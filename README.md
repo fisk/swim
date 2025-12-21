@@ -15,5 +15,17 @@ mvn clean package
 In order to edit a file with swim, use the following command:
 
 ```
-java -XX:+UseZGC -cp "target/swim-0.0.1-SNAPSHOT.jar:target/libs/*" <file>
+java -XX:+UseZGC -cp "target/swim-0.0.1-SNAPSHOT.jar:target/libs/*" org.fisk.swim.Swim <file>
+```
+
+For the best experience, create an alias, like this:
+
+```
+alias swim="java -XX:+UseZGC -cp "<swim_path>/target/swim-0.0.1-SNAPSHOT.jar:<swim_path>target/libs/*" org.fisk.swim.Swim "
+```
+
+where `<swim_path>` is the path where swim was cloned. With this alias, you can open files like a pro:
+
+```
+swim <file>
 ```
