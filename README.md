@@ -1,16 +1,15 @@
-# SWIM – The Java‑powered Vim‑style Editor
+# 🚀 SWIM – The Java‑powered Vim‑style Editor
 
-> **SWIM** stands for *Strange Variety Vi Improved* – the ultimate modal text editor built on the Java platform. It delivers the power and speed of Vim, the flexibility of Java, and the extensibility of a full language‑server ecosystem—all in a single, lightweight JAR.
+🚀 **SWIM** stands for *Strange Variety Vi Improved* – the ultimate modal text editor built on the Java platform. 🌐 It delivers the power and speed of Vim, the flexibility of Java, and the extensibility of a full language‑server ecosystem—all in a single, lightweight JAR. 💡
 
-| Feature | What it gives you |
-|---------|-------------------|
-| **Vim‑style modal editing** | Classic keystrokes, visual and block selections, powerful motions.
-| **Pure Java implementation** | Runs on any JVM, no native dependencies, simple `mvn` build.
-| **Native Java LSP integration** | Auto‑completion, go‑to‑definition, refactoring for Java (and LaTeX, etc.) right out of the box.
-| **Extensible** | Add custom modes or plugins in Java – treat the editor as a platform, not a product.
-| **Zero‑configuration** | One command to launch, alias support for quick launching.
-| **Lightweight** | Less than 50 MB, no external libraries besides the standard JDK.
-
+🛠️ Feature | 💡 What it gives you |
+|----------------|--------------------------|
+| 📌 **Vim‑style modal editing** | Classic keystrokes, visual and block selections, powerful motions. |
+| ⚙️ **Pure Java implementation** | Runs on any JVM, no native dependencies, simple `mvn` build. |
+| 🌐 **Native Java LSP integration** | Auto‑completion, go‑to‑definition, refactoring for Java (and LaTeX, etc.) right out of the box. |
+| 🚀 **Extensible** | Add custom modes or plugins in Java – treat the editor as a platform, not a product. |
+| 🔧 **Zero‑configuration** | One command to launch, alias support for quick launching. |
+| 🧪 **Lightweight** | Less than 50 MB, no external libraries besides the standard JDK. |
 ## Quick Start
 
 ```bash
