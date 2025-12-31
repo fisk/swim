@@ -1,115 +1,92 @@
-Strange Variety Vi Improved, or **swim**, is the ultimate text editor, written in Java.
-Keybindings are similar to vi based editors. But this one is written in Java and runs in a JVM.
+# SWIM – The Java‑powered Vim‑style Editor
 
-# Building #
+> **SWIM** stands for *Strange Variety Vi Improved* – the ultimate modal text editor built on the Java platform. It delivers the power and speed of Vim, the flexibility of Java, and the extensibility of a full language‑server ecosystem—all in a single, lightweight JAR.
 
-Swim is using JDK 25, so make sure you have that installed.
-In order to build swim, run the following command:
+| Feature | What it gives you |
+|---------|-------------------|
+| **Vim‑style modal editing** | Classic keystrokes, visual and block selections, powerful motions.
+| **Pure Java implementation** | Runs on any JVM, no native dependencies, simple `mvn` build.
+| **Native Java LSP integration** | Auto‑completion, go‑to‑definition, refactoring for Java (and LaTeX, etc.) right out of the box.
+| **Extensible** | Add custom modes or plugins in Java – treat the editor as a platform, not a product.
+| **Zero‑configuration** | One command to launch, alias support for quick launching.
+| **Lightweight** | Less than 50 MB, no external libraries besides the standard JDK.
 
-```
-mvn clean package
-```
+## Quick Start
 
-# Keybindings
+```bash
+# 1. Make sure you have JDK 25+ installed.
+# 2. Build the project:
+$ mvn clean package
 
-The SWIM editor provides a Vim‑style modal interface with a set of key‑bindings that cover navigation, editing, and Java LSP integration. Below is a consolidated reference for the current behaviour.
+# 3. Run SWIM with a file:
+$ java -XX:+UseZGC -cp "target/swim-0.0.1-SNAPSHOT.jar:target/libs/*" org.fisk.swim.Swim <file>
 
-## Navigation & movement
-
-| Key sequence | Action |
-|--------------|--------|
-| `<CTRL>-y` | Scroll buffer view up |
-| `<CTRL>-e` | Scroll buffer view down |
-| `$` | Go to end of line |
-| `^` | Go to start of line |
-| `h` | Move cursor left |
-| `l` | Move cursor right |
-| `j` | Move cursor down |
-| `k` | Move cursor up |
-| `<LEFT>` | Move cursor left |
-| `<RIGHT>` | Move cursor right |
-| `<DOWN>` | Move cursor down |
-| `<UP>` | Move cursor up |
-| `g g` | Go to start of buffer |
-| `G` | Go to end of buffer |
-| `f` (followed by a character) | Find next occurrence of character |
-| `F` (followed by a character) | Find previous occurrence of character |
-
-## Normal‑mode bindings
-
-| Key sequence | Action |
-|--------------|--------|
-| `<SPACE> e i` | `JavaLSPClient.organizeImports()` |
-| `<SPACE> e f` | `JavaLSPClient.makeFinal()` |
-| `<SPACE> e a` | `JavaLSPClient.generateAccessors()` |
-| `<SPACE> e s` | `JavaLSPClient.generateToString()` |
-| `<SPACE> e l` | `JavaLSPClient.codeLens()` |
-| `i` | Switch to **Insert** mode |
-| `v` | Switch to **Visual** mode |
-| `V` | Switch to **Visual Line** mode |
-| `<CTRL>-v` | Switch to **Visual Block** mode |
-| `u` | Undo last change |
-| `<CTRL>-r` | Redo last undone change |
-| `d i w` | Delete inner word |
-| `d w` | Delete next word |
-| `d d` | Delete current line |
-| `x` | Delete character under cursor |
-| `c i w` | Change inner word (delete + switch to insert) |
-| `c w` | Change next word (delete + switch to insert) |
-| `a` | Switch to insert mode and move cursor right (append) |
-| `A` | Switch to insert mode and move cursor to end of line (append) |
-| `o` | Insert new line below current line, switch to insert mode |
-| `O` | Insert new line above current line, switch to insert mode |
-| `p` | Paste after cursor (handles line vs. character copy) |
-| `P` | Paste before cursor (handles line vs. character copy) |
-| `y y` | Yank (copy) current line |
-| `m` | Toggle display of the file list panel (Project Files) |
-| `:` | Activate command line (prefix `:`) |
-| `*` | Search for inner word under cursor and activate search |
-| `#` | Search for inner word under cursor backwards and activate search |
-| `/` | Activate forward search prompt |
-| `?` | Activate backward search prompt |
-| `n` | Go to next search match |
-| `N` | Go to previous search match |
-
-## Visual‑mode bindings
-
-The visual modes share the same navigation bindings as normal mode.  They add the following actions:
-
-| Key sequence | Action |
-|--------------|--------|
-| `d i w` | Delete the selected inner word |
-| `d w` | Delete the selected word |
-| `d d` | Delete the selected line(s) |
-| `x` | Delete the selection |
-| `y y` | Yank the selection |
-
-**Note**: Switching out of visual mode back to normal mode is typically done by pressing `<ESC>`.
-
-## Quick reference cheatsheet
-
-```
-Movement      |   Action
---------------|--------
-...
+# 4. For convenience, create an alias:
+$ alias swim='java -XX:+UseZGC -cp "<swim_path>/target/swim-0.0.1-SNAPSHOT.jar:<swim_path>/target/libs/*" org.fisk.swim.Swim'
+# Then simply:
+$ swim <file>
 ```
 
----
+## Modal Editing – The Essentials
 
-In order to edit a file with swim, use the following command:
+SWIM uses the same keybindings that make Vim legendary.  Below are the core motions and commands you’ll use every day.
 
-```
-java -XX:+UseZGC -cp "target/swim-0.0.1-SNAPSHOT.jar:target/libs/*" org.fisk.swim.Swim <file>
-```
+### Normal Mode
 
-For the best experience, create an alias, like this:
+| Key | Action |
+|-----|--------|
+| `h/j/k/l` | Move cursor left/down/up/right |
+| `0/$` | Move to start/end of line |
+| `gg/G` | Go to first/last line |
+| `f/F` | Find next/previous character |
+| `w/b/e` | Move by words |
+| `d{motion}` | Delete |
+| `y{motion}` | Yank |
+| `p/P` | Paste |
+| `u` | Undo |
+| `Ctrl‑r` | Redo |
+| `i` | Enter **Insert** mode |
+| `v/V` | Enter **Visual** / **Visual Line** mode |
+| `Ctrl‑v` | Visual Block mode |
+| `:` | Command‑line prompt |
+| `/` or `?` | Search |
 
-```
-alias swim="java -XX:+UseZGC -cp "<swim_path>/target/swim-0.0.1-SNAPSHOT.jar:<swim_path>target/libs/*" org.fisk.swim.Swim "
-```
+### Insert Mode
 
-where `<swim_path>` is the path where swim was cloned. With this alias, you can open files like a pro:
+All the usual text entry – just type!  Escape (`Esc`) returns you to Normal mode.
 
-```
-swim <file>
-```
+### Visual Mode
+
+Same motion keys as Normal, plus:
+
+| Key | Action |
+|-----|--------|
+| `d` | Delete selection |
+| `y` | Yank selection |
+| `c` | Change selection (delete + Insert) |
+
+## Java‑LSP Power‑Ups
+
+SWIM’s `:JavaLSP` namespace exposes powerful refactorings.  In Normal mode, prefix commands with `<Space>e`:
+
+| Shortcut | Description |
+|----------|-------------|
+| `<Space>e i` | Organize imports |
+| `<Space>e f` | Make field `final` |
+| `<Space>e a` | Generate accessors |
+| `<Space>e s` | Generate `toString()` |
+| `<Space>e l` | Show code lens |
+
+Feel free to create your own custom commands by wiring up a Java handler.
+
+## Extending SWIM
+
+The entire codebase is open source.  To add a new language‑server or mode, simply:
+
+1. Implement a new `LanguageMode`.
+2. Register it via `LanguageModeProvider`.
+3. Build and test.
+
+Because the editor is written in Java, you can drop in existing libraries or even build a UI plug‑in.
+
+
