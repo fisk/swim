@@ -30,7 +30,7 @@ public class KeyStrokes implements Iterator<KeyStroke>, Iterable<KeyStroke> {
 
     @Override
     public KeyStroke next() {
-        return _events.get(++_index);
+        return _events.get(_index++);
     }
     
     public int remaining() {
