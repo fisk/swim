@@ -12,6 +12,7 @@ import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
+import org.fisk.swim.help.HelpIndex;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.utils.LogFactory;
@@ -132,8 +133,15 @@ public class CommandView extends View {
         case "e":
             open(args);
             break;
+        case "h":
+        case "help":
+            Window.getInstance().showList(HelpIndex.createHelpList(), "SWIM Help");
+            break;
         case "w":
             Window.getInstance().getBufferContext().getBuffer().write();
+            break;
+        default:
+            _message = "Unknown command: " + command;
             break;
         }
     }
