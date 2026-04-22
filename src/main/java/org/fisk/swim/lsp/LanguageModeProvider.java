@@ -3,13 +3,17 @@ package org.fisk.swim.lsp;
 import java.nio.file.Path;
 
 import org.eclipse.lsp4j.TextDocumentItem;
+import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.java.JavaLSPClient;
 import org.fisk.swim.lsp.latex.LatexLSPClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.utils.LogFactory;
+import org.slf4j.Logger;
 
 public class LanguageModeProvider {
     private static LanguageModeProvider _instance = new LanguageModeProvider();
+    private static final Logger _log = LogFactory.createLog();
 
     public static LanguageModeProvider getInstance() {
         return _instance;
@@ -77,8 +81,13 @@ public class LanguageModeProvider {
         if (endsIn(path, "java")) {
             var lsp = JavaLSPClient.getInstance();
             if (lsp.isEnabled() && !lsp.hasStarted()) {
-                lsp.start();
-                lsp.ensureInit();
+                try {
+                    lsp.startServer(path);
+                    lsp.ensureInit();
+                } catch (RuntimeException e) {
+                    _log.error("Failed to initialize Java LSP for project " + ProjectPaths.getProjectRootPath(path), e);
+                    lsp.disable();
+                }
             }
             return lsp;
         }

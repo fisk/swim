@@ -4,30 +4,49 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public class ProjectPaths {
-    public static Path getSourceRootPath() {
-        var path = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+    private static Path normalizeStart(Path path) {
+        if (path == null) {
+            return null;
+        }
+        path = path.toAbsolutePath();
+        if (path.toFile().isFile()) {
+            return path.getParent();
+        }
+        return path;
+    }
+
+    private static Path findRoot(Path start, String marker1, String marker2) {
+        var path = normalizeStart(start);
+        if (path == null) {
+            return null;
+        }
         var root = path.getRoot();
-        while (path != null && !root.equals(path)) {
-            if (path.resolve(".git").toFile().exists() || path.resolve(".swim").toFile().exists()) {
+        while (path != null) {
+            if (path.resolve(marker1).toFile().exists() || path.resolve(marker2).toFile().exists()) {
                 return path;
-            } else {
-                path = path.getParent();
             }
+            if (root != null && root.equals(path)) {
+                break;
+            }
+            path = path.getParent();
         }
         return null;
     }
 
+    public static Path getSourceRootPath(Path start) {
+        return findRoot(start, ".git", ".swim");
+    }
+
+    public static Path getSourceRootPath() {
+        return getSourceRootPath(Paths.get(System.getProperty("user.dir")));
+    }
+
+    public static Path getProjectRootPath(Path start) {
+        return findRoot(start, ".git", "pom.xml");
+    }
+
     public static Path getProjectRootPath() {
-        var path = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
-        var root = path.getRoot();
-        while (path != null && !root.equals(path)) {
-            if (path.resolve(".git").toFile().exists() || path.resolve("pom.xml").toFile().exists()) {
-                return path;
-            } else {
-                path = path.getParent();
-            }
-        }
-        return null;
+        return getProjectRootPath(Paths.get(System.getProperty("user.dir")));
     }
 
     public static boolean hasRepository() {

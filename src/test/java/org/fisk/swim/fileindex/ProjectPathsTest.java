@@ -49,6 +49,17 @@ class ProjectPathsTest {
         withUserDir(nested, () -> assertTrue(ProjectPaths.hasRepository()));
     }
 
+    @Test
+    void findsProjectRootFromArbitraryStartPath() throws IOException {
+        Path project = tempDir.resolve("standalone");
+        Path javaFile = project.resolve("src/main/java/App.java");
+        Files.createDirectories(javaFile.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />");
+        Files.writeString(javaFile, "class App {}");
+
+        assertEquals(project, ProjectPaths.getProjectRootPath(javaFile));
+    }
+
     private static void withUserDir(Path path, Runnable assertion) {
         String original = System.getProperty("user.dir");
         System.setProperty("user.dir", path.toString());

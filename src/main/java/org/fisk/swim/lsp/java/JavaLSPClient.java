@@ -1,17 +1,25 @@
 package org.fisk.swim.lsp.java;
 
-import java.io.File;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
-import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Stream;
 import java.util.regex.Pattern;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
@@ -35,6 +43,7 @@ import org.eclipse.lsp4j.DocumentColorParams;
 import org.eclipse.lsp4j.ExecuteCommandCapabilities;
 import org.eclipse.lsp4j.ExecuteCommandParams;
 import org.eclipse.lsp4j.InitializeParams;
+import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
@@ -47,9 +56,11 @@ import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentItem;
+import org.eclipse.lsp4j.TextDocumentEdit;
 import org.eclipse.lsp4j.TextDocumentSaveReason;
 import org.eclipse.lsp4j.UnregistrationParams;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
+import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
@@ -68,21 +79,26 @@ import com.googlecode.lanterna.TextColor;
 
 public class JavaLSPClient extends Thread implements LanguageMode {
     private static final Logger _log = LogFactory.createLog();
+    private static final Gson _gson = new Gson();
 
     private Object _lock = new Object();
     private boolean _started = false;
+    private boolean _startupComplete = false;
+    private boolean _launchAttempted = false;
     private boolean _enabled = true;
+    private Throwable _startupError;
 
-    private InputStream _istream;
-    private OutputStream _ostream;
     private LanguageServer _server;
     private ServerCapabilities _capabilities;
 
-    private String _homePath = System.getProperty("user.home");
-    private String _swimHomePath = _homePath + "/.swim";
-    private String _eclipsePath = _swimHomePath + "/deps/eclipse.jdt.ls/org.eclipse.jdt.ls.product/target/repository";
-    private String _projectPath = ProjectPaths.getProjectRootPath().toString();
-    private String _workspacePath = _swimHomePath + "/workspace";
+    private Path _projectPath;
+    private Path _workspacePath;
+    private Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
+    private Path _eclipsePath = _swimHomePath.resolve("deps")
+            .resolve("eclipse.jdt.ls")
+            .resolve("org.eclipse.jdt.ls.product")
+            .resolve("target")
+            .resolve("repository");
 
     public boolean hasStarted() {
         return _started;
@@ -92,12 +108,124 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return _enabled;
     }
 
+    public void disable() {
+        _enabled = false;
+    }
+
     public JavaLSPClient() {
-        if (!new File(_eclipsePath).exists()) {
+        if (!Files.isDirectory(_eclipsePath)) {
             _log.info("No LSP support");
             _enabled = false;
         }
         initColours();
+    }
+
+    static String getConfigurationDirectoryName(String osName, String arch) {
+        var os = osName.toLowerCase(Locale.ROOT);
+        var normalizedArch = arch.toLowerCase(Locale.ROOT);
+        boolean arm = normalizedArch.contains("aarch64") || normalizedArch.contains("arm64");
+
+        if (os.contains("mac") || os.contains("darwin")) {
+            return arm ? "config_mac_arm" : "config_mac";
+        }
+        if (os.contains("linux")) {
+            return arm ? "config_linux_arm" : "config_linux";
+        }
+        if (os.contains("win")) {
+            return "config_win";
+        }
+        throw new IllegalArgumentException("Unsupported operating system: " + osName);
+    }
+
+    static Path findLauncherJar(Path eclipsePath) {
+        var pluginDir = eclipsePath.resolve("plugins");
+        if (!Files.isDirectory(pluginDir)) {
+            throw new IllegalArgumentException("Missing plugin directory: " + pluginDir);
+        }
+        try (Stream<Path> files = Files.list(pluginDir)) {
+            return files
+                    .filter(path -> path.getFileName().toString().startsWith("org.eclipse.equinox.launcher_"))
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .sorted()
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("Unable to find equinox launcher in " + pluginDir));
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to inspect plugin directory " + pluginDir, e);
+        }
+    }
+
+    static Path getWorkspacePath(Path swimHomePath, Path projectPath) {
+        String projectName = projectPath.getFileName() == null ? "project" : projectPath.getFileName().toString();
+        projectName = projectName.replaceAll("[^A-Za-z0-9._-]", "_");
+        return swimHomePath.resolve("workspace").resolve(projectName + "-" + sha1(projectPath.toAbsolutePath().normalize().toString()));
+    }
+
+    private static String sha1(String value) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-1");
+            var bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            var builder = new StringBuilder();
+            for (var b : bytes) {
+                builder.append(String.format("%02x", b));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-1 algorithm missing", e);
+        }
+    }
+
+    private Path getProjectPath(Path filePath) {
+        var projectPath = ProjectPaths.getProjectRootPath(filePath);
+        if (projectPath != null) {
+            return projectPath;
+        }
+        if (filePath != null) {
+            filePath = filePath.toAbsolutePath();
+            if (filePath.toFile().isFile()) {
+                return filePath.getParent();
+            }
+            return filePath;
+        }
+        return Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+    }
+
+    public synchronized void startServer(Path filePath) {
+        if (!_enabled || _launchAttempted) {
+            return;
+        }
+        _projectPath = getProjectPath(filePath);
+        _workspacePath = getWorkspacePath(_swimHomePath, _projectPath);
+        _launchAttempted = true;
+        new Thread(this::run, "swim-java-lsp").start();
+    }
+
+    private void signalStartupSuccess() {
+        synchronized (_lock) {
+            _started = true;
+            _startupComplete = true;
+            _startupError = null;
+            _lock.notifyAll();
+        }
+    }
+
+    private void signalStartupFailure(Throwable error) {
+        synchronized (_lock) {
+            _started = false;
+            _startupComplete = true;
+            _startupError = error;
+            _lock.notifyAll();
+        }
+    }
+
+    private void logErrorStream(InputStream errorStream) {
+        try (var reader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                _log.info("jdtls stderr: " + line);
+            }
+        } catch (IOException e) {
+            _log.debug("Error stream reader stopped", e);
+        }
     }
 
     private void initColours() {
@@ -278,18 +406,42 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     private void setup() throws IOException {
+        Files.createDirectories(_workspacePath);
+
+        var launcherJar = findLauncherJar(_eclipsePath);
+        var configPath = _eclipsePath.resolve(getConfigurationDirectoryName(System.getProperty("os.name"), System.getProperty("os.arch")));
+
         _log.info("LSP eclipse path: " + _eclipsePath);
         _log.info("LSP workspace path: " + _projectPath);
         _log.info("LSP workspace folder path: " + _workspacePath);
 
-        var java = "java";
-        var javaArgs = "-Declipse.application=org.eclipse.jdt.ls.core.id1 -Dosgi.bundles.defaultStartLevel=4 -Declipse.product=org.eclipse.jdt.ls.core.product -Dlog.level=ALL";
-        var jvmArgs = "-Xmx4G --add-modules=ALL-SYSTEM --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED";
-        var jarPath = _eclipsePath + "/plugins/org.eclipse.equinox.launcher_1.5.700.v20200107-1357.jar";
-        var appArgs = "-configuration " + _eclipsePath + "/config_linux -data " + _workspacePath;
-        var command = java + " " + javaArgs +  " " + jvmArgs + " -jar " + jarPath + " " + appArgs;
-        var commandArg = command.split(" ");
-        var processBuilder = new ProcessBuilder(commandArg);
+        var command = new ArrayList<String>();
+        command.add("java");
+        if (Runtime.version().feature() >= 24) {
+            command.add("-Djdk.xml.maxGeneralEntitySizeLimit=0");
+            command.add("-Djdk.xml.totalEntitySizeLimit=0");
+        }
+        command.add("-Declipse.application=org.eclipse.jdt.ls.core.id1");
+        command.add("-Dosgi.bundles.defaultStartLevel=4");
+        command.add("-Declipse.product=org.eclipse.jdt.ls.core.product");
+        command.add("-Dosgi.checkConfiguration=true");
+        command.add("-Dosgi.sharedConfiguration.area=" + configPath);
+        command.add("-Dosgi.sharedConfiguration.area.readOnly=true");
+        command.add("-Dosgi.configuration.cascaded=true");
+        command.add("-Dlog.level=ALL");
+        command.add("-Xms1G");
+        command.add("--add-modules=ALL-SYSTEM");
+        command.add("--add-opens");
+        command.add("java.base/java.util=ALL-UNNAMED");
+        command.add("--add-opens");
+        command.add("java.base/java.lang=ALL-UNNAMED");
+        command.add("-jar");
+        command.add(launcherJar.toString());
+        command.add("-data");
+        command.add(_workspacePath.toString());
+
+        var processBuilder = new ProcessBuilder(command);
+        processBuilder.directory(_projectPath.toFile());
         var process = processBuilder.start();
 
         Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -308,98 +460,79 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
         });
 
-        _log.info("Proccess command: " + command);
+        _log.info("Proccess command: " + String.join(" ", command));
         _log.info("Process PID: " + process.pid());
 
-        new Thread() {
+        new Thread(() -> logErrorStream(process.getErrorStream()), "swim-java-lsp-stderr").start();
+
+        _log.info("Starting LSP server...");
+        var istream = process.getInputStream();
+        var ostream = process.getOutputStream();
+        var client = new LanguageClient() {
             @Override
-            public void run() {
-                try {
-                    _log.info("Starting LSP server...");
-                    _istream = process.getInputStream();
-                    _ostream = process.getOutputStream();
-                    var client = new LanguageClient() {
-                        @Override
-                        public void telemetryEvent(Object object) {
-                            _log.info("telemetryEvent called");
-                        }
-                        @Override
-                        public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
-                            _log.info("publishDiagnostics called");
-                        }
-                        @Override
-                        public void showMessage(MessageParams message) {
-                            _log.info("showMessage: " + message.getMessage());
-                        }
-                        @Override
-                        public CompletableFuture<MessageActionItem> showMessageRequest(ShowMessageRequestParams requestParams) {
-                            _log.info("showMessageRequest called");
-                            return null;
-                        }
-                        @Override
-                        public void logMessage(MessageParams message) {
-                            _log.info("logMessage: " + message.getMessage());
-                        }
-                        // TODO: Fix this
-                        //                        @Override
-                        //                        public void semanticHighlighting(SemanticHighlightingParams params) {
-                        //                            _log.info("Semantic info: " + params);
-                        //                            var document = params.getTextDocument();
-                        //                            var currentBuffer = Window.getInstance().getBufferContext().getBuffer();
-                        //                            if (Paths.get(document.getUri()).equals(Paths.get(currentBuffer.getTextDocumentID().getUri()))) {
-                        //                                currentBuffer.applyDecorations(document.getVersion(), params.getLines());
-                        //                            }
-                        //                        }
-                        @Override
-                        public CompletableFuture<List<WorkspaceFolder>> workspaceFolders() {
-                            _log.info("Workspace folders?");
-                            return null;
-                        }
-                        @Override
-                        public CompletableFuture<List<Object>> configuration(ConfigurationParams configurationParams) {
-                            _log.info("Configuration?");
-                            throw new UnsupportedOperationException();
-                        }
-                        @Override
-                        public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
-                            _log.info("Workspace edit?");
-                            throw new UnsupportedOperationException();
-                        }
-                        @Override
-                        public CompletableFuture<Void> registerCapability(RegistrationParams params) {
-                            _log.info("Register capability?");
-                            throw new UnsupportedOperationException();
-                        }
-                        @Override
-                        public CompletableFuture<Void> unregisterCapability(UnregistrationParams params) {
-                            _log.info("Unregister capability?");
-                            throw new UnsupportedOperationException();
-                        }
-                    };
-                    var clientLauncher = LSPLauncher.createClientLauncher(client, _istream, _ostream);
-                    var listeningFuture = clientLauncher.startListening();
-                    _server = clientLauncher.getRemoteProxy();
-                    try {
-                        var initParams = new InitializeParams();
-                        initParams.setRootUri(new File(_projectPath).toURI().toString());
-                        initParams.setCapabilities(getClientCapabilities());
-                        var initialized = _server.initialize(initParams).get();
-                        _capabilities = initialized.getCapabilities();
-                        _log.info("Server capabilities: " + _capabilities);
-                        synchronized (_lock) {
-                            _started = true;
-                            _lock.notifyAll();
-                        }
-                    } catch (Exception e) {
-                        _log.error("Exception initializing LSP server", e);
-                    }
-                    listeningFuture.get();
-                } catch (Exception e) {
-                    _log.error("Error reading process output: ", e);
-                    return;
-                }
+            public void telemetryEvent(Object object) {
+                _log.info("telemetryEvent called");
             }
-        }.start();
+            @Override
+            public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
+                _log.info("publishDiagnostics called");
+            }
+            @Override
+            public void showMessage(MessageParams message) {
+                _log.info("showMessage: " + message.getMessage());
+            }
+            @Override
+            public CompletableFuture<MessageActionItem> showMessageRequest(ShowMessageRequestParams requestParams) {
+                _log.info("showMessageRequest called");
+                return null;
+            }
+            @Override
+            public void logMessage(MessageParams message) {
+                _log.info("logMessage: " + message.getMessage());
+            }
+            @Override
+            public CompletableFuture<List<WorkspaceFolder>> workspaceFolders() {
+                return CompletableFuture.completedFuture(List.of(new WorkspaceFolder(_projectPath.toUri().toString(), _projectPath.getFileName().toString())));
+            }
+            @Override
+            public CompletableFuture<List<Object>> configuration(ConfigurationParams configurationParams) {
+                _log.info("Configuration?");
+                return CompletableFuture.completedFuture(List.of());
+            }
+            @Override
+            public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
+                _log.info("Workspace edit?");
+                return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+            }
+            @Override
+            public CompletableFuture<Void> registerCapability(RegistrationParams params) {
+                _log.info("Register capability?");
+                return CompletableFuture.completedFuture(null);
+            }
+            @Override
+            public CompletableFuture<Void> unregisterCapability(UnregistrationParams params) {
+                _log.info("Unregister capability?");
+                return CompletableFuture.completedFuture(null);
+            }
+        };
+        var clientLauncher = LSPLauncher.createClientLauncher(client, istream, ostream);
+        var listeningFuture = clientLauncher.startListening();
+        _server = clientLauncher.getRemoteProxy();
+        try {
+            var initParams = new InitializeParams();
+            initParams.setRootUri(_projectPath.toUri().toString());
+            initParams.setWorkspaceFolders(List.of(new WorkspaceFolder(_projectPath.toUri().toString(), _projectPath.getFileName().toString())));
+            initParams.setCapabilities(getClientCapabilities());
+            var initialized = _server.initialize(initParams).get();
+            _capabilities = initialized.getCapabilities();
+            _server.initialized(new InitializedParams());
+            _log.info("Server capabilities: " + _capabilities);
+            signalStartupSuccess();
+            listeningFuture.get();
+        } catch (Exception e) {
+            signalStartupFailure(e);
+            throw new RuntimeException("Exception initializing LSP server", e);
+        }
     }
 
     private ClientCapabilities getClientCapabilities() {
@@ -437,6 +570,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         try {
             setup();
         } catch (Throwable e) {
+            signalStartupFailure(e);
             _log.error("Error setting up LSP server", e);
         }
     }
@@ -457,7 +591,10 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
         for (;;) {
             synchronized (_lock) {
-                if (_started) {
+                if (_startupComplete) {
+                    if (!_started) {
+                        throw new IllegalStateException("Java LSP failed to initialize", _startupError);
+                    }
                     break;
                 } else {
                     try {
@@ -470,7 +607,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     public List<ColorInformation> decorateBuffer(BufferContext bufferContext) {
-        if (!_enabled) {
+        if (!_enabled || _server == null) {
             return new ArrayList<ColorInformation>();
         }
         try {
@@ -484,6 +621,9 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     public void codeLens(BufferContext bufferContext) {
+        if (!_enabled || _server == null) {
+            return;
+        }
         try {
             var params = new CodeLensParams();
             params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
@@ -505,6 +645,9 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     private List<Either<Command, CodeAction>> getCodeActions(BufferContext bufferContext) {
+        if (!_enabled || _server == null) {
+            return List.of();
+        }
         try {
             _log.info("Get code actions");
             var lineCount = bufferContext.getTextLayout().getPhysicalLineCount();
@@ -521,67 +664,131 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
-    private Command getCodeActionCommand(BufferContext bufferContext, String title) {
-        for (var either: getCodeActions(bufferContext)) {
-            if (either.isLeft()) {
-                _log.info("Left code action: " + either);
-                var command = either.getLeft();
-                if (command.getTitle().equals(title)) {
-                    return command;
-                }
-            }
-            if (either.isRight()) {
-                _log.info("Right code action: " + either);
-            }
+    private static WorkspaceEdit decodeWorkspaceEdit(Object rawEdit) {
+        if (rawEdit == null) {
+            return null;
         }
-        return null;
+        if (rawEdit instanceof WorkspaceEdit) {
+            return (WorkspaceEdit) rawEdit;
+        }
+        return _gson.fromJson(_gson.toJsonTree(rawEdit), WorkspaceEdit.class);
     }
 
-    private void applyWorkspaceEdit(BufferContext context, List<Object> args) {
-        var json = args.get(0).toString();
-        _log.info("applyWorkspaceEdit: " + json);
-        var root = new Gson().fromJson(json, HashMap.class);
-        var changes = (Map<String, Object>)root.get("changes");
-        for (var changeEntry: changes.entrySet()) {
-            URI uri = null;
-            try {
-                uri = new URI(changeEntry.getKey());
-            } catch (URISyntaxException e) {
-                throw new RuntimeException("Invalid URI", e);
+    private static int getIndex(BufferContext context, Position position) {
+        return context.getTextLayout().getIndexForPhysicalLineCharacter(position.getLine(), position.getCharacter());
+    }
+
+    private static boolean uriMatches(URI expectedUri, String candidateUri) {
+        try {
+            var candidate = new URI(candidateUri);
+            if ("file".equalsIgnoreCase(expectedUri.getScheme()) && "file".equalsIgnoreCase(candidate.getScheme())) {
+                return Paths.get(expectedUri).equals(Paths.get(candidate));
             }
-            if (!uri.equals(context.getBuffer().getURI())) {
-                throw new RuntimeException("Applying workspace edit to unexpected URI: " + uri);
+            return expectedUri.equals(candidate);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static class IndexedEdit {
+        private final int _start;
+        private final int _end;
+        private final String _newText;
+
+        IndexedEdit(int start, int end, String newText) {
+            _start = start;
+            _end = end;
+            _newText = newText;
+        }
+    }
+
+    static void applyWorkspaceEdit(BufferContext context, WorkspaceEdit workspaceEdit) {
+        if (workspaceEdit == null) {
+            return;
+        }
+        var currentUri = context.getBuffer().getURI();
+        var edits = new ArrayList<IndexedEdit>();
+
+        if (workspaceEdit.getChanges() != null) {
+            for (var change : workspaceEdit.getChanges().entrySet()) {
+                if (!uriMatches(currentUri, change.getKey())) {
+                    continue;
+                }
+                for (var edit : change.getValue()) {
+                    edits.add(new IndexedEdit(getIndex(context, edit.getRange().getStart()),
+                            getIndex(context, edit.getRange().getEnd()),
+                            edit.getNewText()));
+                }
             }
-            var edits = (List<Map<String, Object>>) changeEntry.getValue();
-            for (var edit: edits) {
-                var range = (Map<String, Object>) edit.get("range");
-                var startPoint = (Map<String, Double>)range.get("start");
-                var startLine = (int) (double)startPoint.get("line");
-                var startCharacter = (int) (double)startPoint.get("character");
-                var startIndex = context.getTextLayout().getIndexForPhysicalLineCharacter(startLine, startCharacter);
-                var endPoint = (Map<String, Double>) range.get("end");
-                var endLine = (int) (double)endPoint.get("line");
-                var endCharacter = (int) (double)endPoint.get("character");
-                var endIndex = context.getTextLayout().getIndexForPhysicalLineCharacter(endLine, endCharacter);
-                var buffer = context.getBuffer();
-                var newText = (String)edit.get("newText");
-                newText = newText.replaceAll("\t", "    ");
-                _log.info("Insert " + newText + " at " + startIndex);
-                _log.info("Remove [" + startIndex + ", " + endIndex + "]");
-                buffer.remove(startIndex, endIndex);
-                buffer.insert(startIndex, newText);
+        }
+
+        if (workspaceEdit.getDocumentChanges() != null) {
+            for (var change : workspaceEdit.getDocumentChanges()) {
+                if (!change.isLeft()) {
+                    continue;
+                }
+                TextDocumentEdit edit = change.getLeft();
+                if (!uriMatches(currentUri, edit.getTextDocument().getUri())) {
+                    continue;
+                }
+                for (var textEdit : edit.getEdits()) {
+                    edits.add(new IndexedEdit(getIndex(context, textEdit.getRange().getStart()),
+                            getIndex(context, textEdit.getRange().getEnd()),
+                            textEdit.getNewText()));
+                }
             }
+        }
+
+        edits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
+                .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
+
+        var buffer = context.getBuffer();
+        for (var edit : edits) {
+            var newText = edit._newText.replace("\t", "    ");
+            _log.info("Insert " + newText + " at " + edit._start);
+            _log.info("Remove [" + edit._start + ", " + edit._end + "]");
+            buffer.remove(edit._start, edit._end);
+            buffer.insert(edit._start, newText);
+        }
+        if (!edits.isEmpty()) {
+            buffer.getUndoLog().commit();
         }
     }
 
     private void applyCommand(BufferContext bufferContext, Command command) {
+        if (command == null) {
+            return;
+        }
         switch (command.getCommand()) {
         case "java.apply.workspaceEdit":
-            applyWorkspaceEdit(bufferContext, command.getArguments());
+            if (command.getArguments() != null && !command.getArguments().isEmpty()) {
+                applyWorkspaceEdit(bufferContext, decodeWorkspaceEdit(command.getArguments().get(0)));
+            }
             break;
         default:
-            throw new RuntimeException("Unknown command: " + command);
+            _log.info("Ignoring unsupported command: " + command);
+            break;
         }
+    }
+
+    private boolean applyCodeActionByTitle(BufferContext bufferContext, String title) {
+        for (var either: getCodeActions(bufferContext)) {
+            if (either.isLeft()) {
+                var command = either.getLeft();
+                if (title.equals(command.getTitle())) {
+                    applyCommand(bufferContext, command);
+                    return true;
+                }
+            } else {
+                var action = either.getRight();
+                if (title.equals(action.getTitle())) {
+                    applyWorkspaceEdit(bufferContext, action.getEdit());
+                    applyCommand(bufferContext, action.getCommand());
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void organizeImports(BufferContext bufferContext) {
@@ -589,10 +796,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             return;
         }
         try {
-            var command = getCodeActionCommand(bufferContext, "Organize imports");
-            if (command != null) {
-                applyCommand(bufferContext, command);
-            }
+            applyCodeActionByTitle(bufferContext, "Organize imports");
         } catch (Exception e) {
             _log.error("Exception: ", e);
         }
@@ -603,10 +807,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             return;
         }
         try {
-            var command = getCodeActionCommand(bufferContext, "Change modifiers to final where possible");
-            if (command != null) {
-                applyCommand(bufferContext, command);
-            }
+            applyCodeActionByTitle(bufferContext, "Change modifiers to final where possible");
         } catch (Exception e) {
             _log.error("Exception: ", e);
         }
@@ -617,10 +818,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             return;
         }
         try {
-            var command = getCodeActionCommand(bufferContext, "Generate Getters and Setters");
-            if (command != null) {
-                applyCommand(bufferContext, command);
-            }
+            applyCodeActionByTitle(bufferContext, "Generate Getters and Setters");
         } catch (Exception e) {
             _log.error("Exception: ", e);
         }
@@ -631,10 +829,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             return;
         }
         try {
-            var command = getCodeActionCommand(bufferContext, "Generate toString()...");
-            if (command != null) {
-                applyCommand(bufferContext, command);
-            }
+            applyCodeActionByTitle(bufferContext, "Generate toString()...");
         } catch (Exception e) {
             _log.error("Exception: ", e);
         }
@@ -811,6 +1006,9 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     @Override
     public TextDocumentItem getTextDocument(BufferContext bufferContext) {
-        return new TextDocumentItem(bufferContext.getBuffer().getPath().toFile().toURI().toString(), "java", 11, bufferContext.getBuffer().getString());
+        return new TextDocumentItem(bufferContext.getBuffer().getPath().toFile().toURI().toString(),
+                "java",
+                bufferContext.getBuffer().getVersionedTextDocumentID().getVersion(),
+                bufferContext.getBuffer().getString());
     }
 }
