@@ -1,0 +1,61 @@
+package org.fisk.swim.event;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.junit.jupiter.api.Test;
+
+import com.googlecode.lanterna.input.KeyStroke;
+
+class ListEventResponderTest {
+    @Test
+    void returnsMaybeWhenAnyResponderNeedsMoreInput() {
+        var responder = new ListEventResponder();
+        responder.addEventResponder(stub(Response.MAYBE, new AtomicInteger()));
+        responder.addEventResponder(stub(Response.YES, new AtomicInteger()));
+
+        var result = responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false))));
+
+        assertEquals(Response.MAYBE, result);
+    }
+
+    @Test
+    void respondInvokesWinningResponder() {
+        var called = new AtomicInteger();
+        var responder = new ListEventResponder();
+        responder.addEventResponder(stub(Response.NO, new AtomicInteger()));
+        responder.addEventResponder(stub(Response.YES, called));
+
+        assertEquals(Response.YES, responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false)))));
+
+        responder.respond();
+
+        assertEquals(1, called.get());
+    }
+
+    @Test
+    void returnsNoWhenNothingMatches() {
+        var responder = new ListEventResponder();
+        responder.addEventResponder(stub(Response.NO, new AtomicInteger()));
+
+        var result = responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false))));
+
+        assertEquals(Response.NO, result);
+    }
+
+    private static EventResponder stub(Response response, AtomicInteger calls) {
+        return new EventResponder() {
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                return response;
+            }
+
+            @Override
+            public void respond() {
+                calls.incrementAndGet();
+            }
+        };
+    }
+}

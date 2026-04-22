@@ -144,6 +144,10 @@ public class AttributedString {
             }
             currentX += fragmentLength;
         }
+        if (!inserted) {
+            _fragments.add(new AttributedStringFragment(str, newAttr));
+            length += str.length();
+        }
         _length += str.length();
         if (length != _length) {
             throw new RuntimeException("Unexpected length: " + length + ", expected: " + _length);
