@@ -1,30 +1,23 @@
-# 🚀 SWIM – The Java‑powered Vim‑style Editor
+# SWIM
 
-🚀 **SWIM** stands for *Strange Variety Vi Improved* – the ultimate modal text editor built on the Java platform. 🌐 It delivers the power and speed of Vim, the flexibility of Java, and the extensibility of a full language‑server ecosystem—all in a single, lightweight JAR. 💡
-
-🛠️ Feature | 💡 What it gives you |
-|----------------|--------------------------|
-| 📌 **Vim‑style modal editing** | Classic keystrokes, visual and block selections, powerful motions. |
-| ⚙️ **Pure Java implementation** | Runs on any JVM, no native dependencies, simple `mvn` build. |
-| 🌐 **Native Java LSP integration** | Auto‑completion, go‑to‑definition, refactoring for Java (and LaTeX, etc.) right out of the box. |
-| 🚀 **Extensible** | Add custom modes or plugins in Java – treat the editor as a platform, not a product. |
-| 🔧 **Zero‑configuration** | One command to launch, alias support for quick launching. |
-| 🧪 **Lightweight** | Less than 50 MB, no external libraries besides the standard JDK. |
+SWIM stands for *Strange Variety Vi Improved*. It is a Java modal editor with Vim-style keybindings, Java/LaTeX language features, and a launcher/core split that lets the editor reload its core while running.
 ## Quick Start
 
 ```bash
 # 1. Make sure you have JDK 25+ installed.
-# 2. Build the project:
-$ mvn clean package
+# 2. Build the project from the repo root:
+$ mvn package
 
-# 3. Run SWIM with a file:
-$ java -XX:+UseZGC -cp "target/swim-0.0.1-SNAPSHOT.jar:target/libs/*" org.fisk.swim.Swim <file>
+# 3. Run SWIM with a file via the launcher:
+$ java -XX:+UseZGC -cp "swim-launcher/target/swim-launcher-0.0.1-SNAPSHOT.jar:swim-launcher/target/runtime-libs/*" org.fisk.swim.launcher.Main <file>
 
 # 4. For convenience, create an alias:
-$ alias swim='java -XX:+UseZGC -cp "<swim_path>/target/swim-0.0.1-SNAPSHOT.jar:<swim_path>/target/libs/*" org.fisk.swim.Swim'
+$ alias swim='java -XX:+UseZGC -cp "<swim_path>/swim-launcher/target/swim-launcher-0.0.1-SNAPSHOT.jar:<swim_path>/swim-launcher/target/runtime-libs/*" org.fisk.swim.launcher.Main'
 # Then simply:
 $ swim <file>
 ```
+
+The launcher jar in `swim-launcher/target` is the supported entrypoint. The old root-level `target/swim-*.jar` compatibility path is no longer used.
 
 ## Modal Editing – The Essentials
 
@@ -88,4 +81,11 @@ The entire codebase is open source.  To add a new language‑server or mode, sim
 
 Because the editor is written in Java, you can drop in existing libraries or even build a UI plug‑in.
 
+## Live Reload
+
+SWIM now runs through a small launcher that loads the editor core dynamically. From inside the editor:
+
+- `:reload` reloads the latest built core
+- `:rebuild` rebuilds the project and reloads
+- `:upgrade` is an alias for `:rebuild`
 

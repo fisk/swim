@@ -27,6 +27,22 @@ public class TerminalContext {
         return instance;
     }
 
+    public static void shutdownInstance() {
+        TerminalContext instance = _instance;
+        if (instance == null) {
+            return;
+        }
+        try {
+            instance._screen.stopScreen();
+        } catch (IOException e) {
+        }
+        try {
+            instance._terminal.close();
+        } catch (IOException e) {
+        }
+        _instance = null;
+    }
+
     private final Screen _screen;
     private final Terminal _terminal;
     private final TextGraphics _graphics;

@@ -4,14 +4,15 @@ import java.nio.file.Path;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
-import org.fisk.swim.event.KeyStrokeEvent;
-import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.lsp.java.JavaLSPClient;
+import org.fisk.swim.event.IOThread;
+import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Window;
 
-import com.googlecode.lanterna.input.KeyStroke;
-
 public class SwimAppImpl implements SwimApp {
+    private IOThread _ioThread;
+
     @Override
     public void start(Path path, SwimHost host) {
         SwimRuntime.setHost(host);
@@ -20,11 +21,8 @@ public class SwimAppImpl implements SwimApp {
         var eventThread = EventThread.getInstance();
         eventThread.addOnEvent(() -> Window.getInstance().update(false));
         eventThread.start();
-    }
-
-    @Override
-    public void submitKeyStroke(KeyStroke keyStroke) {
-        EventThread.getInstance().enqueue(new KeyStrokeEvent(keyStroke));
+        _ioThread = new IOThread(TerminalContext.getInstance().getScreen());
+        _ioThread.start();
     }
 
     @Override
@@ -59,6 +57,11 @@ public class SwimAppImpl implements SwimApp {
         if (window != null) {
             window.dispose();
         }
+        if (_ioThread != null) {
+            _ioThread.interrupt();
+            _ioThread = null;
+        }
+        TerminalContext.shutdownInstance();
         JavaLSPClient.getInstance().shutdown();
         EventThread.shutdownInstance();
         SwimRuntime.clear();

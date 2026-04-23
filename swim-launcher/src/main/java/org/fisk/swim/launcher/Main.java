@@ -6,28 +6,32 @@ import java.io.InputStreamReader;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReference;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
-import org.fisk.swim.terminal.TerminalContext;
 
 public class Main implements SwimHost {
     private static final String CORE_MODULE = "org.fisk.swim.core";
+    private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
+            "swim-launcher-");
 
     private record LoadedApp(ModuleLayer layer, SwimApp app) {
     }
 
     private final Object _reloadLock = new Object();
     private volatile LoadedApp _loadedApp;
-    private volatile boolean _running = true;
+    private final CountDownLatch _exitLatch = new CountDownLatch(1);
     private Path _buildRoot;
 
     public static void main(String[] args) {
@@ -40,44 +44,12 @@ public class Main implements SwimHost {
             return;
         }
 
-        _buildRoot = findBuildRoot(Path.of(System.getProperty("user.dir")));
-        TerminalContext.getInstance();
-        installResizeListener();
+        _buildRoot = determineBuildRoot();
         reload(path, "Loaded SWIM core");
-        readInputLoop();
-        shutdownTerminal();
-    }
-
-    private void installResizeListener() {
-        TerminalContext.getInstance().getTerminal().addResizeListener((terminal, newSize) -> {
-            LoadedApp loaded = _loadedApp;
-            if (loaded != null) {
-                loaded.app().refresh(true);
-            }
-        });
-    }
-
-    private void readInputLoop() {
-        while (_running) {
-            try {
-                var keyStroke = TerminalContext.getInstance().getScreen().readInput();
-                LoadedApp loaded = _loadedApp;
-                if (loaded != null) {
-                    loaded.app().submitKeyStroke(keyStroke);
-                }
-            } catch (IOException e) {
-                if (_running) {
-                    throw new RuntimeException("Error reading terminal input", e);
-                }
-                return;
-            }
-        }
-    }
-
-    private void shutdownTerminal() {
         try {
-            TerminalContext.getInstance().getScreen().stopScreen();
-        } catch (IOException e) {
+            _exitLatch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -101,7 +73,7 @@ public class Main implements SwimHost {
         }
     }
 
-    private Path findBuildRoot(Path start) {
+    static Path findBuildRoot(Path start) {
         Path path = start.toAbsolutePath();
         while (path != null) {
             if (Files.isRegularFile(path.resolve("pom.xml")) && Files.isDirectory(path.resolve("swim-core"))) {
@@ -109,17 +81,41 @@ public class Main implements SwimHost {
             }
             path = path.getParent();
         }
-        return start.toAbsolutePath();
+        return null;
+    }
+
+    static Path getLauncherLocation() {
+        try {
+            return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Unable to determine launcher location", e);
+        }
+    }
+
+    private Path determineBuildRoot() {
+        Path launcherLocation = getLauncherLocation();
+        Path root = findBuildRoot(launcherLocation);
+        if (root != null) {
+            return root;
+        }
+
+        Path cwdRoot = findBuildRoot(Path.of(System.getProperty("user.dir")));
+        if (cwdRoot != null) {
+            return cwdRoot;
+        }
+
+        throw new IllegalStateException("Unable to locate SWIM build root from " + launcherLocation);
     }
 
     private List<Path> getCoreModulePath() {
         Path coreTarget = _buildRoot.resolve("swim-core").resolve("target");
         var paths = new ArrayList<Path>();
         paths.add(findCoreJar(coreTarget));
-        Path libs = coreTarget.resolve("libs");
+        Path libs = coreTarget.resolve("runtime-libs");
         if (Files.isDirectory(libs)) {
             try (var stream = Files.list(libs)) {
                 stream.filter(path -> path.getFileName().toString().endsWith(".jar"))
+                        .filter(path -> !isSharedLib(path))
                         .sorted()
                         .forEach(paths::add);
             } catch (IOException e) {
@@ -127,6 +123,16 @@ public class Main implements SwimHost {
             }
         }
         return paths;
+    }
+
+    private boolean isSharedLib(Path path) {
+        String name = path.getFileName().toString();
+        for (var prefix : SHARED_LIB_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Path findCoreJar(Path coreTarget) {
@@ -145,10 +151,10 @@ public class Main implements SwimHost {
     private LoadedApp loadApp() {
         var modulePath = getCoreModulePath().toArray(Path[]::new);
         var finder = ModuleFinder.of(modulePath);
-        var roots = finder.findAll().stream()
+        var roots = new HashSet<>(finder.findAll().stream()
                 .map(ModuleReference::descriptor)
                 .map(descriptor -> descriptor.name())
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(java.util.stream.Collectors.toSet()));
         roots.add(CORE_MODULE);
         Configuration configuration = ModuleLayer.boot().configuration()
                 .resolve(finder, ModuleFinder.of(), roots);
@@ -240,13 +246,12 @@ public class Main implements SwimHost {
 
     @Override
     public void requestExit() {
-        _running = false;
         LoadedApp loaded = _loadedApp;
         if (loaded != null) {
             loaded.app().close();
             _loadedApp = null;
         }
-        shutdownTerminal();
+        _exitLatch.countDown();
     }
 
     @Override

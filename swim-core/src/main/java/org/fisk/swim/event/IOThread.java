@@ -16,12 +16,16 @@ public class IOThread extends Thread {
 
     @Override
     public void run() {
-        while (true) {
+        while (!isInterrupted()) {
             try {
                 KeyStroke keyStroke = _screen.readInput();
+                if (keyStroke == null) {
+                    continue;
+                }
                 var event = new KeyStrokeEvent(keyStroke);
                 EventThread.getInstance().enqueue(event);
             } catch (IOException e) {
+                break;
             }
         }
     }
