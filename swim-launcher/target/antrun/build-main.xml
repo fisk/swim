@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="maven-antrun-" default="main">
+  <target name="main">
+    <mkdir dir="/Users/eosterlu/Programming/swim/swim-launcher/target/libs" />
+    <copy file="/Users/eosterlu/Programming/swim/swim-launcher/swim-launcher/target/swim-launcher-0.0.1-SNAPSHOT.jar" tofile="/Users/eosterlu/Programming/swim/swim-launcher/target/swim-0.0.1-SNAPSHOT.jar" overwrite="true" />
+    <copy todir="/Users/eosterlu/Programming/swim/swim-launcher/target/libs" overwrite="true">
+      <fileset dir="/Users/eosterlu/Programming/swim/swim-launcher/swim-launcher/target/libs" />
+    </copy>
+  </target>
+</project>
