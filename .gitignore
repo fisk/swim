@@ -4,4 +4,6 @@
 build
 lib
 /target/
+/swim-core/target/
+/swim-launcher/target/
 /bin/
