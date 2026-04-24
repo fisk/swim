@@ -19,7 +19,12 @@ public class SwimAppImpl implements SwimApp {
         Window.createInstance(path);
         Window.getInstance().update(true);
         var eventThread = EventThread.getInstance();
-        eventThread.addOnEvent(() -> Window.getInstance().update(false));
+        eventThread.addOnEvent(() -> {
+            var window = Window.getInstance();
+            if (window != null) {
+                window.update(false);
+            }
+        });
         eventThread.start();
         _ioThread = new IOThread(TerminalContext.getInstance().getScreen());
         _ioThread.start();
@@ -53,17 +58,17 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
-        var window = Window.getInstance();
-        if (window != null) {
-            window.dispose();
-        }
         if (_ioThread != null) {
             _ioThread.interrupt();
             _ioThread = null;
         }
-        TerminalContext.shutdownInstance();
         JavaLSPClient.getInstance().shutdown();
         EventThread.shutdownInstance();
+        var window = Window.getInstance();
+        if (window != null) {
+            window.dispose();
+        }
+        TerminalContext.shutdownInstance();
         SwimRuntime.clear();
     }
 }

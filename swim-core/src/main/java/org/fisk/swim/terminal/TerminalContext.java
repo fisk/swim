@@ -10,6 +10,7 @@ import com.googlecode.lanterna.terminal.Terminal;
 
 public class TerminalContext {
     private static volatile TerminalContext _instance;
+    private boolean _closed;
 
     public static TerminalContext getInstance() {
         TerminalContext instance = _instance;
@@ -32,15 +33,8 @@ public class TerminalContext {
         if (instance == null) {
             return;
         }
-        try {
-            instance._screen.stopScreen();
-        } catch (IOException e) {
-        }
-        try {
-            instance._terminal.close();
-        } catch (IOException e) {
-        }
         _instance = null;
+        instance.shutdown();
     }
 
     private final Screen _screen;
@@ -57,6 +51,17 @@ public class TerminalContext {
             throw new RuntimeException("Can't create screen", e);
         }
         _graphics = _screen.newTextGraphics();
+    }
+
+    private synchronized void shutdown() {
+        if (_closed) {
+            return;
+        }
+        _closed = true;
+        try {
+            _screen.stopScreen();
+        } catch (IOException | IllegalStateException e) {
+        }
     }
 
     public TextGraphics getGraphics() {

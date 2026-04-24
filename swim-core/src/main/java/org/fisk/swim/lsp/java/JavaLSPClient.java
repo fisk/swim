@@ -198,7 +198,9 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         _projectPath = getProjectPath(filePath);
         _workspacePath = getWorkspacePath(_swimHomePath, _projectPath);
         _launchAttempted = true;
-        new Thread(this::run, "swim-java-lsp").start();
+        var thread = new Thread(this::run, "swim-java-lsp");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void signalStartupSuccess() {
@@ -466,7 +468,9 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         _log.info("Proccess command: " + String.join(" ", command));
         _log.info("Process PID: " + _process.pid());
 
-        new Thread(() -> logErrorStream(_process.getErrorStream()), "swim-java-lsp-stderr").start();
+        var stderrThread = new Thread(() -> logErrorStream(_process.getErrorStream()), "swim-java-lsp-stderr");
+        stderrThread.setDaemon(true);
+        stderrThread.start();
 
         _log.info("Starting LSP server...");
         var istream = _process.getInputStream();

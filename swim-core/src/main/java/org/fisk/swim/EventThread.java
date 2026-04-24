@@ -39,6 +39,7 @@ public class EventThread extends Thread {
     }
 
     public EventThread() {
+        setDaemon(true);
         _responder = new ListEventResponder();
     }
 
@@ -48,10 +49,12 @@ public class EventThread extends Thread {
             return;
         }
         instance.shutdown();
-        try {
-            instance.join(2000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        if (Thread.currentThread() != instance) {
+            try {
+                instance.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         _instance = null;
     }
@@ -136,6 +139,7 @@ public class EventThread extends Thread {
 
     public void shutdown() {
         _running = false;
+        _onEventRunnables.clear();
         _events.offer(new RunnableEvent(() -> {
         }));
     }

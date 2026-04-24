@@ -44,7 +44,9 @@ public class CommandView extends View {
             } else {
                 runCommand(_command.toString().split(" "));
             }
-            deactivate();
+            if (Window.getInstance() != null) {
+                deactivate();
+            }
         });
         _responders.addEventResponder("<BACKSPACE>", () -> {
             if (_command.length() > 0) {
@@ -222,6 +224,9 @@ public class CommandView extends View {
     public void deactivate() {
         _command = null;
         var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
         var rootView = window.getRootView();
         rootView.setFirstResponder(window.getBufferContext().getBufferView());
         rootView.setNeedsRedraw();

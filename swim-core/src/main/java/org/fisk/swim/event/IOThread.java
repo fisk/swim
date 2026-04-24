@@ -11,6 +11,7 @@ public class IOThread extends Thread {
     private Screen _screen;
 
     public IOThread(Screen screen) {
+        setDaemon(true);
         _screen = screen;
     }
 

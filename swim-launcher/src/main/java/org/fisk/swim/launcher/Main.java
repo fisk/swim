@@ -51,6 +51,7 @@ public class Main implements SwimHost {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        System.exit(0);
     }
 
     private Path checkArguments(String[] args) {
@@ -107,8 +108,8 @@ public class Main implements SwimHost {
         throw new IllegalStateException("Unable to locate SWIM build root from " + launcherLocation);
     }
 
-    private List<Path> getCoreModulePath() {
-        Path coreTarget = _buildRoot.resolve("swim-core").resolve("target");
+    static List<Path> getCoreModulePath(Path buildRoot) {
+        Path coreTarget = buildRoot.resolve("swim-core").resolve("target");
         var paths = new ArrayList<Path>();
         paths.add(findCoreJar(coreTarget));
         Path libs = coreTarget.resolve("runtime-libs");
@@ -125,7 +126,11 @@ public class Main implements SwimHost {
         return paths;
     }
 
-    private boolean isSharedLib(Path path) {
+    private List<Path> getCoreModulePath() {
+        return getCoreModulePath(_buildRoot);
+    }
+
+    static boolean isSharedLib(Path path) {
         String name = path.getFileName().toString();
         for (var prefix : SHARED_LIB_PREFIXES) {
             if (name.startsWith(prefix)) {
@@ -135,7 +140,7 @@ public class Main implements SwimHost {
         return false;
     }
 
-    private Path findCoreJar(Path coreTarget) {
+    static Path findCoreJar(Path coreTarget) {
         try (var stream = Files.list(coreTarget)) {
             Optional<Path> result = stream
                     .filter(path -> path.getFileName().toString().startsWith("swim-core-"))
@@ -148,8 +153,8 @@ public class Main implements SwimHost {
         }
     }
 
-    private LoadedApp loadApp() {
-        var modulePath = getCoreModulePath().toArray(Path[]::new);
+    static ModuleLayer createCoreLayer(Path buildRoot, ClassLoader parentLoader) {
+        var modulePath = getCoreModulePath(buildRoot).toArray(Path[]::new);
         var finder = ModuleFinder.of(modulePath);
         var roots = new HashSet<>(finder.findAll().stream()
                 .map(ModuleReference::descriptor)
@@ -158,9 +163,13 @@ public class Main implements SwimHost {
         roots.add(CORE_MODULE);
         Configuration configuration = ModuleLayer.boot().configuration()
                 .resolve(finder, ModuleFinder.of(), roots);
-        ModuleLayer layer = ModuleLayer.defineModulesWithOneLoader(configuration,
+        return ModuleLayer.defineModulesWithOneLoader(configuration,
                 List.of(ModuleLayer.boot()),
-                getClass().getClassLoader()).layer();
+                parentLoader).layer();
+    }
+
+    private LoadedApp loadApp() {
+        ModuleLayer layer = createCoreLayer(_buildRoot, getClass().getClassLoader());
         ServiceLoader<SwimApp> loader = ServiceLoader.load(layer, SwimApp.class);
         var app = loader.findFirst().orElseThrow(() -> new IllegalStateException("No SwimApp service found in " + CORE_MODULE));
         return new LoadedApp(layer, app);
@@ -247,11 +256,13 @@ public class Main implements SwimHost {
     @Override
     public void requestExit() {
         LoadedApp loaded = _loadedApp;
-        if (loaded != null) {
-            loaded.app().close();
-            _loadedApp = null;
-        }
+        _loadedApp = null;
         _exitLatch.countDown();
+        if (loaded != null) {
+            var shutdownThread = new Thread(loaded.app()::close, "swim-close");
+            shutdownThread.setDaemon(true);
+            shutdownThread.start();
+        }
     }
 
     @Override
