@@ -42,7 +42,7 @@ public class CommandView extends View {
             if (isSearch()) {
                 runSearch(_command.toString());
             } else {
-                runCommand(_command.toString().split(" "));
+                runCommand(_command.toString());
             }
             if (Window.getInstance() != null) {
                 deactivate();
@@ -125,21 +125,33 @@ public class CommandView extends View {
         }
     }
 
-    private void runCommand(String[] args) {
-        if (args.length == 0) {
+    private void runCommand(String rawCommand) {
+        rawCommand = rawCommand.trim();
+        if (rawCommand.equals("")) {
             return;
         }
-        String command = args[0];
+        int splitIndex = rawCommand.indexOf(' ');
+        String command;
+        String argument = "";
+        if (splitIndex == -1) {
+            command = rawCommand;
+        } else {
+            command = rawCommand.substring(0, splitIndex);
+            argument = rawCommand.substring(splitIndex + 1).trim();
+        }
         switch (command) {
         case "q":
             SwimRuntime.exit();
             break;
         case "e":
-            open(args);
+            open(argument);
             break;
         case "h":
         case "help":
             Window.getInstance().showList(HelpIndex.createHelpList(), "SWIM Help");
+            break;
+        case "nemo":
+            org.fisk.swim.nemo.NemoClient.getInstance().run(Window.getInstance().getBufferContext(), argument);
             break;
         case "reload":
             SwimRuntime.reload();
@@ -157,12 +169,12 @@ public class CommandView extends View {
         }
     }
     
-    private void open(String[] args) {
-        if (args.length != 2) {
+    private void open(String pathString) {
+        if (pathString.equals("")) {
             _message = "Wrong number of parameters";
             return;
         }
-        var path = Paths.get(args[1]).toAbsolutePath();
+        var path = Paths.get(pathString).toAbsolutePath();
         if (!path.toFile().exists()) {
             try {
                 if (path.toFile().createNewFile()) {

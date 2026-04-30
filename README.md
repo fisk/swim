@@ -19,6 +19,11 @@ $ swim <file>
 
 The launcher jar in `swim-launcher/target` is the supported entrypoint. The old root-level `target/swim-*.jar` compatibility path is no longer used.
 
+Once SWIM is running:
+
+- use `:help` to open the built-in tutorial
+- use `:nemo <question>` to ask Nemo about the current file
+
 ## Modal Editing – The Essentials
 
 SWIM uses the same keybindings that make Vim legendary.  Below are the core motions and commands you’ll use every day.
@@ -71,6 +76,41 @@ SWIM’s `:JavaLSP` namespace exposes powerful refactorings.  In Normal mode, pr
 
 Feel free to create your own custom commands by wiring up a Java handler.
 
+## Nemo
+
+SWIM includes `:nemo`, a built-in AI assistant for asking questions about the current file.
+
+Before using it, export your OpenAI credentials in the shell you use to launch SWIM:
+
+```bash
+export OPENAI_API_KEY="your_api_key_here"
+# Optional:
+export OPENAI_MODEL="gpt-4.1"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+```
+
+If you use a provider-compatible endpoint instead of the public OpenAI API, you can point Nemo at it with `OPENAI_BASE_URL` or `OPENAI_RESPONSES_URL` and add provider-specific headers with `OPENAI_HEADER_*`.
+
+Example for an Oracle Code Assist style setup:
+
+```bash
+export OPENAI_API_KEY="your_employer_token"
+export OPENAI_MODEL="gpt-5.4"
+export OPENAI_BASE_URL="https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm"
+export OPENAI_HEADER_CLIENT="codex-cli"
+export OPENAI_HEADER_CLIENT_VERSION="0"
+```
+
+Then inside SWIM you can ask Nemo questions like:
+
+```text
+:nemo summarize this file
+:nemo explain this method
+:nemo suggest a refactor for this class
+```
+
+` :nemo ` sends the current file path and full buffer contents to the model, then shows the answer in a SWIM list panel. The current implementation is read-only: it gives explanations and suggestions, but it does not edit files automatically.
+
 ## Extending SWIM
 
 The entire codebase is open source.  To add a new language‑server or mode, simply:
@@ -88,4 +128,3 @@ SWIM now runs through a small launcher that loads the editor core dynamically. F
 - `:reload` reloads the latest built core
 - `:rebuild` rebuilds the project and reloads
 - `:upgrade` is an alias for `:rebuild`
-

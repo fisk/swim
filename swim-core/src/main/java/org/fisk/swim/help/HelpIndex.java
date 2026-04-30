@@ -64,6 +64,7 @@ public class HelpIndex {
                 "m toggles the project file list.",
                 ":help shows this tutorial.",
                 ":e <path> opens a file and creates it if it does not exist.",
+                ":nemo <question> asks Nemo about the current file.",
                 ":w writes the current buffer to disk.",
                 ":reload loads the latest built SWIM core.",
                 ":rebuild and :upgrade rebuild and reload SWIM.",
