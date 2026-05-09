@@ -14,7 +14,6 @@ import java.util.Map;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.text.BufferContext;
-import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -270,35 +269,10 @@ public class NemoClient {
             if (window == null) {
                 return;
             }
-            if (window.isShowingList()) {
-                window.hideList();
+            if (window.isShowingPanel()) {
+                window.hidePanel();
             }
-            window.showList(toListItems(text), title);
+            window.showTextPanel(title, text);
         }));
-    }
-
-    private static List<ListItem> toListItems(String text) {
-        var items = new ArrayList<ListItem>();
-        for (var line : wrapText(text, 72)) {
-            items.add(new TextItem(line));
-        }
-        return items;
-    }
-
-    private static class TextItem extends ListItem {
-        private final String _text;
-
-        private TextItem(String text) {
-            _text = text;
-        }
-
-        @Override
-        public void onClick() {
-        }
-
-        @Override
-        public String displayString() {
-            return _text;
-        }
     }
 }

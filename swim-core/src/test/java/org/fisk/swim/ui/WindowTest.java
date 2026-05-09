@@ -27,12 +27,35 @@ class WindowTest {
             window.showList(List.of(item("alpha")), "Files");
 
             assertTrue(window.isShowingList());
+            assertTrue(window.isShowingPanel());
             assertEquals(6, window.getBufferContext().getBufferView().getBounds().getSize().getHeight());
-            assertSame(HeadlessWindowHarness.getField(window, "_listView"), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+            assertSame(HeadlessWindowHarness.getField(window, "_panelView"), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
 
             window.hideList();
 
             assertFalse(window.isShowingList());
+            assertFalse(window.isShowingPanel());
+            assertEquals(originalHeight, window.getBufferContext().getBufferView().getBounds().getSize().getHeight());
+            assertSame(window.getBufferContext().getBufferView(), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+        }
+    }
+
+    @Test
+    void showAndHideTextPanelResizeBufferViewAndResponder() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("text-panel.txt", "abc"), 24, 11)) {
+            var window = harness.getWindow();
+            int originalHeight = window.getBufferContext().getBufferView().getBounds().getSize().getHeight();
+
+            window.showTextPanel("Nemo", "alpha\nbeta");
+
+            assertTrue(window.isShowingPanel());
+            assertFalse(window.isShowingList());
+            assertEquals(6, window.getBufferContext().getBufferView().getBounds().getSize().getHeight());
+            assertSame(HeadlessWindowHarness.getField(window, "_panelView"), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+
+            window.hidePanel();
+
+            assertFalse(window.isShowingPanel());
             assertEquals(originalHeight, window.getBufferContext().getBufferView().getBounds().getSize().getHeight());
             assertSame(window.getBufferContext().getBufferView(), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
         }

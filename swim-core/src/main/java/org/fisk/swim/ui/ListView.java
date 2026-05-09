@@ -76,7 +76,7 @@ public class ListView extends View {
         });
         _responders.addEventResponder("<ESC>", () -> {
             ListView.this.getParent().setNeedsRedraw();
-            Window.getInstance().hideList();
+            Window.getInstance().hidePanel();
         });
         _responders.addEventResponder("<ENTER>", () -> {
             if (_selection >= _filteredList.size()) {
@@ -85,7 +85,7 @@ public class ListView extends View {
             var item = _filteredList.get(_selection);
             ListView.this.getParent().setNeedsRedraw();
             item.onClick();
-            Window.getInstance().hideList();
+            Window.getInstance().hidePanel();
         });
         _responders.addEventResponder("<BACKSPACE>", () -> {
             if (_filter.length() > 0) {

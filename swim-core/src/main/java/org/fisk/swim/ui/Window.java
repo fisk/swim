@@ -253,14 +253,18 @@ public class Window implements Drawable {
         _rootView.draw(rect);
     }
 
-    private ListView _listView;
+    private View _panelView;
 
     public boolean isShowingList() {
-        return _listView != null;
+        return _panelView instanceof ListView;
     }
 
-    public void showList(List<? extends ListItem> list, String title) {
-        if (_listView != null) {
+    public boolean isShowingPanel() {
+        return _panelView != null;
+    }
+
+    private void showPanel(View panelView) {
+        if (_panelView != null) {
             return;
         }
         var bufferView = _bufferContext.getBufferView();
@@ -270,25 +274,42 @@ public class Window implements Drawable {
         bufferView.setBounds(Rect.create(rect.getPoint().getX(), rect.getPoint().getY(),
                 rect.getSize().getWidth(), newHeight));
         bufferView.setNeedsRedraw();
-        var listView = new ListView(Rect.create(rect.getPoint().getX(), rect.getPoint().getY() + newHeight,
-                rect.getSize().getWidth(), height - newHeight), list, title);
-        _rootView.addSubview(listView);
-        _rootView.setFirstResponder(listView);
-        _listView = listView;
+        panelView.setBounds(Rect.create(rect.getPoint().getX(), rect.getPoint().getY() + newHeight,
+                rect.getSize().getWidth(), height - newHeight));
+        _rootView.addSubview(panelView);
+        _rootView.setFirstResponder(panelView);
+        _panelView = panelView;
         _rootView.setNeedsRedraw();
     }
 
+    public void showList(List<? extends ListItem> list, String title) {
+        showPanel(new ListView(Rect.create(0, 0, 0, 0), list, title));
+    }
+
+    public void showTextPanel(String title, String text) {
+        showPanel(new TextPanelView(Rect.create(0, 0, 0, 0), title, text));
+    }
+
     public void hideList() {
+        if (!isShowingList()) {
+            return;
+        }
+        hidePanel();
+    }
+
+    public void hidePanel() {
+        if (_panelView == null) {
+            return;
+        }
         var bufferView = _bufferContext.getBufferView();
         var rect = bufferView.getBounds();
-        int height = rect.getSize().getHeight();
-        int newHeight = height + _listView.getBounds().getSize().getHeight();
+        int newHeight = rect.getSize().getHeight() + _panelView.getBounds().getSize().getHeight();
         bufferView.setBounds(Rect.create(rect.getPoint().getX(), rect.getPoint().getY(),
                 rect.getSize().getWidth(), newHeight));
         bufferView.setNeedsRedraw();
-        _listView.removeFromParent();
+        _panelView.removeFromParent();
         _rootView.setFirstResponder(_bufferContext.getBufferView());
         _rootView.setNeedsRedraw();
-        _listView = null;
+        _panelView = null;
     }
 }
