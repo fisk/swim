@@ -1,4 +1,4 @@
-package org.fisk.swim.launcher;
+package org.fisk.swim;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,6 +19,7 @@ import javax.tools.JavaCompiler;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
+import org.fisk.swim.launcher.Main;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -38,16 +39,15 @@ class LauncherProcessIT {
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
         Path launcherJar = buildRoot.resolve("swim-launcher").resolve("target").resolve("swim-launcher-0.0.1-SNAPSHOT.jar");
-        Path runtimeLibs = buildRoot.resolve("swim-launcher").resolve("target").resolve("runtime-libs");
         Path file = tempDir.resolve("switch-source.txt");
         Path other = tempDir.resolve("switch-target.txt");
         Files.writeString(file, "source");
         Files.writeString(other, "xyz");
         String javaAgentArg = jacocoAgentArg(buildRoot);
 
-        var process = startProcess(buildRoot, launcherJar, runtimeLibs, file, script.toString(), "-q", "/dev/null",
-                "java", javaAgentArg, "-cp", launcherJar + ":" + runtimeLibs.resolve("*"),
-                "org.fisk.swim.launcher.Main", file.toString());
+        var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
+                "java", javaAgentArg, "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
         try {
             waitForStartup();
             runCommand(process, "e " + other);
@@ -74,14 +74,13 @@ class LauncherProcessIT {
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
         Path launcherJar = buildRoot.resolve("swim-launcher").resolve("target").resolve("swim-launcher-0.0.1-SNAPSHOT.jar");
-        Path runtimeLibs = buildRoot.resolve("swim-launcher").resolve("target").resolve("runtime-libs");
         Path file = tempDir.resolve("undo-redo.txt");
         Files.writeString(file, "abc");
         String javaAgentArg = jacocoAgentArg(buildRoot);
 
-        var process = startProcess(buildRoot, launcherJar, runtimeLibs, file, script.toString(), "-q", "/dev/null",
-                "java", javaAgentArg, "-cp", launcherJar + ":" + runtimeLibs.resolve("*"),
-                "org.fisk.swim.launcher.Main", file.toString());
+        var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
+                "java", javaAgentArg, "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
         try {
             waitForStartup();
             type(process, "x");
@@ -106,12 +105,12 @@ class LauncherProcessIT {
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
         Path launcherJar = buildRoot.resolve("swim-launcher").resolve("target").resolve("swim-launcher-0.0.1-SNAPSHOT.jar");
-        Path runtimeLibs = buildRoot.resolve("swim-launcher").resolve("target").resolve("runtime-libs");
         Path file = buildRoot.resolve("README.md");
         String javaAgentArg = jacocoAgentArg(buildRoot);
 
-        var process = startProcess(buildRoot, launcherJar, runtimeLibs, file, script.toString(), "-q", "/dev/null",
-                "java", javaAgentArg, "-cp", launcherJar + ":" + runtimeLibs.resolve("*"), "org.fisk.swim.launcher.Main", file.toString());
+        var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
+                "java", javaAgentArg, "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
 
         Thread.sleep(2500);
         assertTrue(process.process().isAlive(), "Editor process should still be alive after startup");
@@ -126,13 +125,12 @@ class LauncherProcessIT {
     void launcherProcessExitsWhenCoreRequestsExit() throws Exception {
         Path buildRoot = createSyntheticBuildRoot();
         Path launcherJar = Main.getLauncherLocation();
-        Path runtimeLibs = launcherJar.getParent().resolve("runtime-libs");
         Path file = buildRoot.resolve("README.txt");
         Files.writeString(file, "hello");
 
-        var process = startProcess(buildRoot, launcherJar, runtimeLibs, file,
-                "java", "-cp", launcherJar + ":" + runtimeLibs.resolve("*"),
-                "org.fisk.swim.launcher.Main", file.toString());
+        var process = startProcess(buildRoot, launcherJar,
+                "java", "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
 
         boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
         assertTrue(exited, "Launcher did not exit after synthetic core requested exit.\n" + process.output());
@@ -175,10 +173,8 @@ class LauncherProcessIT {
         }
     }
 
-    private StartedProcess startProcess(Path workdir, Path launcherJar, Path runtimeLibs, Path file, String... command) throws IOException {
+    private StartedProcess startProcess(Path workdir, Path launcherJar, String... command) throws IOException {
         Assumptions.assumeTrue(Files.isRegularFile(launcherJar), "Launcher jar missing");
-        Assumptions.assumeTrue(Files.isDirectory(runtimeLibs), "Launcher runtime libs missing");
-        Assumptions.assumeTrue(Files.isRegularFile(file), "Input file missing");
 
         var processBuilder = new ProcessBuilder(command);
         processBuilder.directory(workdir.toFile());

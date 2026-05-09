@@ -12,11 +12,11 @@ $ cd ~/.swim
 # 3. Build the project in place:
 $ mvn package
 
-# 4. Run SWIM with a file via the installed launcher:
-$ java -XX:+UseZGC -cp "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar:$HOME/.swim/bin/launcher/runtime-libs/*" org.fisk.swim.launcher.Main <file>
+# 4. Run SWIM with a file via the installed launcher module:
+$ java -XX:+UseZGC --module-path "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar" -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main <file>
 
 # 5. For convenience, create an alias:
-$ alias swim='java -XX:+UseZGC -cp "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar:$HOME/.swim/bin/launcher/runtime-libs/*" org.fisk.swim.launcher.Main'
+$ alias swim='java -XX:+UseZGC --module-path "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar" -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main'
 # Then simply:
 $ swim <file>
 ```
@@ -26,7 +26,7 @@ $ swim <file>
 - `~/.swim/bin/launcher`
 - `~/.swim/lib`
 
-Those installed artifacts are the supported runtime entrypoint. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
+Those installed artifacts are the supported runtime entrypoint. The launcher and core are now deployed as real JPMS modules. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
 
 Once SWIM is running:
 

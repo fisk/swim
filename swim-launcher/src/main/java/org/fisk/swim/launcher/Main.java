@@ -104,7 +104,7 @@ public class Main implements SwimHost {
         }
     }
 
-    static Path findBuildRoot(Path start) {
+    public static Path findBuildRoot(Path start) {
         Path path = start.toAbsolutePath();
         while (path != null) {
             if (Files.isRegularFile(path.resolve("pom.xml")) && Files.isDirectory(path.resolve("swim-core"))) {
@@ -115,7 +115,7 @@ public class Main implements SwimHost {
         return null;
     }
 
-    static Path getLauncherLocation() {
+    public static Path getLauncherLocation() {
         try {
             return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();
         } catch (URISyntaxException e) {
