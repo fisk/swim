@@ -24,9 +24,9 @@ $ swim <file>
 `mvn package` now copies the runtime artifacts into:
 
 - `~/.swim/bin/launcher`
-- `~/.swim/bin/core`
+- `~/.swim/lib`
 
-Those installed artifacts are the supported runtime entrypoint. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `bin/core` artifacts without depending directly on `swim-core/target` at runtime.
+Those installed artifacts are the supported runtime entrypoint. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
 
 Once SWIM is running:
 

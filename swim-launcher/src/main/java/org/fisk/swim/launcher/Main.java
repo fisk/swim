@@ -157,7 +157,7 @@ public class Main implements SwimHost {
     }
 
     static Path resolveCoreArtifactDirectory(Path buildRoot) {
-        Path installedCore = buildRoot.resolve("bin").resolve("core");
+        Path installedCore = buildRoot.resolve("lib");
         if (Files.isDirectory(installedCore)) {
             return installedCore;
         }
