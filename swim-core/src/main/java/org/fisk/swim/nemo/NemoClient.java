@@ -259,40 +259,48 @@ public class NemoClient {
     }
 
     private String request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
-        JsonElement nextInput = _gson.toJsonTree(buildInput(context, turns));
-        String previousResponseId = null;
+        JsonArray inputHistory = new JsonArray();
+        inputHistory.add(_gson.toJsonTree(buildInput(context, turns)));
 
         for (int step = 0; step < 8; step++) {
             JsonObject payload = new JsonObject();
             payload.addProperty("model", configuration.model());
             payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately.");
-            payload.add("input", nextInput);
-            if (previousResponseId != null) {
-                payload.addProperty("previous_response_id", previousResponseId);
-            }
+            payload.add("input", inputHistory);
             var tools = buildTools(configuration);
             if (tools.size() > 0) {
                 payload.add("tools", tools);
             }
 
             JsonObject response = sendRequest(configuration, payload);
-            previousResponseId = response.has("id") ? response.get("id").getAsString() : null;
             var toolCalls = extractToolCalls(response);
             if (toolCalls.isEmpty()) {
                 return extractOutputText(response.toString());
             }
 
-            JsonArray outputs = new JsonArray();
+            JsonArray toolOutputs = new JsonArray();
             for (var call : toolCalls) {
                 var output = new JsonObject();
                 output.addProperty("type", "function_call_output");
                 output.addProperty("call_id", call.callId());
                 output.addProperty("output", executeTool(configuration, context, call));
-                outputs.add(output);
+                toolOutputs.add(output);
             }
-            nextInput = outputs;
+            appendToolRound(inputHistory, response, toolOutputs);
         }
         throw new IOException("Nemo exceeded tool-call limit");
+    }
+
+    static void appendToolRound(JsonArray inputHistory, JsonObject response, JsonArray toolOutputs) {
+        JsonArray output = response.getAsJsonArray("output");
+        if (output != null) {
+            for (var item : output) {
+                inputHistory.add(item.deepCopy());
+            }
+        }
+        for (var item : toolOutputs) {
+            inputHistory.add(item.deepCopy());
+        }
     }
 
     static List<ToolCall> extractToolCalls(JsonObject response) {
