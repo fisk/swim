@@ -55,6 +55,10 @@ public class NemoClient {
         return _instance;
     }
 
+    synchronized void resetForTests() {
+        _conversation = null;
+    }
+
     record ChatTurn(String speaker, String text) {
     }
 
@@ -260,7 +264,7 @@ public class NemoClient {
 
     private String request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
         JsonArray inputHistory = new JsonArray();
-        inputHistory.add(_gson.toJsonTree(buildInput(context, turns)));
+        inputHistory.add(createUserInputMessage(buildInput(context, turns)));
 
         for (int step = 0; step < 8; step++) {
             JsonObject payload = new JsonObject();
@@ -301,6 +305,19 @@ public class NemoClient {
         for (var item : toolOutputs) {
             inputHistory.add(item.deepCopy());
         }
+    }
+
+    static JsonObject createUserInputMessage(String text) {
+        var message = new JsonObject();
+        message.addProperty("type", "message");
+        message.addProperty("role", "user");
+        var content = new JsonArray();
+        var inputText = new JsonObject();
+        inputText.addProperty("type", "input_text");
+        inputText.addProperty("text", text);
+        content.add(inputText);
+        message.add("content", content);
+        return message;
     }
 
     static List<ToolCall> extractToolCalls(JsonObject response) {

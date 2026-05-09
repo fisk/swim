@@ -209,7 +209,7 @@ class NemoClientTest {
     @Test
     void appendsToolRoundWithoutPreviousResponseIdState() {
         var history = new com.google.gson.JsonArray();
-        history.add("initial prompt");
+        history.add(NemoClient.createUserInputMessage("initial prompt"));
 
         var response = com.google.gson.JsonParser.parseString("""
                 {
@@ -234,8 +234,19 @@ class NemoClientTest {
         NemoClient.appendToolRound(history, response, toolOutputs);
 
         assertEquals(3, history.size());
+        assertEquals("message", history.get(0).getAsJsonObject().get("type").getAsString());
         assertEquals("function_call", history.get(1).getAsJsonObject().get("type").getAsString());
         assertEquals("function_call_output", history.get(2).getAsJsonObject().get("type").getAsString());
+    }
+
+    @Test
+    void createsInitialUserInputAsMessageItem() {
+        var message = NemoClient.createUserInputMessage("hello");
+
+        assertEquals("message", message.get("type").getAsString());
+        assertEquals("user", message.get("role").getAsString());
+        assertEquals("input_text", message.getAsJsonArray("content").get(0).getAsJsonObject().get("type").getAsString());
+        assertEquals("hello", message.getAsJsonArray("content").get(0).getAsJsonObject().get("text").getAsString());
     }
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {
