@@ -124,6 +124,43 @@
               <excludeArtifactIds>swim-launcher</excludeArtifactIds>
             </configuration>
           </execution>
+          <execution>
+            <id>copy-core-dependencies-to-bin</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.parent.basedir}/bin/core/runtime-libs</outputDirectory>
+              <includeScope>runtime</includeScope>
+              <excludeArtifactIds>swim-launcher</excludeArtifactIds>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-core-jar-to-bin</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.parent.basedir}/bin/core</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.build.directory}</directory>
+                  <includes>
+                    <include>${project.build.finalName}.jar</include>
+                  </includes>
+                </resource>
+              </resources>
+              <overwrite>true</overwrite>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>

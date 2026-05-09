@@ -74,6 +74,23 @@ class MainTest {
     }
 
     @Test
+    void coreModulePathPrefersInstalledBinArtifactsWhenPresent() throws Exception {
+        Path root = tempDir.resolve("swim");
+        Path target = root.resolve("swim-core").resolve("target");
+        Path binCore = root.resolve("bin").resolve("core");
+        Files.createDirectories(target.resolve("runtime-libs"));
+        Files.createDirectories(binCore.resolve("runtime-libs"));
+        Files.writeString(target.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "target");
+        Files.writeString(binCore.resolve("swim-core-0.0.2-SNAPSHOT.jar"), "bin");
+        Files.writeString(binCore.resolve("runtime-libs").resolve("lanterna-9.9.9.jar"), "lib");
+
+        List<Path> modulePath = Main.getCoreModulePath(root);
+
+        assertEquals(binCore.resolve("swim-core-0.0.2-SNAPSHOT.jar"), modulePath.get(0));
+        assertTrue(modulePath.contains(binCore.resolve("runtime-libs").resolve("lanterna-9.9.9.jar")));
+    }
+
+    @Test
     void launcherCanLoadCoreLayerWithRuntimeDependencyJar() throws Exception {
         Path root = createSyntheticBuildRoot();
 

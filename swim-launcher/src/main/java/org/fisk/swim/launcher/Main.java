@@ -139,7 +139,7 @@ public class Main implements SwimHost {
     }
 
     static List<Path> getCoreModulePath(Path buildRoot) {
-        Path coreTarget = buildRoot.resolve("swim-core").resolve("target");
+        Path coreTarget = resolveCoreArtifactDirectory(buildRoot);
         var paths = new ArrayList<Path>();
         paths.add(findCoreJar(coreTarget));
         Path libs = coreTarget.resolve("runtime-libs");
@@ -154,6 +154,14 @@ public class Main implements SwimHost {
             }
         }
         return paths;
+    }
+
+    static Path resolveCoreArtifactDirectory(Path buildRoot) {
+        Path installedCore = buildRoot.resolve("bin").resolve("core");
+        if (Files.isDirectory(installedCore)) {
+            return installedCore;
+        }
+        return buildRoot.resolve("swim-core").resolve("target");
     }
 
     private List<Path> getCoreModulePath() {
