@@ -204,7 +204,7 @@ public class Cursor {
                 last = start;
             }
         }
-        if (last > 0) {
+        if (last >= 0) {
             _position = last;
             calculate();
             Window.getInstance().getBufferContext().getBufferView().adaptViewToCursor();

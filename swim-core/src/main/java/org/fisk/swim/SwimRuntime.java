@@ -1,12 +1,15 @@
 package org.fisk.swim;
 
 import java.nio.file.Path;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.ui.Window;
 
 public final class SwimRuntime {
     private static SwimHost _host;
+    private static Supplier<Path> _currentPathSupplier = SwimRuntime::resolveCurrentPath;
 
     private SwimRuntime() {
     }
@@ -17,6 +20,7 @@ public final class SwimRuntime {
 
     public static void clear() {
         _host = null;
+        _currentPathSupplier = SwimRuntime::resolveCurrentPath;
     }
 
     public static void exit() {
@@ -27,19 +31,27 @@ public final class SwimRuntime {
         }
     }
 
-    private static Path currentPath() {
+    private static Path resolveCurrentPath() {
         return Window.getInstance().getBufferContext().getBuffer().getPath();
+    }
+
+    static void setCurrentPathSupplier(Supplier<Path> currentPathSupplier) {
+        _currentPathSupplier = Objects.requireNonNull(currentPathSupplier);
+    }
+
+    static void resetCurrentPathSupplier() {
+        _currentPathSupplier = SwimRuntime::resolveCurrentPath;
     }
 
     public static void reload() {
         if (_host != null) {
-            _host.requestReload(currentPath());
+            _host.requestReload(_currentPathSupplier.get());
         }
     }
 
     public static void rebuildAndReload() {
         if (_host != null) {
-            _host.requestRebuildAndReload(currentPath());
+            _host.requestRebuildAndReload(_currentPathSupplier.get());
         }
     }
 }

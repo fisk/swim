@@ -409,46 +409,8 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }), TextColor.ANSI.RED);
     }
 
-    private void setup() throws IOException {
-        Files.createDirectories(_workspacePath);
-
-        var launcherJar = findLauncherJar(_eclipsePath);
-        var configPath = _eclipsePath.resolve(getConfigurationDirectoryName(System.getProperty("os.name"), System.getProperty("os.arch")));
-
-        _log.info("LSP eclipse path: " + _eclipsePath);
-        _log.info("LSP workspace path: " + _projectPath);
-        _log.info("LSP workspace folder path: " + _workspacePath);
-
-        var command = new ArrayList<String>();
-        command.add("java");
-        if (Runtime.version().feature() >= 24) {
-            command.add("-Djdk.xml.maxGeneralEntitySizeLimit=0");
-            command.add("-Djdk.xml.totalEntitySizeLimit=0");
-        }
-        command.add("-Declipse.application=org.eclipse.jdt.ls.core.id1");
-        command.add("-Dosgi.bundles.defaultStartLevel=4");
-        command.add("-Declipse.product=org.eclipse.jdt.ls.core.product");
-        command.add("-Dosgi.checkConfiguration=true");
-        command.add("-Dosgi.sharedConfiguration.area=" + configPath);
-        command.add("-Dosgi.sharedConfiguration.area.readOnly=true");
-        command.add("-Dosgi.configuration.cascaded=true");
-        command.add("-Dlog.level=ALL");
-        command.add("-Xms1G");
-        command.add("--add-modules=ALL-SYSTEM");
-        command.add("--add-opens");
-        command.add("java.base/java.util=ALL-UNNAMED");
-        command.add("--add-opens");
-        command.add("java.base/java.lang=ALL-UNNAMED");
-        command.add("-jar");
-        command.add(launcherJar.toString());
-        command.add("-data");
-        command.add(_workspacePath.toString());
-
-        var processBuilder = new ProcessBuilder(command);
-        processBuilder.directory(_projectPath.toFile());
-        _process = processBuilder.start();
-
-        _shutdownHook = new Thread() {
+    Thread createShutdownHook() {
+        return new Thread() {
             @Override
             public void run() {
                 if (!_started) {
@@ -463,19 +425,10 @@ public class JavaLSPClient extends Thread implements LanguageMode {
                 }
             }
         };
-        Runtime.getRuntime().addShutdownHook(_shutdownHook);
+    }
 
-        _log.info("Proccess command: " + String.join(" ", command));
-        _log.info("Process PID: " + _process.pid());
-
-        var stderrThread = new Thread(() -> logErrorStream(_process.getErrorStream()), "swim-java-lsp-stderr");
-        stderrThread.setDaemon(true);
-        stderrThread.start();
-
-        _log.info("Starting LSP server...");
-        var istream = _process.getInputStream();
-        var ostream = _process.getOutputStream();
-        var client = new LanguageClient() {
+    LanguageClient createLanguageClient() {
+        return new LanguageClient() {
             @Override
             public void telemetryEvent(Object object) {
                 _log.info("telemetryEvent called");
@@ -522,6 +475,61 @@ public class JavaLSPClient extends Thread implements LanguageMode {
                 return CompletableFuture.completedFuture(null);
             }
         };
+    }
+
+    private void setup() throws IOException {
+        Files.createDirectories(_workspacePath);
+
+        var launcherJar = findLauncherJar(_eclipsePath);
+        var configPath = _eclipsePath.resolve(getConfigurationDirectoryName(System.getProperty("os.name"), System.getProperty("os.arch")));
+
+        _log.info("LSP eclipse path: " + _eclipsePath);
+        _log.info("LSP workspace path: " + _projectPath);
+        _log.info("LSP workspace folder path: " + _workspacePath);
+
+        var command = new ArrayList<String>();
+        command.add("java");
+        if (Runtime.version().feature() >= 24) {
+            command.add("-Djdk.xml.maxGeneralEntitySizeLimit=0");
+            command.add("-Djdk.xml.totalEntitySizeLimit=0");
+        }
+        command.add("-Declipse.application=org.eclipse.jdt.ls.core.id1");
+        command.add("-Dosgi.bundles.defaultStartLevel=4");
+        command.add("-Declipse.product=org.eclipse.jdt.ls.core.product");
+        command.add("-Dosgi.checkConfiguration=true");
+        command.add("-Dosgi.sharedConfiguration.area=" + configPath);
+        command.add("-Dosgi.sharedConfiguration.area.readOnly=true");
+        command.add("-Dosgi.configuration.cascaded=true");
+        command.add("-Dlog.level=ALL");
+        command.add("-Xms1G");
+        command.add("--add-modules=ALL-SYSTEM");
+        command.add("--add-opens");
+        command.add("java.base/java.util=ALL-UNNAMED");
+        command.add("--add-opens");
+        command.add("java.base/java.lang=ALL-UNNAMED");
+        command.add("-jar");
+        command.add(launcherJar.toString());
+        command.add("-data");
+        command.add(_workspacePath.toString());
+
+        var processBuilder = new ProcessBuilder(command);
+        processBuilder.directory(_projectPath.toFile());
+        _process = processBuilder.start();
+
+        _shutdownHook = createShutdownHook();
+        Runtime.getRuntime().addShutdownHook(_shutdownHook);
+
+        _log.info("Proccess command: " + String.join(" ", command));
+        _log.info("Process PID: " + _process.pid());
+
+        var stderrThread = new Thread(() -> logErrorStream(_process.getErrorStream()), "swim-java-lsp-stderr");
+        stderrThread.setDaemon(true);
+        stderrThread.start();
+
+        _log.info("Starting LSP server...");
+        var istream = _process.getInputStream();
+        var ostream = _process.getOutputStream();
+        var client = createLanguageClient();
         var clientLauncher = LSPLauncher.createClientLauncher(client, istream, ostream);
         var listeningFuture = clientLauncher.startListening();
         _server = clientLauncher.getRemoteProxy();

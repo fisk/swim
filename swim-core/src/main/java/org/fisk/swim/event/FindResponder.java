@@ -24,13 +24,7 @@ public class FindResponder implements EventResponder {
     }
 
     private void respond(int count, String character) {
-        if (character.equals(".") ||
-                character.equals("\\") ||
-                character.equals("(") ||
-                character.equals(")")) {
-            character = "\\" + character;
-        }
-        var pattern = Pattern.compile(character, Pattern.MULTILINE);
+        var pattern = Pattern.compile(Pattern.quote(character), Pattern.MULTILINE);
         for (int i = 0; i < count; ++i) {
             if (_forward) {
                 _context.getBuffer().getCursor().goNext(pattern);
@@ -45,6 +39,9 @@ public class FindResponder implements EventResponder {
         var result = _prefix.processEvent(events);
         if (result != Response.YES) {
             return result;
+        }
+        if (events.consumed()) {
+            return Response.MAYBE;
         }
         _prefix.respond();
         var event = events.current();

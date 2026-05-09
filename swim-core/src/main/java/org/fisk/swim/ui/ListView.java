@@ -33,17 +33,24 @@ public class ListView extends View {
     private void filterList() {
         if (_filter.length() == 0) {
             _filteredList = _list;
+            if (_selection >= _filteredList.size()) {
+                _selection = Math.max(0, _filteredList.size() - 1);
+            }
+            setNeedsRedraw();
             return;
         }
         var filters = _filter.toString().split(" ");
         _filteredList = _filter.length() == 0 ? _list : _list.stream().filter((item) -> {
             for (var filter: filters) {
-                if (!Pattern.matches("(?i:.*" + filter + ".*)", item.displayString())) {
+                if (!Pattern.matches("(?i:.*" + Pattern.quote(filter) + ".*)", item.displayString())) {
                     return false;
                 }
             }
             return true;
         }).collect(Collectors.toList());
+        if (_selection >= _filteredList.size()) {
+            _selection = Math.max(0, _filteredList.size() - 1);
+        }
         setNeedsRedraw();
     }
 
@@ -54,7 +61,7 @@ public class ListView extends View {
         _title = title;
         _selection = 0;
         _responders.addEventResponder("<DOWN>", () -> {
-            if (_selection >= list.size() - 1) {
+            if (_selection >= _filteredList.size() - 1) {
                 return;
             }
             ++_selection;

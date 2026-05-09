@@ -103,7 +103,7 @@ public class CommandView extends View {
         if (_searchString == null) {
             return;
         }
-        var pattern = Pattern.compile(_searchString);
+        var pattern = Pattern.compile(Pattern.quote(_searchString));
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
             cursor.goPrevious(pattern);
@@ -116,7 +116,7 @@ public class CommandView extends View {
         if (_searchString == null) {
             return;
         }
-        var pattern = Pattern.compile(_searchString);
+        var pattern = Pattern.compile(Pattern.quote(_searchString));
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
             cursor.goNext(pattern);

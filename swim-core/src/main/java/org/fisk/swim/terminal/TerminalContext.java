@@ -42,15 +42,25 @@ public class TerminalContext {
     private final TextGraphics _graphics;
 
     public TerminalContext() {
+        this(createTerminal(), null, null);
+    }
+
+    TerminalContext(Screen screen, Terminal terminal, TextGraphics graphics) {
+        _screen = screen;
+        _terminal = terminal;
+        _graphics = graphics != null ? graphics : screen.newTextGraphics();
+    }
+
+    private static Screen createTerminal() {
         var factory = new DefaultTerminalFactory();
         try {
-            _terminal = factory.createTerminal();
-            _screen = new TerminalScreen(_terminal);
-            _screen.startScreen();
+            Terminal terminal = factory.createTerminal();
+            Screen screen = new TerminalScreen(terminal);
+            screen.startScreen();
+            return screen;
         } catch (IOException e) {
             throw new RuntimeException("Can't create screen", e);
         }
-        _graphics = _screen.newTextGraphics();
     }
 
     private synchronized void shutdown() {

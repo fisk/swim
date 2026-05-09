@@ -1,15 +1,18 @@
 package org.fisk.swim.nemo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.Map;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -96,5 +99,19 @@ class NemoClientTest {
     @Test
     void compactsNonJsonErrorBodies() {
         assertEquals("upstream auth failed", NemoClient.compactRawBody("upstream auth failed"));
+    }
+
+    @Test
+    void toListItemsCreatesDisplayOnlyTextItems() throws Exception {
+        Method method = NemoClient.class.getDeclaredMethod("toListItems", String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<ListItem> items = (List<ListItem>) method.invoke(null, "alpha\nbeta");
+
+        assertEquals(2, items.size());
+        assertEquals("alpha", items.get(0).displayString());
+        assertEquals("beta", items.get(1).displayString());
+        assertInstanceOf(ListItem.class, items.get(0));
     }
 }

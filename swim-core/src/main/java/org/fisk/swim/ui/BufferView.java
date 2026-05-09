@@ -81,7 +81,8 @@ public class BufferView extends View {
 
     public void scrollDown() {
         var textLayout = _bufferContext.getTextLayout();
-        if (_startLine > textLayout.getLogicalLineCount() - 2) {
+        int maxStartLine = Math.max(0, textLayout.getLogicalLineCount() - getBounds().getSize().getHeight());
+        if (_startLine >= maxStartLine) {
             return;
         }
         _startLine++;

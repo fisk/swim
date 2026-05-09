@@ -10,13 +10,13 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
@@ -26,13 +26,43 @@ public class Main implements SwimHost {
     private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
             "swim-launcher-");
 
-    private record LoadedApp(ModuleLayer layer, SwimApp app) {
+    @FunctionalInterface
+    interface AppLoader {
+        SwimApp load(Path buildRoot, ClassLoader parentLoader);
+    }
+
+    @FunctionalInterface
+    interface Rebuilder {
+        boolean rebuild(Path buildRoot);
+    }
+
+    @FunctionalInterface
+    interface TaskRunner {
+        void start(String name, boolean daemon, Runnable task);
+    }
+
+    private record LoadedApp(SwimApp app) {
     }
 
     private final Object _reloadLock = new Object();
+    private final AppLoader _appLoader;
+    private final Rebuilder _rebuilder;
+    private final TaskRunner _taskRunner;
+    private final Supplier<Path> _launcherLocationSupplier;
     private volatile LoadedApp _loadedApp;
     private final CountDownLatch _exitLatch = new CountDownLatch(1);
     private Path _buildRoot;
+
+    public Main() {
+        this(Main::loadApp, Main::rebuild, Main::startThread, Main::getLauncherLocation);
+    }
+
+    Main(AppLoader appLoader, Rebuilder rebuilder, TaskRunner taskRunner, Supplier<Path> launcherLocationSupplier) {
+        _appLoader = appLoader;
+        _rebuilder = rebuilder;
+        _taskRunner = taskRunner;
+        _launcherLocationSupplier = launcherLocationSupplier;
+    }
 
     public static void main(String[] args) {
         new Main().run(args);
@@ -94,7 +124,7 @@ public class Main implements SwimHost {
     }
 
     private Path determineBuildRoot() {
-        Path launcherLocation = getLauncherLocation();
+        Path launcherLocation = _launcherLocationSupplier.get();
         Path root = findBuildRoot(launcherLocation);
         if (root != null) {
             return root;
@@ -146,11 +176,47 @@ public class Main implements SwimHost {
                     .filter(path -> path.getFileName().toString().startsWith("swim-core-"))
                     .filter(path -> path.getFileName().toString().endsWith(".jar"))
                     .filter(path -> !path.getFileName().toString().endsWith("-tests.jar"))
-                    .max(Comparator.comparing(path -> path.getFileName().toString()));
+                    .max(Main::compareJarCandidates);
             return result.orElseThrow(() -> new IllegalStateException("Unable to find built swim-core jar in " + coreTarget));
         } catch (IOException e) {
             throw new RuntimeException("Unable to inspect " + coreTarget, e);
         }
+    }
+
+    private static int compareJarCandidates(Path left, Path right) {
+        return compareVersionTokens(jarCandidateStem(left), jarCandidateStem(right));
+    }
+
+    private static String jarCandidateStem(Path path) {
+        String name = path.getFileName().toString();
+        return name.substring("swim-core-".length(), name.length() - ".jar".length());
+    }
+
+    static int compareVersionTokens(String left, String right) {
+        var leftParts = left.split("(?<=\\D)(?=\\d)|(?<=\\d)(?=\\D)|[.-]");
+        var rightParts = right.split("(?<=\\D)(?=\\d)|(?<=\\d)(?=\\D)|[.-]");
+        int max = Math.max(leftParts.length, rightParts.length);
+        for (int i = 0; i < max; i++) {
+            String l = i < leftParts.length ? leftParts[i] : "";
+            String r = i < rightParts.length ? rightParts[i] : "";
+            if (l.equals(r)) {
+                continue;
+            }
+            boolean lNumeric = l.chars().allMatch(Character::isDigit) && !l.isEmpty();
+            boolean rNumeric = r.chars().allMatch(Character::isDigit) && !r.isEmpty();
+            if (lNumeric && rNumeric) {
+                int cmp = Integer.compare(Integer.parseInt(l), Integer.parseInt(r));
+                if (cmp != 0) {
+                    return cmp;
+                }
+                continue;
+            }
+            int cmp = l.compareTo(r);
+            if (cmp != 0) {
+                return cmp;
+            }
+        }
+        return 0;
     }
 
     static ModuleLayer createCoreLayer(Path buildRoot, ClassLoader parentLoader) {
@@ -168,11 +234,14 @@ public class Main implements SwimHost {
                 parentLoader).layer();
     }
 
-    private LoadedApp loadApp() {
-        ModuleLayer layer = createCoreLayer(_buildRoot, getClass().getClassLoader());
+    private static SwimApp loadApp(Path buildRoot, ClassLoader parentLoader) {
+        ModuleLayer layer = createCoreLayer(buildRoot, parentLoader);
         ServiceLoader<SwimApp> loader = ServiceLoader.load(layer, SwimApp.class);
-        var app = loader.findFirst().orElseThrow(() -> new IllegalStateException("No SwimApp service found in " + CORE_MODULE));
-        return new LoadedApp(layer, app);
+        return loader.findFirst().orElseThrow(() -> new IllegalStateException("No SwimApp service found in " + CORE_MODULE));
+    }
+
+    private LoadedApp loadApp() {
+        return new LoadedApp(_appLoader.load(_buildRoot, getClass().getClassLoader()));
     }
 
     private void reload(Path path, String successMessage) {
@@ -191,13 +260,13 @@ public class Main implements SwimHost {
         }
     }
 
-    private boolean rebuild() {
-        if (_buildRoot == null) {
+    private static boolean rebuild(Path buildRoot) {
+        if (buildRoot == null) {
             return false;
         }
         var command = List.of("mvn", "-q", "-DskipTests", "package");
         var processBuilder = new ProcessBuilder(command);
-        processBuilder.directory(_buildRoot.toFile());
+        processBuilder.directory(buildRoot.toFile());
         processBuilder.redirectErrorStream(true);
         try {
             var process = processBuilder.start();
@@ -214,9 +283,19 @@ public class Main implements SwimHost {
         }
     }
 
+    private boolean rebuild() {
+        return _rebuilder.rebuild(_buildRoot);
+    }
+
+    private static void startThread(String name, boolean daemon, Runnable task) {
+        var thread = new Thread(task, name);
+        thread.setDaemon(daemon);
+        thread.start();
+    }
+
     @Override
     public void requestReload(Path path) {
-        new Thread(() -> {
+        _taskRunner.start("swim-reload", false, () -> {
             try {
                 reload(path, "Reloaded SWIM core");
             } catch (RuntimeException e) {
@@ -225,12 +304,12 @@ public class Main implements SwimHost {
                     loaded.app().showMessage("Reload failed");
                 }
             }
-        }, "swim-reload").start();
+        });
     }
 
     @Override
     public void requestRebuildAndReload(Path path) {
-        new Thread(() -> {
+        _taskRunner.start("swim-rebuild", false, () -> {
             LoadedApp loaded = _loadedApp;
             if (loaded != null) {
                 loaded.app().showMessage("Rebuilding SWIM...");
@@ -250,7 +329,7 @@ public class Main implements SwimHost {
                     loaded.app().showMessage("Reload failed after rebuild");
                 }
             }
-        }, "swim-rebuild").start();
+        });
     }
 
     @Override
@@ -259,9 +338,7 @@ public class Main implements SwimHost {
         _loadedApp = null;
         _exitLatch.countDown();
         if (loaded != null) {
-            var shutdownThread = new Thread(loaded.app()::close, "swim-close");
-            shutdownThread.setDaemon(true);
-            shutdownThread.start();
+            _taskRunner.start("swim-close", true, loaded.app()::close);
         }
     }
 

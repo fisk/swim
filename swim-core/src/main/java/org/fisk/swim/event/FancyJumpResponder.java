@@ -118,7 +118,7 @@ public class FancyJumpResponder implements EventResponder {
         if (range.getLength() == 0) {
             return Response.NO;
         }
-        var pattern = Pattern.compile("\\b" + key.getCharacter(), Pattern.MULTILINE);
+        var pattern = Pattern.compile("\\b" + Pattern.quote(Character.toString(key.getCharacter())), Pattern.MULTILINE);
         var str = _bufferContext.getBuffer().getString().substring(range.getStart(), range.getEnd());
         var matcher = pattern.matcher(str);
         var matches = new ArrayList<Integer>();
