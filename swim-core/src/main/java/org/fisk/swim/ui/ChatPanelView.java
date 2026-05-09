@@ -15,6 +15,10 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class ChatPanelView extends View {
+    private static final String ME_PREFIX = "me> ";
+    private static final String NEMO_PREFIX = "nemo> ";
+    private static final String THINKING_TEXT = "*thinking*";
+
     record ChatMessage(String speaker, String text) {
     }
 
@@ -49,7 +53,7 @@ public class ChatPanelView extends View {
         var lines = new ArrayList<String>();
         int width = Math.max(1, getBounds().getSize().getWidth());
         for (var message : _messages) {
-            String prefix = message.speaker() + "> ";
+            String prefix = prefixForSpeaker(message.speaker());
             var wrapped = TextPanelView.wrapText(message.text(), Math.max(1, width - prefix.length()));
             if (wrapped.isEmpty()) {
                 lines.add(prefix);
@@ -59,6 +63,9 @@ public class ChatPanelView extends View {
             for (int i = 1; i < wrapped.size(); i++) {
                 lines.add(" ".repeat(prefix.length()) + wrapped.get(i));
             }
+        }
+        if (_pending) {
+            lines.add(NEMO_PREFIX + THINKING_TEXT);
         }
         return lines;
     }
@@ -71,7 +78,33 @@ public class ChatPanelView extends View {
 
     public void setPending(boolean pending) {
         _pending = pending;
+        scrollToBottom();
         setNeedsRedraw();
+    }
+
+    private static String prefixForSpeaker(String speaker) {
+        return switch (speaker) {
+        case "me" -> ME_PREFIX;
+        case "nemo" -> NEMO_PREFIX;
+        default -> speaker + "> ";
+        };
+    }
+
+    private AttributedString renderLine(String line) {
+        if (line.startsWith(ME_PREFIX)) {
+            return renderPromptLine(ME_PREFIX, line.substring(ME_PREFIX.length()), com.googlecode.lanterna.TextColor.ANSI.RED);
+        }
+        if (line.startsWith(NEMO_PREFIX)) {
+            return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), com.googlecode.lanterna.TextColor.ANSI.GREEN);
+        }
+        return AttributedString.create(line, TextColor.ANSI.DEFAULT, _backgroundColour);
+    }
+
+    private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour) {
+        var result = new AttributedString();
+        result.append(prompt, promptColour, _backgroundColour);
+        result.append(text, TextColor.ANSI.DEFAULT, _backgroundColour);
+        return result;
     }
 
     private void close() {
@@ -179,7 +212,7 @@ public class ChatPanelView extends View {
         var lines = getDisplayLines();
         int bodyHeight = bodyHeight();
         for (int i = 0; i < bodyHeight && _startLine + i < lines.size(); i++) {
-            AttributedString.create(lines.get(_startLine + i), TextColor.ANSI.DEFAULT, _backgroundColour)
+            renderLine(lines.get(_startLine + i))
                     .drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), graphics);
         }
 
