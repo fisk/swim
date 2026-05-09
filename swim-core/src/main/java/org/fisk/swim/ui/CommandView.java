@@ -240,7 +240,8 @@ public class CommandView extends View {
             return;
         }
         var rootView = window.getRootView();
-        rootView.setFirstResponder(window.getBufferContext().getBufferView());
+        var panelView = window.getPanelView();
+        rootView.setFirstResponder(panelView != null ? panelView : window.getBufferContext().getBufferView());
         rootView.setNeedsRedraw();
     }
 }

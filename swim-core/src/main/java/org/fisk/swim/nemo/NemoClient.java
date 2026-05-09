@@ -14,6 +14,7 @@ import java.util.Map;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -31,6 +32,7 @@ public class NemoClient {
     private static final NemoClient _instance = new NemoClient();
 
     private final HttpClient _httpClient = HttpClient.newHttpClient();
+    private Conversation _conversation;
 
     private NemoClient() {
     }
@@ -39,46 +41,59 @@ public class NemoClient {
         return _instance;
     }
 
+    record ChatTurn(String speaker, String text) {
+    }
+
+    private static final class Conversation {
+        private final BufferContext _context;
+        private final Configuration _configuration;
+        private final ChatPanelView _panelView;
+        private final List<ChatTurn> _turns = new ArrayList<>();
+        private boolean _pending;
+
+        private Conversation(BufferContext context, Configuration configuration, ChatPanelView panelView) {
+            _context = context;
+            _configuration = configuration;
+            _panelView = panelView;
+        }
+    }
+
     public void run(BufferContext context, String question) {
         question = question.trim();
-        if (question.equals("")) {
-            showMessage("Usage: :nemo <question>");
-            return;
-        }
-
         Configuration configuration = resolveConfiguration(System.getenv());
         if (configuration.apiKey().isBlank()) {
             showMessage("Set OPENAI_API_KEY to use :nemo");
             return;
         }
 
-        String finalQuestion = question;
-        Configuration finalConfiguration = configuration;
-        showMessage("Nemo is thinking...");
-        var worker = new Thread(() -> {
-            try {
-                String response = request(finalConfiguration, buildInput(context, finalQuestion));
-                showResult("Nemo", response);
-            } catch (Exception e) {
-                _log.error("Nemo request failed", e);
-                showMessage("Nemo failed: " + e.getMessage());
-            }
-        }, "swim-nemo");
-        worker.setDaemon(true);
-        worker.start();
+        var conversation = ensureConversation(context, configuration);
+        if (!question.equals("")) {
+            submit(conversation, question);
+        }
     }
 
     record Configuration(String apiKey, String model, URI responsesUri, Map<String, String> headers) {
     }
 
     static String buildInput(BufferContext context, String question) {
+        return buildInput(context, List.of(new ChatTurn("me", question)));
+    }
+
+    static String buildInput(BufferContext context, List<ChatTurn> turns) {
         var buffer = context.getBuffer();
+        var transcript = new StringBuilder();
+        for (var turn : turns) {
+            if (!transcript.isEmpty()) {
+                transcript.append("\n\n");
+            }
+            transcript.append(turn.speaker()).append("> ").append(turn.text());
+        }
         return String.join("\n",
                 "You are Nemo, an AI assistant inside the SWIM text editor.",
                 "Answer concisely and focus on the current file.",
                 "",
-                "User request:",
-                question,
+                "Conversation:",
+                transcript.toString(),
                 "",
                 "Current file:",
                 buffer.getPath().toString(),
@@ -255,24 +270,65 @@ public class NemoClient {
         return lines;
     }
 
+    private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration) {
+        var window = Window.getInstance();
+        if (window == null) {
+            throw new IllegalStateException("No active window");
+        }
+        if (_conversation != null && _conversation._panelView.getParent() != null
+                && _conversation._context == context) {
+            return _conversation;
+        }
+
+        if (window.isShowingPanel()) {
+            window.hidePanel();
+        }
+
+        Conversation[] holder = new Conversation[1];
+        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), "Nemo", message -> submit(holder[0], message));
+        var conversation = new Conversation(context, configuration, panelView);
+        holder[0] = conversation;
+        window.showPanel(panelView);
+        _conversation = conversation;
+        return conversation;
+    }
+
+    private synchronized void submit(Conversation conversation, String question) {
+        question = question.trim();
+        if (question.equals("") || conversation._pending) {
+            return;
+        }
+        conversation._pending = true;
+        conversation._turns.add(new ChatTurn("me", question));
+        conversation._panelView.appendMessage("me", question);
+        conversation._panelView.setPending(true);
+
+        String finalQuestion = question;
+        var worker = new Thread(() -> {
+            try {
+                String response = request(conversation._configuration, buildInput(conversation._context, conversation._turns));
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, response)));
+            } catch (Exception e) {
+                _log.error("Nemo request failed", e);
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, "Nemo failed: " + e.getMessage())));
+            }
+        }, "swim-nemo");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private synchronized void handleResponse(Conversation conversation, String response) {
+        conversation._pending = false;
+        conversation._turns.add(new ChatTurn("nemo", response));
+        conversation._panelView.appendMessage("nemo", response);
+        conversation._panelView.setPending(false);
+    }
+
     private void showMessage(String message) {
         EventThread.getInstance().enqueue(new RunnableEvent(() -> {
             if (Window.getInstance() != null) {
                 Window.getInstance().getCommandView().setMessage(message);
             }
-        }));
-    }
-
-    private void showResult(String title, String text) {
-        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
-            var window = Window.getInstance();
-            if (window == null) {
-                return;
-            }
-            if (window.isShowingPanel()) {
-                window.hidePanel();
-            }
-            window.showTextPanel(title, text);
         }));
     }
 }

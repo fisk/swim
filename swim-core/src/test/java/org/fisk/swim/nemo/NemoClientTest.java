@@ -32,6 +32,20 @@ class NemoClientTest {
     }
 
     @Test
+    void buildsPromptFromConversationTurns() throws IOException {
+        Path file = tempDir.resolve("Conversation.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+
+        String prompt = NemoClient.buildInput(context, List.of(
+                new NemoClient.ChatTurn("me", "First"),
+                new NemoClient.ChatTurn("nemo", "Second")));
+
+        assertTrue(prompt.contains("me> First"));
+        assertTrue(prompt.contains("nemo> Second"));
+    }
+
+    @Test
     void extractsOutputTextFromResponsesPayload() {
         String response = """
                 {

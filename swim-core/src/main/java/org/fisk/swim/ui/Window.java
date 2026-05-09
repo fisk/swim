@@ -263,7 +263,11 @@ public class Window implements Drawable {
         return _panelView != null;
     }
 
-    private void showPanel(View panelView) {
+    View getPanelView() {
+        return _panelView;
+    }
+
+    public void showPanel(View panelView) {
         if (_panelView != null) {
             return;
         }
