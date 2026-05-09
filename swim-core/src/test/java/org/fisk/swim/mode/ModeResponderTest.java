@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.Test;
@@ -44,6 +45,11 @@ class ModeResponderTest {
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('^'));
             assertEquals(0, cursor.getPosition());
 
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
+            assertTrue(window.isShowingPanel());
+            assertTrue(HeadlessWindowHarness.getField(window, "_panelView") instanceof ChatPanelView);
+
+            window.hidePanel();
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             assertSame(window.getInputMode(), window.getCurrentMode());
 

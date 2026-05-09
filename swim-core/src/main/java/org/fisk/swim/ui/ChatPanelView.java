@@ -4,8 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
+import org.fisk.swim.EventThread;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
+import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 
@@ -24,16 +26,24 @@ public class ChatPanelView extends View {
 
     private final String _title;
     private final Consumer<String> _onSubmit;
+    private final Consumer<String> _onCommand;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
     private int _startLine;
     private boolean _pending;
+    private long _pendingStartedAtMillis;
+    private long _pendingRefreshGeneration;
     private Runnable _responseAction;
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit) {
+        this(bounds, title, onSubmit, ignored -> {});
+    }
+
+    public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand) {
         super(bounds);
         _title = title;
         _onSubmit = onSubmit;
+        _onCommand = onCommand;
         setBackgroundColour(TextColor.ANSI.DEFAULT);
     }
 
@@ -65,7 +75,7 @@ public class ChatPanelView extends View {
             }
         }
         if (_pending) {
-            lines.add(NEMO_PREFIX + THINKING_TEXT);
+            lines.add(NEMO_PREFIX + formatThinkingText(elapsedSeconds()));
         }
         return lines;
     }
@@ -78,8 +88,48 @@ public class ChatPanelView extends View {
 
     public void setPending(boolean pending) {
         _pending = pending;
+        if (pending) {
+            _pendingStartedAtMillis = System.currentTimeMillis();
+            startPendingRefreshLoop();
+        } else {
+            _pendingStartedAtMillis = 0;
+            _pendingRefreshGeneration++;
+        }
         scrollToBottom();
         setNeedsRedraw();
+    }
+
+    static String formatThinkingText(long elapsedSeconds) {
+        long minutes = elapsedSeconds / 60;
+        long seconds = elapsedSeconds % 60;
+        return THINKING_TEXT + " (" + minutes + " minutes, " + seconds + " seconds, type :abort to stop)";
+    }
+
+    private long elapsedSeconds() {
+        if (!_pending || _pendingStartedAtMillis == 0) {
+            return 0;
+        }
+        return Math.max(0, (System.currentTimeMillis() - _pendingStartedAtMillis) / 1000);
+    }
+
+    private void startPendingRefreshLoop() {
+        long generation = ++_pendingRefreshGeneration;
+        var thread = new Thread(() -> {
+            while (_pending && _pendingRefreshGeneration == generation) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (!_pending || _pendingRefreshGeneration != generation || getParent() == null) {
+                    return;
+                }
+                EventThread.getInstance().enqueue(new RunnableEvent(this::setNeedsRedraw));
+            }
+        }, "swim-nemo-thinking");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private static String prefixForSpeaker(String speaker) {
@@ -152,7 +202,7 @@ public class ChatPanelView extends View {
             _responseAction = () -> scrollUp(1);
             return Response.YES;
         case Backspace:
-            if (_pending || _input.isEmpty()) {
+            if (_input.isEmpty()) {
                 return Response.NO;
             }
             _responseAction = () -> {
@@ -161,23 +211,23 @@ public class ChatPanelView extends View {
             };
             return Response.YES;
         case Enter:
-            if (_pending) {
-                return Response.NO;
-            }
             String message = _input.toString().trim();
             if (message.isEmpty()) {
                 return Response.NO;
             }
             _responseAction = () -> {
                 _input.setLength(0);
-                _onSubmit.accept(message);
+                if (message.startsWith(":")) {
+                    _onCommand.accept(message);
+                } else if (!_pending) {
+                    _onSubmit.accept(message);
+                } else {
+                    _input.append(message);
+                }
                 setNeedsRedraw();
             };
             return Response.YES;
         case Character:
-            if (_pending) {
-                return Response.NO;
-            }
             char character = event.getCharacter();
             _responseAction = () -> {
                 _input.append(character);
@@ -220,8 +270,7 @@ public class ChatPanelView extends View {
         graphics.setBackgroundColor(TextColor.ANSI.BLACK);
         graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), inputY),
                 new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        String inputLabel = _pending ? "nemo> ..." : "me> " + _input;
-        AttributedString.create(inputLabel, TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK)
+        renderPromptLine(ME_PREFIX, _input.toString(), TextColor.ANSI.RED)
                 .drawAt(Point.create(rect.getPoint().getX(), inputY), graphics);
     }
 }

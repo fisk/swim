@@ -4,6 +4,7 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.lsp.java.JavaLSPClient;
+import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.Window;
@@ -153,6 +154,9 @@ public class NormalMode extends Mode {
         });
         _rootResponder.addEventResponder("N", () -> {
             window.getCommandView().searchPrevious();
+        });
+        _rootResponder.addEventResponder("<ESC>", () -> {
+            NemoClient.getInstance().run(window.getBufferContext(), "");
         });
     }
 

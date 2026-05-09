@@ -50,6 +50,9 @@ public class NemoClient {
         private final ChatPanelView _panelView;
         private final List<ChatTurn> _turns = new ArrayList<>();
         private boolean _pending;
+        private long _requestSequence;
+        private long _activeRequestId;
+        private Thread _worker;
 
         private Conversation(BufferContext context, Configuration configuration, ChatPanelView panelView) {
             _context = context;
@@ -61,11 +64,6 @@ public class NemoClient {
     public void run(BufferContext context, String question) {
         question = question.trim();
         Configuration configuration = resolveConfiguration(System.getenv());
-        if (configuration.apiKey().isBlank()) {
-            showMessage("Set OPENAI_API_KEY to use :nemo");
-            return;
-        }
-
         var conversation = ensureConversation(context, configuration);
         if (!question.equals("")) {
             submit(conversation, question);
@@ -285,7 +283,9 @@ public class NemoClient {
         }
 
         Conversation[] holder = new Conversation[1];
-        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), "Nemo", message -> submit(holder[0], message));
+        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), "Nemo",
+                message -> submit(holder[0], message),
+                command -> handleCommand(holder[0], command));
         var conversation = new Conversation(context, configuration, panelView);
         holder[0] = conversation;
         window.showPanel(panelView);
@@ -298,30 +298,96 @@ public class NemoClient {
         if (question.equals("") || conversation._pending) {
             return;
         }
-        conversation._pending = true;
         conversation._turns.add(new ChatTurn("me", question));
         conversation._panelView.appendMessage("me", question);
+
+        if (conversation._configuration.apiKey().isBlank()) {
+            String message = "Set OPENAI_API_KEY to use :nemo";
+            conversation._turns.add(new ChatTurn("nemo", message));
+            conversation._panelView.appendMessage("nemo", message);
+            return;
+        }
+
+        conversation._pending = true;
+        long requestId = ++conversation._requestSequence;
+        conversation._activeRequestId = requestId;
         conversation._panelView.setPending(true);
 
-        String finalQuestion = question;
         var worker = new Thread(() -> {
             try {
                 String response = request(conversation._configuration, buildInput(conversation._context, conversation._turns));
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, response)));
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (Exception e) {
                 _log.error("Nemo request failed", e);
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, "Nemo failed: " + e.getMessage())));
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleFailure(conversation, requestId, "Nemo failed: " + e.getMessage())));
             }
         }, "swim-nemo");
         worker.setDaemon(true);
+        conversation._worker = worker;
         worker.start();
     }
 
-    private synchronized void handleResponse(Conversation conversation, String response) {
+    private synchronized void handleCommand(Conversation conversation, String command) {
+        String trimmed = command.trim();
+        conversation._turns.add(new ChatTurn("me", trimmed));
+        conversation._panelView.appendMessage("me", trimmed);
+
+        switch (trimmed) {
+        case ":abort":
+            if (!conversation._pending || conversation._worker == null) {
+                String response = "Nothing to abort.";
+                conversation._turns.add(new ChatTurn("nemo", response));
+                conversation._panelView.appendMessage("nemo", response);
+                return;
+            }
+            conversation._pending = false;
+            conversation._activeRequestId = 0;
+            Thread worker = conversation._worker;
+            conversation._worker = null;
+            conversation._panelView.setPending(false);
+            worker.interrupt();
+            String response = "*aborted*";
+            conversation._turns.add(new ChatTurn("nemo", response));
+            conversation._panelView.appendMessage("nemo", response);
+            return;
+        case ":help":
+            String help = "Available commands: :abort, :help, :q";
+            conversation._turns.add(new ChatTurn("nemo", help));
+            conversation._panelView.appendMessage("nemo", help);
+            return;
+        case ":q":
+        case ":quit":
+            var window = Window.getInstance();
+            if (window != null) {
+                window.hidePanel();
+            }
+            return;
+        default:
+            String unknown = "Unknown command: " + trimmed;
+            conversation._turns.add(new ChatTurn("nemo", unknown));
+            conversation._panelView.appendMessage("nemo", unknown);
+        }
+    }
+
+    private synchronized void handleResponse(Conversation conversation, long requestId, String response) {
+        if (conversation._activeRequestId != requestId) {
+            return;
+        }
         conversation._pending = false;
+        conversation._activeRequestId = 0;
+        conversation._worker = null;
         conversation._turns.add(new ChatTurn("nemo", response));
         conversation._panelView.appendMessage("nemo", response);
         conversation._panelView.setPending(false);
+    }
+
+    private synchronized void handleFailure(Conversation conversation, long requestId, String response) {
+        if (conversation._activeRequestId != requestId) {
+            return;
+        }
+        handleResponse(conversation, requestId, response);
     }
 
     private void showMessage(String message) {

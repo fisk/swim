@@ -54,9 +54,35 @@ class ChatPanelViewTest {
 
         dispatch(view, new KeyStroke('x', false, false));
 
-        assertEquals("", view.getInputText());
+        assertEquals("x", view.getInputText());
         assertTrue(view.isPending());
-        assertEquals(List.of("nemo> *thinking*"), view.getDisplayLines());
+        assertTrue(view.getDisplayLines().get(0).startsWith("nemo> *thinking* ("));
+    }
+
+    @Test
+    void pendingCommandSubmitsWhileThinking() {
+        var submitted = new AtomicReference<String>();
+        var command = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set, command::set);
+        view.setPending(true);
+
+        dispatch(view, new KeyStroke(':', false, false));
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('o', false, false));
+        dispatch(view, new KeyStroke('r', false, false));
+        dispatch(view, new KeyStroke('t', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter));
+
+        assertEquals(":abort", command.get());
+        assertEquals("", view.getInputText());
+        assertEquals(null, submitted.get());
+    }
+
+    @Test
+    void formatsThinkingTextWithElapsedTimeAndAbortHint() {
+        assertEquals("*thinking* (2 minutes, 5 seconds, type :abort to stop)",
+                ChatPanelView.formatThinkingText(125));
     }
 
     @Test
