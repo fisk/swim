@@ -78,28 +78,37 @@ Feel free to create your own custom commands by wiring up a Java handler.
 
 ## Nemo
 
-SWIM includes `:nemo`, a built-in AI assistant for asking questions about the current file.
+SWIM includes `:nemo`, a built-in AI assistant for asking questions about the current file. Nemo now uses a persistent chat pane and can call tools to inspect the workspace.
 
-Before using it, export your OpenAI credentials in the shell you use to launch SWIM:
+Nemo reads all of its settings from `~/.swim/nemo.conf` using a simple Java-properties format:
 
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-# Optional:
-export OPENAI_MODEL="gpt-4.1"
-export OPENAI_BASE_URL="https://api.openai.com/v1"
+```properties
+api_key=your_api_key_here
+model=gpt-5.4
+base_url=https://api.openai.com/v1
+# Optional override if you want to point directly at a full responses endpoint:
+# responses_url=https://example.invalid/custom/responses
+
+# Optional provider/project headers:
+organization=
+project=
+header.client=swim
+
+# Optional workspace override. If unset, Nemo uses the current project root.
+# workspace_root=/absolute/path/to/workspace
+
+# Tool configuration
+tool.web_search=false
+tool.list_files=true
+tool.read_file=true
+tool.search_files=true
+tool.run_command=true
+tool.max_results=200
+tool.max_output_chars=12000
+tool.command_timeout_seconds=20
 ```
 
-If you use a provider-compatible endpoint instead of the public OpenAI API, you can point Nemo at it with `OPENAI_BASE_URL` or `OPENAI_RESPONSES_URL` and add provider-specific headers with `OPENAI_HEADER_*`.
-
-Example for an Oracle Code Assist style setup:
-
-```bash
-export OPENAI_API_KEY="your_employer_token"
-export OPENAI_MODEL="gpt-5.4"
-export OPENAI_BASE_URL="https://code-internal.aiservice.us-chicago-1.oci.oraclecloud.com/20250206/app/litellm"
-export OPENAI_HEADER_CLIENT="codex-cli"
-export OPENAI_HEADER_CLIENT_VERSION="0"
-```
+If you use a provider-compatible endpoint instead of the public OpenAI API, set `base_url` or `responses_url` and any extra HTTP headers with `header.<name>=<value>`.
 
 Then inside SWIM you can ask Nemo questions like:
 
@@ -109,7 +118,22 @@ Then inside SWIM you can ask Nemo questions like:
 :nemo suggest a refactor for this class
 ```
 
-` :nemo ` sends the current file path and full buffer contents to the model, then shows the answer in a SWIM list panel. The current implementation is read-only: it gives explanations and suggestions, but it does not edit files automatically.
+Or just press `Esc` in Normal mode to open the Nemo chat pane immediately.
+
+Nemo sends the current file path and full buffer contents to the model along with the chat transcript. When enabled in `nemo.conf`, Nemo can use:
+
+- `list_files`
+- `read_file`
+- `search_files`
+- `run_command`
+- OpenAI web search via `tool.web_search=true`
+
+Inside the chat pane:
+
+- type normally and press `Enter` to send a follow-up message
+- use `:abort` to stop the current request
+- use `:help` to list available chat commands
+- use `:q` to close the chat pane
 
 ## Extending SWIM
 

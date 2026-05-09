@@ -1,18 +1,28 @@
 package org.fisk.swim.nemo;
 
+import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.Window;
@@ -21,6 +31,7 @@ import org.slf4j.Logger;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -29,6 +40,9 @@ public class NemoClient {
     private static final Gson _gson = new Gson();
     private static final String _defaultModel = "gpt-4.1";
     private static final String _defaultBaseUrl = "https://api.openai.com/v1";
+    private static final int _defaultMaxResults = 200;
+    private static final int _defaultMaxOutputChars = 12_000;
+    private static final int _defaultCommandTimeoutSeconds = 20;
     private static final NemoClient _instance = new NemoClient();
 
     private final HttpClient _httpClient = HttpClient.newHttpClient();
@@ -42,6 +56,9 @@ public class NemoClient {
     }
 
     record ChatTurn(String speaker, String text) {
+    }
+
+    record ToolCall(String callId, String name, JsonObject arguments) {
     }
 
     private static final class Conversation {
@@ -63,14 +80,31 @@ public class NemoClient {
 
     public void run(BufferContext context, String question) {
         question = question.trim();
-        Configuration configuration = resolveConfiguration(System.getenv());
+        Configuration configuration = loadConfiguration(getConfigPath());
         var conversation = ensureConversation(context, configuration);
         if (!question.equals("")) {
             submit(conversation, question);
         }
     }
 
-    record Configuration(String apiKey, String model, URI responsesUri, Map<String, String> headers) {
+    record Configuration(
+            String apiKey,
+            String model,
+            URI responsesUri,
+            Map<String, String> headers,
+            Path workspaceRoot,
+            boolean toolWebSearch,
+            boolean toolListFiles,
+            boolean toolReadFile,
+            boolean toolSearchFiles,
+            boolean toolRunCommand,
+            int toolMaxResults,
+            int toolMaxOutputChars,
+            int toolCommandTimeoutSeconds) {
+    }
+
+    static Path getConfigPath() {
+        return Paths.get(System.getProperty("user.home"), ".swim", "nemo.conf");
     }
 
     static String buildInput(BufferContext context, String question) {
@@ -100,16 +134,25 @@ public class NemoClient {
                 buffer.getString());
     }
 
-    static Configuration resolveConfiguration(Map<String, String> env) {
-        String apiKey = env.getOrDefault("OPENAI_API_KEY", "").trim();
-        String model = env.getOrDefault("OPENAI_MODEL", "").trim();
+    static Configuration loadConfiguration(Path configPath) {
+        var properties = new Properties();
+        if (Files.isRegularFile(configPath)) {
+            try (InputStream input = Files.newInputStream(configPath)) {
+                properties.load(input);
+            } catch (IOException e) {
+                throw new RuntimeException("Unable to read Nemo config " + configPath, e);
+            }
+        }
+
+        String apiKey = property(properties, "api_key");
+        String model = property(properties, "model");
         if (model.equals("")) {
             model = _defaultModel;
         }
 
         URI responsesUri = buildResponsesUri(
-                env.getOrDefault("OPENAI_RESPONSES_URL", "").trim(),
-                env.getOrDefault("OPENAI_BASE_URL", "").trim());
+                property(properties, "responses_url"),
+                property(properties, "base_url"));
 
         var headers = new LinkedHashMap<String, String>();
         if (!apiKey.equals("")) {
@@ -117,32 +160,67 @@ public class NemoClient {
         }
         headers.put("Content-Type", "application/json");
 
-        String organization = env.getOrDefault("OPENAI_ORGANIZATION", "").trim();
-        if (organization.equals("")) {
-            organization = env.getOrDefault("OPENAI_ORG", "").trim();
-        }
+        String organization = property(properties, "organization");
         if (!organization.equals("")) {
             headers.put("OpenAI-Organization", organization);
         }
 
-        String project = env.getOrDefault("OPENAI_PROJECT", "").trim();
+        String project = property(properties, "project");
         if (!project.equals("")) {
             headers.put("OpenAI-Project", project);
         }
 
-        for (var entry : env.entrySet()) {
-            if (!entry.getKey().startsWith("OPENAI_HEADER_")) {
+        for (String name : properties.stringPropertyNames()) {
+            if (!name.startsWith("header.")) {
                 continue;
             }
-            String value = entry.getValue().trim();
+            String value = property(properties, name);
             if (value.equals("")) {
                 continue;
             }
-            String name = headerName(entry.getKey().substring("OPENAI_HEADER_".length()));
-            headers.put(name, value);
+            headers.put(name.substring("header.".length()), value);
         }
 
-        return new Configuration(apiKey, model, responsesUri, headers);
+        String workspaceRoot = property(properties, "workspace_root");
+
+        return new Configuration(
+                apiKey,
+                model,
+                responsesUri,
+                headers,
+                workspaceRoot.equals("") ? null : Path.of(workspaceRoot).toAbsolutePath().normalize(),
+                booleanProperty(properties, "tool.web_search", false),
+                booleanProperty(properties, "tool.list_files", true),
+                booleanProperty(properties, "tool.read_file", true),
+                booleanProperty(properties, "tool.search_files", true),
+                booleanProperty(properties, "tool.run_command", true),
+                intProperty(properties, "tool.max_results", _defaultMaxResults),
+                intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
+                intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
+    }
+
+    private static String property(Properties properties, String key) {
+        return properties.getProperty(key, "").trim();
+    }
+
+    private static boolean booleanProperty(Properties properties, String key, boolean fallback) {
+        String value = property(properties, key);
+        if (value.equals("")) {
+            return fallback;
+        }
+        return Boolean.parseBoolean(value);
+    }
+
+    private static int intProperty(Properties properties, String key, int fallback) {
+        String value = property(properties, key);
+        if (value.equals("")) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     static URI buildResponsesUri(String explicitResponsesUrl, String baseUrl) {
@@ -165,12 +243,7 @@ public class NemoClient {
         return rawName.toLowerCase().replace('_', '-');
     }
 
-    private String request(Configuration configuration, String input) throws IOException, InterruptedException {
-        JsonObject payload = new JsonObject();
-        payload.addProperty("model", configuration.model());
-        payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor.");
-        payload.addProperty("input", input);
-
+    private JsonObject sendRequest(Configuration configuration, JsonObject payload) throws IOException, InterruptedException {
         HttpRequest.Builder builder = HttpRequest.newBuilder(configuration.responsesUri())
                 .POST(HttpRequest.BodyPublishers.ofString(_gson.toJson(payload), StandardCharsets.UTF_8));
         for (var header : configuration.headers().entrySet()) {
@@ -182,7 +255,309 @@ public class NemoClient {
         if (response.statusCode() / 100 != 2) {
             throw new IOException(extractErrorMessage(response.body(), response.statusCode()));
         }
-        return extractOutputText(response.body());
+        return parseJsonObject(response.body());
+    }
+
+    private String request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
+        JsonElement nextInput = _gson.toJsonTree(buildInput(context, turns));
+        String previousResponseId = null;
+
+        for (int step = 0; step < 8; step++) {
+            JsonObject payload = new JsonObject();
+            payload.addProperty("model", configuration.model());
+            payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately.");
+            payload.add("input", nextInput);
+            if (previousResponseId != null) {
+                payload.addProperty("previous_response_id", previousResponseId);
+            }
+            var tools = buildTools(configuration);
+            if (tools.size() > 0) {
+                payload.add("tools", tools);
+            }
+
+            JsonObject response = sendRequest(configuration, payload);
+            previousResponseId = response.has("id") ? response.get("id").getAsString() : null;
+            var toolCalls = extractToolCalls(response);
+            if (toolCalls.isEmpty()) {
+                return extractOutputText(response.toString());
+            }
+
+            JsonArray outputs = new JsonArray();
+            for (var call : toolCalls) {
+                var output = new JsonObject();
+                output.addProperty("type", "function_call_output");
+                output.addProperty("call_id", call.callId());
+                output.addProperty("output", executeTool(configuration, context, call));
+                outputs.add(output);
+            }
+            nextInput = outputs;
+        }
+        throw new IOException("Nemo exceeded tool-call limit");
+    }
+
+    static List<ToolCall> extractToolCalls(JsonObject response) {
+        var calls = new ArrayList<ToolCall>();
+        JsonArray output = response.getAsJsonArray("output");
+        if (output == null) {
+            return calls;
+        }
+        for (var item : output) {
+            JsonObject object = item.getAsJsonObject();
+            if (!"function_call".equals(object.get("type").getAsString())) {
+                continue;
+            }
+            JsonObject arguments = JsonParser.parseString(object.get("arguments").getAsString()).getAsJsonObject();
+            calls.add(new ToolCall(
+                    object.get("call_id").getAsString(),
+                    object.get("name").getAsString(),
+                    arguments));
+        }
+        return calls;
+    }
+
+    static JsonArray buildTools(Configuration configuration) {
+        var tools = new JsonArray();
+        if (configuration.toolWebSearch()) {
+            var tool = new JsonObject();
+            tool.addProperty("type", "web_search");
+            tools.add(tool);
+        }
+        if (configuration.toolListFiles()) {
+            tools.add(functionTool("list_files",
+                    "List files in the workspace. Use this to inspect the project structure.",
+                    schema(
+                            property("path", stringSchema("Path relative to the workspace root.")),
+                            property("max_results", integerSchema("Maximum number of files to return.")))));
+        }
+        if (configuration.toolReadFile()) {
+            tools.add(functionTool("read_file",
+                    "Read a file from the workspace. Use start_line/end_line to limit output.",
+                    schema(List.of(
+                            property("path", stringSchema("Path relative to the workspace root.")),
+                            property("start_line", integerSchema("Optional 1-based start line.")),
+                            property("end_line", integerSchema("Optional 1-based end line."))),
+                            List.of("path"))));
+        }
+        if (configuration.toolSearchFiles()) {
+            tools.add(functionTool("search_files",
+                    "Search text across workspace files and return matching lines.",
+                    schema(List.of(
+                            property("query", stringSchema("Text to search for.")),
+                            property("path", stringSchema("Optional path relative to the workspace root.")),
+                            property("max_results", integerSchema("Maximum number of matches to return."))),
+                            List.of("query"))));
+        }
+        if (configuration.toolRunCommand()) {
+            tools.add(functionTool("run_command",
+                    "Run a shell command in the workspace and return exit code, stdout, and stderr.",
+                    schema(List.of(
+                            property("command", stringSchema("Shell command to execute.")),
+                            property("cwd", stringSchema("Optional working directory relative to the workspace root."))),
+                            List.of("command"))));
+        }
+        return tools;
+    }
+
+    private static JsonObject functionTool(String name, String description, JsonObject parameters) {
+        var tool = new JsonObject();
+        tool.addProperty("type", "function");
+        tool.addProperty("name", name);
+        tool.addProperty("description", description);
+        tool.add("parameters", parameters);
+        return tool;
+    }
+
+    private static JsonObject schema(Map.Entry<String, JsonObject>... properties) {
+        return schema(List.of(properties));
+    }
+
+    private static JsonObject schema(List<Map.Entry<String, JsonObject>> properties) {
+        return schema(properties, List.of());
+    }
+
+    private static JsonObject schema(List<Map.Entry<String, JsonObject>> properties, List<String> required) {
+        var schema = new JsonObject();
+        schema.addProperty("type", "object");
+        var propertyObject = new JsonObject();
+        for (var entry : properties) {
+            propertyObject.add(entry.getKey(), entry.getValue());
+        }
+        schema.add("properties", propertyObject);
+        if (!required.isEmpty()) {
+            var requiredArray = new JsonArray();
+            for (var name : required) {
+                requiredArray.add(name);
+            }
+            schema.add("required", requiredArray);
+        }
+        schema.addProperty("additionalProperties", false);
+        return schema;
+    }
+
+    private static Map.Entry<String, JsonObject> property(String name, JsonObject schema) {
+        return Map.entry(name, schema);
+    }
+
+    private static JsonObject stringSchema(String description) {
+        var schema = new JsonObject();
+        schema.addProperty("type", "string");
+        schema.addProperty("description", description);
+        return schema;
+    }
+
+    private static JsonObject integerSchema(String description) {
+        var schema = new JsonObject();
+        schema.addProperty("type", "integer");
+        schema.addProperty("description", description);
+        return schema;
+    }
+
+    static String executeTool(Configuration configuration, BufferContext context, ToolCall call) throws IOException, InterruptedException {
+        return switch (call.name()) {
+        case "list_files" -> listFiles(configuration, context, call.arguments());
+        case "read_file" -> readFile(configuration, context, call.arguments());
+        case "search_files" -> searchFiles(configuration, context, call.arguments());
+        case "run_command" -> runCommand(configuration, context, call.arguments());
+        default -> "Unknown tool: " + call.name();
+        };
+    }
+
+    private static Path resolveWorkspaceRoot(Configuration configuration, BufferContext context) {
+        if (configuration.workspaceRoot() != null) {
+            return configuration.workspaceRoot();
+        }
+        var path = context.getBuffer().getPath();
+        var projectRoot = ProjectPaths.getProjectRootPath(path);
+        if (projectRoot != null) {
+            return projectRoot;
+        }
+        if (path != null && path.toFile().isFile()) {
+            return path.toAbsolutePath().getParent();
+        }
+        return Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+    }
+
+    private static Path resolvePathInsideWorkspace(Path workspaceRoot, String rawPath) throws IOException {
+        Path path = rawPath == null || rawPath.isBlank()
+                ? workspaceRoot
+                : workspaceRoot.resolve(rawPath).normalize();
+        if (!path.startsWith(workspaceRoot)) {
+            throw new IOException("Path escapes workspace root: " + rawPath);
+        }
+        return path;
+    }
+
+    private static String listFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path start = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
+        var files = new ArrayList<String>();
+        try (Stream<Path> stream = Files.walk(start)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
+                    .sorted()
+                    .limit(maxResults)
+                    .forEach(path -> files.add(root.relativize(path).toString()));
+        }
+        if (files.isEmpty()) {
+            return "(no files)";
+        }
+        return truncateOutput(configuration, String.join("\n", files));
+    }
+
+    private static String readFile(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        if (!Files.isRegularFile(path)) {
+            throw new IOException("Not a file: " + path);
+        }
+        var lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+        int startLine = Math.max(1, intArgument(arguments, "start_line", 1));
+        int endLine = intArgument(arguments, "end_line", lines.size());
+        endLine = Math.min(lines.size(), endLine <= 0 ? lines.size() : endLine);
+        startLine = Math.min(startLine, lines.isEmpty() ? 1 : lines.size());
+
+        var output = new ArrayList<String>();
+        for (int i = startLine; i <= endLine && i <= lines.size(); i++) {
+            output.add(i + ": " + lines.get(i - 1));
+        }
+        return truncateOutput(configuration, String.join("\n", output));
+    }
+
+    private static String searchFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path start = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        String query = stringArgument(arguments, "query", "");
+        int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
+        var matches = new ArrayList<String>();
+        try (Stream<Path> stream = Files.walk(start)) {
+            var iterator = stream.filter(Files::isRegularFile)
+                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
+                    .sorted()
+                    .iterator();
+            while (iterator.hasNext() && matches.size() < maxResults) {
+                Path path = iterator.next();
+                List<String> lines;
+                try {
+                    lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    continue;
+                }
+                for (int i = 0; i < lines.size() && matches.size() < maxResults; i++) {
+                    if (lines.get(i).contains(query)) {
+                        matches.add(root.relativize(path) + ":" + (i + 1) + ": " + lines.get(i));
+                    }
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return "(no matches)";
+        }
+        return truncateOutput(configuration, String.join("\n", matches));
+    }
+
+    private static String runCommand(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path cwd = resolvePathInsideWorkspace(root, stringArgument(arguments, "cwd", ""));
+        String command = stringArgument(arguments, "command", "");
+
+        var process = new ProcessBuilder("zsh", "-lc", command)
+                .directory(cwd.toFile())
+                .redirectErrorStream(false)
+                .start();
+        try {
+            if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "exit_code: timeout\nstdout:\n\nstderr:\ncommand exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds";
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            throw e;
+        }
+
+        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        return truncateOutput(configuration, String.join("\n",
+                "exit_code: " + process.exitValue(),
+                "stdout:",
+                stdout,
+                "stderr:",
+                stderr));
+    }
+
+    private static String truncateOutput(Configuration configuration, String output) {
+        if (output.length() <= configuration.toolMaxOutputChars()) {
+            return output;
+        }
+        return output.substring(0, configuration.toolMaxOutputChars()) + "...";
+    }
+
+    private static String stringArgument(JsonObject arguments, String name, String fallback) {
+        return arguments.has(name) ? arguments.get(name).getAsString() : fallback;
+    }
+
+    private static int intArgument(JsonObject arguments, String name, int fallback) {
+        return arguments.has(name) ? arguments.get(name).getAsInt() : fallback;
     }
 
     static String extractOutputText(String responseBody) {
@@ -302,7 +677,7 @@ public class NemoClient {
         conversation._panelView.appendMessage("me", question);
 
         if (conversation._configuration.apiKey().isBlank()) {
-            String message = "Set OPENAI_API_KEY to use :nemo";
+            String message = "Set api_key in " + getConfigPath() + " to use :nemo";
             conversation._turns.add(new ChatTurn("nemo", message));
             conversation._panelView.appendMessage("nemo", message);
             return;
@@ -315,7 +690,7 @@ public class NemoClient {
 
         var worker = new Thread(() -> {
             try {
-                String response = request(conversation._configuration, buildInput(conversation._context, conversation._turns));
+                String response = request(conversation._configuration, conversation._context, conversation._turns);
                 EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
