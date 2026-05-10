@@ -25,8 +25,11 @@ $ swim <file>
 
 - `~/.swim/bin/launcher`
 - `~/.swim/lib`
+- `~/.swim/deps/oracle.oracle-java`
 
 Those installed artifacts are the supported runtime entrypoint. The launcher and core are now deployed as real JPMS modules. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
+
+The build also installs the Oracle Java VS Code extension bundle under `~/.swim/deps/oracle.oracle-java` on first package, so Java LSP support does not depend on a separate VS Code installation.
 
 Once SWIM is running:
 

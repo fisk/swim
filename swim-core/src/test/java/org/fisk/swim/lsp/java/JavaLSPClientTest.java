@@ -22,21 +22,24 @@ class JavaLSPClientTest {
     Path tempDir;
 
     @Test
-    void choosesPlatformSpecificConfigurationDirectory() {
-        assertEquals("config_mac_arm", JavaLSPClient.getConfigurationDirectoryName("Darwin", "aarch64"));
-        assertEquals("config_mac", JavaLSPClient.getConfigurationDirectoryName("Mac OS X", "x86_64"));
-        assertEquals("config_linux", JavaLSPClient.getConfigurationDirectoryName("Linux", "x86_64"));
+    void choosesPlatformSpecificNbcodeExecutable() {
+        assertEquals("nbcode.sh", JavaLSPClient.getNbcodeExecutableName("Darwin", "aarch64"));
+        assertEquals("nbcode.sh", JavaLSPClient.getNbcodeExecutableName("Linux", "x86_64"));
+        assertEquals("nbcode64.exe", JavaLSPClient.getNbcodeExecutableName("Windows 11", "x86_64"));
     }
 
     @Test
-    void findsVersionedLauncherJar() throws IOException {
-        Path repo = tempDir.resolve("repo");
-        Path plugins = repo.resolve("plugins");
-        Files.createDirectories(plugins);
-        Path launcher = plugins.resolve("org.eclipse.equinox.launcher_9.9.9.jar");
-        Files.writeString(launcher, "launcher");
+    void findsOracleExtensionAndNbcodeExecutable() throws IOException {
+        Path extensions = tempDir.resolve("extensions");
+        Path oldVersion = extensions.resolve("oracle.oracle-java-23.0.0");
+        Path newVersion = extensions.resolve("oracle.oracle-java-24.0.0");
+        Files.createDirectories(oldVersion.resolve("nbcode/bin"));
+        Files.createDirectories(newVersion.resolve("nbcode/bin"));
+        Path executable = newVersion.resolve("nbcode/bin/nbcode.sh");
+        Files.writeString(executable, "#!/bin/sh\n");
 
-        assertEquals(launcher, JavaLSPClient.findLauncherJar(repo));
+        assertEquals(newVersion, JavaLSPClient.findOracleExtensionPath(extensions));
+        assertEquals(executable, JavaLSPClient.findNbcode(newVersion, "Linux", "x86_64"));
     }
 
     @Test
