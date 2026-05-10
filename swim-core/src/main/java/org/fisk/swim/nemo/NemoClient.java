@@ -17,7 +17,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.fisk.swim.EventThread;
@@ -102,6 +104,7 @@ public class NemoClient {
             boolean toolReadFile,
             boolean toolSearchFiles,
             boolean toolRunCommand,
+            boolean toolWriteFile,
             int toolMaxResults,
             int toolMaxOutputChars,
             int toolCommandTimeoutSeconds) {
@@ -126,7 +129,7 @@ public class NemoClient {
         }
         return String.join("\n",
                 "You are Nemo, an AI assistant inside the SWIM text editor.",
-                "Answer concisely and focus on the current file.",
+                "Answer concisely and focus on the current file unless the task requires workspace changes.",
                 "",
                 "Conversation:",
                 transcript.toString(),
@@ -198,6 +201,7 @@ public class NemoClient {
                 booleanProperty(properties, "tool.read_file", true),
                 booleanProperty(properties, "tool.search_files", true),
                 booleanProperty(properties, "tool.run_command", true),
+                booleanProperty(properties, "tool.write_file", true),
                 intProperty(properties, "tool.max_results", _defaultMaxResults),
                 intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
                 intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
@@ -269,7 +273,7 @@ public class NemoClient {
         for (int step = 0; step < 8; step++) {
             JsonObject payload = new JsonObject();
             payload.addProperty("model", configuration.model());
-            payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately.");
+            payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately or modify workspace files.");
             payload.add("input", inputHistory);
             var tools = buildTools(configuration);
             if (tools.size() > 0) {
@@ -380,6 +384,14 @@ public class NemoClient {
                             property("cwd", stringSchema("Optional working directory relative to the workspace root."))),
                             List.of("command"))));
         }
+        if (configuration.toolWriteFile()) {
+            tools.add(functionTool("write_file",
+                    "Create or overwrite a file in the workspace. Use this to apply code changes after reading the file you want to edit.",
+                    schema(List.of(
+                            property("path", stringSchema("Path relative to the workspace root.")),
+                            property("content", stringSchema("Full file contents to write."))),
+                            List.of("path", "content"))));
+        }
         return tools;
     }
 
@@ -443,6 +455,7 @@ public class NemoClient {
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
         case "run_command" -> runCommand(configuration, context, call.arguments());
+        case "write_file" -> writeFile(configuration, context, call.arguments());
         default -> "Unknown tool: " + call.name();
         };
     }
@@ -463,11 +476,43 @@ public class NemoClient {
     }
 
     private static Path resolvePathInsideWorkspace(Path workspaceRoot, String rawPath) throws IOException {
-        Path path = rawPath == null || rawPath.isBlank()
-                ? workspaceRoot
-                : workspaceRoot.resolve(rawPath).normalize();
+        if (rawPath == null || rawPath.isBlank()) {
+            return workspaceRoot;
+        }
+        Path requested = Path.of(rawPath);
+        Path path = requested.isAbsolute()
+                ? requested.normalize()
+                : workspaceRoot.resolve(requested).normalize();
         if (!path.startsWith(workspaceRoot)) {
             throw new IOException("Path escapes workspace root: " + rawPath);
+        }
+        Path fallback = maybeStripWorkspaceRootPrefix(workspaceRoot, requested, path);
+        if (fallback != null) {
+            return fallback;
+        }
+        return path;
+    }
+
+    private static Path maybeStripWorkspaceRootPrefix(Path workspaceRoot, Path requested, Path resolvedPath) {
+        if (requested.isAbsolute() || Files.exists(resolvedPath)) {
+            return null;
+        }
+        Path workspaceName = workspaceRoot.getFileName();
+        if (workspaceName == null || requested.getNameCount() == 0 || !workspaceName.equals(requested.getName(0))) {
+            return null;
+        }
+        Path stripped = requested.getNameCount() == 1
+                ? workspaceRoot
+                : workspaceRoot.resolve(requested.subpath(1, requested.getNameCount())).normalize();
+        if (!stripped.startsWith(workspaceRoot)) {
+            return null;
+        }
+        return stripped;
+    }
+
+    private static Path requireDirectory(Path path, String rawPath) throws IOException {
+        if (!Files.isDirectory(path)) {
+            throw new IOException("Not a directory: " + rawPath);
         }
         return path;
     }
@@ -543,7 +588,8 @@ public class NemoClient {
 
     private static String runCommand(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
-        Path cwd = resolvePathInsideWorkspace(root, stringArgument(arguments, "cwd", ""));
+        String rawCwd = stringArgument(arguments, "cwd", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
 
         var process = new ProcessBuilder("zsh", "-lc", command)
@@ -568,6 +614,80 @@ public class NemoClient {
                 stdout,
                 "stderr:",
                 stderr));
+    }
+
+    private static String writeFile(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        String content = stringArgument(arguments, "content", "");
+        Path parent = path.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+
+        if (isCurrentBufferPath(context, path)) {
+            writeOpenBuffer(context, content);
+        } else {
+            Files.writeString(path, content, StandardCharsets.UTF_8);
+        }
+
+        return truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
+    }
+
+    private static boolean isCurrentBufferPath(BufferContext context, Path path) {
+        Path currentPath = context.getBuffer().getPath();
+        return currentPath != null
+                && currentPath.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize());
+    }
+
+    private static void writeOpenBuffer(BufferContext context, String content) throws IOException {
+        var eventThread = EventThread.getInstance();
+        if (!eventThread.isAlive() || Thread.currentThread() == eventThread) {
+            replaceOpenBufferContents(context, content);
+            return;
+        }
+
+        var failure = new AtomicReference<Throwable>();
+        var done = new CountDownLatch(1);
+        eventThread.enqueue(new RunnableEvent(() -> {
+            try {
+                replaceOpenBufferContents(context, content);
+            } catch (Throwable throwable) {
+                failure.set(throwable);
+            } finally {
+                done.countDown();
+            }
+        }));
+        try {
+            done.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while writing open buffer", e);
+        }
+
+        Throwable throwable = failure.get();
+        if (throwable instanceof IOException ioException) {
+            throw ioException;
+        }
+        if (throwable != null) {
+            throw new IOException("Failed to write open buffer", throwable);
+        }
+    }
+
+    private static void replaceOpenBufferContents(BufferContext context, String content) throws IOException {
+        var buffer = context.getBuffer();
+        int cursorPosition = Math.min(buffer.getCursor().getPosition(), content.length());
+        int length = buffer.getLength();
+        if (length > 0) {
+            buffer.remove(0, length);
+        }
+        if (!content.isEmpty()) {
+            buffer.insert(0, content);
+        }
+        buffer.getUndoLog().commit();
+        buffer.getCursor().setPosition(cursorPosition);
+        context.getBufferView().adaptViewToCursor();
+        buffer.writeOrThrow();
     }
 
     private static String truncateOutput(Configuration configuration, String output) {

@@ -1,0 +1,57 @@
+!SESSION 2026-04-22 18:53:51.107 -----------------------------------------------
+eclipse.buildId=unknown
+java.version=25.0.1
+java.vendor=Oracle Corporation
+BootLoader constants: OS=macosx, ARCH=aarch64, WS=cocoa, NL=en_SE
+Command-line arguments:  -data /Users/eosterlu/.swim/workspace/swim-78b5b07d701facf7153098a72f19e770937ab73f
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.735
+!MESSAGE class org.eclipse.jdt.ls.core.internal.JavaLanguageServerPlugin is started
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.773
+!MESSAGE Started org.eclipse.buildship.core 24ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.773
+!MESSAGE Started org.eclipse.m2e.core 0ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.894
+!MESSAGE Main thread is waiting
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.921
+!MESSAGE >> initialize
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:52.922
+!MESSAGE Initializing Java Language Server 1.55.0.202512212128
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.318
+!MESSAGE ProjectRegistryRefreshJob finished 545ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.365
+!MESSAGE Static Commands: []
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.366
+!MESSAGE Non-Static Commands: [java.project.import, java.project.changeImportedProjects, java.navigate.openTypeHierarchy, java.project.resolveStackTraceLocation, java.edit.handlePasteEvent, java.edit.stringFormatting, java.project.getSettings, java.project.resolveWorkspaceSymbol, java.project.upgradeGradle, java.project.createModuleInfo, java.vm.getAllInstalls, java.edit.organizeImports, java.project.refreshDiagnostics, java.project.removeFromSourcePath, java.project.listSourcePaths, java.project.updateSettings, java.project.getAll, java.reloadBundles, java.project.isTestFile, java.project.resolveText, java.project.getClasspaths, java.navigate.resolveTypeHierarchy, java.getTroubleshootingInfo, java.edit.smartSemicolonDetection, java.project.updateSourceAttachment, java.project.updateClassPaths, java.decompile, java.protobuf.generateSources, java.project.resolveSourceAttachment, java.project.updateJdk, java.project.addToSourcePath, java.completion.onDidSelect]
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.389
+!MESSAGE RepositoryRegistryUpdateJob finished 14ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.420
+!MESSAGE >> initialized
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.480
+!MESSAGE Importing Maven project(s)
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:53.595
+!MESSAGE Default VM Install changed from  null to com.oracle.java.jdk-/Library/Java/JavaVirtualMachines/jdk-25.jdk/Contents/Home
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:54.658
+!MESSAGE Workspace initialized in 1282ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:54.689
+!MESSAGE >> initialization job finished
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:56.283
+!MESSAGE >> build jobs finished
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-04-22 18:53:56.284
+!MESSAGE >> registerWatchers'

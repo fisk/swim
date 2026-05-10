@@ -335,11 +335,18 @@ public class Buffer {
     }
 
     public void write() {
-        _languageMode.willSave(_bufferContext);
         try {
-            Files.writeString(_path, _string.toString());
-            Window.getInstance().getCommandView().setMessage("Saved file");
+            writeOrThrow();
         } catch (IOException e) {
+        }
+    }
+
+    public void writeOrThrow() throws IOException {
+        _languageMode.willSave(_bufferContext);
+        Files.writeString(_path, _string.toString());
+        var window = Window.getInstance();
+        if (window != null && window.getCommandView() != null) {
+            window.getCommandView().setMessage("Saved file");
         }
         _languageMode.didSave(_bufferContext);
     }

@@ -112,6 +112,7 @@ tool.list_files=true
 tool.read_file=true
 tool.search_files=true
 tool.run_command=true
+tool.write_file=true
 tool.max_results=200
 tool.max_output_chars=12000
 tool.command_timeout_seconds=20
@@ -135,7 +136,10 @@ Nemo sends the current file path and full buffer contents to the model along wit
 - `read_file`
 - `search_files`
 - `run_command`
+- `write_file`
 - OpenAI web search via `tool.web_search=true`
+
+The `write_file` tool lets Nemo create or overwrite files in the workspace. This is intended for explicit edit requests, such as updating a README, generating a new source file, or applying a requested rewrite directly from chat.
 
 Inside the chat pane:
 

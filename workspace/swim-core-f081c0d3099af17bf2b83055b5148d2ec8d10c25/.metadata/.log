@@ -1,0 +1,78 @@
+!SESSION 2026-05-09 11:18:49.905 -----------------------------------------------
+eclipse.buildId=unknown
+java.version=25.0.1
+java.vendor=Oracle Corporation
+BootLoader constants: OS=macosx, ARCH=aarch64, WS=cocoa, NL=en_SE
+Command-line arguments:  -data /Users/eosterlu/.swim/workspace/swim-core-f081c0d3099af17bf2b83055b5148d2ec8d10c25
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:50.910
+!MESSAGE class org.eclipse.jdt.ls.core.internal.JavaLanguageServerPlugin is started
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:50.940
+!MESSAGE Started org.eclipse.buildship.core 20ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:50.940
+!MESSAGE Started org.eclipse.m2e.core 0ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.033
+!MESSAGE Main thread is waiting
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.061
+!MESSAGE >> initialize
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.063
+!MESSAGE Initializing Java Language Server 1.55.0.202512212128
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.363
+!MESSAGE ProjectRegistryRefreshJob finished 422ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.391
+!MESSAGE Static Commands: []
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.391
+!MESSAGE Non-Static Commands: [java.project.import, java.project.changeImportedProjects, java.navigate.openTypeHierarchy, java.project.resolveStackTraceLocation, java.edit.handlePasteEvent, java.edit.stringFormatting, java.project.getSettings, java.project.resolveWorkspaceSymbol, java.project.upgradeGradle, java.project.createModuleInfo, java.vm.getAllInstalls, java.edit.organizeImports, java.project.refreshDiagnostics, java.project.removeFromSourcePath, java.project.listSourcePaths, java.project.updateSettings, java.project.getAll, java.reloadBundles, java.project.isTestFile, java.project.resolveText, java.project.getClasspaths, java.navigate.resolveTypeHierarchy, java.getTroubleshootingInfo, java.edit.smartSemicolonDetection, java.project.updateSourceAttachment, java.project.updateClassPaths, java.decompile, java.protobuf.generateSources, java.project.resolveSourceAttachment, java.project.updateJdk, java.project.addToSourcePath, java.completion.onDidSelect]
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.410
+!MESSAGE RepositoryRegistryUpdateJob finished 13ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.412
+!MESSAGE >> initialized
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.431
+!MESSAGE Importing Maven project(s)
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:51.532
+!MESSAGE Default VM Install changed from  null to com.oracle.java.jdk-/Library/Java/JavaVirtualMachines/jdk-25.jdk/Contents/Home
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:52.334
+!MESSAGE Workspace initialized in 937ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:52.350
+!MESSAGE >> initialization job finished
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:52.528
+!MESSAGE >> build jobs finished
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:52.529
+!MESSAGE >> registerWatchers'
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:52.883
+!MESSAGE Reconciled 1. Took 0 ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:53.804
+!MESSAGE begin problem for /NemoClient.java
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:53.805
+!MESSAGE 0 problems reported for /NemoClient.java
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:18:53.806
+!MESSAGE Validated 1. Took 318 ms
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:19:42.913
+!MESSAGE >> shutdown
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:19:42.916
+!MESSAGE >> shutdown
+
+!ENTRY org.eclipse.jdt.ls.core 1 0 2026-05-09 11:19:42.922
+!MESSAGE >> exit

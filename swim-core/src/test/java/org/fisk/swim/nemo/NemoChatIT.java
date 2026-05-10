@@ -1,5 +1,6 @@
 package org.fisk.swim.nemo;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,7 +23,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.sun.net.httpserver.HttpExchange;
@@ -42,7 +42,10 @@ class NemoChatIT {
     @Timeout(15)
     void chatsAcrossMultipleTurnsAndCompletesToolRoundWithoutErrors() throws Exception {
         var requestCount = new AtomicInteger();
-        var server = startServer(requestCount);
+        var server = startServer(requestCount, List.of(
+                functionCallResponse(),
+                textResponse("Tool-assisted answer"),
+                textResponse("Follow-up answer")));
         try {
             writeConfig(server);
             String originalUserHome = System.getProperty("user.home");
@@ -73,26 +76,48 @@ class NemoChatIT {
         }
     }
 
-    private HttpServer startServer(AtomicInteger requestCount) throws IOException {
+    @Test
+    @Timeout(15)
+    void appliesWriteFileToolToCurrentBufferAndDisk() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startServer(requestCount, List.of(
+                writeFileResponse("chat.txt", "class Updated {}\n"),
+                textResponse("Updated file")));
+        try {
+            writeConfig(server);
+            String originalUserHome = System.getProperty("user.home");
+            System.setProperty("user.home", tempDir.toString());
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Update this file");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Updated file");
+
+                assertTrue(requestCount.get() >= 2);
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("me> Update this file")));
+                assertEquals("class Updated {}\n", Files.readString(tempDir.resolve("chat.txt")));
+                assertEquals("class Updated {}\n", window.getBufferContext().getBuffer().getString());
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private HttpServer startServer(AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/responses", exchange -> handleResponse(exchange, requestCount));
+        server.createContext("/responses", exchange -> handleResponse(exchange, requestCount, responses));
         server.start();
         return server;
     }
 
-    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount) throws IOException {
+    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
         int requestIndex = requestCount.incrementAndGet();
-        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        JsonObject request = JsonParser.parseString(body).getAsJsonObject();
-
-        JsonObject response;
-        if (requestIndex == 1) {
-            response = functionCallResponse();
-        } else if (requestIndex == 2) {
-            response = textResponse("Tool-assisted answer");
-        } else {
-            response = textResponse("Follow-up answer");
-        }
+        exchange.getRequestBody().readAllBytes();
+        JsonObject response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
 
         byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -110,6 +135,19 @@ class NemoChatIT {
         call.addProperty("call_id", "call_1");
         call.addProperty("name", "list_files");
         call.addProperty("arguments", "{\"path\":\".\",\"max_results\":5}");
+        output.add(call);
+        response.add("output", output);
+        return response;
+    }
+
+    private static JsonObject writeFileResponse(String path, String content) {
+        JsonObject response = new JsonObject();
+        JsonArray output = new JsonArray();
+        JsonObject call = new JsonObject();
+        call.addProperty("type", "function_call");
+        call.addProperty("call_id", "call_write");
+        call.addProperty("name", "write_file");
+        call.addProperty("arguments", "{\"path\":\"" + path + "\",\"content\":\"" + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}");
         output.add(call);
         response.add("output", output);
         return response;
@@ -142,6 +180,7 @@ class NemoChatIT {
                 "tool.read_file=true",
                 "tool.search_files=true",
                 "tool.run_command=false",
+                "tool.write_file=true",
                 "tool.web_search=false"));
     }
 

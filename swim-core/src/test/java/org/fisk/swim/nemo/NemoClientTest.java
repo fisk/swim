@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -83,6 +84,7 @@ class NemoClientTest {
                 "header.client=swim",
                 "tool.web_search=true",
                 "tool.run_command=false",
+                "tool.write_file=false",
                 "tool.max_results=42"));
 
         var configuration = NemoClient.loadConfiguration(config);
@@ -97,6 +99,7 @@ class NemoClientTest {
         assertTrue(configuration.toolWebSearch());
         assertEquals(42, configuration.toolMaxResults());
         assertTrue(!configuration.toolRunCommand());
+        assertTrue(!configuration.toolWriteFile());
     }
 
     @Test
@@ -132,13 +135,14 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                true,
                 50,
                 2000,
                 10);
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(5, tools.size());
+        assertEquals(6, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
     }
 
@@ -159,6 +163,7 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                false,
                 false,
                 50,
                 4000,
@@ -195,6 +200,7 @@ class NemoClientTest {
                 false,
                 false,
                 true,
+                false,
                 50,
                 4000,
                 5);
@@ -204,6 +210,74 @@ class NemoClientTest {
 
         assertTrue(output.contains("exit_code: 0"));
         assertTrue(output.contains("ok"));
+    }
+
+    @Test
+    void executesRunCommandWhenModelRepeatsWorkspaceDirectoryName() throws Exception {
+        Path project = tempDir.resolve(".swim");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                50,
+                4000,
+                5);
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("4b", "run_command", json(Map.of(
+                        "command", "printf 'ok'",
+                        "cwd", ".swim"))));
+
+        assertTrue(output.contains("exit_code: 0"));
+        assertTrue(output.contains("ok"));
+    }
+
+    @Test
+    void executesWriteFileToolAndSynchronizesCurrentBuffer() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Path file = project.resolve("src/Main.txt");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "class Demo {}\n");
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                50,
+                4000,
+                5);
+
+        try (var harness = HeadlessWindowHarness.create(file, 80, 20)) {
+            var context = harness.getWindow().getBufferContext();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("5", "write_file", json(Map.of(
+                            "path", "src/Main.txt",
+                            "content", "class Updated {}\n"))));
+
+            assertTrue(output.contains("wrote 17 chars to src/Main.txt"));
+            assertEquals("class Updated {}\n", Files.readString(file));
+            assertEquals("class Updated {}\n", context.getBuffer().getString());
+        }
     }
 
     @Test
