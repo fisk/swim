@@ -136,13 +136,16 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                true,
+                true,
+                true,
                 50,
                 2000,
                 10);
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(6, tools.size());
+        assertEquals(9, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
     }
 
@@ -163,6 +166,9 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                false,
+                false,
+                false,
                 false,
                 false,
                 50,
@@ -201,6 +207,9 @@ class NemoClientTest {
                 false,
                 true,
                 false,
+                false,
+                false,
+                false,
                 50,
                 4000,
                 5);
@@ -230,6 +239,9 @@ class NemoClientTest {
                 false,
                 false,
                 true,
+                false,
+                false,
+                false,
                 false,
                 50,
                 4000,
@@ -325,5 +337,61 @@ class NemoClientTest {
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {
         return com.google.gson.JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
+    }
+
+
+    @Test
+    void executesGitHelpersAndApplyPatchTool() throws Exception {
+        Path project = tempDir.resolve("repo");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("note.txt"), "hello\n");
+        runGit(project, "git init");
+        runGit(project, "git config user.email 'nemo@example.com'");
+        runGit(project, "git config user.name 'Nemo'");
+        runGit(project, "git add note.txt");
+        runGit(project, "git commit -m init");
+        Files.writeString(project.resolve("note.txt"), "hello\nworld\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), project.resolve("note.txt"));
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                true,
+                50,
+                4000,
+                5);
+
+        String status = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("5", "git_status", json(Map.of())));
+        String diff = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("6", "git_diff", json(Map.of())));
+        String patchResult = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("7", "apply_patch", json(Map.of(
+                        "patch", "diff --git a/note.txt b/note.txt\n--- a/note.txt\n+++ b/note.txt\n@@ -1,2 +1,3 @@\n hello\n world\n+done\n"))));
+
+        assertTrue(status.contains("note.txt"));
+        assertTrue(diff.contains("+world"));
+        assertTrue(patchResult.contains("exit_code: 0"));
+        assertEquals("hello\nworld\ndone\n", Files.readString(project.resolve("note.txt")));
+    }
+
+    private static void runGit(Path cwd, String command) throws IOException, InterruptedException {
+        var process = new ProcessBuilder("zsh", "-lc", command)
+                .directory(cwd.toFile())
+                .redirectErrorStream(true)
+                .start();
+        if (process.waitFor() != 0) {
+            throw new IOException(new String(process.getInputStream().readAllBytes()));
+        }
     }
 }

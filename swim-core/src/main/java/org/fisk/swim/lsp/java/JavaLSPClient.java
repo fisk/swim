@@ -36,8 +36,8 @@ import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
-import org.fisk.swim.ProjectPaths;
-import org.fisk.swim.lang.LanguageMode;
+import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.BufferContext;
 
 import com.googlecode.lanterna.TextColor;

@@ -105,6 +105,9 @@ public class NemoClient {
             boolean toolSearchFiles,
             boolean toolRunCommand,
             boolean toolWriteFile,
+            boolean toolApplyPatch,
+            boolean toolGitStatus,
+            boolean toolGitDiff,
             int toolMaxResults,
             int toolMaxOutputChars,
             int toolCommandTimeoutSeconds) {
@@ -202,6 +205,9 @@ public class NemoClient {
                 booleanProperty(properties, "tool.search_files", true),
                 booleanProperty(properties, "tool.run_command", true),
                 booleanProperty(properties, "tool.write_file", true),
+                booleanProperty(properties, "tool.apply_patch", true),
+                booleanProperty(properties, "tool.git_status", true),
+                booleanProperty(properties, "tool.git_diff", true),
                 intProperty(properties, "tool.max_results", _defaultMaxResults),
                 intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
                 intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
@@ -270,7 +276,7 @@ public class NemoClient {
         JsonArray inputHistory = new JsonArray();
         inputHistory.add(createUserInputMessage(buildInput(context, turns)));
 
-        for (int step = 0; step < 8; step++) {
+        while (true) {
             JsonObject payload = new JsonObject();
             payload.addProperty("model", configuration.model());
             payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately or modify workspace files.");
@@ -296,7 +302,6 @@ public class NemoClient {
             }
             appendToolRound(inputHistory, response, toolOutputs);
         }
-        throw new IOException("Nemo exceeded tool-call limit");
     }
 
     static void appendToolRound(JsonArray inputHistory, JsonObject response, JsonArray toolOutputs) {
@@ -392,6 +397,26 @@ public class NemoClient {
                             property("content", stringSchema("Full file contents to write."))),
                             List.of("path", "content"))));
         }
+        if (configuration.toolApplyPatch()) {
+            tools.add(functionTool("apply_patch",
+                    "Apply a targeted unified diff patch inside the workspace. Prefer this for small edits instead of rewriting whole files.",
+                    schema(List.of(
+                            property("patch", stringSchema("Unified diff patch text to apply."))),
+                            List.of("patch"))));
+        }
+        if (configuration.toolGitStatus()) {
+            tools.add(functionTool("git_status",
+                    "Show git status for the workspace or a subdirectory.",
+                    schema(List.of(
+                            property("path", stringSchema("Optional path relative to the workspace root."))))));
+        }
+        if (configuration.toolGitDiff()) {
+            tools.add(functionTool("git_diff",
+                    "Show git diff for the workspace or a subdirectory.",
+                    schema(List.of(
+                            property("path", stringSchema("Optional path relative to the workspace root."))),
+                            List.of())));
+        }
         return tools;
     }
 
@@ -456,6 +481,9 @@ public class NemoClient {
         case "search_files" -> searchFiles(configuration, context, call.arguments());
         case "run_command" -> runCommand(configuration, context, call.arguments());
         case "write_file" -> writeFile(configuration, context, call.arguments());
+        case "apply_patch" -> applyPatch(configuration, context, call.arguments());
+        case "git_status" -> gitStatus(configuration, context, call.arguments());
+        case "git_diff" -> gitDiff(configuration, context, call.arguments());
         default -> "Unknown tool: " + call.name();
         };
     }
@@ -632,6 +660,64 @@ public class NemoClient {
         }
 
         return truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
+    }
+
+    private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String patch = stringArgument(arguments, "patch", "");
+        if (patch.isBlank()) {
+            throw new IOException("patch is required");
+        }
+        Path marker = Files.createTempFile(root, "nemo-patch-", ".diff");
+        Files.writeString(marker, patch, StandardCharsets.UTF_8);
+        try {
+            return runShellCommand(configuration, root, "git apply --whitespace=nowarn " + shellQuote(root.relativize(marker).toString()));
+        } finally {
+            Files.deleteIfExists(marker);
+        }
+    }
+
+    private static String gitStatus(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawPath = stringArgument(arguments, "path", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
+        return runShellCommand(configuration, cwd, "git status --short --branch");
+    }
+
+    private static String gitDiff(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawPath = stringArgument(arguments, "path", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
+        return runShellCommand(configuration, cwd, "git diff -- " + shellQuote("."));
+    }
+
+    private static String runShellCommand(Configuration configuration, Path cwd, String command) throws IOException, InterruptedException {
+        var process = new ProcessBuilder("zsh", "-lc", command)
+                .directory(cwd.toFile())
+                .redirectErrorStream(false)
+                .start();
+        try {
+            if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return "exit_code: timeout\nstdout:\n\nstderr:\ncommand exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds";
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            throw e;
+        }
+
+        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        return truncateOutput(configuration, String.join("\n",
+                "exit_code: " + process.exitValue(),
+                "stdout:",
+                stdout,
+                "stderr:",
+                stderr));
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\''") + "'";
     }
 
     private static boolean isCurrentBufferPath(BufferContext context, Path path) {
