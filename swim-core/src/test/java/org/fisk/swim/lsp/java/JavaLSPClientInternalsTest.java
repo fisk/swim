@@ -40,7 +40,7 @@ class JavaLSPClientInternalsTest {
         languageClient.showMessage(new MessageParams());
         languageClient.logMessage(new MessageParams());
 
-        assertNull(languageClient.showMessageRequest(new ShowMessageRequestParams()));
+        assertNull(languageClient.showMessageRequest(new ShowMessageRequestParams()).get());
         assertEquals(List.of(), languageClient.configuration(new ConfigurationParams()).get());
         assertFalse(languageClient.applyEdit(new ApplyWorkspaceEditParams()).get().isApplied());
         assertNull(languageClient.registerCapability(new RegistrationParams()).get());
