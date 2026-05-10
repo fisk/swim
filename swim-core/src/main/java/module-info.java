@@ -14,5 +14,7 @@ module org.fisk.swim.core {
     requires org.fisk.swim.launcher;
     requires org.slf4j;
 
+    opens org.fisk.swim.lsp.java to org.eclipse.lsp4j.jsonrpc;
+
     provides org.fisk.swim.api.SwimApp with org.fisk.swim.SwimAppImpl;
 }

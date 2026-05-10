@@ -10,16 +10,21 @@ import java.io.OutputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
 import org.eclipse.lsp4j.ConfigurationParams;
 import org.eclipse.lsp4j.MessageParams;
+import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.RegistrationParams;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.UnregistrationParams;
+import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.jsonrpc.Endpoint;
+import org.eclipse.lsp4j.jsonrpc.services.ServiceEndpoints;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.junit.jupiter.api.Test;
@@ -45,6 +50,8 @@ class JavaLSPClientInternalsTest {
         assertFalse(languageClient.applyEdit(new ApplyWorkspaceEditParams()).get().isApplied());
         assertNull(languageClient.registerCapability(new RegistrationParams()).get());
         assertNull(languageClient.unregisterCapability(new UnregistrationParams()).get());
+        assertNull(languageClient.createProgress(new WorkDoneProgressCreateParams()).get());
+        languageClient.notifyProgress(new ProgressParams());
 
         List<WorkspaceFolder> folders = languageClient.workspaceFolders().get();
         assertEquals(1, folders.size());
@@ -81,10 +88,43 @@ class JavaLSPClientInternalsTest {
         assertFalse(process.destroyed);
     }
 
+    @Test
+    void customOracleRequestsAreHandled() throws Exception {
+        var client = new JavaLSPClient();
+        Endpoint endpoint = ServiceEndpoints.toEndpoint(client.createLanguageClient());
+
+        endpoint.request("output/write", Map.of(
+                "outputName", "Oracle Java",
+                "message", "hello",
+                "stdIO", false)).get();
+        endpoint.request("output/show", "Oracle Java").get();
+        endpoint.request("output/reset", "Oracle Java").get();
+        endpoint.request("output/close", "Oracle Java").get();
+        endpoint.request("window/showHtmlPage", Map.of("text", "<p>hello</p>")).get();
+
+        @SuppressWarnings("unchecked")
+        var outputBuffers = (Map<String, StringBuilder>) getField(client, "_outputBuffers");
+        assertFalse(outputBuffers.containsKey("Oracle Java"));
+    }
+
+    @Test
+    void javaLspPackageIsOpenToLsp4jJsonRpc() {
+        Module clientModule = JavaLSPClient.class.getModule();
+        Module jsonRpcModule = Endpoint.class.getModule();
+
+        assertTrue(clientModule.isOpen("org.fisk.swim.lsp.java", jsonRpcModule));
+    }
+
     private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    private static Object getField(Object target, String name) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(target);
     }
 
     private static final class RecordingProcess extends Process {

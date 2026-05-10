@@ -52,6 +52,7 @@ import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
+import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ReferencesCapabilities;
 import org.eclipse.lsp4j.RegistrationParams;
@@ -64,11 +65,13 @@ import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextDocumentSaveReason;
 import org.eclipse.lsp4j.UnregistrationParams;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
+import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.launch.LSPLauncher;
+import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.fileindex.ProjectPaths;
@@ -104,6 +107,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     private Path _oracleExtensionPath = resolveOracleExtensionPath();
 
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
+    private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
 
     static JavaLSPClient _instance = new JavaLSPClient();
 
@@ -607,10 +611,85 @@ public class JavaLSPClient extends Thread implements LanguageMode {
                 return CompletableFuture.completedFuture(null);
             }
 
+            @Override
+            public CompletableFuture<Void> createProgress(WorkDoneProgressCreateParams params) {
+                _log.info("createProgress: " + params);
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @Override
+            public void notifyProgress(ProgressParams params) {
+                _log.info("notifyProgress: " + params);
+            }
+
             public void languageStatus(Object params) {
                 _log.info("language/status: " + params);
             }
+
+            @JsonRequest("output/write")
+            public CompletableFuture<Void> writeOutput(Object params) {
+                var values = objectValues(params);
+                String outputName = values.getOrDefault("outputName", "Oracle Java");
+                String message = values.getOrDefault("message", "");
+                appendOutput(outputName, message);
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @JsonRequest("output/show")
+            public CompletableFuture<Void> showOutput(String outputName) {
+                if (outputName != null) {
+                    _outputBuffers.computeIfAbsent(outputName, ignored -> new StringBuilder());
+                    _log.info("oracle-java output/show: " + outputName);
+                }
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @JsonRequest("output/close")
+            public CompletableFuture<Void> closeOutput(String outputName) {
+                if (outputName != null) {
+                    _outputBuffers.remove(outputName);
+                    _log.info("oracle-java output/close: " + outputName);
+                }
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @JsonRequest("output/reset")
+            public CompletableFuture<Void> resetOutput(String outputName) {
+                if (outputName != null) {
+                    _outputBuffers.put(outputName, new StringBuilder());
+                    _log.info("oracle-java output/reset: " + outputName);
+                }
+                return CompletableFuture.completedFuture(null);
+            }
+
+            @JsonRequest("window/showHtmlPage")
+            public CompletableFuture<Void> showHtmlPage(Object params) {
+                _log.info("oracle-java window/showHtmlPage: " + params);
+                return CompletableFuture.completedFuture(null);
+            }
         };
+    }
+
+    private Map<String, String> objectValues(Object params) {
+        if (params == null) {
+            return Map.of();
+        }
+        if (params instanceof Map<?, ?> rawMap) {
+            var values = new HashMap<String, String>();
+            for (var entry : rawMap.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null) {
+                    values.put(entry.getKey().toString(), entry.getValue().toString());
+                }
+            }
+            return values;
+        }
+        return _gson.fromJson(_gson.toJsonTree(params), Map.class);
+    }
+
+    private synchronized void appendOutput(String outputName, String message) {
+        var buffer = _outputBuffers.computeIfAbsent(outputName, ignored -> new StringBuilder());
+        buffer.append(message);
+        _log.info("oracle-java output[" + outputName + "]: " + message);
     }
 
     private void setup() throws IOException {
