@@ -85,6 +85,8 @@ class NemoClientTest {
                 "tool.web_search=true",
                 "tool.run_command=false",
                 "tool.write_file=false",
+                "tool.git_add=false",
+                "tool.git_commit=false",
                 "tool.max_results=42"));
 
         var configuration = NemoClient.loadConfiguration(config);
@@ -100,6 +102,8 @@ class NemoClientTest {
         assertEquals(42, configuration.toolMaxResults());
         assertTrue(!configuration.toolRunCommand());
         assertTrue(!configuration.toolWriteFile());
+        assertTrue(!configuration.toolGitAdd());
+        assertTrue(!configuration.toolGitCommit());
     }
 
     @Test
@@ -139,13 +143,15 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                true,
+                true,
                 50,
                 2000,
                 10);
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(9, tools.size());
+        assertEquals(11, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
     }
 
@@ -166,6 +172,8 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -210,6 +218,8 @@ class NemoClientTest {
                 false,
                 false,
                 false,
+                false,
+                false,
                 50,
                 4000,
                 5);
@@ -239,6 +249,8 @@ class NemoClientTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -274,6 +286,8 @@ class NemoClientTest {
                 false,
                 false,
                 true,
+                false,
+                false,
                 false,
                 false,
                 false,
@@ -370,6 +384,8 @@ class NemoClientTest {
                 true,
                 true,
                 true,
+                true,
+                true,
                 50,
                 4000,
                 5);
@@ -381,11 +397,18 @@ class NemoClientTest {
         String patchResult = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("7", "apply_patch", json(Map.of(
                         "patch", "diff --git a/note.txt b/note.txt\n--- a/note.txt\n+++ b/note.txt\n@@ -1,2 +1,3 @@\n hello\n world\n+done\n"))));
+        String addResult = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("8", "git_add", json(Map.of("path", "note.txt"))));
+        String commitResult = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("9", "git_commit", json(Map.of("message", "Update note"))));
 
         assertTrue(status.contains("note.txt"));
         assertTrue(diff.contains("+world"));
         assertTrue(patchResult.contains("exit_code: 0"));
+        assertTrue(addResult.contains("exit_code: 0"));
+        assertTrue(commitResult.contains("exit_code: 0"));
         assertEquals("hello\nworld\ndone\n", Files.readString(project.resolve("note.txt")));
+        assertEquals("Update note", runGitCapture(project, "git log -1 --pretty=%s").trim());
     }
 
     private static void runGit(Path cwd, String command) throws IOException, InterruptedException {
@@ -396,5 +419,17 @@ class NemoClientTest {
         if (process.waitFor() != 0) {
             throw new IOException(new String(process.getInputStream().readAllBytes()));
         }
+    }
+
+    private static String runGitCapture(Path cwd, String command) throws IOException, InterruptedException {
+        var process = new ProcessBuilder("zsh", "-lc", command)
+                .directory(cwd.toFile())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        if (process.waitFor() != 0) {
+            throw new IOException(output);
+        }
+        return output;
     }
 }

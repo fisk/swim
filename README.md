@@ -113,6 +113,11 @@ tool.read_file=true
 tool.search_files=true
 tool.run_command=true
 tool.write_file=true
+tool.apply_patch=true
+tool.git_status=true
+tool.git_diff=true
+tool.git_add=true
+tool.git_commit=true
 tool.max_results=200
 tool.max_output_chars=12000
 tool.command_timeout_seconds=20
@@ -130,13 +135,18 @@ Then inside SWIM you can ask Nemo questions like:
 
 Or just press `Esc` in Normal mode to open the Nemo chat pane immediately.
 
-Nemo sends the current file path and full buffer contents to the model along with the chat transcript. When enabled in `nemo.conf`, Nemo can use:
+Nemo sends the current file path and full buffer contents to the model along with the chat transcript. Nemo is configured to act directly on fix and commit requests when it has enough information. When enabled in `nemo.conf`, Nemo can use:
 
 - `list_files`
 - `read_file`
 - `search_files`
 - `run_command`
 - `write_file`
+- `apply_patch`
+- `git_status`
+- `git_diff`
+- `git_add`
+- `git_commit`
 - OpenAI web search via `tool.web_search=true`
 
 The `write_file` tool lets Nemo create or overwrite files in the workspace. This is intended for explicit edit requests, such as updating a README, generating a new source file, or applying a requested rewrite directly from chat.

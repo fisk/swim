@@ -108,6 +108,8 @@ public class NemoClient {
             boolean toolApplyPatch,
             boolean toolGitStatus,
             boolean toolGitDiff,
+            boolean toolGitAdd,
+            boolean toolGitCommit,
             int toolMaxResults,
             int toolMaxOutputChars,
             int toolCommandTimeoutSeconds) {
@@ -132,7 +134,9 @@ public class NemoClient {
         }
         return String.join("\n",
                 "You are Nemo, an AI assistant inside the SWIM text editor.",
-                "Answer concisely and focus on the current file unless the task requires workspace changes.",
+                "Answer concisely and take action when the user asks for a fix or change.",
+                "Use the current file first, but work across the workspace when the task requires it.",
+                "Avoid unnecessary questions. Make reasonable decisions unless the intent is genuinely ambiguous.",
                 "",
                 "Conversation:",
                 transcript.toString(),
@@ -208,6 +212,8 @@ public class NemoClient {
                 booleanProperty(properties, "tool.apply_patch", true),
                 booleanProperty(properties, "tool.git_status", true),
                 booleanProperty(properties, "tool.git_diff", true),
+                booleanProperty(properties, "tool.git_add", true),
+                booleanProperty(properties, "tool.git_commit", true),
                 intProperty(properties, "tool.max_results", _defaultMaxResults),
                 intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
                 intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
@@ -279,7 +285,13 @@ public class NemoClient {
         while (true) {
             JsonObject payload = new JsonObject();
             payload.addProperty("model", configuration.model());
-            payload.addProperty("instructions", "You are Nemo, a concise coding assistant inside the SWIM text editor. Use tools when they help you answer accurately or modify workspace files.");
+            payload.addProperty("instructions",
+                    "You are Nemo, a concise coding assistant inside the SWIM text editor. "
+                            + "Default to direct action for coding tasks: inspect, edit, verify, and then summarize. "
+                            + "Use tools when they help you answer accurately or modify workspace files. "
+                            + "When the user asks for a commit, inspect the repo state, stage only the relevant files, "
+                            + "and create a concise commit message yourself unless the user already provided one. "
+                            + "Avoid unnecessary questions unless the request is ambiguous or unrelated changes would force a risky commit.");
             payload.add("input", inputHistory);
             var tools = buildTools(configuration);
             if (tools.size() > 0) {
@@ -417,6 +429,20 @@ public class NemoClient {
                             property("path", stringSchema("Optional path relative to the workspace root."))),
                             List.of())));
         }
+        if (configuration.toolGitAdd()) {
+            tools.add(functionTool("git_add",
+                    "Stage files in git. Use this before git_commit when the user asks you to commit changes.",
+                    schema(List.of(
+                            property("path", stringSchema("Optional file or directory path relative to the workspace root. Defaults to the whole workspace."))),
+                            List.of())));
+        }
+        if (configuration.toolGitCommit()) {
+            tools.add(functionTool("git_commit",
+                    "Create a git commit from the staged changes.",
+                    schema(List.of(
+                            property("message", stringSchema("Commit message to use."))),
+                            List.of("message"))));
+        }
         return tools;
     }
 
@@ -484,6 +510,8 @@ public class NemoClient {
         case "apply_patch" -> applyPatch(configuration, context, call.arguments());
         case "git_status" -> gitStatus(configuration, context, call.arguments());
         case "git_diff" -> gitDiff(configuration, context, call.arguments());
+        case "git_add" -> gitAdd(configuration, context, call.arguments());
+        case "git_commit" -> gitCommit(configuration, context, call.arguments());
         default -> "Unknown tool: " + call.name();
         };
     }
@@ -689,6 +717,23 @@ public class NemoClient {
         String rawPath = stringArgument(arguments, "path", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
         return runShellCommand(configuration, cwd, "git diff -- " + shellQuote("."));
+    }
+
+    private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawPath = stringArgument(arguments, "path", "");
+        Path path = resolvePathInsideWorkspace(root, rawPath);
+        String pathspec = root.equals(path) ? "." : root.relativize(path).toString();
+        return runShellCommand(configuration, root, "git add -- " + shellQuote(pathspec));
+    }
+
+    private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String message = stringArgument(arguments, "message", "");
+        if (message.isBlank()) {
+            throw new IOException("message is required");
+        }
+        return runShellCommand(configuration, root, "git commit -m " + shellQuote(message));
     }
 
     private static String runShellCommand(Configuration configuration, Path cwd, String command) throws IOException, InterruptedException {
