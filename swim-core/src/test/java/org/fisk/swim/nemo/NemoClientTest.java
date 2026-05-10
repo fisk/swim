@@ -274,6 +274,9 @@ class NemoClientTest {
                 false,
                 false,
                 true,
+                false,
+                false,
+                false,
                 50,
                 4000,
                 5);
