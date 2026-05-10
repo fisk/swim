@@ -24,6 +24,8 @@ import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.eclipse.lsp4j.InitializeParams;
+import org.eclipse.lsp4j.InitializeResult;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
@@ -126,57 +128,8 @@ class JavaLSPClientTest {
         setField(client, "_enabled", true);
 
         var requests = new AtomicInteger();
-        TextDocumentService textDocumentService = new TextDocumentService() {
-            @Override
-            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
-            }
-
-            @Override
-            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
-            }
-
-            @Override
-            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
-            }
-
-            @Override
-            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
-            }
-
-            @Override
-            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
-                requests.incrementAndGet();
-                return CompletableFuture.completedFuture(new SemanticTokens(List.of(
-                        0, 0, 5, 0, 0,
-                        0, 6, 4, 1, 0)));
-            }
-        };
-
-        LanguageServer server = new LanguageServer() {
-            @Override
-            public CompletableFuture<org.eclipse.lsp4j.InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public CompletableFuture<Object> shutdown() {
-                return CompletableFuture.completedFuture(null);
-            }
-
-            @Override
-            public void exit() {
-            }
-
-            @Override
-            public TextDocumentService getTextDocumentService() {
-                return textDocumentService;
-            }
-
-            @Override
-            public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
-                throw new UnsupportedOperationException();
-            }
-        };
+        TextDocumentService textDocumentService = new SemanticTokensTextDocumentService(requests);
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
 
         var capabilities = new ServerCapabilities();
         var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
@@ -210,5 +163,69 @@ class JavaLSPClientTest {
         Field foregroundField = attributes.getClass().getDeclaredField("_foregroundColour");
         foregroundField.setAccessible(true);
         return (TextColor) foregroundField.get(attributes);
+    }
+
+    private static final class SemanticTokensTextDocumentService implements TextDocumentService {
+        private final AtomicInteger _requests;
+
+        private SemanticTokensTextDocumentService(AtomicInteger requests) {
+            _requests = requests;
+        }
+
+        @Override
+        public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+        }
+
+        @Override
+        public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+        }
+
+        @Override
+        public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+        }
+
+        @Override
+        public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+        }
+
+        @Override
+        public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+            _requests.incrementAndGet();
+            return CompletableFuture.completedFuture(new SemanticTokens(List.of(
+                    0, 0, 5, 0, 0,
+                    0, 6, 4, 1, 0)));
+        }
+    }
+
+    private static final class SemanticTokensLanguageServer implements LanguageServer {
+        private final TextDocumentService _textDocumentService;
+
+        private SemanticTokensLanguageServer(TextDocumentService textDocumentService) {
+            _textDocumentService = textDocumentService;
+        }
+
+        @Override
+        public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return _textDocumentService;
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            throw new UnsupportedOperationException();
+        }
     }
 }
