@@ -56,6 +56,12 @@ import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ReferencesCapabilities;
 import org.eclipse.lsp4j.RegistrationParams;
+import org.eclipse.lsp4j.SemanticTokens;
+import org.eclipse.lsp4j.SemanticTokensCapabilities;
+import org.eclipse.lsp4j.SemanticTokensClientCapabilitiesRequests;
+import org.eclipse.lsp4j.SemanticTokensLegend;
+import org.eclipse.lsp4j.SemanticTokensParams;
+import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
@@ -69,6 +75,7 @@ import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.TokenFormat;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
@@ -108,8 +115,15 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
+    private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
 
     static JavaLSPClient _instance = new JavaLSPClient();
+
+    static record SemanticHighlight(int start, int end, TextColor foregroundColor) {
+    }
+
+    private static record CachedSemanticTokens(int version, List<SemanticHighlight> highlights) {
+    }
 
     public static JavaLSPClient getInstance() {
         return _instance;
@@ -528,6 +542,16 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }), TextColor.ANSI.RED);
     }
 
+    private synchronized void clearSemanticTokensCache() {
+        _semanticTokensCache.clear();
+    }
+
+    private synchronized void clearSemanticTokensCache(String uri) {
+        if (uri != null) {
+            _semanticTokensCache.remove(uri);
+        }
+    }
+
     Thread createShutdownHook() {
         return new Thread(() -> {
             if (_process == null) {
@@ -789,6 +813,24 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         var references = new ReferencesCapabilities();
         textDocument.setReferences(references);
 
+        var semanticTokens = new SemanticTokensCapabilities();
+        var requests = new SemanticTokensClientCapabilitiesRequests();
+        requests.setFull(true);
+        requests.setRange(false);
+        semanticTokens.setRequests(requests);
+        semanticTokens.setFormats(List.of(TokenFormat.Relative));
+        semanticTokens.setTokenTypes(List.of(
+                "namespace", "type", "class", "enum", "interface", "struct", "typeParameter",
+                "parameter", "variable", "property", "enumMember", "event", "function", "method",
+                "macro", "keyword", "modifier", "comment", "string", "number", "regexp", "operator", "decorator"));
+        semanticTokens.setTokenModifiers(List.of(
+                "declaration", "definition", "readonly", "static", "deprecated",
+                "abstract", "async", "modification", "documentation", "defaultLibrary"));
+        semanticTokens.setMultilineTokenSupport(false);
+        semanticTokens.setOverlappingTokenSupport(false);
+        semanticTokens.setAugmentsSyntaxTokens(true);
+        textDocument.setSemanticTokens(semanticTokens);
+
         return new ClientCapabilities(workspace, textDocument, null);
     }
 
@@ -851,6 +893,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
         _server = null;
         _capabilities = null;
+        clearSemanticTokensCache();
         _started = false;
         _startupComplete = false;
         _launchAttempted = false;
@@ -1104,6 +1147,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         if (!_enabled || _server == null) {
             return;
         }
+        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         _log.info("didSave");
         var params = new DidSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
@@ -1116,6 +1160,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         if (!_enabled || _server == null) {
             return;
         }
+        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         _log.info("didOpen");
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
@@ -1127,6 +1172,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         if (!_enabled || _server == null) {
             return;
         }
+        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         _log.info("didClose");
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
@@ -1138,6 +1184,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         if (!_enabled || _server == null) {
             return;
         }
+        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
         var lineIndex = line.getY();
@@ -1156,6 +1203,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         if (!_enabled || _server == null) {
             return;
         }
+        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         _log.info("didRemove at " + startPosition + ", " + endPosition);
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var startLine = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
@@ -1178,6 +1226,108 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     public TextColor foregroundColourForScope(int scope) {
         return TextColor.ANSI.RED;
+    }
+
+    private boolean supportsSemanticTokens() {
+        return _enabled
+                && _server != null
+                && _capabilities != null
+                && _capabilities.getSemanticTokensProvider() != null;
+    }
+
+    private TextColor semanticTokenColor(String tokenType, int modifiersBitset, List<String> modifiers) {
+        if (hasModifier(modifiersBitset, modifiers, "deprecated")) {
+            return TextColor.ANSI.RED;
+        }
+        if (hasModifier(modifiersBitset, modifiers, "readonly")) {
+            return TextColor.ANSI.YELLOW;
+        }
+        return switch (tokenType) {
+        case "namespace", "decorator" -> TextColor.ANSI.CYAN;
+        case "type", "class", "enum", "interface", "struct" -> TextColor.ANSI.GREEN;
+        case "typeParameter", "parameter" -> TextColor.ANSI.MAGENTA;
+        case "property", "enumMember", "event" -> TextColor.ANSI.YELLOW;
+        case "function", "method", "macro" -> TextColor.ANSI.BLUE;
+        case "keyword", "modifier" -> TextColor.ANSI.RED;
+        case "comment" -> TextColor.ANSI.GREEN;
+        case "string" -> TextColor.ANSI.CYAN;
+        case "number", "regexp" -> TextColor.ANSI.MAGENTA;
+        case "operator" -> TextColor.ANSI.DEFAULT;
+        default -> TextColor.ANSI.DEFAULT;
+        };
+    }
+
+    private boolean hasModifier(int modifiersBitset, List<String> modifiers, String name) {
+        int index = modifiers.indexOf(name);
+        return index >= 0 && ((modifiersBitset >> index) & 1) == 1;
+    }
+
+    static List<SemanticHighlight> decodeSemanticHighlights(BufferContext bufferContext, SemanticTokens tokens, SemanticTokensLegend legend) {
+        if (tokens == null || tokens.getData() == null || legend == null || legend.getTokenTypes() == null) {
+            return List.of();
+        }
+        var tokenTypes = legend.getTokenTypes();
+        var tokenModifiers = legend.getTokenModifiers() == null ? List.<String>of() : legend.getTokenModifiers();
+        var client = JavaLSPClient.getInstance();
+        var data = tokens.getData();
+        var highlights = new ArrayList<SemanticHighlight>();
+        int line = 0;
+        int character = 0;
+
+        for (int i = 0; i + 4 < data.size(); i += 5) {
+            int deltaLine = data.get(i);
+            int deltaStart = data.get(i + 1);
+            int length = data.get(i + 2);
+            int tokenTypeIndex = data.get(i + 3);
+            int modifiersBitset = data.get(i + 4);
+
+            line += deltaLine;
+            character = deltaLine == 0 ? character + deltaStart : deltaStart;
+            if (length <= 0 || tokenTypeIndex < 0 || tokenTypeIndex >= tokenTypes.size()) {
+                continue;
+            }
+
+            try {
+                int start = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character);
+                int end = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character + length);
+                highlights.add(new SemanticHighlight(
+                        start,
+                        end,
+                        client.semanticTokenColor(tokenTypes.get(tokenTypeIndex), modifiersBitset, tokenModifiers)));
+            } catch (RuntimeException e) {
+                _log.debug("Skipping invalid semantic token at line " + line + " character " + character, e);
+            }
+        }
+        return highlights;
+    }
+
+    private List<SemanticHighlight> getSemanticHighlights(BufferContext bufferContext) {
+        if (!supportsSemanticTokens()) {
+            return List.of();
+        }
+        String uri = bufferContext.getBuffer().getURI().toString();
+        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+        synchronized (this) {
+            var cached = _semanticTokensCache.get(uri);
+            if (cached != null && cached.version() == version) {
+                return cached.highlights();
+            }
+        }
+
+        List<SemanticHighlight> highlights = List.of();
+        try {
+            var legend = _capabilities.getSemanticTokensProvider().getLegend();
+            var params = new SemanticTokensParams(bufferContext.getBuffer().getTextDocumentID());
+            var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
+            highlights = decodeSemanticHighlights(bufferContext, tokens, legend);
+        } catch (Exception e) {
+            _log.debug("Semantic token request failed", e);
+        }
+
+        synchronized (this) {
+            _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
+        }
+        return highlights;
     }
 
     private static Pattern _javaCommentPattern = Pattern.compile("(/\\*([^*]|[\\n]|(\\*+([^*/]|[\\n])))*\\*+/)|(//.*)", Pattern.MULTILINE);
@@ -1211,6 +1361,11 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         formatToken(str, string, _javaCharacterPattern, TextColor.ANSI.CYAN);
         formatToken(str, string, _javaCommentPattern, TextColor.ANSI.GREEN);
         formatToken(str, string, _javaStringPattern, TextColor.ANSI.CYAN);
+        if (bufferContext != null) {
+            for (var highlight : getSemanticHighlights(bufferContext)) {
+                str.format(highlight.start(), highlight.end(), highlight.foregroundColor(), TextColor.ANSI.DEFAULT);
+            }
+        }
     }
 
     private static Pattern _bracketPattern = Pattern.compile("\\{|\\}");
