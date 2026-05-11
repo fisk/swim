@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.lang.management.MemoryUsage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -52,6 +53,21 @@ class ModeLineViewTest {
 
             assertEquals(TextColor.ANSI.RED, invoke(window.getModeLineView(), "getModeColor", TextColor.class));
         }
+    }
+
+    @Test
+    void heapBarUsesCommittedCapacityAndThresholdColors() {
+        long mib = 1024L * 1024L;
+        var green = new MemoryUsage(0, 50 * mib, 100 * mib, 200 * mib);
+        var yellow = new MemoryUsage(0, 70 * mib, 100 * mib, 200 * mib);
+        var red = new MemoryUsage(0, 90 * mib, 100 * mib, 200 * mib);
+
+        assertEquals(100 * mib, ModeLineView.heapCapacityBytes(green));
+        assertEquals(5, ModeLineView.heapBarFilledColumns(green, 10));
+        assertEquals("50/100M", ModeLineView.heapLabel(green));
+        assertEquals(TextColor.ANSI.GREEN, ModeLineView.heapBarColor(green));
+        assertEquals(TextColor.ANSI.YELLOW, ModeLineView.heapBarColor(yellow));
+        assertEquals(TextColor.ANSI.RED, ModeLineView.heapBarColor(red));
     }
 
     private Path writeFile(String name, String text) throws IOException {

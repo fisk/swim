@@ -22,9 +22,12 @@ import org.fisk.swim.text.Powerline;
 import com.googlecode.lanterna.TextColor;
 
 public class ModeLineView extends View {
+    private static final int HEAP_BAR_WIDTH = 10;
+
     private String _time;
     private TextColor _foregroundColour;
     private final Timer _timer;
+    private final MemoryMXBean _memoryBean;
 
     private String getTime() {
         var format = DateFormat.getTimeInstance(2);
@@ -65,10 +68,56 @@ public class ModeLineView extends View {
         }
     }
     
-    private String getHeapData() {
-        MemoryMXBean bean = ManagementFactory.getMemoryMXBean();
-        MemoryUsage memoryUsage = bean.getHeapMemoryUsage();
-        return "" + memoryUsage.getUsed() / 1024 / 1024 + " MB / " + memoryUsage.getCommitted() / 1024 / 1024 + " MB";
+    static long heapCapacityBytes(MemoryUsage usage) {
+        long committed = usage.getCommitted();
+        if (committed > 0) {
+            return committed;
+        }
+        long max = usage.getMax();
+        if (max > 0) {
+            return max;
+        }
+        return 1;
+    }
+
+    static int heapBarFilledColumns(MemoryUsage usage, int width) {
+        long capacity = heapCapacityBytes(usage);
+        long used = Math.max(0, Math.min(usage.getUsed(), capacity));
+        return (int) Math.round((double) used * width / capacity);
+    }
+
+    static String heapLabel(MemoryUsage usage) {
+        long capacity = heapCapacityBytes(usage);
+        long used = Math.max(0, Math.min(usage.getUsed(), capacity));
+        return used / 1024 / 1024 + "/" + capacity / 1024 / 1024 + "M";
+    }
+
+    static TextColor heapBarColor(MemoryUsage usage) {
+        long capacity = heapCapacityBytes(usage);
+        long used = Math.max(0, Math.min(usage.getUsed(), capacity));
+        double ratio = capacity == 0 ? 0 : (double) used / capacity;
+        if (ratio >= 0.85) {
+            return TextColor.ANSI.RED;
+        }
+        if (ratio >= 0.6) {
+            return TextColor.ANSI.YELLOW;
+        }
+        return TextColor.ANSI.GREEN;
+    }
+
+    private MemoryUsage getHeapUsage() {
+        return _memoryBean.getHeapMemoryUsage();
+    }
+
+    private AttributedString getHeapString() {
+        MemoryUsage usage = getHeapUsage();
+        int filledColumns = heapBarFilledColumns(usage, HEAP_BAR_WIDTH);
+        var str = new AttributedString();
+        str.append("[", _foregroundColour, _backgroundColour);
+        str.append("#".repeat(filledColumns), heapBarColor(usage), _backgroundColour);
+        str.append("-".repeat(HEAP_BAR_WIDTH - filledColumns), TextColor.ANSI.DEFAULT, _backgroundColour);
+        str.append("] " + heapLabel(usage), _foregroundColour, _backgroundColour);
+        return str;
     }
 
     private String getLine() {
@@ -99,6 +148,7 @@ public class ModeLineView extends View {
         super(bounds);
         setBackgroundColour(TextColor.Factory.fromString("#000000"));
         _foregroundColour = TextColor.ANSI.RED;
+        _memoryBean = ManagementFactory.getMemoryMXBean();
         _time = getTime();
 
         _timer = new Timer(true);
@@ -143,7 +193,9 @@ public class ModeLineView extends View {
         str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
         str.append(" " + _time + " ", _foregroundColour, _backgroundColour);
         str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
-        str.append(" " + getHeapData() + " ", _foregroundColour, _backgroundColour);
+        str.append(" ", _foregroundColour, _backgroundColour);
+        str.append(getHeapString());
+        str.append(" ", _foregroundColour, _backgroundColour);
         str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
         return str;
     }
