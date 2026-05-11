@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.ui.Window;
 
 public final class SwimRuntime {
@@ -53,5 +54,18 @@ public final class SwimRuntime {
         if (_host != null) {
             _host.requestRebuildAndReload(_currentPathSupplier.get());
         }
+    }
+
+    public static void loadPlugin(String pluginId) {
+        if (_host != null) {
+            _host.requestLoadPlugin(pluginId, _currentPathSupplier.get());
+        }
+    }
+
+    public static SwimPanel getPanel(String pluginId) {
+        if (_host == null) {
+            return null;
+        }
+        return _host.getPanel(pluginId);
     }
 }

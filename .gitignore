@@ -2,11 +2,15 @@
 .settings
 .project
 build
-lib
 /target/
 /swim-core/target/
 /swim-launcher/target/
-/bin/
+/swim-java-lsp/target/
+/swim-tree-view/target/
+/image/
+/plugins/
+/workspace/
+/nemo/
 /deps/oracle.oracle-java/
 /deps/oracle.oracle-java.vsix
 /deps/oracle.oracle-java.vsix.download

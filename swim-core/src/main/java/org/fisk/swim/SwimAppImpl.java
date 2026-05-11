@@ -117,7 +117,7 @@ public class SwimAppImpl implements SwimApp {
 
         @Override
         public void shutdownJavaLsp() {
-            JavaLSPClient.getInstance().shutdown();
+            org.fisk.swim.lsp.java.JavaLspPluginSupport.shutdown();
         }
 
         @Override
@@ -199,6 +199,7 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
+        Thread ioThread = _ioThread;
         if (_ioThread != null) {
             _ioThread.interrupt();
             _ioThread = null;
@@ -210,6 +211,13 @@ public class SwimAppImpl implements SwimApp {
             window.dispose();
         }
         _bindings.shutdownTerminalContext();
+        if (ioThread != null && Thread.currentThread() != ioThread) {
+            try {
+                ioThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         _bindings.clearRuntime();
     }
 }

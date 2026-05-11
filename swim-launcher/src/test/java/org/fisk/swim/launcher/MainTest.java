@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -77,7 +76,7 @@ class MainTest {
     void coreModulePathPrefersInstalledBinArtifactsWhenPresent() throws Exception {
         Path root = tempDir.resolve("swim");
         Path target = root.resolve("swim-core").resolve("target");
-        Path installedCore = root.resolve("lib");
+        Path installedCore = root.resolve("plugins");
         Files.createDirectories(target.resolve("runtime-libs"));
         Files.createDirectories(installedCore.resolve("runtime-libs"));
         Files.writeString(target.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "target");
@@ -197,9 +196,7 @@ class MainTest {
 
     @Test
     void checkArgumentsCreatesMissingFileAndReturnsAbsolutePath() throws Exception {
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, (name, daemon, task) -> {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> tempDir);
         Path file = tempDir.resolve("new-file.txt");
@@ -212,9 +209,7 @@ class MainTest {
 
     @Test
     void checkArgumentsRejectsWrongNumberOfArguments() throws Exception {
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, (name, daemon, task) -> {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> tempDir);
 
@@ -228,9 +223,7 @@ class MainTest {
         Path root = tempDir.resolve("swim");
         Files.createDirectories(root.resolve("swim-core"));
         Files.writeString(root.resolve("pom.xml"), "<project />");
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, (name, daemon, task) -> {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> tempDir.resolve("missing").resolve("launcher.jar"));
         String previousUserDir = System.getProperty("user.dir");
@@ -251,9 +244,7 @@ class MainTest {
         Files.writeString(root.resolve("pom.xml"), "<project />");
         Path runtimeHome = root.resolve("image");
         Files.createDirectories(runtimeHome);
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, (name, daemon, task) -> {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> runtimeHome);
 
@@ -264,9 +255,7 @@ class MainTest {
 
     @Test
     void determineBuildRootThrowsWhenLauncherLocationAndUserDirMiss() {
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, (name, daemon, task) -> {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> tempDir.resolve("missing").resolve("launcher.jar"));
         String previousUserDir = System.getProperty("user.dir");
@@ -284,11 +273,18 @@ class MainTest {
     void requestReloadStartsNewAppRefreshesAndClosesPreviousApp() throws Exception {
         FakeApp previous = new FakeApp();
         FakeApp next = new FakeApp();
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = previous;
+        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+            previous.close();
+            next.start(path, host);
+            next.refresh(true);
+            return next;
+        };
         RecordingTaskRunner taskRunner = new RecordingTaskRunner();
-        Main main = new Main((buildRoot, parentLoader) -> next, buildRoot -> {
+        Main main = new Main(plugins, buildRoot -> {
             throw new AssertionError("rebuild not expected");
         }, taskRunner, () -> tempDir);
-        setLoadedApp(main, previous);
         Path path = tempDir.resolve("project.txt");
 
         main.requestReload(path);
@@ -300,39 +296,41 @@ class MainTest {
         assertEquals(List.of(true), next.refreshCalls);
         assertEquals(List.of("Reloaded SWIM core"), next.messages);
         assertTrue(previous.closed);
-        assertSame(next, getLoadedApp(main));
+        assertSame(next, main.getLoadedApp());
     }
 
     @Test
     void requestReloadFailureShowsMessageOnExistingApp() throws Exception {
         FakeApp previous = new FakeApp();
-        RecordingTaskRunner taskRunner = new RecordingTaskRunner();
-        Main main = new Main((buildRoot, parentLoader) -> {
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = previous;
+        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+            previous.close();
             throw new IllegalStateException("boom");
-        }, buildRoot -> {
+        };
+        RecordingTaskRunner taskRunner = new RecordingTaskRunner();
+        Main main = new Main(plugins, buildRoot -> {
             throw new AssertionError("rebuild not expected");
         }, taskRunner, () -> tempDir);
-        setLoadedApp(main, previous);
 
         main.requestReload(tempDir.resolve("project.txt"));
 
         assertEquals(List.of("Reload failed"), previous.messages);
-        assertFalse(previous.closed);
-        assertSame(previous, getLoadedApp(main));
+        assertTrue(previous.closed);
+        assertSame(previous, main.getLoadedApp());
     }
 
     @Test
     void requestRebuildAndReloadReportsBuildFailureWithoutReloading() throws Exception {
         FakeApp previous = new FakeApp();
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = previous;
         RecordingTaskRunner taskRunner = new RecordingTaskRunner();
         AtomicReference<Path> rebuildPath = new AtomicReference<>();
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("reload not expected");
-        }, buildRoot -> {
+        Main main = new Main(plugins, buildRoot -> {
             rebuildPath.set(buildRoot);
             return false;
         }, taskRunner, () -> tempDir);
-        setLoadedApp(main, previous);
         setBuildRoot(main, tempDir.resolve("build-root"));
 
         main.requestRebuildAndReload(tempDir.resolve("project.txt"));
@@ -340,30 +338,40 @@ class MainTest {
         assertEquals(tempDir.resolve("build-root"), rebuildPath.get());
         assertEquals(List.of("Rebuilding SWIM...", "Build failed"), previous.messages);
         assertFalse(previous.closed);
-        assertSame(previous, getLoadedApp(main));
+        assertSame(previous, main.getLoadedApp());
     }
 
     @Test
     void requestRebuildAndReloadReportsReloadFailureAfterSuccessfulBuild() throws Exception {
         FakeApp previous = new FakeApp();
-        Main main = new Main((buildRoot, parentLoader) -> {
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = previous;
+        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+            previous.close();
             throw new IllegalStateException("boom");
-        }, buildRoot -> true, (name, daemon, task) -> task.run(), () -> tempDir);
-        setLoadedApp(main, previous);
+        };
+        Main main = new Main(plugins, buildRoot -> true, (name, daemon, task) -> task.run(), () -> tempDir);
 
         main.requestRebuildAndReload(tempDir.resolve("project.txt"));
 
         assertEquals(List.of("Rebuilding SWIM...", "Reload failed after rebuild"), previous.messages);
-        assertFalse(previous.closed);
-        assertSame(previous, getLoadedApp(main));
+        assertTrue(previous.closed);
+        assertSame(previous, main.getLoadedApp());
     }
 
     @Test
     void requestRebuildAndReloadReplacesRunningAppAfterSuccessfulBuild() throws Exception {
         FakeApp previous = new FakeApp();
         FakeApp next = new FakeApp();
-        Main main = new Main((buildRoot, parentLoader) -> next, buildRoot -> true, (name, daemon, task) -> task.run(), () -> tempDir);
-        setLoadedApp(main, previous);
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = previous;
+        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+            previous.close();
+            next.start(path, host);
+            next.refresh(true);
+            return next;
+        };
+        Main main = new Main(plugins, buildRoot -> true, (name, daemon, task) -> task.run(), () -> tempDir);
         Path path = tempDir.resolve("project.txt");
 
         main.requestRebuildAndReload(path);
@@ -373,22 +381,22 @@ class MainTest {
         assertEquals(path, next.startedPath);
         assertEquals(List.of(true), next.refreshCalls);
         assertEquals(List.of("Rebuilt and reloaded SWIM"), next.messages);
-        assertSame(next, getLoadedApp(main));
+        assertSame(next, main.getLoadedApp());
     }
 
     @Test
     void requestExitCountsDownLatchClearsLoadedAppAndClosesInDaemonTask() throws Exception {
         FakeApp app = new FakeApp();
+        FakePluginController plugins = new FakePluginController();
+        plugins.currentApp = app;
         RecordingTaskRunner taskRunner = new RecordingTaskRunner();
-        Main main = new Main((buildRoot, parentLoader) -> {
-            throw new AssertionError("app loading not expected");
-        }, buildRoot -> false, taskRunner, () -> tempDir);
-        setLoadedApp(main, app);
+        Main main = new Main(plugins, buildRoot -> false, taskRunner, () -> tempDir);
 
         main.requestExit();
 
-        assertNull(getLoadedApp(main));
+        assertNull(main.getLoadedApp());
         assertTrue(app.closed);
+        assertTrue(plugins.unloadAllCalled);
         assertEquals(List.of("swim-close"), taskRunner.names);
         assertEquals(List.of(true), taskRunner.daemons);
         assertEquals(0L, getExitLatch(main).getCount());
@@ -540,34 +548,10 @@ class MainTest {
         field.set(main, buildRoot);
     }
 
-    private static void setLoadedApp(Main main, SwimApp app) throws Exception {
-        Field field = Main.class.getDeclaredField("_loadedApp");
-        field.setAccessible(true);
-        field.set(main, createLoadedApp(app));
-    }
-
-    private static SwimApp getLoadedApp(Main main) throws Exception {
-        Field field = Main.class.getDeclaredField("_loadedApp");
-        field.setAccessible(true);
-        Object loadedApp = field.get(main);
-        if (loadedApp == null) {
-            return null;
-        }
-        Method appMethod = loadedApp.getClass().getDeclaredMethod("app");
-        appMethod.setAccessible(true);
-        return (SwimApp) appMethod.invoke(loadedApp);
-    }
-
     private static CountDownLatch getExitLatch(Main main) throws Exception {
         Field field = Main.class.getDeclaredField("_exitLatch");
         field.setAccessible(true);
         return (CountDownLatch) field.get(main);
-    }
-
-    private static Object createLoadedApp(SwimApp app) throws Exception {
-        Constructor<?> constructor = Class.forName("org.fisk.swim.launcher.Main$LoadedApp").getDeclaredConstructor(SwimApp.class);
-        constructor.setAccessible(true);
-        return constructor.newInstance(app);
     }
 
     private static final class RecordingTaskRunner implements Main.TaskRunner {
@@ -580,6 +564,50 @@ class MainTest {
             daemons.add(daemon);
             task.run();
         }
+    }
+
+    private static final class FakePluginController implements Main.PluginController {
+        private ReloadAction reloadAction = (buildRoot, path, host, parentLoader) -> {
+            throw new AssertionError("reload not expected");
+        };
+        private SwimApp currentApp;
+        private boolean unloadAllCalled;
+
+        @Override
+        public SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader) {
+            SwimApp reloaded = reloadAction.reload(buildRoot, path, host, parentLoader);
+            currentApp = reloaded;
+            return reloaded;
+        }
+
+        @Override
+        public SwimApp currentApp() {
+            return currentApp;
+        }
+
+        @Override
+        public void loadPlugin(String id, Path path, SwimHost host) {
+        }
+
+        @Override
+        public List<String> loadedPluginIds() {
+            return currentApp == null ? List.of() : List.of("core");
+        }
+
+        @Override
+        public void unloadAll() {
+            unloadAllCalled = true;
+            SwimApp app = currentApp;
+            currentApp = null;
+            if (app != null) {
+                app.close();
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface ReloadAction {
+        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader);
     }
 
     private static final class FakeApp implements SwimApp {

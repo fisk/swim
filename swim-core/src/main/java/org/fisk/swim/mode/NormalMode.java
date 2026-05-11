@@ -1,15 +1,19 @@
 package org.fisk.swim.mode;
 
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.lsp.java.JavaLSPClient;
+import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
+import org.fisk.swim.ui.PluginPanelView;
 import org.fisk.swim.ui.Window;
 
 public class NormalMode extends Mode {
+    private static final String TREE_VIEW_PLUGIN_ID = "swim-tree-view";
     private FancyJumpResponder _fancyJump;
     
     public NormalMode(Window window) {
@@ -22,99 +26,125 @@ public class NormalMode extends Mode {
         var window = _window;
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
-        var cursor = buffer.getCursor();
         String leader = "<SPACE>";
         _fancyJump = new FancyJumpResponder(bufferContext, 'w');
         _rootResponder.addEventResponder(_fancyJump);
         _rootResponder.addEventResponder(leader + " e i", () -> {
+            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
             JavaLSPClient.getInstance().organizeImports(window.getBufferContext());
         });
         _rootResponder.addEventResponder(leader + " e f", () -> {
+            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
             JavaLSPClient.getInstance().makeFinal(window.getBufferContext());
         });
         _rootResponder.addEventResponder(leader + " e a", () -> {
+            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
             JavaLSPClient.getInstance().generateAccessors(window.getBufferContext());
         });
         _rootResponder.addEventResponder(leader + " e s", () -> {
+            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
             JavaLSPClient.getInstance().generateToString(window.getBufferContext());
         });
         _rootResponder.addEventResponder(leader + " e l", () -> {
+            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
             JavaLSPClient.getInstance().codeLens(window.getBufferContext());
         });
         _rootResponder.addEventResponder("i", () -> { window.switchToMode(window.getInputMode()); });
         _rootResponder.addEventResponder("v", () -> { window.switchToMode(window.getVisualMode()); });
         _rootResponder.addEventResponder("V", () -> { window.switchToMode(window.getVisualLineMode()); });
         _rootResponder.addEventResponder("<CTRL>-v", () -> { window.switchToMode(window.getVisualBlockMode()); });
-        _rootResponder.addEventResponder("u", () -> { buffer.undo(); });
+        _rootResponder.addEventResponder("<CTRL>-w s", () -> { window.splitActiveBufferVertically(); });
+        _rootResponder.addEventResponder("<CTRL>-w v", () -> { window.splitActiveBufferHorizontally(); });
+        _rootResponder.addEventResponder("<CTRL>-w h", () -> { announceIfUnmoved(window.focusView(Window.Direction.LEFT), "No pane to the left"); });
+        _rootResponder.addEventResponder("<CTRL>-w j", () -> { announceIfUnmoved(window.focusView(Window.Direction.DOWN), "No pane below"); });
+        _rootResponder.addEventResponder("<CTRL>-w k", () -> { announceIfUnmoved(window.focusView(Window.Direction.UP), "No pane above"); });
+        _rootResponder.addEventResponder("<CTRL>-w l", () -> { announceIfUnmoved(window.focusView(Window.Direction.RIGHT), "No pane to the right"); });
+        _rootResponder.addEventResponder("<CTRL>-w w", () -> { announceIfUnmoved(window.focusNextView(), "No other pane"); });
+        _rootResponder.addEventResponder("<CTRL>-w W", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); });
+        _rootResponder.addEventResponder("<CTRL>-w q", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); });
+        _rootResponder.addEventResponder("<CTRL>-w o", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); });
+        _rootResponder.addEventResponder("u", () -> { window.getBufferContext().getBuffer().undo(); });
         _rootResponder.addEventResponder("<CTRL>-r", () -> {window.getBufferContext().getBuffer().redo(); });
         _rootResponder.addEventResponder("d i w", () -> {
-            buffer.deleteInnerWord();
-            buffer.getUndoLog().commit();
+            var activeBuffer = window.getBufferContext().getBuffer();
+            activeBuffer.deleteInnerWord();
+            activeBuffer.getUndoLog().commit();
         });
         _rootResponder.addEventResponder("d w", () -> {
-            buffer.deleteWord();
-            buffer.getUndoLog().commit();
+            var activeBuffer = window.getBufferContext().getBuffer();
+            activeBuffer.deleteWord();
+            activeBuffer.getUndoLog().commit();
         });
         _rootResponder.addEventResponder("d d", () -> {
-            buffer.deleteLine();
-            buffer.getUndoLog().commit();
+            var activeBuffer = window.getBufferContext().getBuffer();
+            activeBuffer.deleteLine();
+            activeBuffer.getUndoLog().commit();
         });
         _rootResponder.addEventResponder("x", () -> {
-            buffer.removeAt();
-            buffer.getUndoLog().commit();
+            var activeBuffer = window.getBufferContext().getBuffer();
+            activeBuffer.removeAt();
+            activeBuffer.getUndoLog().commit();
         });
         _rootResponder.addEventResponder("c i w", () -> {
-            buffer.deleteInnerWord();
+            window.getBufferContext().getBuffer().deleteInnerWord();
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("c w", () -> {
-            buffer.deleteWord();
+            window.getBufferContext().getBuffer().deleteWord();
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("a", () -> {
             window.switchToMode(window.getInputMode());
-            buffer.getCursor().goRight();
+            window.getBufferContext().getBuffer().getCursor().goRight();
         });
         _rootResponder.addEventResponder("A", () -> {
             window.switchToMode(window.getInputMode());
-            cursor.goEndOfLine();
+            window.getBufferContext().getBuffer().getCursor().goEndOfLine();
         });
         _rootResponder.addEventResponder("o", () -> {
+            var cursor = window.getBufferContext().getBuffer().getCursor();
+            var activeBuffer = window.getBufferContext().getBuffer();
             cursor.goEndOfLine();
             window.switchToMode(window.getInputMode());
-            buffer.insert("\n");
+            activeBuffer.insert("\n");
         });
         _rootResponder.addEventResponder("O", () -> {
+            var activeBuffer = window.getBufferContext().getBuffer();
+            var cursor = activeBuffer.getCursor();
             cursor.goStartOfLine();
             cursor.goBack();
             boolean isFirst = cursor.getPosition() == 0;
             window.switchToMode(window.getInputMode());
-            buffer.insert("\n");
+            activeBuffer.insert("\n");
             if (isFirst) {
                 cursor.goBack();
             }
         });
         _rootResponder.addEventResponder("p", () -> {
+            var activeBuffer = window.getBufferContext().getBuffer();
+            var cursor = activeBuffer.getCursor();
             if (Copy.getInstance().isLine()) {
                 cursor.goEndOfLine();
                 cursor.goForward();
-                buffer.insert(Copy.getInstance().getText());
+                activeBuffer.insert(Copy.getInstance().getText());
                 cursor.goBack();
             } else {
                 cursor.goForward();
-                buffer.insert(Copy.getInstance().getText());
+                activeBuffer.insert(Copy.getInstance().getText());
             }
         });
         _rootResponder.addEventResponder("P", () -> {
+            var activeBuffer = window.getBufferContext().getBuffer();
+            var cursor = activeBuffer.getCursor();
             if (Copy.getInstance().isLine()) {
                 cursor.goStartOfLine();
-                buffer.insert(Copy.getInstance().getText());
+                activeBuffer.insert(Copy.getInstance().getText());
             } else {
-                buffer.insert(Copy.getInstance().getText());
+                activeBuffer.insert(Copy.getInstance().getText());
             }
         });
         _rootResponder.addEventResponder("y y", () -> {
-            var text = buffer.getCurrentLineText();
+            var text = window.getBufferContext().getBuffer().getCurrentLineText();
             Copy.getInstance().setText(text, true /* isLine */);
         });
         _rootResponder.addEventResponder("m", () -> {
@@ -124,11 +154,14 @@ public class NormalMode extends Mode {
                 window.showList(FileIndex.createFileList(), "Project Files");
             }
         });
+        _rootResponder.addEventResponder("t", () -> {
+            toggleTreeView();
+        });
         _rootResponder.addEventResponder(":", () -> {
             window.getCommandView().activate(":");
         });
         _rootResponder.addEventResponder("*", () -> {
-            var word = buffer.getInnerWord();
+            var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
                 window.getCommandView().activate("/");
                 window.getCommandView().runSearch(word);
@@ -136,7 +169,7 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("#", () -> {
-            var word = buffer.getInnerWord();
+            var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
                 window.getCommandView().activate("?");
                 window.getCommandView().runSearch(word);
@@ -158,6 +191,34 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<ESC>", () -> {
             NemoClient.getInstance().run(window.getBufferContext(), "");
         });
+    }
+
+    private void announceIfUnmoved(boolean changed, String message) {
+        if (!changed) {
+            _window.getCommandView().setMessage(message);
+        }
+    }
+
+    private void toggleTreeView() {
+        if (_window.getPanelView() instanceof PluginPanelView panelView
+                && TREE_VIEW_PLUGIN_ID.equals(panelView.getPluginId())) {
+            _window.hidePanel();
+            return;
+        }
+        if (_window.isShowingPanel()) {
+            _window.hidePanel();
+        }
+        SwimRuntime.loadPlugin(TREE_VIEW_PLUGIN_ID);
+        var panel = SwimRuntime.getPanel(TREE_VIEW_PLUGIN_ID);
+        if (panel == null) {
+            _window.getCommandView().setMessage("Tree view plugin unavailable");
+            return;
+        }
+        panel.syncToCurrentPath(_window.getBufferContext().getBuffer().getPath());
+        if (!_window.showSidePanel(new PluginPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), TREE_VIEW_PLUGIN_ID, panel),
+                true, 0.28)) {
+            _window.getCommandView().setMessage("Unable to open tree view");
+        }
     }
 
     @Override

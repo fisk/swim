@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.fisk.swim.EventThread;
@@ -48,8 +49,7 @@ class NemoChatIT {
                 textResponse("Follow-up answer")));
         try {
             writeConfig(server);
-            String originalUserHome = System.getProperty("user.home");
-            System.setProperty("user.home", tempDir.toString());
+            String originalUserHome = switchToTempUserHome();
             try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
                 EventThread.getInstance().start();
                 var window = harness.getWindow();
@@ -85,8 +85,7 @@ class NemoChatIT {
                 textResponse("Updated file")));
         try {
             writeConfig(server);
-            String originalUserHome = System.getProperty("user.home");
-            System.setProperty("user.home", tempDir.toString());
+            String originalUserHome = switchToTempUserHome();
             try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
                 EventThread.getInstance().start();
                 var window = harness.getWindow();
@@ -107,17 +106,208 @@ class NemoChatIT {
         }
     }
 
+    @Test
+    @Timeout(20)
+    void supportsMultipleSessionsWorkersAndHistoryPersistence() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startServer(requestCount, 2000, List.of(
+                textResponse("First answer"),
+                textResponse("Second answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            Path file = writeFile("chat.txt", "class Demo {}\n");
+            try {
+                try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                    EventThread.getInstance().start();
+                    var window = harness.getWindow();
+
+                    NemoClient.getInstance().run(window.getBufferContext(), "First question");
+                    var panel = waitForPanel(window);
+                    waitForThinking(panel);
+
+                    submit(panel, ":new Review");
+                    panel = waitForPanel(window);
+                    waitForLine(panel, "Created session-2 (Review).");
+
+                    submit(panel, "Second question");
+                    waitForThinking(panel);
+
+                    submit(panel, ":workers");
+                    waitForLine(panel, "Workers:");
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-2")));
+
+                    String session2Answer = waitForAnyAnswer(panel);
+                    submit(panel, ":switch session-1");
+                    panel = waitForPanel(window);
+                    waitForAnyAnswer(panel);
+                    String session1Answer = findAnswer(panel);
+                    assertTrue(session1Answer != null && session2Answer != null);
+                    assertFalse(session1Answer.equals(session2Answer));
+                    assertTrue(List.of(session1Answer, session2Answer).contains("First answer"));
+                    assertTrue(List.of(session1Answer, session2Answer).contains("Second answer"));
+                }
+
+                assertTrue(Files.isRegularFile(tempDir.resolve(".swim/nemo/sessions.json")));
+
+                NemoClient.getInstance().resetForTests();
+                EventThread.shutdownInstance();
+
+                try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                    EventThread.getInstance().start();
+                    var window = harness.getWindow();
+
+                    NemoClient.getInstance().run(window.getBufferContext(), "");
+                    var panel = waitForPanel(window);
+                    String restoredSession1Answer = waitForAnyAnswer(panel);
+
+                    submit(panel, ":sessions");
+                    waitForLine(panel, "Sessions:");
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-2")));
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("me> :sessions")));
+
+                    submit(panel, ":switch session-2");
+                    panel = waitForPanel(window);
+                    String restoredSession2Answer = waitForAnyAnswer(panel);
+                    assertFalse(restoredSession1Answer.equals(restoredSession2Answer));
+                    assertTrue(List.of(restoredSession1Answer, restoredSession2Answer).contains("First answer"));
+                    assertTrue(List.of(restoredSession1Answer, restoredSession2Answer).contains("Second answer"));
+                }
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void listsAndAbortsWorkersAcrossSessions() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startServer(requestCount, 3000, List.of(
+                textResponse("First answer"),
+                textResponse("Second answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "First question");
+                var panel = waitForPanel(window);
+                waitForThinking(panel);
+
+                submit(panel, ":new Review");
+                panel = waitForPanel(window);
+                waitForLine(panel, "Created session-2 (Review).");
+
+                submit(panel, "Second question");
+                waitForThinking(panel);
+
+                submit(panel, ":workers");
+                waitForLine(panel, "Workers:");
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-2")));
+
+                submit(panel, ":abort all");
+                waitForLine(panel, "Aborted 2 workers.");
+                submit(panel, ":workers");
+                waitForLine(panel, "No Nemo workers running.");
+
+                Thread.sleep(3500);
+                var transcript = displayLines(panel);
+                assertFalse(transcript.stream().anyMatch(line -> line.contains("First answer")));
+                assertFalse(transcript.stream().anyMatch(line -> line.contains("Second answer")));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void renamesAndDeletesSessionsAndPersistsMetadata() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir);
+        Files.writeString(configDir.resolve("nemo.conf"), "");
+        Path file = writeFile("chat.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":new Review");
+                panel = waitForPanel(window);
+                waitForLine(panel, "Created session-2 (Review).");
+
+                submit(panel, ":rename Review Session");
+                panel = waitForPanel(window);
+                waitForLine(panel, "Renamed session-2 to Review Session.");
+
+                submit(panel, ":delete session-1");
+                waitForLine(panel, "Deleted session-1.");
+
+                submit(panel, ":sessions");
+                waitForLine(panel, "Sessions:");
+                var transcript = displayLines(panel);
+                assertFalse(transcript.stream().anyMatch(line -> line.contains("session-1 |")));
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("session-2 | Review Session")));
+            }
+
+            NemoClient.getInstance().resetForTests();
+            EventThread.shutdownInstance();
+
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":sessions");
+                waitForLine(panel, "Sessions:");
+                var transcript = displayLines(panel);
+                assertFalse(transcript.stream().anyMatch(line -> line.contains("session-1 |")));
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("session-2 | Review Session")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
     private HttpServer startServer(AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
+        return startServer(requestCount, 0, responses);
+    }
+
+    private HttpServer startServer(AtomicInteger requestCount, long responseDelayMillis, List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/responses", exchange -> handleResponse(exchange, requestCount, responses));
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/responses", exchange -> handleResponse(exchange, requestCount, responseDelayMillis, responses));
         server.start();
         return server;
     }
 
-    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
+    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, long responseDelayMillis, List<JsonObject> responses) throws IOException {
         int requestIndex = requestCount.incrementAndGet();
         exchange.getRequestBody().readAllBytes();
         JsonObject response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
+        if (responseDelayMillis > 0) {
+            try {
+                Thread.sleep(responseDelayMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -184,6 +374,13 @@ class NemoChatIT {
                 "tool.web_search=false"));
     }
 
+    private String switchToTempUserHome() {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        NemoClient.getInstance().resetForTests();
+        return originalUserHome;
+    }
+
     private ChatPanelView waitForPanel(org.fisk.swim.ui.Window window) throws Exception {
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
@@ -206,6 +403,41 @@ class NemoChatIT {
             Thread.sleep(50);
         }
         throw new AssertionError("Timed out waiting for line: " + expected + "\nCurrent lines: " + displayLines(panel));
+    }
+
+    private void waitForThinking(ChatPanelView panel) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (displayLines(panel).stream().anyMatch(line -> line.contains("*thinking*"))) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Timed out waiting for pending worker. Current lines: " + displayLines(panel));
+    }
+
+    private String waitForAnyAnswer(ChatPanelView panel) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            String answer = findAnswer(panel);
+            if (answer != null) {
+                return answer;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for Nemo answer. Current lines: " + displayLines(panel));
+    }
+
+    private String findAnswer(ChatPanelView panel) throws Exception {
+        for (String line : displayLines(panel)) {
+            if (line.contains("nemo> First answer")) {
+                return "First answer";
+            }
+            if (line.contains("nemo> Second answer")) {
+                return "Second answer";
+            }
+        }
+        return null;
     }
 
     private static void submit(ChatPanelView panel, String text) {

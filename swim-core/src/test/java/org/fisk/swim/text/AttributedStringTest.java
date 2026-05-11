@@ -57,6 +57,20 @@ class AttributedStringTest {
         assertEquals("a,f", fragments(string));
     }
 
+    @Test
+    void sliceKeepsOnlyRequestedRange() {
+        var string = new AttributedString();
+        string.append("ab", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+        string.append("cd", TextColor.ANSI.RED, TextColor.ANSI.BLACK);
+        string.append("ef", TextColor.ANSI.GREEN, TextColor.ANSI.BLACK);
+
+        var slice = string.slice(1, 5);
+
+        assertEquals("bcde", slice.toString());
+        assertEquals(4, slice.length());
+        assertEquals("b,cd,e", fragments(slice));
+    }
+
     private static String fragments(AttributedString string) {
         return string.getFragments().stream()
                 .map(AttributedString.AttributedStringFragment::toString)

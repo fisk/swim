@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -48,7 +49,11 @@ public class NemoClient {
     private static final NemoClient _instance = new NemoClient();
 
     private final HttpClient _httpClient = HttpClient.newHttpClient();
-    private Conversation _conversation;
+    private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
+    private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
+    private boolean _sessionsLoaded;
+    private String _activeSessionId;
+    private long _nextSessionNumber = 1;
 
     private NemoClient() {
     }
@@ -58,29 +63,47 @@ public class NemoClient {
     }
 
     synchronized void resetForTests() {
-        _conversation = null;
+        for (var conversation : _conversations.values()) {
+            stopWorker(conversation);
+        }
+        _conversations.clear();
+        _workspaceSessionIds.clear();
+        _sessionsLoaded = false;
+        _activeSessionId = null;
+        _nextSessionNumber = 1;
     }
 
-    record ChatTurn(String speaker, String text) {
+    record ChatTurn(String speaker, String text, boolean includeInPrompt) {
+        ChatTurn(String speaker, String text) {
+            this(speaker, text, true);
+        }
     }
 
     record ToolCall(String callId, String name, JsonObject arguments) {
     }
 
     private static final class Conversation {
-        private final BufferContext _context;
-        private final Configuration _configuration;
-        private final ChatPanelView _panelView;
+        private final String _id;
+        private final Path _workspaceRoot;
+        private final long _createdAtMillis;
         private final List<ChatTurn> _turns = new ArrayList<>();
+        private String _title;
+        private long _updatedAtMillis;
+        private BufferContext _context;
+        private Configuration _configuration;
+        private ChatPanelView _panelView;
         private boolean _pending;
+        private long _pendingStartedAtMillis;
         private long _requestSequence;
         private long _activeRequestId;
         private Thread _worker;
 
-        private Conversation(BufferContext context, Configuration configuration, ChatPanelView panelView) {
-            _context = context;
-            _configuration = configuration;
-            _panelView = panelView;
+        private Conversation(String id, String title, Path workspaceRoot, long createdAtMillis, long updatedAtMillis) {
+            _id = id;
+            _title = title;
+            _workspaceRoot = workspaceRoot;
+            _createdAtMillis = createdAtMillis;
+            _updatedAtMillis = updatedAtMillis;
         }
     }
 
@@ -88,7 +111,9 @@ public class NemoClient {
         question = question.trim();
         Configuration configuration = loadConfiguration(getConfigPath());
         var conversation = ensureConversation(context, configuration);
-        if (!question.equals("")) {
+        if (question.startsWith(":")) {
+            handleCommand(conversation, question);
+        } else if (!question.equals("")) {
             submit(conversation, question);
         }
     }
@@ -119,6 +144,10 @@ public class NemoClient {
         return Paths.get(System.getProperty("user.home"), ".swim", "nemo.conf");
     }
 
+    static Path getStatePath() {
+        return Paths.get(System.getProperty("user.home"), ".swim", "nemo", "sessions.json");
+    }
+
     static String buildInput(BufferContext context, String question) {
         return buildInput(context, List.of(new ChatTurn("me", question)));
     }
@@ -127,6 +156,9 @@ public class NemoClient {
         var buffer = context.getBuffer();
         var transcript = new StringBuilder();
         for (var turn : turns) {
+            if (!turn.includeInPrompt()) {
+                continue;
+            }
             if (!transcript.isEmpty()) {
                 transcript.append("\n\n");
             }
@@ -919,29 +951,278 @@ public class NemoClient {
         return lines;
     }
 
+    private synchronized void ensureSessionsLoaded() {
+        if (_sessionsLoaded) {
+            return;
+        }
+
+        _sessionsLoaded = true;
+        _conversations.clear();
+        _workspaceSessionIds.clear();
+        _activeSessionId = null;
+        _nextSessionNumber = 1;
+
+        Path statePath = getStatePath();
+        if (!Files.isRegularFile(statePath)) {
+            return;
+        }
+
+        try {
+            JsonObject root = parseJsonObject(Files.readString(statePath, StandardCharsets.UTF_8));
+            if (root.has("next_session_number")) {
+                _nextSessionNumber = Math.max(1L, root.get("next_session_number").getAsLong());
+            }
+            if (root.has("active_session_id")) {
+                _activeSessionId = compactRawBody(root.get("active_session_id").getAsString());
+            }
+
+            JsonObject workspaceSessions = root.getAsJsonObject("workspace_sessions");
+            if (workspaceSessions != null) {
+                for (String key : workspaceSessions.keySet()) {
+                    _workspaceSessionIds.put(key, workspaceSessions.get(key).getAsString());
+                }
+            }
+
+            JsonArray sessions = root.getAsJsonArray("sessions");
+            long highestSessionNumber = 0;
+            if (sessions != null) {
+                for (JsonElement element : sessions) {
+                    JsonObject sessionObject = element.getAsJsonObject();
+                    String id = sessionObject.get("id").getAsString();
+                    String title = sessionObject.has("title") ? sessionObject.get("title").getAsString() : id;
+                    String workspaceRoot = sessionObject.get("workspace_root").getAsString();
+                    long createdAtMillis = sessionObject.has("created_at_millis")
+                            ? sessionObject.get("created_at_millis").getAsLong()
+                            : System.currentTimeMillis();
+                    long updatedAtMillis = sessionObject.has("updated_at_millis")
+                            ? sessionObject.get("updated_at_millis").getAsLong()
+                            : createdAtMillis;
+
+                    var conversation = new Conversation(
+                            id,
+                            title,
+                            Path.of(workspaceRoot).toAbsolutePath().normalize(),
+                            createdAtMillis,
+                            updatedAtMillis);
+                    JsonArray turns = sessionObject.getAsJsonArray("turns");
+                    if (turns != null) {
+                        for (JsonElement turnElement : turns) {
+                            JsonObject turnObject = turnElement.getAsJsonObject();
+                            conversation._turns.add(new ChatTurn(
+                                    turnObject.get("speaker").getAsString(),
+                                    turnObject.get("text").getAsString(),
+                                    !turnObject.has("include_in_prompt")
+                                            || turnObject.get("include_in_prompt").getAsBoolean()));
+                        }
+                    }
+                    _conversations.put(conversation._id, conversation);
+                    highestSessionNumber = Math.max(highestSessionNumber, sessionNumber(conversation._id));
+                }
+            }
+
+            _nextSessionNumber = Math.max(_nextSessionNumber, highestSessionNumber + 1);
+            if (_activeSessionId != null && !_conversations.containsKey(_activeSessionId)) {
+                _activeSessionId = null;
+            }
+            _workspaceSessionIds.entrySet().removeIf(entry -> !_conversations.containsKey(entry.getValue()));
+        } catch (Exception e) {
+            _log.error("Unable to load Nemo sessions from {}", statePath, e);
+            _conversations.clear();
+            _workspaceSessionIds.clear();
+            _activeSessionId = null;
+            _nextSessionNumber = 1;
+        }
+    }
+
+    private synchronized void persistSessions() {
+        var root = new JsonObject();
+        root.addProperty("next_session_number", _nextSessionNumber);
+        if (_activeSessionId != null) {
+            root.addProperty("active_session_id", _activeSessionId);
+        }
+
+        var workspaceSessions = new JsonObject();
+        for (var entry : _workspaceSessionIds.entrySet()) {
+            if (_conversations.containsKey(entry.getValue())) {
+                workspaceSessions.addProperty(entry.getKey(), entry.getValue());
+            }
+        }
+        root.add("workspace_sessions", workspaceSessions);
+
+        var sessions = new JsonArray();
+        for (var conversation : _conversations.values()) {
+            var session = new JsonObject();
+            session.addProperty("id", conversation._id);
+            session.addProperty("title", conversation._title);
+            session.addProperty("workspace_root", conversation._workspaceRoot.toString());
+            session.addProperty("created_at_millis", conversation._createdAtMillis);
+            session.addProperty("updated_at_millis", conversation._updatedAtMillis);
+
+            var turns = new JsonArray();
+            for (var turn : conversation._turns) {
+                var turnObject = new JsonObject();
+                turnObject.addProperty("speaker", turn.speaker());
+                turnObject.addProperty("text", turn.text());
+                turnObject.addProperty("include_in_prompt", turn.includeInPrompt());
+                turns.add(turnObject);
+            }
+            session.add("turns", turns);
+            sessions.add(session);
+        }
+        root.add("sessions", sessions);
+
+        Path statePath = getStatePath();
+        try {
+            Files.createDirectories(statePath.getParent());
+            Path tempPath = Files.createTempFile(statePath.getParent(), "sessions-", ".json.tmp");
+            Files.writeString(tempPath, _gson.toJson(root), StandardCharsets.UTF_8);
+            try {
+                Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            _log.error("Unable to persist Nemo sessions to {}", statePath, e);
+        }
+    }
+
+    private static long sessionNumber(String sessionId) {
+        int separator = sessionId.lastIndexOf('-');
+        if (separator < 0 || separator + 1 >= sessionId.length()) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(sessionId.substring(separator + 1));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration) {
+        ensureSessionsLoaded();
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        Conversation conversation = currentVisibleConversation();
+        if (conversation != null && conversation._workspaceRoot.equals(workspaceRoot)) {
+            bindConversation(conversation, context, configuration);
+            return conversation;
+        }
+
+        conversation = preferredConversationForWorkspace(workspaceRoot);
+        if (conversation == null) {
+            conversation = createConversation(workspaceRoot, "");
+        }
+
+        bindConversation(conversation, context, configuration);
+        showConversation(conversation);
+        return conversation;
+    }
+
+    private Conversation currentVisibleConversation() {
+        if (_activeSessionId == null) {
+            return null;
+        }
+        Conversation conversation = _conversations.get(_activeSessionId);
+        if (conversation == null || !isPanelVisible(conversation)) {
+            return null;
+        }
+        return conversation;
+    }
+
+    private Conversation preferredConversationForWorkspace(Path workspaceRoot) {
+        String preferredId = _workspaceSessionIds.get(workspaceRoot.toString());
+        if (preferredId != null) {
+            Conversation conversation = _conversations.get(preferredId);
+            if (conversation != null) {
+                return conversation;
+            }
+        }
+
+        Conversation newest = null;
+        for (var conversation : _conversations.values()) {
+            if (!conversation._workspaceRoot.equals(workspaceRoot)) {
+                continue;
+            }
+            if (newest == null || conversation._updatedAtMillis > newest._updatedAtMillis) {
+                newest = conversation;
+            }
+        }
+        return newest;
+    }
+
+    private Conversation createConversation(Path workspaceRoot, String requestedTitle) {
+        long sessionNumber = _nextSessionNumber++;
+        String id = "session-" + sessionNumber;
+        String title = requestedTitle == null || requestedTitle.isBlank()
+                ? "Session " + sessionNumber
+                : requestedTitle.trim();
+        long now = System.currentTimeMillis();
+        var conversation = new Conversation(id, title, workspaceRoot, now, now);
+        _conversations.put(conversation._id, conversation);
+        return conversation;
+    }
+
+    private void bindConversation(Conversation conversation, BufferContext context, Configuration configuration) {
+        conversation._context = context;
+        conversation._configuration = configuration;
+    }
+
+    private synchronized void showConversation(Conversation conversation) {
         var window = Window.getInstance();
         if (window == null) {
             throw new IllegalStateException("No active window");
         }
-        if (_conversation != null && _conversation._panelView.getParent() != null
-                && _conversation._context == context) {
-            return _conversation;
+
+        if (isPanelVisible(conversation)) {
+            _activeSessionId = conversation._id;
+            _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
+            persistSessions();
+            return;
         }
 
         if (window.isShowingPanel()) {
             window.hidePanel();
         }
 
-        Conversation[] holder = new Conversation[1];
-        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), "Nemo",
-                message -> submit(holder[0], message),
-                command -> handleCommand(holder[0], command));
-        var conversation = new Conversation(context, configuration, panelView);
-        holder[0] = conversation;
-        window.showPanel(panelView);
-        _conversation = conversation;
-        return conversation;
+        conversation._panelView = createPanelView(conversation);
+        window.showPanel(conversation._panelView);
+        _activeSessionId = conversation._id;
+        _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
+        persistSessions();
+    }
+
+    private ChatPanelView createPanelView(Conversation conversation) {
+        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0),
+                formatPanelTitle(conversation),
+                message -> submit(conversation, message),
+                command -> handleCommand(conversation, command));
+        for (var turn : conversation._turns) {
+            panelView.appendMessage(turn.speaker(), turn.text());
+        }
+        if (conversation._pending) {
+            panelView.setPending(true, conversation._pendingStartedAtMillis);
+        }
+        return panelView;
+    }
+
+    private static String formatPanelTitle(Conversation conversation) {
+        return "Nemo " + conversation._id + " | " + conversation._title;
+    }
+
+    private static boolean isPanelVisible(Conversation conversation) {
+        return conversation._panelView != null && conversation._panelView.getParent() != null;
+    }
+
+    private synchronized void appendTurn(Conversation conversation, ChatTurn turn) {
+        conversation._turns.add(turn);
+        conversation._updatedAtMillis = System.currentTimeMillis();
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.appendMessage(turn.speaker(), turn.text());
+        }
+        persistSessions();
+    }
+
+    private void appendAssistantNote(Conversation conversation, String text) {
+        appendTurn(conversation, new ChatTurn("nemo", text, false));
     }
 
     private synchronized void submit(Conversation conversation, String question) {
@@ -949,32 +1230,35 @@ public class NemoClient {
         if (question.equals("") || conversation._pending) {
             return;
         }
-        conversation._turns.add(new ChatTurn("me", question));
-        conversation._panelView.appendMessage("me", question);
+
+        appendTurn(conversation, new ChatTurn("me", question));
 
         if (conversation._configuration.apiKey().isBlank()) {
-            String message = "Set api_key in " + getConfigPath() + " to use :nemo";
-            conversation._turns.add(new ChatTurn("nemo", message));
-            conversation._panelView.appendMessage("nemo", message);
+            appendAssistantNote(conversation, "Set api_key in " + getConfigPath() + " to use :nemo");
             return;
         }
 
         conversation._pending = true;
+        conversation._pendingStartedAtMillis = System.currentTimeMillis();
         long requestId = ++conversation._requestSequence;
         conversation._activeRequestId = requestId;
-        conversation._panelView.setPending(true);
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.setPending(true, conversation._pendingStartedAtMillis);
+        }
 
+        var promptTurns = new ArrayList<>(conversation._turns);
         var worker = new Thread(() -> {
             try {
-                String response = request(conversation._configuration, conversation._context, conversation._turns);
+                String response = request(conversation._configuration, conversation._context, promptTurns);
                 EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
                 _log.error("Nemo request failed", e);
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleFailure(conversation, requestId, "Nemo failed: " + e.getMessage())));
+                EventThread.getInstance().enqueue(new RunnableEvent(
+                        () -> handleFailure(conversation, requestId, "Nemo failed: " + e.getMessage())));
             }
-        }, "swim-nemo");
+        }, "swim-nemo-" + conversation._id);
         worker.setDaemon(true);
         conversation._worker = worker;
         worker.start();
@@ -982,31 +1266,36 @@ public class NemoClient {
 
     private synchronized void handleCommand(Conversation conversation, String command) {
         String trimmed = command.trim();
-        conversation._turns.add(new ChatTurn("me", trimmed));
-        conversation._panelView.appendMessage("me", trimmed);
+        appendTurn(conversation, new ChatTurn("me", trimmed, false));
+        int split = trimmed.indexOf(' ');
+        String name = split < 0 ? trimmed : trimmed.substring(0, split);
+        String argument = split < 0 ? "" : trimmed.substring(split + 1).trim();
 
-        switch (trimmed) {
+        switch (name) {
         case ":abort":
-            if (!conversation._pending || conversation._worker == null) {
-                String response = "Nothing to abort.";
-                conversation._turns.add(new ChatTurn("nemo", response));
-                conversation._panelView.appendMessage("nemo", response);
-                return;
-            }
-            conversation._pending = false;
-            conversation._activeRequestId = 0;
-            Thread worker = conversation._worker;
-            conversation._worker = null;
-            conversation._panelView.setPending(false);
-            worker.interrupt();
-            String response = "*aborted*";
-            conversation._turns.add(new ChatTurn("nemo", response));
-            conversation._panelView.appendMessage("nemo", response);
+            handleAbortCommand(conversation, argument);
+            return;
+        case ":sessions":
+            appendAssistantNote(conversation, formatSessions(conversation._workspaceRoot));
+            return;
+        case ":workers":
+            appendAssistantNote(conversation, formatWorkers());
+            return;
+        case ":new":
+            handleNewSessionCommand(conversation, argument);
+            return;
+        case ":switch":
+            handleSwitchCommand(conversation, argument);
+            return;
+        case ":rename":
+            handleRenameCommand(conversation, argument);
+            return;
+        case ":delete":
+            handleDeleteCommand(conversation, argument);
             return;
         case ":help":
-            String help = "Available commands: :abort, :help, :q";
-            conversation._turns.add(new ChatTurn("nemo", help));
-            conversation._panelView.appendMessage("nemo", help);
+            appendAssistantNote(conversation,
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :delete [session-id], :help, :q");
             return;
         case ":q":
         case ":quit":
@@ -1016,9 +1305,222 @@ public class NemoClient {
             }
             return;
         default:
-            String unknown = "Unknown command: " + trimmed;
-            conversation._turns.add(new ChatTurn("nemo", unknown));
-            conversation._panelView.appendMessage("nemo", unknown);
+            appendAssistantNote(conversation, "Unknown command: " + trimmed);
+        }
+    }
+
+    private void handleAbortCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            if (!abortConversation(conversation)) {
+                appendAssistantNote(conversation, "Nothing to abort.");
+                return;
+            }
+            appendAssistantNote(conversation, "*aborted*");
+            return;
+        }
+
+        if ("all".equals(argument)) {
+            int aborted = 0;
+            for (var target : _conversations.values()) {
+                if (abortConversation(target)) {
+                    aborted++;
+                    appendAssistantNote(target, "*aborted*");
+                }
+            }
+            appendAssistantNote(conversation, aborted == 0
+                    ? "Nothing to abort."
+                    : "Aborted " + aborted + " worker" + (aborted == 1 ? "." : "s."));
+            return;
+        }
+
+        Conversation target = findConversation(argument, conversation._workspaceRoot);
+        if (target == null) {
+            appendAssistantNote(conversation, "Unknown session: " + argument);
+            return;
+        }
+        if (!abortConversation(target)) {
+            appendAssistantNote(conversation, "Nothing to abort for " + target._id + ".");
+            return;
+        }
+        appendAssistantNote(target, "*aborted*");
+        if (target == conversation) {
+            return;
+        }
+        appendAssistantNote(conversation, "Aborted " + target._id + ".");
+    }
+
+    private void handleNewSessionCommand(Conversation conversation, String argument) {
+        var created = createConversation(conversation._workspaceRoot, argument);
+        bindConversation(created, conversation._context, conversation._configuration);
+        showConversation(created);
+        appendAssistantNote(created, "Created " + created._id + " (" + created._title + ").");
+    }
+
+    private void handleSwitchCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :switch <session-id>");
+            return;
+        }
+
+        Conversation target = findConversation(argument, conversation._workspaceRoot);
+        if (target == null) {
+            appendAssistantNote(conversation, "Unknown session: " + argument);
+            return;
+        }
+
+        bindConversation(target, conversation._context, conversation._configuration);
+        showConversation(target);
+        appendAssistantNote(target, "Switched to " + target._id + " (" + target._title + ").");
+    }
+
+    private void handleRenameCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :rename <title>");
+            return;
+        }
+        conversation._title = argument.trim();
+        conversation._updatedAtMillis = System.currentTimeMillis();
+        persistSessions();
+        if (isPanelVisible(conversation)) {
+            reopenConversationPanel(conversation);
+        }
+        appendAssistantNote(conversation, "Renamed " + conversation._id + " to " + conversation._title + ".");
+    }
+
+    private void handleDeleteCommand(Conversation conversation, String argument) {
+        Conversation target = argument.isBlank()
+                ? conversation
+                : findConversation(argument, conversation._workspaceRoot);
+        if (target == null) {
+            appendAssistantNote(conversation, "Unknown session: " + argument);
+            return;
+        }
+
+        stopWorker(target);
+        _conversations.remove(target._id);
+        _workspaceSessionIds.entrySet().removeIf(entry -> target._id.equals(entry.getValue()));
+        if (target._id.equals(_activeSessionId)) {
+            _activeSessionId = null;
+        }
+
+        if (target == conversation) {
+            Conversation replacement = preferredConversationForWorkspace(conversation._workspaceRoot);
+            if (replacement == null) {
+                replacement = createConversation(conversation._workspaceRoot, "");
+            }
+            bindConversation(replacement, conversation._context, conversation._configuration);
+            showConversation(replacement);
+            appendAssistantNote(replacement, "Deleted " + target._id + ".");
+            return;
+        }
+
+        persistSessions();
+        appendAssistantNote(conversation, "Deleted " + target._id + ".");
+    }
+
+    private synchronized void reopenConversationPanel(Conversation conversation) {
+        if (!isPanelVisible(conversation)) {
+            return;
+        }
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        window.hidePanel();
+        conversation._panelView = null;
+        showConversation(conversation);
+    }
+
+    private Conversation findConversation(String identifier, Path workspaceRoot) {
+        Conversation byId = _conversations.get(identifier);
+        if (byId != null && byId._workspaceRoot.equals(workspaceRoot)) {
+            return byId;
+        }
+
+        Conversation match = null;
+        for (var conversation : _conversations.values()) {
+            if (!conversation._workspaceRoot.equals(workspaceRoot)) {
+                continue;
+            }
+            if (!conversation._title.equalsIgnoreCase(identifier)) {
+                continue;
+            }
+            if (match != null) {
+                return null;
+            }
+            match = conversation;
+        }
+        return match;
+    }
+
+    private String formatSessions(Path workspaceRoot) {
+        var sessions = new ArrayList<Conversation>();
+        for (var conversation : _conversations.values()) {
+            if (conversation._workspaceRoot.equals(workspaceRoot)) {
+                sessions.add(conversation);
+            }
+        }
+        sessions.sort(Comparator.comparingLong(conversation -> conversation._createdAtMillis));
+        if (sessions.isEmpty()) {
+            return "No Nemo sessions.";
+        }
+
+        var lines = new ArrayList<String>();
+        lines.add("Sessions:");
+        for (var session : sessions) {
+            String marker = session._id.equals(_activeSessionId) ? "*" : "-";
+            String status = session._pending ? "running " + elapsedSeconds(session) + "s" : "idle";
+            lines.add(marker + " " + session._id + " | " + session._title + " | " + status + " | turns=" + session._turns.size());
+        }
+        return String.join("\n", lines);
+    }
+
+    private String formatWorkers() {
+        var workers = new ArrayList<Conversation>();
+        for (var conversation : _conversations.values()) {
+            if (conversation._pending) {
+                workers.add(conversation);
+            }
+        }
+        workers.sort(Comparator.comparingLong(conversation -> conversation._pendingStartedAtMillis));
+        if (workers.isEmpty()) {
+            return "No Nemo workers running.";
+        }
+
+        var lines = new ArrayList<String>();
+        lines.add("Workers:");
+        for (var worker : workers) {
+            lines.add("- " + worker._id + " | " + worker._title + " | " + elapsedSeconds(worker) + "s");
+        }
+        return String.join("\n", lines);
+    }
+
+    private static long elapsedSeconds(Conversation conversation) {
+        if (!conversation._pending || conversation._pendingStartedAtMillis == 0) {
+            return 0;
+        }
+        return Math.max(0, (System.currentTimeMillis() - conversation._pendingStartedAtMillis) / 1000);
+    }
+
+    private boolean abortConversation(Conversation conversation) {
+        if (!conversation._pending || conversation._worker == null) {
+            return false;
+        }
+        stopWorker(conversation);
+        return true;
+    }
+
+    private void stopWorker(Conversation conversation) {
+        conversation._pending = false;
+        conversation._pendingStartedAtMillis = 0;
+        conversation._activeRequestId = 0;
+        Thread worker = conversation._worker;
+        conversation._worker = null;
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.setPending(false);
+        }
+        if (worker != null) {
+            worker.interrupt();
         }
     }
 
@@ -1027,18 +1529,27 @@ public class NemoClient {
             return;
         }
         conversation._pending = false;
+        conversation._pendingStartedAtMillis = 0;
         conversation._activeRequestId = 0;
         conversation._worker = null;
-        conversation._turns.add(new ChatTurn("nemo", response));
-        conversation._panelView.appendMessage("nemo", response);
-        conversation._panelView.setPending(false);
+        appendTurn(conversation, new ChatTurn("nemo", response));
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.setPending(false);
+        }
     }
 
     private synchronized void handleFailure(Conversation conversation, long requestId, String response) {
         if (conversation._activeRequestId != requestId) {
             return;
         }
-        handleResponse(conversation, requestId, response);
+        conversation._pending = false;
+        conversation._pendingStartedAtMillis = 0;
+        conversation._activeRequestId = 0;
+        conversation._worker = null;
+        appendAssistantNote(conversation, response);
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.setPending(false);
+        }
     }
 
     private void showMessage(String message) {

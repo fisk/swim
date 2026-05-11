@@ -1,116 +1,141 @@
 # SWIM
 
-SWIM stands for *Strange Variety Vi Improved*. It is a Java modal editor with Vim-style keybindings, Java/LaTeX language features, and a launcher/core split that lets the editor reload its core while running.
+SWIM stands for *Strange Variety Vi Improved*. It is a Java modal editor with Vim-style movement, embedded Java LSP support, live core reloading, and a plugin-based runtime layout.
+
 ## Quick Start
 
 ```bash
-# 1. Make sure you have JDK 25+ installed.
-# 2. Clone SWIM into a local hidden directory:
-$ git clone <your-fork-or-this-repo-url> ~/.swim
-$ cd ~/.swim
+# 1. Install JDK 25+.
+# 2. Clone SWIM into ~/.swim.
+git clone <your-fork-or-this-repo-url> ~/.swim
+cd ~/.swim
 
-# 3. Build the project in place:
-$ mvn package
+# 3. Build the editor and runtime image.
+mvn package
 
-# 4. Run SWIM with the installed launcher binary:
-$ "$HOME/.swim/image/bin/swim" <file>
-
-# 5. For convenience, create an alias:
-$ alias swim='"$HOME/.swim/image/bin/swim"'
-# Then simply:
-$ swim <file>
+# 4. Launch SWIM.
+"$HOME/.swim/image/bin/swim" README.md
 ```
 
-`mvn package` now installs runtime artifacts into:
+`mvn package` installs runtime artifacts into:
 
 - `~/.swim/image`
-- `~/.swim/lib`
+- `~/.swim/plugins`
 - `~/.swim/deps/oracle.oracle-java`
 
-The launcher binary is built from a custom JDK runtime image using `jlink`. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
+The launcher binary in `image/bin/swim` is built from a custom `jlink` image. Runtime code is loaded from `plugins/`, so `:rebuild` can rebuild in place and then reload freshly built plugin jars without running directly from `target/`.
 
-The build also installs the Oracle Java VS Code extension bundle under `~/.swim/deps/oracle.oracle-java` on first package, so Java LSP support does not depend on a separate VS Code installation.
-The packaged launcher also embeds the Oracle NetBeans JVM compatibility flags required by the built-in embedded Java LSP.
+## Runtime Layout
 
-Once SWIM is running:
+`plugins/` contains the runtime modules that SWIM loads:
 
-- use `:help` to open the built-in tutorial
-- use `:nemo <question>` to ask Nemo about the current file
+- `swim-core-...jar`: the editor core plugin
+- `swim-java-lsp-...jar`: Java language support
+- `swim-tree-view-...jar`: the project tree plugin
+- `runtime-libs/`: shared runtime dependencies for the plugin layer
 
-## Modal Editing – The Essentials
+The Oracle Java VS Code extension payload is installed automatically during the build under `deps/oracle.oracle-java`, so Java support does not depend on a separate VS Code installation.
 
-SWIM uses the same keybindings that make Vim legendary.  Below are the core motions and commands you’ll use every day.
+## Everyday Editing
 
-### Normal Mode
+Normal mode uses familiar Vim-style keys:
 
 | Key | Action |
-|-----|--------|
-| `h/j/k/l` | Move cursor left/down/up/right |
-| `0/$` | Move to start/end of line |
-| `gg/G` | Go to first/last line |
-| `f/F` | Find next/previous character |
-| `w/b/e` | Move by words |
-| `d{motion}` | Delete |
-| `y{motion}` | Yank |
-| `p/P` | Paste |
-| `u` | Undo |
-| `Ctrl‑r` | Redo |
-| `i` | Enter **Insert** mode |
-| `v/V` | Enter **Visual** / **Visual Line** mode |
-| `Ctrl‑v` | Visual Block mode |
-| `:` | Command‑line prompt |
+| --- | --- |
+| `h/j/k/l` | Move left/down/up/right |
+| `0/$` | Start/end of line |
+| `gg/G` | Top/bottom of buffer |
+| `w/b/e` | Word motions |
+| `d{motion}` / `c{motion}` / `y{motion}` | Delete / change / yank |
+| `p/P` | Paste after / before |
+| `u` / `Ctrl-r` | Undo / redo |
+| `i` | Enter insert mode |
+| `v`, `V`, `Ctrl-v` | Visual, visual-line, visual-block |
+| `:` | Command line |
 | `/` or `?` | Search |
+| `m` | Project file list |
+| `t` | Tree view plugin |
+| `Esc` | Open Nemo chat |
 
-### Insert Mode
+## Discoverability
 
-All the usual text entry – just type!  Escape (`Esc`) returns you to Normal mode.
+SWIM now exposes more of the editor while you work:
 
-### Visual Mode
+- The two-line top menu shows normal-mode key chains and updates live as you type prefixes.
+- When the command line is active, the top menu switches to command-specific hints.
+- Typing `:` opens a command popup with matching commands for the current prefix.
+- `Up` and `Down` move through command matches, and `Tab` completes the selected command.
 
-Same motion keys as Normal, plus:
+This makes it possible to explore commands and key chains without memorizing everything up front.
 
-| Key | Action |
-|-----|--------|
-| `d` | Delete selection |
-| `y` | Yank selection |
-| `c` | Change selection (delete + Insert) |
+## Panes And Panels
 
-## Java‑LSP Power‑Ups
+SWIM supports multiple panes and persistent side/bottom panels.
 
-SWIM’s `:JavaLSP` namespace exposes powerful refactorings.  In Normal mode, prefix commands with `<Space>e`:
+Command-line pane controls:
 
-| Shortcut | Description |
-|----------|-------------|
-| `<Space>e i` | Organize imports |
-| `<Space>e f` | Make field `final` |
-| `<Space>e a` | Generate accessors |
-| `<Space>e s` | Generate `toString()` |
-| `<Space>e l` | Show code lens |
+- `:split` or `:sp` opens a pane below the active pane
+- `:vsplit` or `:vs` opens a pane to the right
+- `:focus left|right|up|down|next|prev` moves focus
+- `:close` closes the active pane
+- `:only` closes every other pane
 
-Feel free to create your own custom commands by wiring up a Java handler.
+Normal-mode pane controls:
+
+- `Ctrl-w s` splits below
+- `Ctrl-w v` splits to the right
+- `Ctrl-w h/j/k/l` moves focus
+- `Ctrl-w w` and `Ctrl-w W` cycle panes
+- `Ctrl-w q` closes the active pane
+- `Ctrl-w o` keeps only the active pane
+
+## Tree View
+
+The project tree ships as the separate `swim-tree-view` plugin artifact and is loaded on demand.
+
+- Press `t` in normal mode to open or close the tree view.
+- The tree opens on the left side of the current layout.
+- Use `j/k` or arrow keys to move.
+- Use `h/l` or left/right arrows to collapse and expand directories.
+- Use `Enter` or `Space` to open the selected file.
+- Use `r` to refresh the tree.
+- Use `q` or `Esc` to close the tree pane.
+
+The tree follows the current project root and keeps its selection synced to the active file.
+
+## Java Support
+
+Java files use the embedded Oracle/NetBeans LSP provider through the separate `swim-java-lsp` plugin.
+
+Current Java features include:
+
+- semantic token coloring
+- embedded LSP startup from the bundled Oracle payload
+- insert-mode completion popup with Java completion items
+- snippet placeholder support for LSP snippet completions
+- code actions wired to normal-mode shortcuts
+
+Normal-mode Java shortcuts use the `<Space> e` prefix:
+
+| Shortcut | Action |
+| --- | --- |
+| `<Space> e i` | Organize imports |
+| `<Space> e f` | Make field `final` |
+| `<Space> e a` | Generate accessors |
+| `<Space> e s` | Generate `toString()` |
+| `<Space> e l` | Show code lens information |
 
 ## Nemo
 
-SWIM includes `:nemo`, a built-in AI assistant for asking questions about the current file. Nemo now uses a persistent chat pane and can call tools to inspect the workspace.
+SWIM includes `:nemo`, a built-in AI assistant for the current workspace.
 
-Nemo reads all of its settings from `~/.swim/nemo.conf` using a simple Java-properties format:
+Nemo reads configuration from `~/.swim/nemo.conf`:
 
 ```properties
 api_key=your_api_key_here
 model=gpt-5.4
 base_url=https://api.openai.com/v1
-# Optional override if you want to point directly at a full responses endpoint:
-# responses_url=https://example.invalid/custom/responses
 
-# Optional provider/project headers:
-organization=
-project=
-header.client=swim
-
-# Optional workspace override. If unset, Nemo uses the current project root.
-# workspace_root=/absolute/path/to/workspace
-
-# Tool configuration
 tool.web_search=false
 tool.list_files=true
 tool.read_file=true
@@ -127,57 +152,27 @@ tool.max_output_chars=12000
 tool.command_timeout_seconds=20
 ```
 
-If you use a provider-compatible endpoint instead of the public OpenAI API, set `base_url` or `responses_url` and any extra HTTP headers with `header.<name>=<value>`.
+Inside the Nemo chat pane:
 
-Then inside SWIM you can ask Nemo questions like:
+- type normally and press `Enter` to send
+- `:sessions` lists sessions for the current workspace
+- `:workers` lists active workers across sessions
+- `:new [title]` creates a session
+- `:switch <session-id>` changes sessions
+- `:rename <title>` renames the current session
+- `:delete [session-id]` deletes a session
+- `:abort [session-id|all]` stops running work
+- `:help` lists chat commands
+- `:q` closes the pane
 
-```text
-:nemo summarize this file
-:nemo explain this method
-:nemo suggest a refactor for this class
-```
+Session state is persisted under `~/.swim/nemo/sessions.json`, so chat history survives editor restarts.
 
-Or just press `Esc` in Normal mode to open the Nemo chat pane immediately.
+## Reloading
 
-Java files use the embedded Oracle/NetBeans LSP by default when the bundled payload is installed.
+The launcher keeps the editor running through a reloadable core/plugin boundary:
 
-Nemo sends the current file path and full buffer contents to the model along with the chat transcript. Nemo is configured to act directly on fix and commit requests when it has enough information. When enabled in `nemo.conf`, Nemo can use:
-
-- `list_files`
-- `read_file`
-- `search_files`
-- `run_command`
-- `write_file`
-- `apply_patch`
-- `git_status`
-- `git_diff`
-- `git_add`
-- `git_commit`
-- OpenAI web search via `tool.web_search=true`
-
-The `write_file` tool lets Nemo create or overwrite files in the workspace. This is intended for explicit edit requests, such as updating a README, generating a new source file, or applying a requested rewrite directly from chat.
-
-Inside the chat pane:
-
-- type normally and press `Enter` to send a follow-up message
-- use `:abort` to stop the current request
-- use `:help` to list available chat commands
-- use `:q` to close the chat pane
-
-## Extending SWIM
-
-The entire codebase is open source.  To add a new language‑server or mode, simply:
-
-1. Implement a new `LanguageMode`.
-2. Register it via `LanguageModeProvider`.
-3. Build and test.
-
-Because the editor is written in Java, you can drop in existing libraries or even build a UI plug‑in.
-
-## Live Reload
-
-SWIM now runs through a small launcher that loads the editor core dynamically. From inside the editor:
-
-- `:reload` reloads the latest built core
-- `:rebuild` rebuilds the project and reloads
+- `:reload` reloads the latest built plugins
+- `:rebuild` rebuilds the project and reloads it
 - `:upgrade` is an alias for `:rebuild`
+
+This is the intended workflow while developing SWIM itself.

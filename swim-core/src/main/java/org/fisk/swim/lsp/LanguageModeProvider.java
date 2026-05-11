@@ -3,8 +3,7 @@ package org.fisk.swim.lsp;
 import java.nio.file.Path;
 
 import org.eclipse.lsp4j.TextDocumentItem;
-import org.fisk.swim.fileindex.ProjectPaths;
-import org.fisk.swim.lsp.java.JavaLSPClient;
+import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.lsp.latex.LatexLSPClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
@@ -15,21 +14,15 @@ public class LanguageModeProvider {
     private static LanguageModeProvider _instance = new LanguageModeProvider();
     private static final Logger _log = LogFactory.createLog();
 
+    static {
+        LanguagePluginRegistry.register("tex", null, path -> new LatexLSPClient());
+        LanguagePluginRegistry.register("java", JavaLspPluginSupport.PLUGIN_ID, JavaLspPluginSupport::createLanguageMode);
+    }
+
     public static LanguageModeProvider getInstance() {
         return _instance;
     }
 
-    private boolean endsIn(Path path, String ending) {
-        String extension = "";
-        String fileName = path.getFileName().toString();
-
-        int i = fileName.lastIndexOf('.');
-        if (i >= 0) {
-            extension = fileName.substring(i + 1);
-        }
-        return extension.equals(ending);
-    }
-    
     private LanguageMode getPlainLanguageMode() {
         return new LanguageMode() {
             @Override
@@ -78,21 +71,16 @@ public class LanguageModeProvider {
     }
     
     public LanguageMode getLanguageMode(Path path) {
-        if (endsIn(path, "java")) {
-            var lsp = JavaLSPClient.getInstance();
-            if (lsp.isEnabled() && !lsp.hasStarted()) {
-                try {
-                    lsp.startServer(path);
-                    lsp.ensureInit();
-                } catch (RuntimeException e) {
-                    _log.error("Failed to initialize Java LSP for project " + ProjectPaths.getProjectRootPath(path), e);
-                    lsp.disable();
+        var registration = LanguagePluginRegistry.find(path);
+        if (registration != null) {
+            try {
+                var languageMode = registration.factory().create(path);
+                if (languageMode != null) {
+                    return languageMode;
                 }
+            } catch (RuntimeException e) {
+                _log.error("Failed to initialize language mode for " + path, e);
             }
-            return lsp;
-        }
-        if (endsIn(path, "tex")) {
-            return new LatexLSPClient();
         }
         return getPlainLanguageMode();
     }

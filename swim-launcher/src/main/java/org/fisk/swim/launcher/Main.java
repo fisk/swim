@@ -10,26 +10,23 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.ServiceLoader;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPanel;
 
 public class Main implements SwimHost {
     private static final String CORE_MODULE = "org.fisk.swim.core";
     private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
             "swim-launcher-");
-
-    @FunctionalInterface
-    interface AppLoader {
-        SwimApp load(Path buildRoot, ClassLoader parentLoader);
-    }
 
     @FunctionalInterface
     interface Rebuilder {
@@ -41,24 +38,29 @@ public class Main implements SwimHost {
         void start(String name, boolean daemon, Runnable task);
     }
 
-    private record LoadedApp(SwimApp app) {
+    interface PluginController {
+        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader);
+        SwimApp currentApp();
+        List<String> loadedPluginIds();
+        void loadPlugin(String id, Path path, SwimHost host);
+        void unloadAll();
     }
 
     private final Object _reloadLock = new Object();
-    private final AppLoader _appLoader;
+    private final PluginController _plugins;
     private final Rebuilder _rebuilder;
     private final TaskRunner _taskRunner;
     private final Supplier<Path> _launcherLocationSupplier;
-    private volatile LoadedApp _loadedApp;
     private final CountDownLatch _exitLatch = new CountDownLatch(1);
+    private final Map<String, SwimPanel> _panels = new ConcurrentHashMap<>();
     private Path _buildRoot;
 
     public Main() {
-        this(Main::loadApp, Main::rebuild, Main::startThread, Main::getLauncherLocation);
+        this(new PluginRegistry(), Main::rebuild, Main::startThread, Main::getLauncherLocation);
     }
 
-    Main(AppLoader appLoader, Rebuilder rebuilder, TaskRunner taskRunner, Supplier<Path> launcherLocationSupplier) {
-        _appLoader = appLoader;
+    Main(PluginController plugins, Rebuilder rebuilder, TaskRunner taskRunner, Supplier<Path> launcherLocationSupplier) {
+        _plugins = plugins;
         _rebuilder = rebuilder;
         _taskRunner = taskRunner;
         _launcherLocationSupplier = launcherLocationSupplier;
@@ -163,7 +165,7 @@ public class Main implements SwimHost {
     }
 
     static Path resolveCoreArtifactDirectory(Path buildRoot) {
-        Path installedCore = buildRoot.resolve("lib");
+        Path installedCore = buildRoot.resolve("plugins");
         if (Files.isDirectory(installedCore)) {
             return installedCore;
         }
@@ -248,28 +250,11 @@ public class Main implements SwimHost {
                 parentLoader).layer();
     }
 
-    private static SwimApp loadApp(Path buildRoot, ClassLoader parentLoader) {
-        ModuleLayer layer = createCoreLayer(buildRoot, parentLoader);
-        ServiceLoader<SwimApp> loader = ServiceLoader.load(layer, SwimApp.class);
-        return loader.findFirst().orElseThrow(() -> new IllegalStateException("No SwimApp service found in " + CORE_MODULE));
-    }
-
-    private LoadedApp loadApp() {
-        return new LoadedApp(_appLoader.load(_buildRoot, getClass().getClassLoader()));
-    }
-
     private void reload(Path path, String successMessage) {
         synchronized (_reloadLock) {
-            LoadedApp next = loadApp();
-            next.app().start(path, this);
-            next.app().refresh(true);
-            LoadedApp previous = _loadedApp;
-            _loadedApp = next;
-            if (previous != null) {
-                previous.app().close();
-            }
+            SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader());
             if (successMessage != null) {
-                next.app().showMessage(successMessage);
+                next.showMessage(successMessage);
             }
         }
     }
@@ -313,9 +298,9 @@ public class Main implements SwimHost {
             try {
                 reload(path, "Reloaded SWIM core");
             } catch (RuntimeException e) {
-                LoadedApp loaded = _loadedApp;
+                SwimApp loaded = _plugins.currentApp();
                 if (loaded != null) {
-                    loaded.app().showMessage("Reload failed");
+                    loaded.showMessage("Reload failed");
                 }
             }
         });
@@ -324,40 +309,87 @@ public class Main implements SwimHost {
     @Override
     public void requestRebuildAndReload(Path path) {
         _taskRunner.start("swim-rebuild", false, () -> {
-            LoadedApp loaded = _loadedApp;
+            SwimApp loaded = _plugins.currentApp();
             if (loaded != null) {
-                loaded.app().showMessage("Rebuilding SWIM...");
+                loaded.showMessage("Rebuilding SWIM...");
             }
             if (!rebuild()) {
-                loaded = _loadedApp;
+                loaded = _plugins.currentApp();
                 if (loaded != null) {
-                    loaded.app().showMessage("Build failed");
+                    loaded.showMessage("Build failed");
                 }
                 return;
             }
             try {
                 reload(path, "Rebuilt and reloaded SWIM");
             } catch (RuntimeException e) {
-                loaded = _loadedApp;
+                loaded = _plugins.currentApp();
                 if (loaded != null) {
-                    loaded.app().showMessage("Reload failed after rebuild");
+                    loaded.showMessage("Reload failed after rebuild");
                 }
             }
         });
     }
 
     @Override
-    public void requestExit() {
-        LoadedApp loaded = _loadedApp;
-        _loadedApp = null;
-        _exitLatch.countDown();
-        if (loaded != null) {
-            _taskRunner.start("swim-close", true, loaded.app()::close);
+    public void requestLoadPlugin(String pluginId, Path path) {
+        try {
+            _plugins.loadPlugin(pluginId, path, this);
+        } catch (RuntimeException e) {
+            SwimApp loaded = _plugins.currentApp();
+            if (loaded != null) {
+                loaded.showMessage("Plugin load failed: " + pluginId);
+            }
         }
+    }
+
+    @Override
+    public void registerPanel(String pluginId, SwimPanel panel) {
+        if (pluginId == null || panel == null) {
+            return;
+        }
+        _panels.put(pluginId, panel);
+    }
+
+    @Override
+    public void unregisterPanel(String pluginId) {
+        if (pluginId == null) {
+            return;
+        }
+        _panels.remove(pluginId);
+    }
+
+    @Override
+    public SwimPanel getPanel(String pluginId) {
+        return _panels.get(pluginId);
+    }
+
+    @Override
+    public void requestExit() {
+        SwimApp loaded = _plugins.currentApp();
+        if (loaded != null) {
+            _taskRunner.start("swim-close", true, () -> {
+                try {
+                    _plugins.unloadAll();
+                } finally {
+                    _exitLatch.countDown();
+                }
+            });
+            return;
+        }
+        _exitLatch.countDown();
     }
 
     @Override
     public Path getBuildRoot() {
         return _buildRoot;
+    }
+
+    SwimApp getLoadedApp() {
+        return _plugins.currentApp();
+    }
+
+    List<String> getLoadedPluginIds() {
+        return _plugins.loadedPluginIds();
     }
 }

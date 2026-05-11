@@ -8,10 +8,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
+import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.PluginPanelView;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -126,9 +132,155 @@ class ModeResponderTest {
         }
     }
 
+    @Test
+    void ctrlWPaneBindingsSplitFocusAndTargetTheFocusedBuffer() throws IOException {
+        Path first = writeFile("pane-left.txt", "left\npane");
+        Path second = writeFile("pane-right.txt", "right\npane");
+
+        try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
+            Window window = harness.getWindow();
+            var leftView = window.getBufferContext().getBufferView();
+            var leftBuffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
+                    HeadlessWindowHarness.key('v'));
+            assertEquals("{12, 2, 12, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
+
+            window.setBufferPath(second);
+            var rightBuffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
+                    HeadlessWindowHarness.key('h'));
+            assertSame(leftView, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('j'));
+            assertEquals(5, leftBuffer.getCursor().getPosition());
+            assertEquals(0, rightBuffer.getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
+                    HeadlessWindowHarness.key('l'));
+            assertEquals("right\npane", window.getBufferContext().getBuffer().getString());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
+                    HeadlessWindowHarness.key('q'));
+            assertSame(leftView, window.getActiveView());
+            assertEquals("{0, 2, 24, 7}", absoluteBounds(leftView).toString());
+        }
+    }
+
+    @Test
+    void treeBindingLoadsPluginPanelAndOpensSelectedFile() throws IOException {
+        Path first = writeFile("tree-left.txt", "left\npane");
+        Path second = writeFile("tree-right.txt", "right\npane");
+        RecordingHost host = new RecordingHost(new FakeTreePanel(second));
+        SwimRuntime.setHost(host);
+
+        try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
+            Window window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('t'));
+
+            assertEquals("swim-tree-view", host.pluginId);
+            assertTrue(window.getPanelView() instanceof PluginPanelView);
+            assertEquals("{0, 2, 6, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getPanelView()).toString());
+            assertEquals("{6, 2, 18, 7}", absoluteBounds(window.getBufferContext().getBufferView()).toString());
+
+            HeadlessWindowHarness.dispatch((PluginPanelView) window.getPanelView(), HeadlessWindowHarness.enter());
+
+            assertEquals("right\npane", window.getBufferContext().getBuffer().getString());
+            assertSame(window.getBufferContext().getBufferView(), window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('t'));
+            assertFalse(window.isShowingPanel());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
     private Path writeFile(String name, String text) throws IOException {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
         return path;
+    }
+
+    private static org.fisk.swim.ui.Rect absoluteBounds(org.fisk.swim.ui.View view) {
+        int x = view.getBounds().getPoint().getX();
+        int y = view.getBounds().getPoint().getY();
+        org.fisk.swim.ui.View parent = view.getParent();
+        while (parent != null) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+            parent = parent.getParent();
+        }
+        return org.fisk.swim.ui.Rect.create(x, y, view.getBounds().getSize().getWidth(),
+                view.getBounds().getSize().getHeight());
+    }
+
+    private static final class RecordingHost implements SwimHost {
+        private final SwimPanel panel;
+        private String pluginId;
+
+        private RecordingHost(SwimPanel panel) {
+            this.panel = panel;
+        }
+
+        @Override
+        public void requestReload(Path path) {
+        }
+
+        @Override
+        public void requestRebuildAndReload(Path path) {
+        }
+
+        @Override
+        public void requestLoadPlugin(String pluginId, Path path) {
+            this.pluginId = pluginId;
+        }
+
+        @Override
+        public SwimPanel getPanel(String pluginId) {
+            return panel;
+        }
+
+        @Override
+        public void requestExit() {
+        }
+
+        @Override
+        public Path getBuildRoot() {
+            return tempPath();
+        }
+
+        private Path tempPath() {
+            return Path.of("/tmp");
+        }
+    }
+
+    private static final class FakeTreePanel implements SwimPanel {
+        private final Path _openPath;
+
+        private FakeTreePanel(Path openPath) {
+            _openPath = openPath;
+        }
+
+        @Override
+        public String getId() {
+            return "swim-tree-view";
+        }
+
+        @Override
+        public String getTitle() {
+            return "Tree";
+        }
+
+        @Override
+        public List<String> render(int width, int height) {
+            return List.of("Tree", "> - " + _openPath.getFileName());
+        }
+
+        @Override
+        public SwimPanelResult handleInput(String input, int width, int height) {
+            return "enter".equals(input) ? SwimPanelResult.success(_openPath) : SwimPanelResult.success();
+        }
     }
 }

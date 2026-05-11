@@ -43,6 +43,10 @@ public class View implements Drawable, EventResponder {
         _firstResponder = responder;
     }
 
+    public EventResponder getFirstResponder() {
+        return _firstResponder;
+    }
+
     public Cursor getCursor() {
         var responder = _firstResponder;
         if (responder instanceof View) {

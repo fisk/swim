@@ -60,6 +60,7 @@ public class ListView extends View {
         _filteredList = _list;
         _title = title;
         _selection = 0;
+        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         _responders.addEventResponder("<DOWN>", () -> {
             if (_selection >= _filteredList.size() - 1) {
                 return;
@@ -127,22 +128,29 @@ public class ListView extends View {
         _responders.respond();
     }
 
+    String getTitle() {
+        return _title;
+    }
+
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var graphics = terminalContext.getGraphics();
+        int width = rect.getSize().getWidth();
 
-        graphics.setBackgroundColor(TextColor.ANSI.GREEN);
-        graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()), new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        var title = AttributedString.create(_title, TextColor.ANSI.BLACK, TextColor.ANSI.GREEN);
-        title.drawAt(rect.getPoint(), graphics);
+        var title = new AttributedString();
+        title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+        title.append(" " + _filteredList.size() + "/" + _list.size() + " ", UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
+        title.append(" enter open  esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
-        graphics.setBackgroundColor(TextColor.ANSI.RED);
-        graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY() + 1),
-        new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        var searchText = AttributedString.create("Filter: " + _filter.toString(), TextColor.ANSI.BLACK, TextColor.ANSI.RED);
-        searchText.drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), graphics);
+        var search = new AttributedString();
+        search.append(" filter ", UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
+        search.append(_filter.length() == 0 ? " type to narrow results" : " " + _filter, UiTheme.TEXT_PRIMARY,
+                UiTheme.SURFACE_MUTED);
+        UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width, search,
+                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
 
         int totalHeight = rect.getSize().getHeight();
         int listHeight = totalHeight - 2;
@@ -160,13 +168,32 @@ public class ListView extends View {
             _start = _selection;
         }
 
-        for (int i = _start; i < _filteredList.size() && i - _start < listHeight; ++i) {
-            var item = _filteredList.get(i);
-            boolean selected = i == _selection;
-            var str = AttributedString.create(item.displayString(),
-                                              selected ? TextColor.ANSI.YELLOW : TextColor.ANSI.DEFAULT,
-                                              selected ? TextColor.ANSI.BLACK : _backgroundColour);
-            str.drawAt(Point.create(0, i - _start + rect.getPoint().getY() + 2), graphics);
+        for (int row = 0; row < listHeight; ++row) {
+            int index = _start + row;
+            int y = rect.getPoint().getY() + 2 + row;
+            boolean selected = index == _selection && index < _filteredList.size();
+            TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
+                    : row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            UiTheme.fillRow(graphics, Point.create(rect.getPoint().getX(), y), width, background);
+            if (index >= _filteredList.size()) {
+                continue;
+            }
+            var item = _filteredList.get(index);
+            var line = new AttributedString();
+            line.append(selected ? "▌ " : "  ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE,
+                    background);
+            line.append(item.displayString(),
+                    selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
+                    background);
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), y), width, line, UiTheme.TEXT_MUTED,
+                    background);
+        }
+
+        if (_filteredList.isEmpty() && listHeight > 0) {
+            var empty = AttributedString.create("  no matches for current filter", UiTheme.TEXT_MUTED,
+                    UiTheme.SURFACE_BACKGROUND);
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 2), width, empty,
+                    UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND);
         }
     }
 }

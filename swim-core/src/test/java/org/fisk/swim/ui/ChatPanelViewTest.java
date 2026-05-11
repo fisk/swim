@@ -92,10 +92,10 @@ class ChatPanelViewTest {
         AttributedString meLine = renderLine(view, "me> hello");
         AttributedString nemoLine = renderLine(view, "nemo> hello");
 
-        assertEquals(TextColor.ANSI.RED, foreground(meLine, 0));
+        assertEquals(UiTheme.CHAT_ME, foreground(meLine, 0));
         assertEquals("hello", meLine.getFragments().get(1).toString());
-        assertEquals(TextColor.ANSI.GREEN, foreground(nemoLine, 0));
-        assertEquals(TextColor.ANSI.DEFAULT, foreground(nemoLine, 1));
+        assertEquals(UiTheme.CHAT_NEMO, foreground(nemoLine, 0));
+        assertEquals(UiTheme.TEXT_PRIMARY, foreground(nemoLine, 1));
     }
 
     @Test

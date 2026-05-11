@@ -51,7 +51,7 @@ class ModeLineViewTest {
 
             window.switchToMode(window.getInputMode());
 
-            assertEquals(TextColor.ANSI.RED, invoke(window.getModeLineView(), "getModeColor", TextColor.class));
+            assertEquals(UiTheme.MODE_INPUT, invoke(window.getModeLineView(), "getModeColor", TextColor.class));
         }
     }
 
@@ -65,9 +65,9 @@ class ModeLineViewTest {
         assertEquals(100 * mib, ModeLineView.heapCapacityBytes(green));
         assertEquals(5, ModeLineView.heapBarFilledColumns(green, 10));
         assertEquals("50/100M", ModeLineView.heapLabel(green));
-        assertEquals(TextColor.ANSI.GREEN, ModeLineView.heapBarColor(green));
-        assertEquals(TextColor.ANSI.YELLOW, ModeLineView.heapBarColor(yellow));
-        assertEquals(TextColor.ANSI.RED, ModeLineView.heapBarColor(red));
+        assertEquals(UiTheme.ACCENT_GREEN, ModeLineView.heapBarColor(green));
+        assertEquals(UiTheme.ACCENT_GOLD, ModeLineView.heapBarColor(yellow));
+        assertEquals(UiTheme.ACCENT_RED, ModeLineView.heapBarColor(red));
     }
 
     private Path writeFile(String name, String text) throws IOException {

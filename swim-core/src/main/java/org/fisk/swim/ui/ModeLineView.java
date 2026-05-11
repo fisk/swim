@@ -1,6 +1,5 @@
 package org.fisk.swim.ui;
 
-import java.io.File;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -10,7 +9,6 @@ import java.util.Date;
 import java.util.Timer;
 import java.util.TimerTask;
 
-import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
@@ -97,12 +95,12 @@ public class ModeLineView extends View {
         long used = Math.max(0, Math.min(usage.getUsed(), capacity));
         double ratio = capacity == 0 ? 0 : (double) used / capacity;
         if (ratio >= 0.85) {
-            return TextColor.ANSI.RED;
+            return UiTheme.ACCENT_RED;
         }
         if (ratio >= 0.6) {
-            return TextColor.ANSI.YELLOW;
+            return UiTheme.ACCENT_GOLD;
         }
-        return TextColor.ANSI.GREEN;
+        return UiTheme.ACCENT_GREEN;
     }
 
     private MemoryUsage getHeapUsage() {
@@ -114,8 +112,8 @@ public class ModeLineView extends View {
         int filledColumns = heapBarFilledColumns(usage, HEAP_BAR_WIDTH);
         var str = new AttributedString();
         str.append("[", _foregroundColour, _backgroundColour);
-        str.append("#".repeat(filledColumns), heapBarColor(usage), _backgroundColour);
-        str.append("-".repeat(HEAP_BAR_WIDTH - filledColumns), TextColor.ANSI.DEFAULT, _backgroundColour);
+        str.append(UiTheme.repeat("■", filledColumns), heapBarColor(usage), _backgroundColour);
+        str.append(UiTheme.repeat("·", HEAP_BAR_WIDTH - filledColumns), UiTheme.TEXT_SUBTLE, _backgroundColour);
         str.append("] " + heapLabel(usage), _foregroundColour, _backgroundColour);
         return str;
     }
@@ -132,22 +130,13 @@ public class ModeLineView extends View {
     }
 
     private TextColor getModeColor() {
-        switch (getMode()) {
-        case "NORMAL":
-            return TextColor.ANSI.YELLOW;
-        case "INPUT":
-            return TextColor.ANSI.RED;
-        case "VISUAL":
-            return TextColor.ANSI.GREEN;
-        default:
-            return null;
-        }
+        return UiTheme.modeColor(getMode());
     }
 
     public ModeLineView(Rect bounds) {
         super(bounds);
-        setBackgroundColour(TextColor.Factory.fromString("#000000"));
-        _foregroundColour = TextColor.ANSI.RED;
+        setBackgroundColour(UiTheme.MODELINE_BACKGROUND);
+        _foregroundColour = UiTheme.MODELINE_FOREGROUND;
         _memoryBean = ManagementFactory.getMemoryMXBean();
         _time = getTime();
 
@@ -173,39 +162,29 @@ public class ModeLineView extends View {
     private AttributedString getLeftString() {
         var str = new AttributedString();
         TextColor modeColour = getModeColor();
-        str.append(" " + getMode() + " ", _backgroundColour, modeColour);
+        str.append(" " + getMode() + " ", UiTheme.TEXT_ON_ACCENT, modeColour);
         str.append(Powerline.SYMBOL_FILLED_RIGHT_ARROW, modeColour, _backgroundColour);
-        str.append(" " + getName() + " ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_RIGHT_ARROW, _foregroundColour, _backgroundColour);
-        str.append(" ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_LN, _foregroundColour, _backgroundColour);
-        str.append(" " + getLine() + " ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_RIGHT_ARROW, _foregroundColour, _backgroundColour);
+        str.append(" " + getName() + " ", UiTheme.TEXT_PRIMARY, _backgroundColour);
+        str.append("  " + Powerline.SYMBOL_LN + " " + getLine() + " ", UiTheme.TEXT_MUTED, _backgroundColour);
         return str;
     }
 
     private AttributedString getRightString() {
         var str = new AttributedString();
-        str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
-        str.append(" " + Powerline.SYMBOL_BRANCH + " ", _foregroundColour, _backgroundColour);
-        str.append(getBranch(), _foregroundColour, _backgroundColour);
-        str.append(" ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
-        str.append(" " + _time + " ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
-        str.append(" ", _foregroundColour, _backgroundColour);
+        String branch = getBranch();
+        if (!branch.equals("")) {
+            str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_ACCENT, _backgroundColour);
+            str.append(" " + Powerline.SYMBOL_BRANCH + " " + branch + " ", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
+        }
+        str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_MUTED, str.length() == 0 ? _backgroundColour : UiTheme.SURFACE_ACCENT);
+        str.append(" " + _time + " ", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
+        str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_ELEVATED, UiTheme.SURFACE_MUTED);
         str.append(getHeapString());
-        str.append(" ", _foregroundColour, _backgroundColour);
-        str.append(Powerline.SYMBOL_LEFT_ARROW, _foregroundColour, _backgroundColour);
         return str;
     }
 
     private AttributedString getWhitespaces(int length) {
-        var str = new StringBuffer();
-        for (int i = 0; i < length; i++) {
-            str.append(" ");
-        }
-        return AttributedString.create(str.toString(), TextColor.ANSI.DEFAULT, _backgroundColour);
+        return AttributedString.create(UiTheme.repeat(" ", Math.max(0, length)), UiTheme.TEXT_MUTED, _backgroundColour);
     }
 
     private AttributedString getString() {
@@ -225,6 +204,7 @@ public class ModeLineView extends View {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var textGraphics = terminalContext.getGraphics();
-        getString().drawAt(rect.getPoint(), textGraphics);
+        UiTheme.drawLine(textGraphics, rect.getPoint(), rect.getSize().getWidth(), getString(), UiTheme.TEXT_MUTED,
+                _backgroundColour);
     }
 }

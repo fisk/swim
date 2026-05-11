@@ -125,13 +125,13 @@
             </configuration>
           </execution>
           <execution>
-            <id>copy-core-dependencies-to-lib</id>
+            <id>copy-core-dependencies-to-plugins</id>
             <phase>package</phase>
             <goals>
               <goal>copy-dependencies</goal>
             </goals>
             <configuration>
-              <outputDirectory>${project.parent.basedir}/lib/runtime-libs</outputDirectory>
+              <outputDirectory>${project.parent.basedir}/plugins/runtime-libs</outputDirectory>
               <includeScope>runtime</includeScope>
               <excludeArtifactIds>swim-launcher</excludeArtifactIds>
             </configuration>
@@ -143,13 +143,13 @@
         <artifactId>maven-resources-plugin</artifactId>
         <executions>
           <execution>
-            <id>copy-core-jar-to-lib</id>
+            <id>copy-core-jar-to-plugins</id>
             <phase>package</phase>
             <goals>
               <goal>copy-resources</goal>
             </goals>
             <configuration>
-              <outputDirectory>${project.parent.basedir}/lib</outputDirectory>
+              <outputDirectory>${project.parent.basedir}/plugins</outputDirectory>
               <resources>
                 <resource>
                   <directory>${project.build.directory}</directory>

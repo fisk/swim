@@ -62,19 +62,36 @@ public class HelpIndex {
                 "Ctrl-v enters VISUAL BLOCK mode.");
         addSection(items, "Panels and commands",
                 "m toggles the project file list.",
+                "t toggles the tree view on the left.",
                 ":help shows this tutorial.",
                 ":e <path> opens a file and creates it if it does not exist.",
-                ":nemo <question> asks Nemo about the current file.",
+                ":split opens another view below the active buffer.",
+                ":vsplit opens another view to the right of the active buffer.",
+                ":focus left|right|up|down|next|prev moves between panes.",
+                ":close closes the active pane and :only keeps just the active pane.",
+                "While typing : commands, Up/Down browses matches and Tab completes them.",
+                ":nemo <question> asks Nemo about the current file and opens the persistent chat pane.",
+                "Inside Nemo, use :sessions, :workers, :new, and :switch to manage multiple chat sessions.",
                 ":w writes the current buffer to disk.",
                 ":reload loads the latest built SWIM core.",
                 ":rebuild and :upgrade rebuild and reload SWIM.",
                 ":q quits the editor.");
+        addSection(items, "Pane shortcuts",
+                "Ctrl-w s splits below and Ctrl-w v splits to the right.",
+                "Ctrl-w h/j/k/l moves focus left, down, up, or right.",
+                "Ctrl-w w cycles panes and Ctrl-w W cycles backward.",
+                "Ctrl-w q closes the active pane and Ctrl-w o keeps only that pane.");
+        addSection(items, "Discoverability",
+                "The two-line top menu shows key chains in NORMAL mode.",
+                "It switches to contextual hints while the command line, lists, panels, or chat are active.",
+                "The command popup shows matching : commands as you type.");
         addSection(items, "Java shortcuts",
                 "Space e i organizes imports.",
                 "Space e f makes a field final.",
                 "Space e a generates accessors.",
                 "Space e s generates toString().",
-                "Space e l shows code lens information.");
+                "Space e l shows code lens information.",
+                "Insert mode shows a completion popup for Java suggestions and snippets.");
         return new ArrayList<ListItem>(items);
     }
 }

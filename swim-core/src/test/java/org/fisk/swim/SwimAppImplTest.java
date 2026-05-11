@@ -331,6 +331,10 @@ class SwimAppImplTest {
         }
 
         @Override
+        public void requestLoadPlugin(String pluginId, Path path) {
+        }
+
+        @Override
         public void requestExit() {
         }
 

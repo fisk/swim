@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
 import java.util.List;
 
 import org.fisk.swim.event.EventResponder;
@@ -16,7 +17,6 @@ import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.text.BufferContext;
 
-import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
@@ -40,12 +40,28 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         setStaticField(Window.class, "_instance", window);
 
         var rootView = new View(Rect.create(0, 0, width, height));
-        rootView.setBackgroundColour(TextColor.ANSI.DEFAULT);
+        rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
+        var keyMenuView = new KeyMenuView(Rect.create(0, 0, width, 2));
+        var commandMenuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        rootView.addSubview(keyMenuView);
         rootView.addSubview(bufferContext.getBufferView());
+        rootView.addSubview(commandMenuView);
         rootView.setFirstResponder(bufferContext.getBufferView());
 
         setField(window, "_rootView", rootView);
+        setField(window, "_keyMenuView", keyMenuView);
+        setField(window, "_commandMenuView", commandMenuView);
+        setField(window, "_workspaceView", bufferContext.getBufferView());
+        setField(window, "_activeView", bufferContext.getBufferView());
+        setField(window, "_activeBufferView", bufferContext.getBufferView());
         setField(window, "_bufferContext", bufferContext);
+        var bufferContextsByView = new IdentityHashMap<BufferView, org.fisk.swim.text.BufferContext>();
+        bufferContextsByView.put(bufferContext.getBufferView(), bufferContext);
+        setField(window, "_bufferContextsByView", bufferContextsByView);
+        var bufferViewCounts = new IdentityHashMap<org.fisk.swim.text.BufferContext, Integer>();
+        bufferViewCounts.put(bufferContext, 1);
+        setField(window, "_bufferViewCounts", bufferViewCounts);
+        window.refreshChromeState();
 
         return new HeadlessWindowHarness(window);
     }
@@ -60,23 +76,39 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         setStaticField(Window.class, "_instance", window);
 
         var rootView = new View(Rect.create(0, 0, width, height));
-        rootView.setBackgroundColour(TextColor.ANSI.DEFAULT);
-        var bufferContext = new BufferContext(Rect.create(0, 0, width, height - 2), path);
+        rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
+        var bufferContext = new BufferContext(Rect.create(0, 2, width, height - 4), path);
+        var keyMenuView = new KeyMenuView(Rect.create(0, 0, width, 2));
+        keyMenuView.setResizeMask(View.RESIZE_MASK_TOP | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         var modeLineView = new ModeLineView(Rect.create(0, height - 2, width, 1));
         modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         var commandView = new CommandView(Rect.create(0, height - 1, width, 1));
         commandView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
+        var commandMenuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
 
+        rootView.addSubview(keyMenuView);
         rootView.addSubview(modeLineView);
         rootView.addSubview(commandView);
         rootView.addSubview(bufferContext.getBufferView());
+        rootView.addSubview(commandMenuView);
         rootView.setFirstResponder(bufferContext.getBufferView());
 
         setField(window, "_rootView", rootView);
+        setField(window, "_keyMenuView", keyMenuView);
+        setField(window, "_workspaceView", bufferContext.getBufferView());
+        setField(window, "_activeView", bufferContext.getBufferView());
+        setField(window, "_activeBufferView", bufferContext.getBufferView());
         setField(window, "_modeLineView", modeLineView);
         setField(window, "_commandView", commandView);
+        setField(window, "_commandMenuView", commandMenuView);
         setField(window, "_size", Size.create(width, height));
         setField(window, "_bufferContext", bufferContext);
+        var bufferContextsByView = new IdentityHashMap<BufferView, org.fisk.swim.text.BufferContext>();
+        bufferContextsByView.put(bufferContext.getBufferView(), bufferContext);
+        setField(window, "_bufferContextsByView", bufferContextsByView);
+        var bufferViewCounts = new IdentityHashMap<org.fisk.swim.text.BufferContext, Integer>();
+        bufferViewCounts.put(bufferContext, 1);
+        setField(window, "_bufferViewCounts", bufferViewCounts);
 
         var normalMode = new NormalMode(window);
         var inputMode = new InputMode(window);
@@ -92,6 +124,7 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         setField(window, "_currentMode", normalMode);
 
         bufferContext.getBufferView().setFirstResponder(normalMode);
+        window.refreshChromeState();
 
         return new HeadlessWindowHarness(window);
     }
@@ -124,6 +157,10 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         return new KeyStroke(KeyType.Enter);
     }
 
+    public static KeyStroke tab() {
+        return new KeyStroke(KeyType.Tab);
+    }
+
     public static KeyStroke backspace() {
         return new KeyStroke(KeyType.Backspace);
     }
@@ -134,6 +171,18 @@ public final class HeadlessWindowHarness implements AutoCloseable {
 
     public static KeyStroke down() {
         return new KeyStroke(KeyType.ArrowDown);
+    }
+
+    public static KeyStroke pageUp() {
+        return new KeyStroke(KeyType.PageUp);
+    }
+
+    public static KeyStroke pageDown() {
+        return new KeyStroke(KeyType.PageDown);
+    }
+
+    public static KeyStroke reverseTab() {
+        return new KeyStroke(KeyType.ReverseTab);
     }
 
     public static KeyStroke left() {

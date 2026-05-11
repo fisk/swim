@@ -10,6 +10,8 @@
   <modules>
     <module>swim-launcher</module>
     <module>swim-core</module>
+    <module>swim-java-lsp</module>
+    <module>swim-tree-view</module>
   </modules>
 
   <properties>
@@ -74,6 +76,11 @@
       <plugins>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-clean-plugin</artifactId>
+          <version>3.4.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-compiler-plugin</artifactId>
           <version>3.13.0</version>
           <configuration>
@@ -112,5 +119,21 @@
         </plugin>
       </plugins>
     </pluginManagement>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-clean-plugin</artifactId>
+        <configuration>
+          <filesets>
+            <fileset>
+              <directory>${project.basedir}/image</directory>
+            </fileset>
+            <fileset>
+              <directory>${project.basedir}/plugins</directory>
+            </fileset>
+          </filesets>
+        </configuration>
+      </plugin>
+    </plugins>
   </build>
 </project>

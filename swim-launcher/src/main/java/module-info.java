@@ -10,4 +10,5 @@ module org.fisk.swim.launcher {
     exports org.fisk.swim.launcher;
 
     uses org.fisk.swim.api.SwimApp;
+    uses org.fisk.swim.api.SwimPlugin;
 }

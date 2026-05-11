@@ -30,6 +30,14 @@ import org.eclipse.lsp4j.CodeLensCapabilities;
 import org.eclipse.lsp4j.CodeLensParams;
 import org.eclipse.lsp4j.ColorInformation;
 import org.eclipse.lsp4j.Command;
+import org.eclipse.lsp4j.CompletionCapabilities;
+import org.eclipse.lsp4j.CompletionContext;
+import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionItemCapabilities;
+import org.eclipse.lsp4j.CompletionList;
+import org.eclipse.lsp4j.CompletionOptions;
+import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.ConfigurationParams;
 import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
@@ -57,11 +65,14 @@ import org.eclipse.lsp4j.SemanticTokensParams;
 import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
+import org.eclipse.lsp4j.InsertReplaceEdit;
+import org.eclipse.lsp4j.InsertTextFormat;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentEdit;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextDocumentSaveReason;
+import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.UnregistrationParams;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
 import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
@@ -77,6 +88,9 @@ import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.CompletionPopupView;
+import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
@@ -93,6 +107,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     private boolean _launchAttempted = false;
     private boolean _enabled = true;
     private Throwable _startupError;
+    private Thread _workerThread;
 
     private LanguageServer _server;
     private ServerCapabilities _capabilities;
@@ -108,8 +123,12 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
     private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
+    private final Object _completionLock = new Object();
+    private final Object _snippetLock = new Object();
 
-    static JavaLSPClient _instance = new JavaLSPClient();
+    private JavaCompletionSession _completionSession;
+    private CompletionPopupView _completionPopupView;
+    private JavaSnippetSession _snippetSession;
 
     static record SemanticHighlight(int start, int end, TextColor foregroundColor) {
     }
@@ -118,8 +137,27 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     public static JavaLSPClient getInstance() {
-        return _instance;
+        return JavaLspPluginSupport.getClient();
     }
+
+    static synchronized JavaLSPClient getInstalledInstanceOr(JavaLSPClient fallback) {
+        return _instance == null ? fallback : _instance;
+    }
+
+    static synchronized void installInstance(JavaLSPClient client) {
+        shutdownInstalledInstance();
+        _instance = client;
+    }
+
+    static synchronized void shutdownInstalledInstance() {
+        JavaLSPClient instance = _instance;
+        _instance = null;
+        if (instance != null) {
+            instance.shutdown();
+        }
+    }
+
+    private static JavaLSPClient _instance;
 
     public JavaLSPClient() {
         this(createDefaultProvider());
@@ -136,7 +174,22 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private static JavaLspProvider createDefaultProvider() {
         Path extensionPath = EmbeddedOracleModuleLayerLspProvider.resolveOracleExtensionPath();
+        String override = System.getProperty("swim.java.lsp.provider", "").trim().toLowerCase(Locale.ROOT);
+        if ("embedded".equals(override)) {
+            return new EmbeddedOracleModuleLayerLspProvider(extensionPath);
+        }
+        if ("process".equals(override)) {
+            return new OracleNbcodeLspProvider(extensionPath);
+        }
         return new EmbeddedOracleModuleLayerLspProvider(extensionPath);
+    }
+
+    static boolean prefersProcessProvider(String osName) {
+        if (osName == null) {
+            return false;
+        }
+        String normalized = osName.toLowerCase(Locale.ROOT);
+        return normalized.contains("mac") || normalized.contains("darwin");
     }
 
     public boolean hasStarted() {
@@ -211,6 +264,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         _launchAttempted = true;
         var thread = new Thread(this::run, "swim-java-lsp");
         thread.setDaemon(true);
+        _workerThread = thread;
         thread.start();
     }
 
@@ -630,6 +684,18 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         var codeLens = new CodeLensCapabilities();
         textDocument.setCodeLens(codeLens);
 
+        var completionItem = new CompletionItemCapabilities();
+        completionItem.setSnippetSupport(false);
+        completionItem.setCommitCharactersSupport(true);
+        completionItem.setDeprecatedSupport(true);
+        completionItem.setPreselectSupport(true);
+        completionItem.setInsertReplaceSupport(true);
+        completionItem.setLabelDetailsSupport(true);
+        var completion = new CompletionCapabilities();
+        completion.setCompletionItem(completionItem);
+        completion.setContextSupport(true);
+        textDocument.setCompletion(completion);
+
         var references = new ReferencesCapabilities();
         textDocument.setReferences(references);
 
@@ -707,10 +773,20 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
             _providerConnection = null;
         }
+        if (_workerThread != null && Thread.currentThread() != _workerThread) {
+            try {
+                _workerThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        _workerThread = null;
         _server = null;
         _capabilities = null;
         _providerDescription = "";
         clearSemanticTokensCache();
+        cancelCompletion();
+        cancelSnippet();
         _started = false;
         _startupComplete = false;
         _launchAttempted = false;
@@ -774,6 +850,474 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    private boolean supportsCompletion() {
+        return _enabled
+                && _server != null
+                && _capabilities != null
+                && _capabilities.getCompletionProvider() != null;
+    }
+
+    private static Position getPosition(BufferContext context, int index) {
+        var line = context.getTextLayout().getPhysicalLineAt(index);
+        return new Position(line.getY(), index - line.getStartPosition());
+    }
+
+    private String currentCompletionPrefix(BufferContext bufferContext) {
+        var buffer = bufferContext.getBuffer();
+        int cursor = buffer.getCursor().getPosition();
+        int start = cursor;
+        while (start > 0) {
+            String character = buffer.getCharacter(start - 1);
+            if (character.isEmpty() || !Character.isJavaIdentifierPart(character.charAt(0))) {
+                break;
+            }
+            --start;
+        }
+        return buffer.getSubstring(start, cursor);
+    }
+
+    private boolean isCompletionTriggerCharacter(char character) {
+        if (!supportsCompletion()) {
+            return false;
+        }
+        CompletionOptions options = _capabilities.getCompletionProvider();
+        if (options == null || options.getTriggerCharacters() == null) {
+            return false;
+        }
+        String value = Character.toString(character);
+        return options.getTriggerCharacters().contains(value);
+    }
+
+    private boolean shouldRequestCompletion(BufferContext bufferContext) {
+        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+        if (cursor <= 0) {
+            return false;
+        }
+        String previous = bufferContext.getBuffer().getCharacter(cursor - 1);
+        if (previous.isEmpty()) {
+            return false;
+        }
+        char character = previous.charAt(0);
+        return Character.isJavaIdentifierPart(character) || isCompletionTriggerCharacter(character);
+    }
+
+    private JavaCompletionSession requestCompletionSession(
+            BufferContext bufferContext,
+            CompletionTriggerKind triggerKind,
+            String triggerCharacter) {
+        if (!supportsCompletion()) {
+            return null;
+        }
+        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+        var params = new CompletionParams(
+                bufferContext.getBuffer().getTextDocumentID(),
+                getPosition(bufferContext, cursor),
+                new CompletionContext(triggerKind, triggerCharacter));
+        try {
+            var completion = _server.getTextDocumentService().completion(params).get(400, TimeUnit.MILLISECONDS);
+            List<CompletionItem> items;
+            boolean incomplete;
+            if (completion == null) {
+                return null;
+            }
+            if (completion.isLeft()) {
+                items = completion.getLeft();
+                incomplete = false;
+            } else {
+                CompletionList list = completion.getRight();
+                items = list == null ? List.of() : list.getItems();
+                incomplete = list != null && list.isIncomplete();
+            }
+            if (items == null || items.isEmpty()) {
+                return null;
+            }
+            String prefix = currentCompletionPrefix(bufferContext);
+            int replacementEnd = bufferContext.getBuffer().getCursor().getPosition();
+            int replacementStart = replacementEnd - prefix.length();
+            return JavaCompletionSession.create(
+                    bufferContext,
+                    prefix,
+                    replacementStart,
+                    replacementEnd,
+                    items,
+                    incomplete);
+        } catch (Exception e) {
+            _log.debug("Completion request failed", e);
+            return null;
+        }
+    }
+
+    private void showCompletionSession(JavaCompletionSession session) {
+        synchronized (_completionLock) {
+            _completionSession = session;
+        }
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        synchronized (_completionLock) {
+            if (_completionPopupView == null || _completionPopupView.getParent() == null) {
+                _completionPopupView = new CompletionPopupView(Rect.create(0, 0, 0, 0));
+                window.getRootView().addSubview(_completionPopupView);
+            }
+            _completionPopupView.setSession(session);
+        }
+        window.getRootView().setNeedsRedraw();
+    }
+
+    private void refreshCompletion(
+            BufferContext bufferContext,
+            CompletionTriggerKind triggerKind,
+            String triggerCharacter) {
+        JavaCompletionSession session = requestCompletionSession(bufferContext, triggerKind, triggerCharacter);
+        if (session == null) {
+            cancelCompletion();
+            return;
+        }
+        showCompletionSession(session);
+    }
+
+    public boolean triggerCompletion(BufferContext bufferContext) {
+        if (!supportsCompletion()) {
+            return false;
+        }
+        refreshCompletion(bufferContext, CompletionTriggerKind.Invoked, null);
+        synchronized (_completionLock) {
+            return _completionSession != null;
+        }
+    }
+
+    public void handleInsertedCharacter(BufferContext bufferContext, char insertedCharacter) {
+        if (hasActiveSnippet()) {
+            return;
+        }
+        if (!supportsCompletion()) {
+            return;
+        }
+        if (Character.isWhitespace(insertedCharacter)) {
+            cancelCompletion();
+            return;
+        }
+        if (Character.isJavaIdentifierPart(insertedCharacter)) {
+            refreshCompletion(bufferContext, CompletionTriggerKind.Invoked, null);
+        } else if (isCompletionTriggerCharacter(insertedCharacter)) {
+            refreshCompletion(bufferContext, CompletionTriggerKind.TriggerCharacter, Character.toString(insertedCharacter));
+        } else {
+            cancelCompletion();
+        }
+    }
+
+    public void handleBackspace(BufferContext bufferContext) {
+        if (hasActiveSnippet()) {
+            return;
+        }
+        if (!supportsCompletion()) {
+            return;
+        }
+        if (shouldRequestCompletion(bufferContext)) {
+            refreshCompletion(bufferContext, CompletionTriggerKind.Invoked, null);
+        } else {
+            cancelCompletion();
+        }
+    }
+
+    public boolean hasCompletionSession() {
+        synchronized (_completionLock) {
+            return _completionSession != null;
+        }
+    }
+
+    public boolean selectNextCompletion() {
+        synchronized (_completionLock) {
+            if (_completionSession == null) {
+                return false;
+            }
+            _completionSession.moveSelection(1);
+            if (_completionPopupView != null) {
+                _completionPopupView.setNeedsRedraw();
+            }
+        }
+        return true;
+    }
+
+    public boolean selectPreviousCompletion() {
+        synchronized (_completionLock) {
+            if (_completionSession == null) {
+                return false;
+            }
+            _completionSession.moveSelection(-1);
+            if (_completionPopupView != null) {
+                _completionPopupView.setNeedsRedraw();
+            }
+        }
+        return true;
+    }
+
+    public boolean pageNextCompletion() {
+        synchronized (_completionLock) {
+            if (_completionSession == null) {
+                return false;
+            }
+            _completionSession.pageSelection(1, JavaCompletionSession.DEFAULT_VISIBLE_ROWS);
+            if (_completionPopupView != null) {
+                _completionPopupView.setNeedsRedraw();
+            }
+        }
+        return true;
+    }
+
+    public boolean pagePreviousCompletion() {
+        synchronized (_completionLock) {
+            if (_completionSession == null) {
+                return false;
+            }
+            _completionSession.pageSelection(-1, JavaCompletionSession.DEFAULT_VISIBLE_ROWS);
+            if (_completionPopupView != null) {
+                _completionPopupView.setNeedsRedraw();
+            }
+        }
+        return true;
+    }
+
+    public boolean isCommitCharacter(char character) {
+        synchronized (_completionLock) {
+            if (_completionSession == null) {
+                return false;
+            }
+            var selected = _completionSession.getSelectedEntry();
+            if (selected == null) {
+                return false;
+            }
+            String value = Character.toString(character);
+            var item = selected.getItem();
+            if (item.getCommitCharacters() != null && item.getCommitCharacters().contains(value)) {
+                return true;
+            }
+            CompletionOptions options = _capabilities == null ? null : _capabilities.getCompletionProvider();
+            return options != null
+                    && options.getAllCommitCharacters() != null
+                    && options.getAllCommitCharacters().contains(value);
+        }
+    }
+
+    public boolean cancelCompletion() {
+        CompletionPopupView popupView;
+        synchronized (_completionLock) {
+            if (_completionSession == null && _completionPopupView == null) {
+                return false;
+            }
+            _completionSession = null;
+            popupView = _completionPopupView;
+            _completionPopupView = null;
+        }
+        if (popupView != null) {
+            popupView.removeFromParent();
+        }
+        var window = Window.getInstance();
+        if (window != null) {
+            window.getRootView().setNeedsRedraw();
+        }
+        return true;
+    }
+
+    public boolean hasActiveSnippet() {
+        synchronized (_snippetLock) {
+            return _snippetSession != null && _snippetSession.isActive();
+        }
+    }
+
+    public void cancelSnippet() {
+        synchronized (_snippetLock) {
+            _snippetSession = null;
+        }
+    }
+
+    public boolean jumpToNextSnippetStop(BufferContext bufferContext) {
+        synchronized (_snippetLock) {
+            if (_snippetSession == null) {
+                return false;
+            }
+            _snippetSession.moveNext(bufferContext);
+            if (!_snippetSession.isActive()) {
+                _snippetSession = null;
+            }
+            return true;
+        }
+    }
+
+    public boolean jumpToPreviousSnippetStop(BufferContext bufferContext) {
+        synchronized (_snippetLock) {
+            if (_snippetSession == null) {
+                return false;
+            }
+            return _snippetSession.movePrevious(bufferContext);
+        }
+    }
+
+    public boolean handleSnippetCharacter(BufferContext bufferContext, char character) {
+        synchronized (_snippetLock) {
+            if (_snippetSession == null) {
+                return false;
+            }
+            var buffer = bufferContext.getBuffer();
+            if (_snippetSession.replaceActivePlaceholder(bufferContext, character)) {
+                return true;
+            }
+            int position = buffer.getCursor().getPosition();
+            buffer.insert(Character.toString(character));
+            _snippetSession.onInsert(position, 1);
+            return true;
+        }
+    }
+
+    public void handleSnippetBackspace(int startPosition, int endPosition) {
+        synchronized (_snippetLock) {
+            if (_snippetSession != null) {
+                _snippetSession.onRemove(startPosition, endPosition);
+            }
+        }
+    }
+
+    private CompletionItem resolveCompletionItem(CompletionItem item) {
+        if (item == null || !supportsCompletion()) {
+            return item;
+        }
+        CompletionOptions options = _capabilities.getCompletionProvider();
+        if (options == null || !Boolean.TRUE.equals(options.getResolveProvider())) {
+            return item;
+        }
+        try {
+            return _server.getTextDocumentService().resolveCompletionItem(item).get(400, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            _log.debug("Completion resolve failed", e);
+            return item;
+        }
+    }
+
+    private TextEdit primaryCompletionEdit(BufferContext bufferContext, JavaCompletionSession session, CompletionItem item) {
+        if (item.getTextEdit() != null) {
+            if (item.getTextEdit().isLeft()) {
+                return item.getTextEdit().getLeft();
+            }
+            InsertReplaceEdit edit = item.getTextEdit().getRight();
+            return edit == null ? null : new TextEdit(edit.getReplace(), edit.getNewText());
+        }
+        String newText = item.getInsertText();
+        if (newText == null) {
+            newText = item.getTextEditText();
+        }
+        if (newText == null) {
+            newText = item.getLabel();
+        }
+        if (newText == null) {
+            return null;
+        }
+        var range = new Range(
+                getPosition(bufferContext, session.getReplacementStart()),
+                getPosition(bufferContext, session.getReplacementEnd()));
+        return new TextEdit(range, newText);
+    }
+
+    private boolean isSnippetCompletion(CompletionItem item) {
+        return item != null && item.getInsertTextFormat() == InsertTextFormat.Snippet;
+    }
+
+    private JavaSnippetParser.ParseResult snippetParseResult(BufferContext bufferContext, CompletionItem item, TextEdit primaryEdit) {
+        if (!isSnippetCompletion(item) || primaryEdit == null) {
+            return null;
+        }
+        return JavaSnippetParser.parse(primaryEdit.getNewText(), bufferContext.getBuffer().getPath());
+    }
+
+    private int finalSnippetInsertionStart(int primaryStart, List<IndexedEdit> edits) {
+        int result = primaryStart;
+        for (var edit : edits) {
+            if (edit._start < primaryStart) {
+                result += edit._newText.replace("\t", "    ").length() - (edit._end - edit._start);
+            }
+        }
+        return result;
+    }
+
+    private void activateSnippet(BufferContext bufferContext, JavaSnippetParser.ParseResult snippet, int insertionStart) {
+        if (snippet == null) {
+            cancelSnippet();
+            return;
+        }
+        if (snippet.tabStops().isEmpty()) {
+            bufferContext.getBuffer().getCursor().setPosition(insertionStart + snippet.finalCursorOffset());
+            cancelSnippet();
+            return;
+        }
+        synchronized (_snippetLock) {
+            _snippetSession = JavaSnippetSession.fromParseResult(insertionStart, snippet);
+            _snippetSession.activate(bufferContext);
+        }
+    }
+
+    private void applyCompletionItem(BufferContext bufferContext, JavaCompletionSession session, CompletionItem item) {
+        if (item == null) {
+            return;
+        }
+        var edits = new ArrayList<TextEdit>();
+        TextEdit primaryEdit = primaryCompletionEdit(bufferContext, session, item);
+        if (primaryEdit != null) {
+            edits.add(primaryEdit);
+        }
+        if (item.getAdditionalTextEdits() != null) {
+            edits.addAll(item.getAdditionalTextEdits());
+        }
+        if (!edits.isEmpty()) {
+            var snippet = snippetParseResult(bufferContext, item, primaryEdit);
+            if (snippet != null && primaryEdit != null) {
+                int primaryStart = getIndex(bufferContext, primaryEdit.getRange().getStart());
+                var appliedEdits = new ArrayList<TextEdit>();
+                for (var edit : edits) {
+                    if (edit == primaryEdit) {
+                        appliedEdits.add(new TextEdit(edit.getRange(), snippet.text()));
+                    } else {
+                        appliedEdits.add(edit);
+                    }
+                }
+                var indexedEdits = indexedEdits(bufferContext, appliedEdits);
+                int insertionStart = finalSnippetInsertionStart(primaryStart, indexedEdits);
+                applyIndexedEdits(bufferContext, indexedEdits);
+                activateSnippet(bufferContext, snippet, insertionStart);
+            } else {
+                cancelSnippet();
+                var workspaceEdit = new WorkspaceEdit();
+                workspaceEdit.setChanges(Map.of(bufferContext.getBuffer().getURI().toString(), edits));
+                applyWorkspaceEdit(bufferContext, workspaceEdit);
+            }
+        } else {
+            cancelSnippet();
+        }
+        applyCommand(bufferContext, item.getCommand());
+    }
+
+    public boolean acceptCompletion(BufferContext bufferContext) {
+        JavaCompletionSession session;
+        synchronized (_completionLock) {
+            session = _completionSession;
+        }
+        if (session == null || session.getSelectedEntry() == null) {
+            return false;
+        }
+        CompletionItem item = resolveCompletionItem(session.getSelectedEntry().getItem());
+        cancelCompletion();
+        applyCompletionItem(bufferContext, session, item);
+        return true;
+    }
+
+    public boolean acceptCompletionWithCharacter(BufferContext bufferContext, char character) {
+        if (!acceptCompletion(bufferContext)) {
+            return false;
+        }
+        bufferContext.getBuffer().insert(Character.toString(character));
+        handleInsertedCharacter(bufferContext, character);
+        return true;
+    }
+
     private static WorkspaceEdit decodeWorkspaceEdit(Object rawEdit) {
         if (rawEdit == null) {
             return null;
@@ -809,6 +1353,33 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             _start = start;
             _end = end;
             _newText = newText;
+        }
+    }
+
+    private static List<IndexedEdit> indexedEdits(BufferContext context, List<? extends TextEdit> edits) {
+        var indexedEdits = new ArrayList<IndexedEdit>();
+        for (var edit : edits) {
+            indexedEdits.add(new IndexedEdit(
+                    getIndex(context, edit.getRange().getStart()),
+                    getIndex(context, edit.getRange().getEnd()),
+                    edit.getNewText()));
+        }
+        indexedEdits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
+                .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
+        return indexedEdits;
+    }
+
+    private static void applyIndexedEdits(BufferContext context, List<IndexedEdit> edits) {
+        var buffer = context.getBuffer();
+        for (var edit : edits) {
+            var newText = edit._newText.replace("\t", "    ");
+            _log.info("Insert " + newText + " at " + edit._start);
+            _log.info("Remove [" + edit._start + ", " + edit._end + "]");
+            buffer.remove(edit._start, edit._end);
+            buffer.insert(edit._start, newText);
+        }
+        if (!edits.isEmpty()) {
+            buffer.getUndoLog().commit();
         }
     }
 
@@ -853,18 +1424,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
         edits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
                 .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
-
-        var buffer = context.getBuffer();
-        for (var edit : edits) {
-            var newText = edit._newText.replace("\t", "    ");
-            _log.info("Insert " + newText + " at " + edit._start);
-            _log.info("Remove [" + edit._start + ", " + edit._end + "]");
-            buffer.remove(edit._start, edit._end);
-            buffer.insert(edit._start, newText);
-        }
-        if (!edits.isEmpty()) {
-            buffer.getUndoLog().commit();
-        }
+        applyIndexedEdits(context, edits);
     }
 
     private void applyCommand(BufferContext bufferContext, Command command) {
@@ -986,10 +1546,12 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        cancelSnippet();
         if (!_enabled || _server == null) {
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        cancelCompletion();
         _log.info("didClose");
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());

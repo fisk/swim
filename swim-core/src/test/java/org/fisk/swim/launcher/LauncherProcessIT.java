@@ -31,6 +31,8 @@ class LauncherProcessIT {
     @TempDir
     Path tempDir;
 
+    private static final String EXPECTED_JAVA_PROVIDER = "oracle-embedded";
+
     @Test
     @Timeout(30)
     void actualEditorCanSwitchFilesDeleteSaveAndQuit() throws Exception {
@@ -205,16 +207,57 @@ class LauncherProcessIT {
             Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
             assertTrue(logFile != null,
                     "Expected launcher binary to create a new /tmp/swim-*.log file. Output:\n" + process.output());
-            assertTrue(waitForFileText(logFile, "Java LSP provider: oracle-embedded", java.time.Duration.ofSeconds(20)),
-                    "Embedded provider was not activated.\nLog:\n" + Files.readString(logFile) + "\nOutput:\n" + process.output());
-            assertTrue(!Files.readString(logFile).contains("Java LSP provider: oracle-process (fallback)"),
-                    "Embedded provider fell back to oracle-process.\nLog:\n" + Files.readString(logFile));
-            assertTrue(!waitForFileText(logFile, "netbeans.user is not set.", java.time.Duration.ofSeconds(5)),
-                    "Embedded provider crashed after activation.\nLog:\n" + Files.readString(logFile));
+            Path providerLog = waitForNewLogContainingText(
+                    existingLogs,
+                    "Java LSP provider: " + EXPECTED_JAVA_PROVIDER,
+                    java.time.Duration.ofSeconds(40));
+            assertTrue(providerLog != null,
+                    "Expected Java provider was not activated.\nLog:\n" + Files.readString(logFile) + "\nOutput:\n" + process.output());
+            logFile = providerLog;
+            if ("oracle-embedded".equals(EXPECTED_JAVA_PROVIDER)) {
+                assertTrue(!Files.readString(logFile).contains("Java LSP provider: oracle-process (fallback)"),
+                        "Embedded provider fell back to oracle-process.\nLog:\n" + Files.readString(logFile));
+                assertTrue(!waitForFileText(logFile, "netbeans.user is not set.", java.time.Duration.ofSeconds(5)),
+                        "Embedded provider crashed after activation.\nLog:\n" + Files.readString(logFile));
+            }
 
             runCommand(process, "q");
             boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
             assertTrue(exited, "Installed launcher binary did not exit after quit command.\n" + process.output());
+        } finally {
+            destroyIfAlive(process.process());
+        }
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryKeepsRunningWhenOpeningRepositoryJavaFile() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
+        Path javaFile = buildRoot.resolve("swim-core").resolve("src").resolve("main").resolve("java")
+                .resolve("org").resolve("fisk").resolve("swim").resolve("lsp").resolve("java").resolve("JavaLSPClient.java");
+        Assumptions.assumeTrue(Files.isRegularFile(javaFile), "Repository Java file missing");
+
+        var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
+                launcherBinary.toString(), javaFile.toString());
+        try {
+            waitForStartup();
+            assertTrue(process.process().isAlive(), "Installed launcher binary died while opening repository Java file.\n" + process.output());
+
+            type(process, "jjjjjjjjjj");
+            Thread.sleep(5000);
+
+            assertTrue(process.process().isAlive(), "Installed launcher binary crashed after opening and navigating a repository Java file.\n" + process.output());
+
+            runCommand(process, "q");
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
+            assertTrue(exited, "Installed launcher binary did not exit after repository Java workflow.\n" + process.output());
         } finally {
             destroyIfAlive(process.process());
         }
@@ -236,6 +279,27 @@ class LauncherProcessIT {
         assertTrue(exited, "Launcher did not exit after synthetic core requested exit.\n" + process.output());
         assertTrue(!process.output().toString().contains("Exception"),
                 "Launcher process logged an exception while exiting.\n" + process.output());
+    }
+
+    @Test
+    @Timeout(30)
+    void launcherRebuildAndReloadLoadsReplacementCoreAfterPreviousCloses() throws Exception {
+        Path buildRoot = createSyntheticRebuildRoot();
+        Path launcherJar = copyLauncherJarInto(buildRoot);
+        Path file = buildRoot.resolve("README.txt");
+        Files.writeString(file, "hello");
+
+        var process = startProcess(buildRoot, launcherJar,
+                "java", "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
+
+        boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(15));
+        assertTrue(exited, "Launcher did not exit after synthetic rebuild workflow.\n" + process.output());
+        assertEquals("v2-after-close", Files.readString(buildRoot.resolve("marker.txt")));
+        assertEquals(List.of("plugin-load", "plugin-close", "plugin-load", "plugin-close"),
+                Files.readAllLines(buildRoot.resolve("plugin-events.txt")));
+        assertTrue(!process.output().toString().contains("Exception"),
+                "Launcher process logged an exception during rebuild workflow.\n" + process.output());
     }
 
     private static void waitForStartup() throws InterruptedException {
@@ -285,6 +349,30 @@ class LauncherProcessIT {
         }
         for (Path candidate : listLogFiles()) {
             if (!existingLogs.contains(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static Path waitForNewLogContainingText(Set<Path> existingLogs, String text, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            for (Path candidate : listLogFiles()) {
+                if (existingLogs.contains(candidate) || !Files.isRegularFile(candidate)) {
+                    continue;
+                }
+                if (Files.readString(candidate).contains(text)) {
+                    return candidate;
+                }
+            }
+            Thread.sleep(100);
+        }
+        for (Path candidate : listLogFiles()) {
+            if (existingLogs.contains(candidate) || !Files.isRegularFile(candidate)) {
+                continue;
+            }
+            if (Files.readString(candidate).contains(text)) {
                 return candidate;
             }
         }
@@ -394,6 +482,194 @@ class LauncherProcessIT {
         jarDirectory(coreClasses, coreJar, "org.fisk.swim.core",
                 Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.ExitApp\n"));
         return root;
+    }
+
+    private Path createSyntheticRebuildRoot() throws Exception {
+        Path root = tempDir.resolve("rebuild-swim");
+        Path plugins = root.resolve("plugins");
+        Files.createDirectories(plugins);
+        Files.createDirectories(root.resolve("swim-core"));
+        Files.writeString(root.resolve("pom.xml"), """
+                <project xmlns="http://maven.apache.org/POM/4.0.0"
+                         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>rebuild-swim</artifactId>
+                  <version>1.0</version>
+                  <build>
+                    <plugins>
+                      <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <version>3.3.1</version>
+                        <executions>
+                          <execution>
+                            <id>copy-replacement-core</id>
+                            <phase>package</phase>
+                            <goals><goal>copy-resources</goal></goals>
+                            <configuration>
+                              <outputDirectory>${project.basedir}/plugins</outputDirectory>
+                              <resources>
+                                <resource>
+                                  <directory>${project.basedir}/artifacts</directory>
+                                  <includes>
+                                    <include>swim-core-0.0.2-SNAPSHOT.jar</include>
+                                  </includes>
+                                </resource>
+                              </resources>
+                              <overwrite>true</overwrite>
+                            </configuration>
+                          </execution>
+                        </executions>
+                      </plugin>
+                    </plugins>
+                  </build>
+                </project>
+                """);
+
+        Path compileDir = tempDir.resolve("rebuild-compile");
+        Path v1Classes = compileDir.resolve("v1-classes");
+        Path v2Classes = compileDir.resolve("v2-classes");
+        Path pluginClasses = compileDir.resolve("plugin-classes");
+        Files.createDirectories(v1Classes);
+        Files.createDirectories(v2Classes);
+        Files.createDirectories(pluginClasses);
+        String classpath = System.getProperty("java.class.path");
+
+        compileJava(Map.of(
+                "fake/core/RebuildApp.java", """
+                        package fake.core;
+                        import java.nio.file.Files;
+                        import java.nio.file.Path;
+                        import org.fisk.swim.api.SwimApp;
+                        import org.fisk.swim.api.SwimHost;
+                        public final class RebuildApp implements SwimApp {
+                            private Path path;
+                            private SwimHost host;
+                            public void start(Path path, SwimHost host) {
+                                this.path = path;
+                                this.host = host;
+                                Thread thread = new Thread(() -> {
+                                    try {
+                                        Thread.sleep(200);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                    host.requestRebuildAndReload(path);
+                                }, "rebuild-v1-trigger");
+                                thread.setDaemon(true);
+                                thread.start();
+                            }
+                            public void refresh(boolean forced) {
+                            }
+                            public Path getCurrentPath() {
+                                return path;
+                            }
+                            public void showMessage(String message) {
+                            }
+                            public void close() {
+                                try {
+                                    Files.writeString(host.getBuildRoot().resolve("closed.txt"), "closed");
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        }
+                        """
+        ), v1Classes, List.of(classpath));
+
+        compileJava(Map.of(
+                "fake/core/RebuildApp.java", """
+                        package fake.core;
+                        import java.nio.file.Files;
+                        import java.nio.file.Path;
+                        import org.fisk.swim.api.SwimApp;
+                        import org.fisk.swim.api.SwimHost;
+                        public final class RebuildApp implements SwimApp {
+                            private Path path;
+                            public void start(Path path, SwimHost host) {
+                                this.path = path;
+                                try {
+                                    String marker = Files.exists(host.getBuildRoot().resolve("closed.txt")) ? "v2-after-close" : "v2-before-close";
+                                    Files.writeString(host.getBuildRoot().resolve("marker.txt"), marker);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                                Thread thread = new Thread(() -> {
+                                    try {
+                                        Thread.sleep(200);
+                                    } catch (InterruptedException e) {
+                                        Thread.currentThread().interrupt();
+                                    }
+                                    host.requestExit();
+                                }, "rebuild-v2-exit");
+                                thread.setDaemon(true);
+                                thread.start();
+                            }
+                            public void refresh(boolean forced) {
+                            }
+                            public Path getCurrentPath() {
+                                return path;
+                            }
+                            public void showMessage(String message) {
+                            }
+                            public void close() {
+                            }
+                        }
+                        """
+        ), v2Classes, List.of(classpath));
+
+        compileJava(Map.of(
+                "fake/plugin/ReloadMarkerPlugin.java", """
+                        package fake.plugin;
+                        import java.nio.file.Files;
+                        import java.nio.file.Path;
+                        import java.nio.file.StandardOpenOption;
+                        import org.fisk.swim.api.SwimPlugin;
+                        import org.fisk.swim.api.SwimPluginContext;
+                        public final class ReloadMarkerPlugin implements SwimPlugin {
+                            private Path events;
+                            public String getId() {
+                                return "reload-marker-plugin";
+                            }
+                            public void load(SwimPluginContext context) {
+                                events = context.getHost().getBuildRoot().resolve("plugin-events.txt");
+                                append("plugin-load");
+                            }
+                            public void close() {
+                                append("plugin-close");
+                            }
+                            private void append(String event) {
+                                try {
+                                    Files.writeString(events,
+                                            event + System.lineSeparator(),
+                                            StandardOpenOption.CREATE,
+                                            StandardOpenOption.APPEND);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        }
+                        """
+        ), pluginClasses, List.of(classpath));
+
+        jarDirectory(v1Classes, plugins.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "org.fisk.swim.core",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.RebuildApp\n"));
+        jarDirectory(pluginClasses, plugins.resolve("reload-marker-plugin-0.0.1-SNAPSHOT.jar"), "demo.reload.marker",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimPlugin", "fake.plugin.ReloadMarkerPlugin\n"));
+        Path artifacts = root.resolve("artifacts");
+        Files.createDirectories(artifacts);
+        jarDirectory(v2Classes, artifacts.resolve("swim-core-0.0.2-SNAPSHOT.jar"), "org.fisk.swim.core",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.RebuildApp\n"));
+        return root;
+    }
+
+    private Path copyLauncherJarInto(Path buildRoot) throws IOException {
+        Path source = Main.getLauncherLocation();
+        Path target = buildRoot.resolve("target").resolve(source.getFileName().toString());
+        Files.createDirectories(target.getParent());
+        Files.copy(source, target);
+        return target;
     }
 
     private static void compileJava(Map<String, String> sources, Path classesDir, List<String> classpathEntries) throws Exception {

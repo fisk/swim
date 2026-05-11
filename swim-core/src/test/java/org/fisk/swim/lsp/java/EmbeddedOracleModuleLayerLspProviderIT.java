@@ -42,6 +42,7 @@ class EmbeddedOracleModuleLayerLspProviderIT {
                 "Embedded provider requires the NetBeans-compatible JVM launcher flags");
 
         Path project = tempDir.resolve("demo");
+        Path workspace = JavaLSPClient.getWorkspacePath(tempDir, project);
         Files.createDirectories(project.resolve("src/main/java/demo"));
         Files.writeString(project.resolve("pom.xml"), """
                 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -60,7 +61,7 @@ class EmbeddedOracleModuleLayerLspProviderIT {
 
         var session = provider.start(
                 project,
-                JavaLSPClient.getWorkspacePath(tempDir, project),
+                workspace,
                 new SilentLanguageClient(project),
                 basicCapabilities(),
                 initializationOptions(),
@@ -72,6 +73,14 @@ class EmbeddedOracleModuleLayerLspProviderIT {
         } finally {
             session.closeable().close();
         }
+
+        Path messagesLog = workspace.resolve("userdir").resolve("var").resolve("log").resolve("messages.log");
+        assertTrue(Files.isRegularFile(messagesLog), "Expected NetBeans workspace log at " + messagesLog);
+        String logText = Files.readString(messagesLog);
+        assertTrue(!logText.contains("ClassNotFoundException: org.netbeans.api.maven.MavenActions"),
+                () -> "Embedded provider left Maven project support half-initialized.\n" + logText);
+        assertTrue(!logText.contains("ClassNotFoundException: maven.actions.override"),
+                () -> "Embedded provider failed loading Maven layer entries.\n" + logText);
     }
 
     private static ClientCapabilities basicCapabilities() {

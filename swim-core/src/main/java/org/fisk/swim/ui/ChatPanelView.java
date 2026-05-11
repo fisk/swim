@@ -11,8 +11,6 @@ import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
@@ -44,11 +42,15 @@ public class ChatPanelView extends View {
         _title = title;
         _onSubmit = onSubmit;
         _onCommand = onCommand;
-        setBackgroundColour(TextColor.ANSI.DEFAULT);
+        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
     int getStartLine() {
         return _startLine;
+    }
+
+    String getTitle() {
+        return _title;
     }
 
     String getInputText() {
@@ -87,9 +89,13 @@ public class ChatPanelView extends View {
     }
 
     public void setPending(boolean pending) {
+        setPending(pending, System.currentTimeMillis());
+    }
+
+    public void setPending(boolean pending, long startedAtMillis) {
         _pending = pending;
         if (pending) {
-            _pendingStartedAtMillis = System.currentTimeMillis();
+            _pendingStartedAtMillis = startedAtMillis > 0 ? startedAtMillis : System.currentTimeMillis();
             startPendingRefreshLoop();
         } else {
             _pendingStartedAtMillis = 0;
@@ -141,19 +147,27 @@ public class ChatPanelView extends View {
     }
 
     private AttributedString renderLine(String line) {
+        return renderLine(line, _backgroundColour);
+    }
+
+    private AttributedString renderLine(String line, TextColor background) {
         if (line.startsWith(ME_PREFIX)) {
-            return renderPromptLine(ME_PREFIX, line.substring(ME_PREFIX.length()), com.googlecode.lanterna.TextColor.ANSI.RED);
+            return renderPromptLine(ME_PREFIX, line.substring(ME_PREFIX.length()), UiTheme.CHAT_ME, background);
         }
         if (line.startsWith(NEMO_PREFIX)) {
-            return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), com.googlecode.lanterna.TextColor.ANSI.GREEN);
+            return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), UiTheme.CHAT_NEMO, background);
         }
-        return AttributedString.create(line, TextColor.ANSI.DEFAULT, _backgroundColour);
+        return AttributedString.create(line, UiTheme.TEXT_MUTED, background);
     }
 
     private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour) {
+        return renderPromptLine(prompt, text, promptColour, _backgroundColour);
+    }
+
+    private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour, TextColor background) {
         var result = new AttributedString();
-        result.append(prompt, promptColour, _backgroundColour);
-        result.append(text, TextColor.ANSI.DEFAULT, _backgroundColour);
+        result.append(prompt, promptColour, background);
+        result.append(text, UiTheme.TEXT_PRIMARY, background);
         return result;
     }
 
@@ -252,25 +266,29 @@ public class ChatPanelView extends View {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var graphics = terminalContext.getGraphics();
+        int width = rect.getSize().getWidth();
 
-        graphics.setBackgroundColor(TextColor.ANSI.GREEN);
-        graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
-                new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        AttributedString.create(_title, TextColor.ANSI.BLACK, TextColor.ANSI.GREEN)
-                .drawAt(rect.getPoint(), graphics);
+        var title = new AttributedString();
+        title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+        title.append(_pending ? " waiting for Nemo " : " ready ", _pending ? UiTheme.ACCENT_GOLD : UiTheme.ACCENT_GREEN,
+                UiTheme.SURFACE_ACCENT);
+        title.append(" esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var lines = getDisplayLines();
         int bodyHeight = bodyHeight();
         for (int i = 0; i < bodyHeight && _startLine + i < lines.size(); i++) {
-            renderLine(lines.get(_startLine + i))
-                    .drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), graphics);
+            TextColor background = i % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), width,
+                    renderLine(lines.get(_startLine + i), background), UiTheme.TEXT_MUTED, background);
         }
 
         int inputY = rect.getPoint().getY() + rect.getSize().getHeight() - 1;
-        graphics.setBackgroundColor(TextColor.ANSI.BLACK);
-        graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), inputY),
-                new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        renderPromptLine(ME_PREFIX, _input.toString(), TextColor.ANSI.RED)
-                .drawAt(Point.create(rect.getPoint().getX(), inputY), graphics);
+        var input = new AttributedString();
+        input.append(" me> ", UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
+        input.append(_input.length() == 0 ? "type a message or :abort" : _input.toString(),
+                _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+        UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY), width, input, UiTheme.TEXT_MUTED,
+                UiTheme.COMMAND_BACKGROUND);
     }
 }

@@ -10,8 +10,6 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
@@ -25,7 +23,7 @@ public class TextPanelView extends View {
         super(bounds);
         _title = title;
         _text = text;
-        setBackgroundColour(TextColor.ANSI.DEFAULT);
+        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
 
         _responders.addEventResponder("<ESC>", this::close);
         _responders.addEventResponder("q", this::close);
@@ -37,6 +35,10 @@ public class TextPanelView extends View {
 
     int getStartLine() {
         return _startLine;
+    }
+
+    String getTitle() {
+        return _title;
     }
 
     static List<String> wrapText(String text, int width) {
@@ -75,7 +77,7 @@ public class TextPanelView extends View {
     }
 
     private void scrollDown(int amount) {
-        int maxStart = Math.max(0, getWrappedLines().size() - Math.max(0, getBounds().getSize().getHeight() - 1));
+        int maxStart = Math.max(0, getWrappedLines().size() - Math.max(0, getBounds().getSize().getHeight() - 2));
         _startLine = Math.min(maxStart, _startLine + amount);
         setNeedsRedraw();
     }
@@ -100,18 +102,31 @@ public class TextPanelView extends View {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var graphics = terminalContext.getGraphics();
+        int width = rect.getSize().getWidth();
 
-        graphics.setBackgroundColor(TextColor.ANSI.GREEN);
-        graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
-                new TerminalSize(rect.getSize().getWidth(), 1), ' ');
-        AttributedString.create(_title, TextColor.ANSI.BLACK, TextColor.ANSI.GREEN)
-                .drawAt(rect.getPoint(), graphics);
+        var title = new AttributedString();
+        title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+        title.append(" j/k scroll  q close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var lines = getWrappedLines();
-        int bodyHeight = Math.max(0, rect.getSize().getHeight() - 1);
+        int bodyHeight = Math.max(0, rect.getSize().getHeight() - 2);
         for (int i = 0; i < bodyHeight && _startLine + i < lines.size(); i++) {
-            AttributedString.create(lines.get(_startLine + i), TextColor.ANSI.DEFAULT, _backgroundColour)
-                    .drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), graphics);
+            TextColor background = i % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), width,
+                    AttributedString.create(" " + lines.get(_startLine + i), UiTheme.TEXT_PRIMARY, background),
+                    UiTheme.TEXT_MUTED, background);
+        }
+
+        if (rect.getSize().getHeight() > 2) {
+            int visibleEnd = Math.min(lines.size(), _startLine + bodyHeight);
+            String footerText = " " + visibleEnd + "/" + lines.size() + " lines";
+            var footer = new AttributedString();
+            footer.append(footerText, UiTheme.ACCENT_BLUE, UiTheme.SURFACE_MUTED);
+            footer.append("  Esc dismiss", UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(),
+                    rect.getPoint().getY() + rect.getSize().getHeight() - 1), width, footer, UiTheme.TEXT_MUTED,
+                    UiTheme.SURFACE_MUTED);
         }
     }
 }

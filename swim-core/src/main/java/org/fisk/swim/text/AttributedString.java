@@ -72,6 +72,25 @@ public class AttributedString {
         _fragments.addAll(str._fragments);
         _length += str._length;
     }
+
+    public AttributedString slice(int start, int end) {
+        if (start < 0 || end < start || end > _length) {
+            throw new IllegalArgumentException("Slice out of bounds: " + start + ", " + end + " length: " + _length);
+        }
+        var result = new AttributedString();
+        if (start == end) {
+            return result;
+        }
+        int currentX = 0;
+        for (var fragment : _fragments) {
+            int fragmentLength = fragment._string.length();
+            var fragmentRange = Range.create(currentX, currentX + fragmentLength);
+            result._length += result.formatFragmentRange(Range.create(start, end), fragmentRange, fragment._attributes,
+                    fragment._string);
+            currentX += fragmentLength;
+        }
+        return result;
+    }
     
     private int formatFragmentRange(Range range, Range fragmentRange, AttributeSet attrs, String fragmentStr) {
         if (range.getLength() <= 0) {

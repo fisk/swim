@@ -1,6 +1,7 @@
 package org.fisk.swim.nemo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -44,6 +45,24 @@ class NemoClientTest {
 
         assertTrue(prompt.contains("me> First"));
         assertTrue(prompt.contains("nemo> Second"));
+    }
+
+    @Test
+    void omitsNonPromptTurnsFromConversationTranscript() throws IOException {
+        Path file = tempDir.resolve("Conversation.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+
+        String prompt = NemoClient.buildInput(context, List.of(
+                new NemoClient.ChatTurn("me", ":workers", false),
+                new NemoClient.ChatTurn("nemo", "Workers:\nsession-1", false),
+                new NemoClient.ChatTurn("me", "Explain this class"),
+                new NemoClient.ChatTurn("nemo", "It models a demo.")));
+
+        assertFalse(prompt.contains(":workers"));
+        assertFalse(prompt.contains("Workers:"));
+        assertTrue(prompt.contains("me> Explain this class"));
+        assertTrue(prompt.contains("nemo> It models a demo."));
     }
 
     @Test
