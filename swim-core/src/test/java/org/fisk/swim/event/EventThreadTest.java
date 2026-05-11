@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.EventThread;
 import org.junit.jupiter.api.Test;
@@ -43,5 +44,33 @@ class EventThreadTest {
 
         thread.shutdown();
         thread.join(2000);
+    }
+
+    @Test
+    void shutdownCanClearHooksWhileHooksAreRunning() throws Exception {
+        var thread = new EventThread();
+        var enteredHook = new CountDownLatch(1);
+        var releaseHook = new CountDownLatch(1);
+        var uncaught = new AtomicReference<Throwable>();
+        thread.setUncaughtExceptionHandler((ignored, throwable) -> uncaught.set(throwable));
+        thread.addOnEvent(() -> {
+            enteredHook.countDown();
+            try {
+                releaseHook.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        thread.start();
+
+        thread.enqueue(new RunnableEvent(() -> {
+        }));
+
+        assertTrue(enteredHook.await(2, TimeUnit.SECONDS));
+        thread.shutdown();
+        releaseHook.countDown();
+        thread.join(2000);
+
+        assertEquals(null, uncaught.get());
     }
 }

@@ -140,6 +140,22 @@ class MainTest {
     }
 
     @Test
+    void launcherScriptInstallerCreatesExecutableScript() throws Exception {
+        LauncherScriptInstaller.install(tempDir);
+
+        Path script = tempDir.resolve("bin").resolve("swim");
+        assertTrue(Files.isRegularFile(script));
+        assertTrue(Files.isExecutable(script));
+        String content = Files.readString(script);
+        assertTrue(content.contains("SWIM_JAVA_ARGS"));
+        assertTrue(content.contains("org.fisk.swim.launcher/org.fisk.swim.launcher.Main"));
+        assertTrue(content.contains("--add-modules=java.instrument"));
+        assertFalse(content.contains("com.sun.tools.classfile"));
+        assertTrue(content.contains("LOG_FILE=\"$LOG_DIR/swim-$$.log\""));
+        assertTrue(content.contains("exec 2>>\"$LOG_FILE\""));
+    }
+
+    @Test
     void checkArgumentsCreatesMissingFileAndReturnsAbsolutePath() throws Exception {
         Main main = new Main((buildRoot, parentLoader) -> {
             throw new AssertionError("app loading not expected");

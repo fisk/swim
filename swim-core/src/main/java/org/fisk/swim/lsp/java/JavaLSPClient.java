@@ -1,12 +1,7 @@
 package org.fisk.swim.lsp.java;
 
-import java.io.BufferedReader;
-import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.URI;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,8 +17,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.stream.Stream;
 import java.util.regex.Pattern;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
@@ -77,7 +70,6 @@ import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.TokenFormat;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
-import org.eclipse.lsp4j.launch.LSPLauncher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
@@ -104,14 +96,14 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private LanguageServer _server;
     private ServerCapabilities _capabilities;
-    private Process _process;
-    private Socket _serverSocket;
     private Thread _shutdownHook;
+    private AutoCloseable _providerConnection;
 
     private Path _projectPath;
     private Path _workspacePath;
     private Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
-    private Path _oracleExtensionPath = resolveOracleExtensionPath();
+    private final JavaLspProvider _provider;
+    private volatile String _providerDescription = "";
 
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
@@ -130,11 +122,21 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     }
 
     public JavaLSPClient() {
-        if (_oracleExtensionPath == null) {
+        this(createDefaultProvider());
+    }
+
+    JavaLSPClient(JavaLspProvider provider) {
+        _provider = provider;
+        if (!_provider.isAvailable()) {
             _log.info("No LSP support");
             _enabled = false;
         }
         initColours();
+    }
+
+    private static JavaLspProvider createDefaultProvider() {
+        Path extensionPath = EmbeddedOracleModuleLayerLspProvider.resolveOracleExtensionPath();
+        return new EmbeddedOracleModuleLayerLspProvider(extensionPath);
     }
 
     public boolean hasStarted() {
@@ -145,47 +147,24 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return _enabled;
     }
 
+    public String getProviderDescription() {
+        return _providerDescription;
+    }
+
     public void disable() {
         _enabled = false;
     }
 
     static Path findOracleExtensionPath(Path extensionsDir) {
-        if (!Files.isDirectory(extensionsDir)) {
-            return null;
-        }
-        try (Stream<Path> entries = Files.list(extensionsDir)) {
-            return entries
-                    .filter(Files::isDirectory)
-                    .filter(path -> {
-                        String name = path.getFileName().toString();
-                        return name.equals("oracle.oracle-java") || name.startsWith("oracle.oracle-java-");
-                    })
-                    .sorted(Comparator.reverseOrder())
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to inspect VS Code extensions in " + extensionsDir, e);
-        }
+        return OracleNbcodeLspProvider.findOracleExtensionPath(extensionsDir);
     }
 
     static String getNbcodeExecutableName(String osName, String arch) {
-        String normalizedOs = osName.toLowerCase(Locale.ROOT);
-        if (!normalizedOs.contains("mac") && !normalizedOs.contains("darwin") && normalizedOs.contains("win")) {
-            String normalizedArch = arch.toLowerCase(Locale.ROOT);
-            return normalizedArch.contains("x64") || normalizedArch.contains("x86_64")
-                    || normalizedArch.contains("amd64") || normalizedArch.contains("arm64")
-                    ? "nbcode64.exe"
-                    : "nbcode.exe";
-        }
-        return "nbcode.sh";
+        return OracleNbcodeLspProvider.getNbcodeExecutableName(osName, arch);
     }
 
     static Path findNbcode(Path oracleExtensionPath, String osName, String arch) {
-        Path path = oracleExtensionPath.resolve("nbcode").resolve("bin").resolve(getNbcodeExecutableName(osName, arch));
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("Cannot execute " + path);
-        }
-        return path;
+        return OracleNbcodeLspProvider.findNbcode(oracleExtensionPath, osName, arch);
     }
 
     static Path getWorkspacePath(Path swimHomePath, Path projectPath) {
@@ -250,118 +229,6 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             _startupComplete = true;
             _startupError = error;
             _lock.notifyAll();
-        }
-    }
-
-    private void logErrorStream(InputStream errorStream) {
-        try (var reader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                _log.info("oracle-java stderr: " + line);
-            }
-        } catch (IOException e) {
-            _log.debug("Error stream reader stopped", e);
-        }
-    }
-
-    private void ensureExecutablePermissions(Path nbcodePath) throws IOException {
-        if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win")) {
-            return;
-        }
-        Files.setPosixFilePermissions(nbcodePath, java.util.Set.of(
-                java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
-                java.nio.file.attribute.PosixFilePermission.GROUP_READ,
-                java.nio.file.attribute.PosixFilePermission.OTHERS_READ));
-        Path nbexec = _oracleExtensionPath.resolve("nbcode").resolve("platform").resolve("lib").resolve("nbexec.sh");
-        if (Files.isRegularFile(nbexec)) {
-            Files.setPosixFilePermissions(nbexec, java.util.Set.of(
-                    java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                    java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                    java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE,
-                    java.nio.file.attribute.PosixFilePermission.GROUP_READ,
-                    java.nio.file.attribute.PosixFilePermission.OTHERS_READ));
-        }
-    }
-
-    private List<String> getNbcodeClusterPaths() throws IOException {
-        Path nbcodeRoot = _oracleExtensionPath.resolve("nbcode");
-        try (Stream<Path> entries = Files.list(nbcodeRoot)) {
-            return entries
-                    .filter(Files::isDirectory)
-                    .filter(path -> {
-                        String name = path.getFileName().toString();
-                        return !name.equals("bin") && !name.equals("etc");
-                    })
-                    .sorted()
-                    .map(Path::toString)
-                    .toList();
-        }
-    }
-
-    private String detectJdkHome() {
-        Path javaHome = Paths.get(System.getProperty("java.home")).toAbsolutePath().normalize();
-        if (Files.isRegularFile(javaHome.resolve("bin").resolve("javac"))) {
-            return javaHome.toString();
-        }
-        Path parent = javaHome.getParent();
-        if (parent != null && Files.isRegularFile(parent.resolve("bin").resolve("javac"))) {
-            return parent.toString();
-        }
-        return null;
-    }
-
-    private List<String> buildLaunchCommand(Path nbcodePath, Path userDir) throws IOException {
-        var command = new ArrayList<String>();
-        command.add(nbcodePath.toString());
-
-        String jdkHome = detectJdkHome();
-        if (jdkHome != null) {
-            command.add("--jdkhome");
-            command.add(jdkHome);
-        }
-
-        command.add("--userdir");
-        command.add(userDir.toString());
-        command.add("--modules");
-        command.add("--list");
-        command.add("-J-XX:PerfMaxStringConstLength=10240");
-        command.add("--locale");
-        command.add(Locale.getDefault().toLanguageTag());
-        command.add("--start-java-language-server=listen-hash:0");
-        command.add("-J--add-exports=jdk.compiler/com.sun.tools.javac.resources=ALL-UNNAMED");
-        command.add("-J-Dnetbeans.extra.dirs=" + String.join(File.pathSeparator, getNbcodeClusterPaths()));
-        return command;
-    }
-
-    private Socket connectToLanguageServer(int port, String hash) throws IOException {
-        var socket = new Socket("127.0.0.1", port);
-        socket.getOutputStream().write(hash.getBytes(StandardCharsets.UTF_8));
-        socket.getOutputStream().flush();
-        return socket;
-    }
-
-    private void monitorLanguageServerOutput(InputStream outputStream, CompletableFuture<Socket> socketFuture) {
-        Pattern pattern = Pattern.compile("Java Language Server listening at port (\\d+) with hash (.+)");
-        try (var reader = new BufferedReader(new InputStreamReader(outputStream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                _log.info("oracle-java stdout: " + line);
-                var matcher = pattern.matcher(line);
-                if (matcher.find() && !socketFuture.isDone()) {
-                    socketFuture.complete(connectToLanguageServer(
-                            Integer.parseInt(matcher.group(1)),
-                            matcher.group(2)));
-                }
-            }
-            if (!socketFuture.isDone()) {
-                socketFuture.completeExceptionally(new IOException("Oracle Java language server did not publish a socket endpoint"));
-            }
-        } catch (Exception e) {
-            if (!socketFuture.isDone()) {
-                socketFuture.completeExceptionally(e);
-            }
         }
     }
 
@@ -554,24 +421,12 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     Thread createShutdownHook() {
         return new Thread(() -> {
-            if (_process == null) {
+            if (_providerConnection == null) {
                 return;
             }
-            if (!_started) {
-                _process.destroy();
-            } else {
-                try {
-                    _server.shutdown().get();
-                    _server.exit();
-                } catch (Exception e) {
-                    _process.destroy();
-                }
-            }
-            if (_serverSocket != null) {
-                try {
-                    _serverSocket.close();
-                } catch (IOException e) {
-                }
+            try {
+                _providerConnection.close();
+            } catch (Exception e) {
             }
         });
     }
@@ -718,60 +573,25 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private void setup() throws IOException {
         Files.createDirectories(_workspacePath);
-        Path userDir = _workspacePath.resolve("userdir");
-        Files.createDirectories(userDir);
-        Path nbcodePath = findNbcode(_oracleExtensionPath, System.getProperty("os.name"), System.getProperty("os.arch"));
-        ensureExecutablePermissions(nbcodePath);
-
-        _log.info("Oracle Java extension path: " + _oracleExtensionPath);
         _log.info("LSP workspace path: " + _projectPath);
         _log.info("LSP workspace folder path: " + _workspacePath);
-        _log.info("Oracle Java userdir path: " + userDir);
-
-        var command = buildLaunchCommand(nbcodePath, userDir);
-
-        var processBuilder = new ProcessBuilder(command);
-        processBuilder.directory(userDir.toFile());
-        _process = processBuilder.start();
-
-        _shutdownHook = createShutdownHook();
-        Runtime.getRuntime().addShutdownHook(_shutdownHook);
-
-        _log.info("Proccess command: " + String.join(" ", command));
-        _log.info("Process PID: " + _process.pid());
-
-        var stderrThread = new Thread(() -> logErrorStream(_process.getErrorStream()), "swim-java-lsp-stderr");
-        stderrThread.setDaemon(true);
-        stderrThread.start();
-
-        _log.info("Starting Oracle Java language server...");
-        var socketFuture = new CompletableFuture<Socket>();
-        var stdoutThread = new Thread(() -> monitorLanguageServerOutput(_process.getInputStream(), socketFuture), "swim-oracle-java-stdout");
-        stdoutThread.setDaemon(true);
-        stdoutThread.start();
         var client = createLanguageClient();
-        _serverSocket = null;
         try {
-            _serverSocket = socketFuture.get(configurationTimeoutSeconds(), TimeUnit.SECONDS);
-            var clientLauncher = LSPLauncher.createClientLauncher(client, _serverSocket.getInputStream(), _serverSocket.getOutputStream());
-            var listeningFuture = clientLauncher.startListening();
-            _server = clientLauncher.getRemoteProxy();
-            var initParams = new InitializeParams();
-            initParams.setRootUri(_projectPath.toUri().toString());
-            initParams.setWorkspaceFolders(List.of(new WorkspaceFolder(
-                    _projectPath.toUri().toString(),
-                    _projectPath.getFileName().toString())));
-            initParams.setCapabilities(getClientCapabilities());
-            initParams.setInitializationOptions(getInitializationOptions());
-            var initialized = _server.initialize(initParams).get();
-            _capabilities = initialized.getCapabilities();
-            _server.initialized(new InitializedParams());
-            _log.info("Server capabilities: " + _capabilities);
+            var session = _provider.start(
+                    _projectPath,
+                    _workspacePath,
+                    client,
+                    getClientCapabilities(),
+                    getInitializationOptions(),
+                    configurationTimeoutSeconds());
+            _server = session.server();
+            _capabilities = session.capabilities();
+            _providerConnection = session.closeable();
+            _providerDescription = session.description();
+            _log.info("Java LSP provider: " + session.description());
+            _shutdownHook = createShutdownHook();
+            Runtime.getRuntime().addShutdownHook(_shutdownHook);
             signalStartupSuccess();
-            listeningFuture.get();
-        } catch (TimeoutException e) {
-            signalStartupFailure(e);
-            throw new RuntimeException("Timed out waiting for Oracle Java language server socket", e);
         } catch (Exception e) {
             signalStartupFailure(e);
             throw new RuntimeException("Exception initializing LSP server", e);
@@ -880,19 +700,16 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
             _shutdownHook = null;
         }
-        if (_server != null) {
+        if (_providerConnection != null) {
             try {
-                _server.shutdown().get();
-                _server.exit();
+                _providerConnection.close();
             } catch (Exception e) {
             }
-        }
-        if (_process != null) {
-            _process.destroy();
-            _process = null;
+            _providerConnection = null;
         }
         _server = null;
         _capabilities = null;
+        _providerDescription = "";
         clearSemanticTokensCache();
         _started = false;
         _startupComplete = false;
@@ -1325,7 +1142,11 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
 
         synchronized (this) {
-            _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
+            if (highlights.isEmpty()) {
+                _semanticTokensCache.remove(uri);
+            } else {
+                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
+            }
         }
         return highlights;
     }

@@ -3,6 +3,7 @@ package org.fisk.swim;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import org.fisk.swim.event.Event;
@@ -21,7 +22,7 @@ public class EventThread extends Thread {
     private final ListEventResponder _responder;
     private final ArrayBlockingQueue<Event> _events = new ArrayBlockingQueue<>(1024, true);
     private static volatile EventThread _instance;
-    private final List<Runnable> _onEventRunnables = new ArrayList<>();
+    private final List<Runnable> _onEventRunnables = new CopyOnWriteArrayList<>();
     private volatile boolean _running = true;
 
     public static EventThread getInstance() {

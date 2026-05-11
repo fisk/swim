@@ -2,6 +2,8 @@ package org.fisk.swim;
 
 import java.nio.file.Path;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.lsp.java.JavaLSPClient;
@@ -11,6 +13,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Window;
 
 public class SwimAppImpl implements SwimApp {
+    private static final Logger LOG = LogManager.getLogger(SwimAppImpl.class);
+
     interface WindowAccess {
         void update(boolean forced);
         Path getCurrentPath();
@@ -145,6 +149,7 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void start(Path path, SwimHost host) {
+        SwimLogging.setup();
         _bindings.setHost(host);
         var window = _bindings.createWindow(path);
         window.update(true);
@@ -158,6 +163,7 @@ public class SwimAppImpl implements SwimApp {
         eventThread.start();
         _ioThread = _bindings.createIoThread();
         _ioThread.start();
+        LOG.info("swim started");
     }
 
     @Override

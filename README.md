@@ -12,11 +12,11 @@ $ cd ~/.swim
 # 3. Build the project in place:
 $ mvn package
 
-# 4. Run SWIM with a file via the installed launcher module:
-$ java -XX:+UseZGC --module-path "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar" -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main <file>
+# 4. Run SWIM with the installed launcher script:
+$ "$HOME/.swim/bin/swim" <file>
 
 # 5. For convenience, create an alias:
-$ alias swim='java -XX:+UseZGC --module-path "$HOME/.swim/bin/launcher/swim-launcher-0.0.1-SNAPSHOT.jar" -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main'
+$ alias swim='"$HOME/.swim/bin/swim"'
 # Then simply:
 $ swim <file>
 ```
@@ -30,6 +30,7 @@ $ swim <file>
 Those installed artifacts are the supported runtime entrypoint. The launcher and core are now deployed as real JPMS modules. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
 
 The build also installs the Oracle Java VS Code extension bundle under `~/.swim/deps/oracle.oracle-java` on first package, so Java LSP support does not depend on a separate VS Code installation.
+The generated `~/.swim/bin/swim` script also applies the Oracle NetBeans JVM compatibility flags required by the built-in embedded Java LSP.
 
 Once SWIM is running:
 
@@ -137,6 +138,8 @@ Then inside SWIM you can ask Nemo questions like:
 ```
 
 Or just press `Esc` in Normal mode to open the Nemo chat pane immediately.
+
+Java files use the embedded Oracle/NetBeans LSP by default when the bundled payload is installed.
 
 Nemo sends the current file path and full buffer contents to the model along with the chat transcript. Nemo is configured to act directly on fix and commit requests when it has enough information. When enabled in `nemo.conf`, Nemo can use:
 

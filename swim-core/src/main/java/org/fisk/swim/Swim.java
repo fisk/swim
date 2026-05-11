@@ -3,14 +3,8 @@ package org.fisk.swim;
 import java.io.PrintStream;
 import java.nio.file.Path;
 
-import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.core.LoggerContext;
-import org.apache.logging.log4j.core.appender.FileAppender;
-import org.apache.logging.log4j.core.config.Configuration;
-import org.apache.logging.log4j.core.config.LoggerConfig;
-import org.apache.logging.log4j.core.layout.PatternLayout;
 
 import org.fisk.swim.event.IOThread;
 import org.fisk.swim.terminal.TerminalContext;
@@ -64,46 +58,8 @@ public class Swim {
     private static Logger _log = LogManager.getLogger(Swim.class);
 
     private static void setupLogging() {
-        try {
-            // Get the current PID
-            String pid = java.lang.management.ManagementFactory.getRuntimeMXBean().getName().split("@")[0];
-            String fileName = "/tmp/swim-" + pid + ".log";
-            
-            // Programmatically add or update the File Appender
-            LoggerContext context = (LoggerContext) LogManager.getContext(false);
-            Configuration config = context.getConfiguration();
-            
-            PatternLayout layout = PatternLayout.newBuilder()
-                .withPattern("%d [%t] %-5p %c - %m%n")
-                .build();
-            
-            FileAppender appender = FileAppender.newBuilder()
-                .setName("FileAppender")
-                .withFileName(fileName)
-                .setLayout(layout)
-                .setConfiguration(config)
-                .build();
-            appender.start();
-            config.addAppender(appender);
-            
-            // Attach to root logger so ALL loggers write here
-            LoggerConfig loggerConfig = config.getLoggerConfig(LogManager.ROOT_LOGGER_NAME);
-
-            // Remove all existing appenders
-            for (String appenderName : loggerConfig.getAppenders().keySet()) {
-                loggerConfig.removeAppender(appenderName);
-            }
-
-            loggerConfig.addAppender(appender, Level.DEBUG, null);
-            
-            // Ensure desired log level
-            loggerConfig.setLevel(Level.DEBUG);
-            
-            context.updateLoggers();
-            
-            _log = LogManager.getLogger(Swim.class);
-        } catch (Throwable e) {
-        }
+        SwimLogging.setup();
+        _log = LogManager.getLogger(Swim.class);
     }
 
     static Path checkArguments(String[] args, PrintStream out) {

@@ -149,6 +149,62 @@ class JavaLSPClientTest {
         assertEquals(1, requests.get());
     }
 
+    @Test
+    void applyColouringRetriesWhenSemanticTokensAreInitiallyUnavailable() throws Exception {
+        Path file = tempDir.resolve("SemanticRetry.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var requests = new AtomicInteger();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+                if (requests.getAndIncrement() == 0) {
+                    return CompletableFuture.completedFuture(new SemanticTokens(List.of()));
+                }
+                return CompletableFuture.completedFuture(new SemanticTokens(List.of(
+                        0, 0, 5, 0, 0,
+                        0, 6, 4, 1, 0)));
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
+        var semanticOptions = new SemanticTokensWithRegistrationOptions();
+        semanticOptions.setLegend(legend);
+        semanticOptions.setFull(Either.forLeft(true));
+        capabilities.setSemanticTokensProvider(semanticOptions);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+
+        var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, first);
+        var second = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, second);
+
+        assertEquals(TextColor.ANSI.GREEN, foregroundColour(second.getCharacter(6)));
+        assertEquals(2, requests.get());
+    }
+
     private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);

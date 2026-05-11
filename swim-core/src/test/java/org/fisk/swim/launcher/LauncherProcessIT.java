@@ -8,8 +8,10 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -107,6 +109,7 @@ class LauncherProcessIT {
         Path launcherJar = buildRoot.resolve("swim-launcher").resolve("target").resolve("swim-launcher-0.0.1-SNAPSHOT.jar");
         Path file = buildRoot.resolve("README.md");
         String javaAgentArg = jacocoAgentArg(buildRoot);
+        Set<Path> existingLogs = listLogFiles();
 
         var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
                 "java", javaAgentArg, "--module-path", launcherJar.toString(),
@@ -114,10 +117,107 @@ class LauncherProcessIT {
 
         Thread.sleep(2500);
         assertTrue(process.process().isAlive(), "Editor process should still be alive after startup");
+        Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(5));
+        assertTrue(logFile != null,
+                "Expected launcher to create a new /tmp/swim-*.log file. Output:\n" + process.output());
 
         process.process().destroyForcibly();
         boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(5));
         assertTrue(exited, "Editor process did not terminate after forced destroy");
+        Files.deleteIfExists(logFile);
+    }
+
+    @Test
+    @Timeout(20)
+    void installedLauncherScriptStartsWithoutStaleJdepsWarning() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherScript = buildRoot.resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherScript), "Installed launcher script missing");
+        Path file = tempDir.resolve("script-launch.txt");
+        Files.writeString(file, "abc");
+
+        var process = startProcess(buildRoot, launcherScript, scriptUtility.toString(), "-q", "/dev/null",
+                launcherScript.toString(), file.toString());
+
+        try {
+            waitForStartup();
+            assertTrue(process.process().isAlive(), "Installed launcher script should still be alive after startup");
+            assertTrue(!process.output().toString().contains("package com.sun.tools.classfile not in jdk.jdeps"),
+                    "Installed launcher script emitted stale jdk.jdeps warning.\n" + process.output());
+
+            type(process, "x");
+            runCommand(process, "w");
+            runCommand(process, "q");
+
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
+            assertTrue(exited, "Installed launcher script did not exit after edit workflow.\n" + process.output());
+            assertEquals("bc", Files.readString(file));
+        } finally {
+            destroyIfAlive(process.process());
+        }
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherScriptUsesEmbeddedProvider() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherScript = buildRoot.resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherScript), "Installed launcher script missing");
+        Set<Path> existingLogs = listLogFiles();
+
+        Path project = tempDir.resolve("embedded-demo");
+        Path javaFile = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(javaFile.getParent());
+        Files.writeString(project.resolve("pom.xml"), """
+                <project xmlns="http://maven.apache.org/POM/4.0.0"
+                         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>demo</groupId>
+                  <artifactId>embedded-demo</artifactId>
+                  <version>1.0</version>
+                </project>
+                """);
+        Files.writeString(javaFile, """
+                package demo;
+                class Main {}
+                """);
+
+        var process = startProcess(
+                buildRoot,
+                launcherScript,
+                Map.of(),
+                scriptUtility.toString(), "-q", "/dev/null",
+                launcherScript.toString(), javaFile.toString());
+        try {
+            waitForStartup();
+            assertTrue(process.process().isAlive(), "Installed launcher script should still be alive after startup");
+            Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
+            assertTrue(logFile != null,
+                    "Expected launcher script to create a new /tmp/swim-*.log file. Output:\n" + process.output());
+            assertTrue(waitForFileText(logFile, "Java LSP provider: oracle-embedded", java.time.Duration.ofSeconds(20)),
+                    "Embedded provider was not activated.\nLog:\n" + Files.readString(logFile) + "\nOutput:\n" + process.output());
+            assertTrue(!Files.readString(logFile).contains("Java LSP provider: oracle-process (fallback)"),
+                    "Embedded provider fell back to oracle-process.\nLog:\n" + Files.readString(logFile));
+            assertTrue(!waitForFileText(logFile, "netbeans.user is not set.", java.time.Duration.ofSeconds(5)),
+                    "Embedded provider crashed after activation.\nLog:\n" + Files.readString(logFile));
+
+            runCommand(process, "q");
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
+            assertTrue(exited, "Installed launcher script did not exit after quit command.\n" + process.output());
+        } finally {
+            destroyIfAlive(process.process());
+        }
     }
 
     @Test
@@ -173,12 +273,60 @@ class LauncherProcessIT {
         }
     }
 
+    private static Path waitForNewLogFile(Set<Path> existingLogs, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            for (Path candidate : listLogFiles()) {
+                if (!existingLogs.contains(candidate)) {
+                    return candidate;
+                }
+            }
+            Thread.sleep(100);
+        }
+        for (Path candidate : listLogFiles()) {
+            if (!existingLogs.contains(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static boolean waitForFileText(Path file, String text, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (Files.isRegularFile(file) && Files.readString(file).contains(text)) {
+                return true;
+            }
+            Thread.sleep(100);
+        }
+        return Files.isRegularFile(file) && Files.readString(file).contains(text);
+    }
+
+    private static Set<Path> listLogFiles() throws Exception {
+        Set<Path> logs = new HashSet<>();
+        Path tmpDir = Path.of("/tmp");
+        if (!Files.isDirectory(tmpDir)) {
+            return logs;
+        }
+        try (var stream = Files.list(tmpDir)) {
+            stream.filter(path -> path.getFileName().toString().startsWith("swim-"))
+                    .filter(path -> path.getFileName().toString().endsWith(".log"))
+                    .forEach(logs::add);
+        }
+        return logs;
+    }
+
     private StartedProcess startProcess(Path workdir, Path launcherJar, String... command) throws IOException {
+        return startProcess(workdir, launcherJar, Map.of(), command);
+    }
+
+    private StartedProcess startProcess(Path workdir, Path launcherJar, Map<String, String> environment, String... command) throws IOException {
         Assumptions.assumeTrue(Files.isRegularFile(launcherJar), "Launcher jar missing");
 
         var processBuilder = new ProcessBuilder(command);
         processBuilder.directory(workdir.toFile());
         processBuilder.redirectErrorStream(true);
+        processBuilder.environment().putAll(environment);
         var process = processBuilder.start();
         var output = new StringBuilder();
         var gobbler = new Thread(() -> readOutput(process, output), "launcher-process-it-output");

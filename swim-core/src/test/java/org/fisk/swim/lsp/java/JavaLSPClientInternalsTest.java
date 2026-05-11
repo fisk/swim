@@ -8,13 +8,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
+import org.eclipse.lsp4j.ClientCapabilities;
 import org.eclipse.lsp4j.ConfigurationParams;
+import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
@@ -23,6 +26,7 @@ import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.UnregistrationParams;
 import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.Endpoint;
 import org.eclipse.lsp4j.jsonrpc.services.ServiceEndpoints;
 import org.eclipse.lsp4j.services.LanguageClient;
@@ -62,30 +66,25 @@ class JavaLSPClientInternalsTest {
     @Test
     void shutdownHookDestroysProcessBeforeStartupCompletes() throws Exception {
         var client = new JavaLSPClient();
-        var process = new RecordingProcess();
-        setField(client, "_process", process);
+        var closeable = new RecordingCloseable();
+        setField(client, "_providerConnection", closeable);
         setField(client, "_started", false);
 
         client.createShutdownHook().run();
 
-        assertTrue(process.destroyed);
-        assertFalse(process.destroyForciblyCalled);
+        assertTrue(closeable.closed);
     }
 
     @Test
     void shutdownHookShutsServerDownAfterStartup() throws Exception {
         var client = new JavaLSPClient();
-        var process = new RecordingProcess();
-        var server = new RecordingLanguageServer();
-        setField(client, "_process", process);
-        setField(client, "_server", server);
+        var closeable = new RecordingCloseable();
+        setField(client, "_providerConnection", closeable);
         setField(client, "_started", true);
 
         client.createShutdownHook().run();
 
-        assertTrue(server.shutdownCalled);
-        assertTrue(server.exitCalled);
-        assertFalse(process.destroyed);
+        assertTrue(closeable.closed);
     }
 
     @Test
@@ -113,6 +112,30 @@ class JavaLSPClientInternalsTest {
         Module jsonRpcModule = Endpoint.class.getModule();
 
         assertTrue(clientModule.isOpen("org.fisk.swim.lsp.java", jsonRpcModule));
+    }
+
+    @Test
+    void unavailableProviderDisablesClient() {
+        var client = new JavaLSPClient(new RecordingProvider(false));
+
+        assertFalse(client.isEnabled());
+    }
+
+    @Test
+    void embeddedProviderIsCurrentlyDisabled() {
+        var provider = new EmbeddedOracleModuleLayerLspProvider(tempDir.resolve("missing-extension"));
+
+        assertFalse(provider.isAvailable());
+    }
+
+    @Test
+    void embeddedProviderDetectsBundledPayload() throws Exception {
+        Path extension = tempDir.resolve("oracle.oracle-java");
+        Files.createDirectories(extension.resolve("nbcode/bin"));
+
+        var provider = new EmbeddedOracleModuleLayerLspProvider(extension);
+
+        assertTrue(provider.isAvailable());
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
@@ -179,13 +202,22 @@ class JavaLSPClientInternalsTest {
         }
     }
 
+    private static final class RecordingCloseable implements AutoCloseable {
+        private boolean closed;
+
+        @Override
+        public void close() {
+            closed = true;
+        }
+    }
+
     private static final class RecordingLanguageServer implements LanguageServer {
         private boolean shutdownCalled;
         private boolean exitCalled;
 
         @Override
-        public CompletableFuture<org.eclipse.lsp4j.InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
-            throw new UnsupportedOperationException();
+        public CompletableFuture<InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
+            return CompletableFuture.completedFuture(new InitializeResult(new org.eclipse.lsp4j.ServerCapabilities()));
         }
 
         @Override
@@ -206,6 +238,30 @@ class JavaLSPClientInternalsTest {
 
         @Override
         public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class RecordingProvider implements JavaLspProvider {
+        private final boolean _available;
+
+        private RecordingProvider(boolean available) {
+            _available = available;
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return _available;
+        }
+
+        @Override
+        public Session start(
+                Path projectPath,
+                Path workspacePath,
+                LanguageClient client,
+                ClientCapabilities clientCapabilities,
+                Object initializationOptions,
+                long timeoutSeconds) {
             throw new UnsupportedOperationException();
         }
     }

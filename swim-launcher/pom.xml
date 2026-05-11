@@ -53,6 +53,19 @@
               </arguments>
             </configuration>
           </execution>
+          <execution>
+            <id>install-launcher-script</id>
+            <phase>package</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>org.fisk.swim.launcher.LauncherScriptInstaller</mainClass>
+              <arguments>
+                <argument>${project.parent.basedir}</argument>
+              </arguments>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
       <plugin>
