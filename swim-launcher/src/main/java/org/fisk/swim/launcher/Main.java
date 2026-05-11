@@ -117,10 +117,16 @@ public class Main implements SwimHost {
 
     public static Path getLauncherLocation() {
         try {
-            return Path.of(Main.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toAbsolutePath();
-        } catch (URISyntaxException e) {
-            throw new RuntimeException("Unable to determine launcher location", e);
+            var codeSource = Main.class.getProtectionDomain().getCodeSource();
+            if (codeSource != null) {
+                var uri = codeSource.getLocation().toURI();
+                if ("file".equalsIgnoreCase(uri.getScheme())) {
+                    return Path.of(uri).toAbsolutePath();
+                }
+            }
+        } catch (URISyntaxException | IllegalArgumentException e) {
         }
+        return Path.of(System.getProperty("java.home")).toAbsolutePath();
     }
 
     private Path determineBuildRoot() {

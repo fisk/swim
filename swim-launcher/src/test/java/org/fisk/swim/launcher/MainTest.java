@@ -140,19 +140,59 @@ class MainTest {
     }
 
     @Test
-    void launcherScriptInstallerCreatesExecutableScript() throws Exception {
-        LauncherScriptInstaller.install(tempDir);
+    void launcherImageInstallerFiltersUnsupportedNetBeansFlags() throws Exception {
+        Path nbcodeConf = tempDir.resolve("deps").resolve("oracle.oracle-java").resolve("nbcode").resolve("etc").resolve("nbcode.conf");
+        Files.createDirectories(nbcodeConf.getParent());
+        Files.writeString(nbcodeConf, """
+                default_options="-J--add-exports=jdk.jdeps/com.sun.tools.classfile=ALL-UNNAMED -J--add-opens=java.base/java.net=ALL-UNNAMED -J-Djava.awt.headless=true"
+                """);
 
-        Path script = tempDir.resolve("bin").resolve("swim");
-        assertTrue(Files.isRegularFile(script));
-        assertTrue(Files.isExecutable(script));
-        String content = Files.readString(script);
-        assertTrue(content.contains("SWIM_JAVA_ARGS"));
-        assertTrue(content.contains("org.fisk.swim.launcher/org.fisk.swim.launcher.Main"));
-        assertTrue(content.contains("--add-modules=java.instrument"));
-        assertFalse(content.contains("com.sun.tools.classfile"));
-        assertTrue(content.contains("LOG_FILE=\"$LOG_DIR/swim-$$.log\""));
+        List<String> args = LauncherImageInstaller.resolveNetBeansJvmArgs(tempDir);
+
+        assertTrue(args.contains("--add-opens=java.base/java.net=ALL-UNNAMED"));
+        assertTrue(args.contains("-Djava.awt.headless=true"));
+        assertFalse(args.contains("--add-exports=jdk.jdeps/com.sun.tools.classfile=ALL-UNNAMED"));
+    }
+
+    @Test
+    void launcherImageInstallerAddsModulesReferencedOnlyByJvmOptions() {
+        List<String> modules = LauncherImageInstaller.collectJlinkModules(List.of(
+                "--add-opens=jdk.jshell/jdk.jshell=ALL-UNNAMED",
+                "--add-exports=jdk.jdeps/com.sun.tools.javap=ALL-UNNAMED",
+                "--add-modules=java.instrument"));
+
+        assertTrue(modules.contains("org.fisk.swim.launcher"));
+        assertTrue(modules.contains("jdk.jshell"));
+        assertTrue(modules.contains("jdk.jdeps"));
+        assertTrue(modules.contains("java.instrument"));
+    }
+
+    @Test
+    void launcherImageInstallerCopiesJavaLauncherIntoImage() throws Exception {
+        Path bin = tempDir.resolve("bin");
+        Files.createDirectories(bin);
+        String executable = System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java";
+
+        LauncherImageInstaller.installJavaLauncher(tempDir);
+
+        assertTrue(Files.isRegularFile(bin.resolve(executable)));
+        assertTrue(Files.isExecutable(bin.resolve(executable)));
+    }
+
+    @Test
+    void launcherImageInstallerPatchesImageLauncherScript() throws Exception {
+        Path launcher = tempDir.resolve("bin").resolve("swim");
+        Files.createDirectories(launcher.getParent());
+        Files.writeString(launcher, "#!/bin/sh\nJLINK_VM_OPTIONS=\nDIR=`dirname $0`\n$DIR/java $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\"\n");
+
+        LauncherImageInstaller.patchLauncherScript(launcher, List.of(
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "-Djava.awt.headless=true"));
+
+        String content = Files.readString(launcher);
+        assertTrue(content.contains("JLINK_VM_OPTIONS='-XX:+UseZGC --add-opens=java.base/java.net=ALL-UNNAMED -Djava.awt.headless=true'"));
         assertTrue(content.contains("exec 2>>\"$LOG_FILE\""));
+        assertTrue(content.contains("\"$DIR/java\" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\""));
     }
 
     @Test
@@ -202,6 +242,24 @@ class MainTest {
         } finally {
             System.setProperty("user.dir", previousUserDir);
         }
+    }
+
+    @Test
+    void determineBuildRootFindsRootFromPackagedRuntimeLocation() throws Exception {
+        Path root = tempDir.resolve("swim");
+        Files.createDirectories(root.resolve("swim-core"));
+        Files.writeString(root.resolve("pom.xml"), "<project />");
+        Path runtimeHome = root.resolve("image");
+        Files.createDirectories(runtimeHome);
+        Main main = new Main((buildRoot, parentLoader) -> {
+            throw new AssertionError("app loading not expected");
+        }, buildRoot -> false, (name, daemon, task) -> {
+            throw new AssertionError("tasks not expected");
+        }, () -> runtimeHome);
+
+        Path buildRoot = invokePrivate(main, "determineBuildRoot", new Class<?>[0]);
+
+        assertEquals(root, buildRoot);
     }
 
     @Test

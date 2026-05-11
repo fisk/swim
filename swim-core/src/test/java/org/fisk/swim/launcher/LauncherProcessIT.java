@@ -129,33 +129,33 @@ class LauncherProcessIT {
 
     @Test
     @Timeout(20)
-    void installedLauncherScriptStartsWithoutStaleJdepsWarning() throws Exception {
+    void installedLauncherBinaryStartsWithoutStaleJdepsWarning() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherScript = buildRoot.resolve("bin").resolve("swim");
-        Assumptions.assumeTrue(Files.isExecutable(launcherScript), "Installed launcher script missing");
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Path file = tempDir.resolve("script-launch.txt");
         Files.writeString(file, "abc");
 
-        var process = startProcess(buildRoot, launcherScript, scriptUtility.toString(), "-q", "/dev/null",
-                launcherScript.toString(), file.toString());
+        var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
+                launcherBinary.toString(), file.toString());
 
         try {
             waitForStartup();
-            assertTrue(process.process().isAlive(), "Installed launcher script should still be alive after startup");
+            assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
             assertTrue(!process.output().toString().contains("package com.sun.tools.classfile not in jdk.jdeps"),
-                    "Installed launcher script emitted stale jdk.jdeps warning.\n" + process.output());
+                    "Installed launcher binary emitted stale jdk.jdeps warning.\n" + process.output());
 
             type(process, "x");
             runCommand(process, "w");
             runCommand(process, "q");
 
             boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
-            assertTrue(exited, "Installed launcher script did not exit after edit workflow.\n" + process.output());
+            assertTrue(exited, "Installed launcher binary did not exit after edit workflow.\n" + process.output());
             assertEquals("bc", Files.readString(file));
         } finally {
             destroyIfAlive(process.process());
@@ -164,15 +164,15 @@ class LauncherProcessIT {
 
     @Test
     @Timeout(45)
-    void installedLauncherScriptUsesEmbeddedProvider() throws Exception {
+    void installedLauncherBinaryUsesEmbeddedProvider() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherScript = buildRoot.resolve("bin").resolve("swim");
-        Assumptions.assumeTrue(Files.isExecutable(launcherScript), "Installed launcher script missing");
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Set<Path> existingLogs = listLogFiles();
 
         Path project = tempDir.resolve("embedded-demo");
@@ -195,16 +195,16 @@ class LauncherProcessIT {
 
         var process = startProcess(
                 buildRoot,
-                launcherScript,
+                launcherBinary,
                 Map.of(),
                 scriptUtility.toString(), "-q", "/dev/null",
-                launcherScript.toString(), javaFile.toString());
+                launcherBinary.toString(), javaFile.toString());
         try {
             waitForStartup();
-            assertTrue(process.process().isAlive(), "Installed launcher script should still be alive after startup");
+            assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
             Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
             assertTrue(logFile != null,
-                    "Expected launcher script to create a new /tmp/swim-*.log file. Output:\n" + process.output());
+                    "Expected launcher binary to create a new /tmp/swim-*.log file. Output:\n" + process.output());
             assertTrue(waitForFileText(logFile, "Java LSP provider: oracle-embedded", java.time.Duration.ofSeconds(20)),
                     "Embedded provider was not activated.\nLog:\n" + Files.readString(logFile) + "\nOutput:\n" + process.output());
             assertTrue(!Files.readString(logFile).contains("Java LSP provider: oracle-process (fallback)"),
@@ -214,7 +214,7 @@ class LauncherProcessIT {
 
             runCommand(process, "q");
             boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
-            assertTrue(exited, "Installed launcher script did not exit after quit command.\n" + process.output());
+            assertTrue(exited, "Installed launcher binary did not exit after quit command.\n" + process.output());
         } finally {
             destroyIfAlive(process.process());
         }

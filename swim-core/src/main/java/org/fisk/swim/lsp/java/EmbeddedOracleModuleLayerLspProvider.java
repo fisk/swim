@@ -30,7 +30,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
     private static final Logger _log = LogFactory.createLog();
     private static final String EMBEDDED_LAUNCH_HINT =
             "Embedded Oracle Java LSP requires launching Swim with the NetBeans JVM compatibility flags. "
-                    + "Use ~/.swim/bin/swim or an equivalent launcher.";
+                    + "Use ~/.swim/image/bin/swim or an equivalent launcher.";
     private final Path _extensionPath;
 
     EmbeddedOracleModuleLayerLspProvider(Path extensionPath) {
@@ -203,6 +203,8 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         args.add("nbcode");
         args.add("--userdir");
         args.add(userDir.toString());
+        args.add("--modules");
+        args.add("--list");
         args.add("--cachedir");
         args.add(cacheDir.toString());
         args.add("--locale");
@@ -222,16 +224,29 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         return java.util.Map.of(
                 "jdk.home", System.getProperty("java.home"),
                 "netbeans.dirs", String.join(java.io.File.pathSeparator, clusterPaths),
+                "netbeans.extra.dirs", String.join(java.io.File.pathSeparator, clusterPaths),
                 "netbeans.home", platformHome.toAbsolutePath().normalize().toString(),
                 "netbeans.user", userDir.toString());
     }
 
     private List<String> clusterPaths(Path nbcodeRoot) throws IOException {
+        Path clustersFile = nbcodeRoot.resolve("etc").resolve("nbcode.clusters");
+        if (Files.isRegularFile(clustersFile)) {
+            return Files.readAllLines(clustersFile).stream()
+                    .map(String::trim)
+                    .filter(line -> !line.isEmpty())
+                    .filter(line -> !line.startsWith("#"))
+                    .filter(line -> !line.equals("platform"))
+                    .map(nbcodeRoot::resolve)
+                    .filter(Files::isDirectory)
+                    .map(path -> path.toAbsolutePath().normalize().toString())
+                    .toList();
+        }
         try (var stream = Files.list(nbcodeRoot)) {
             return stream.filter(Files::isDirectory)
                     .filter(path -> {
                         String name = path.getFileName().toString();
-                        return !name.equals("bin") && !name.equals("etc");
+                        return !name.equals("bin") && !name.equals("etc") && !name.equals("platform");
                     })
                     .map(path -> path.toAbsolutePath().normalize().toString())
                     .sorted()

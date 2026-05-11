@@ -36,39 +36,6 @@
         <artifactId>maven-compiler-plugin</artifactId>
       </plugin>
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.5.0</version>
-        <executions>
-          <execution>
-            <id>install-oracle-java-extension</id>
-            <phase>package</phase>
-            <goals>
-              <goal>java</goal>
-            </goals>
-            <configuration>
-              <mainClass>org.fisk.swim.launcher.OracleJavaExtensionInstaller</mainClass>
-              <arguments>
-                <argument>${project.parent.basedir}</argument>
-              </arguments>
-            </configuration>
-          </execution>
-          <execution>
-            <id>install-launcher-script</id>
-            <phase>package</phase>
-            <goals>
-              <goal>java</goal>
-            </goals>
-            <configuration>
-              <mainClass>org.fisk.swim.launcher.LauncherScriptInstaller</mainClass>
-              <arguments>
-                <argument>${project.parent.basedir}</argument>
-              </arguments>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
         <configuration>
@@ -94,40 +61,37 @@
               <includeScope>runtime</includeScope>
             </configuration>
           </execution>
-          <execution>
-            <id>copy-launcher-dependencies-to-bin</id>
-            <phase>package</phase>
-            <goals>
-              <goal>copy-dependencies</goal>
-            </goals>
-            <configuration>
-              <outputDirectory>${project.parent.basedir}/bin/launcher/runtime-libs</outputDirectory>
-              <includeScope>runtime</includeScope>
-            </configuration>
-          </execution>
         </executions>
       </plugin>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-resources-plugin</artifactId>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.5.0</version>
         <executions>
           <execution>
-            <id>copy-launcher-jar-to-bin</id>
+            <id>install-oracle-java-extension</id>
             <phase>package</phase>
             <goals>
-              <goal>copy-resources</goal>
+              <goal>java</goal>
             </goals>
             <configuration>
-              <outputDirectory>${project.parent.basedir}/bin/launcher</outputDirectory>
-              <resources>
-                <resource>
-                  <directory>${project.build.directory}</directory>
-                  <includes>
-                    <include>${project.build.finalName}.jar</include>
-                  </includes>
-                </resource>
-              </resources>
-              <overwrite>true</overwrite>
+              <mainClass>org.fisk.swim.launcher.OracleJavaExtensionInstaller</mainClass>
+              <arguments>
+                <argument>${project.parent.basedir}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>install-launcher-image</id>
+            <phase>package</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>org.fisk.swim.launcher.LauncherImageInstaller</mainClass>
+              <arguments>
+                <argument>${project.parent.basedir}</argument>
+              </arguments>
             </configuration>
           </execution>
         </executions>

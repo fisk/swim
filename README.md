@@ -12,25 +12,25 @@ $ cd ~/.swim
 # 3. Build the project in place:
 $ mvn package
 
-# 4. Run SWIM with the installed launcher script:
-$ "$HOME/.swim/bin/swim" <file>
+# 4. Run SWIM with the installed launcher binary:
+$ "$HOME/.swim/image/bin/swim" <file>
 
 # 5. For convenience, create an alias:
-$ alias swim='"$HOME/.swim/bin/swim"'
+$ alias swim='"$HOME/.swim/image/bin/swim"'
 # Then simply:
 $ swim <file>
 ```
 
-`mvn package` now copies the runtime artifacts into:
+`mvn package` now installs runtime artifacts into:
 
-- `~/.swim/bin/launcher`
+- `~/.swim/image`
 - `~/.swim/lib`
 - `~/.swim/deps/oracle.oracle-java`
 
-Those installed artifacts are the supported runtime entrypoint. The launcher and core are now deployed as real JPMS modules. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
+The launcher binary is built from a custom JDK runtime image using `jlink`. The source tree remains in `~/.swim`, so `:rebuild` can rebuild in place and then reload the freshly copied `lib` artifacts without depending directly on `swim-core/target` at runtime.
 
 The build also installs the Oracle Java VS Code extension bundle under `~/.swim/deps/oracle.oracle-java` on first package, so Java LSP support does not depend on a separate VS Code installation.
-The generated `~/.swim/bin/swim` script also applies the Oracle NetBeans JVM compatibility flags required by the built-in embedded Java LSP.
+The packaged launcher also embeds the Oracle NetBeans JVM compatibility flags required by the built-in embedded Java LSP.
 
 Once SWIM is running:
 
