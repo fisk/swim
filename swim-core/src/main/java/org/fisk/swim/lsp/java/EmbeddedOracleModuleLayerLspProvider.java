@@ -1,6 +1,7 @@
 package org.fisk.swim.lsp.java;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Method;
@@ -10,9 +11,12 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.Socket;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.CompletableFuture;
@@ -22,7 +26,6 @@ import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.launch.LSPLauncher;
-import java.nio.file.Files;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.utils.LogFactory;
@@ -57,6 +60,17 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             ClientCapabilities clientCapabilities,
             Object initializationOptions,
             long timeoutSeconds) throws Exception {
+        return start(projectPath, workspacePath, client, clientCapabilities, initializationOptions, timeoutSeconds, true);
+    }
+
+    private Session start(
+            Path projectPath,
+            Path workspacePath,
+            LanguageClient client,
+            ClientCapabilities clientCapabilities,
+            Object initializationOptions,
+            long timeoutSeconds,
+            boolean allowWorkspaceReset) throws Exception {
         _log.info("Starting embedded Oracle Java LSP for project {}", projectPath);
         requireJvmCompatibility();
         Path nbcodeRoot = _extensionPath.resolve("nbcode");
@@ -72,16 +86,24 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
                 EmbeddedOracleModuleLayerLspProvider.class.getClassLoader());
         var socketFuture = new CompletableFuture<Socket>();
         var serverSocket = new ServerSocket(0, 1, Inet4Address.getLoopbackAddress());
-        Class<?> mainClass = loader.loadClass("org.netbeans.Main");
-        Method main = mainClass.getMethod("main", String[].class);
+        Class<?> mainImplClass = loader.loadClass("org.netbeans.MainImpl");
+        Method execute = mainImplClass.getDeclaredMethod(
+                "execute",
+                String[].class,
+                InputStream.class,
+                OutputStream.class,
+                OutputStream.class,
+                AtomicReference.class);
+        execute.setAccessible(true);
 
         var launchArgs = buildLaunchArguments(userDir, cacheDir, clusterPaths, serverSocket.getLocalPort());
         var systemProperties = netBeansSystemProperties(platformHome, userDir, clusterPaths);
         _log.info("Embedded NetBeans launch args: {}", java.util.Arrays.toString(launchArgs));
         _log.info("Embedded NetBeans system properties: {}", systemProperties);
         var previousProperties = applySystemProperties(systemProperties);
+        Socket languageServerSocket = null;
         var bootThread = new Thread(
-                () -> runNetBeansBoot(loader, main, launchArgs, socketFuture),
+                () -> runNetBeansBoot(loader, execute, launchArgs, socketFuture),
                 "swim-oracle-java-embedded");
         bootThread.setDaemon(true);
         bootThread.start();
@@ -90,50 +112,43 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         acceptThread.setDaemon(true);
         acceptThread.start();
 
-        Socket languageServerSocket = socketFuture.get(timeoutSeconds, TimeUnit.SECONDS);
-        _log.info("Embedded NetBeans accepted language server socket on {}", serverSocket.getLocalPort());
-        var launcher = LSPLauncher.createClientLauncher(client, languageServerSocket.getInputStream(), languageServerSocket.getOutputStream());
-        var listening = launcher.startListening();
-        LanguageServer server = launcher.getRemoteProxy();
+        try {
+            languageServerSocket = socketFuture.get(timeoutSeconds, TimeUnit.SECONDS);
+            _log.info("Embedded NetBeans accepted language server socket on {}", serverSocket.getLocalPort());
+            var launcher = LSPLauncher.createClientLauncher(client, languageServerSocket.getInputStream(), languageServerSocket.getOutputStream());
+            launcher.startListening();
+            LanguageServer server = launcher.getRemoteProxy();
 
-        var initParams = new InitializeParams();
-        initParams.setRootUri(projectPath.toUri().toString());
-        initParams.setWorkspaceFolders(List.of(new WorkspaceFolder(
-                projectPath.toUri().toString(),
-                projectPath.getFileName().toString())));
-        initParams.setCapabilities(clientCapabilities);
-        initParams.setInitializationOptions(initializationOptions);
-        var initialized = server.initialize(initParams).get(timeoutSeconds, TimeUnit.SECONDS);
-        server.initialized(new InitializedParams());
+            var initParams = new InitializeParams();
+            initParams.setRootUri(projectPath.toUri().toString());
+            initParams.setWorkspaceFolders(List.of(new WorkspaceFolder(
+                    projectPath.toUri().toString(),
+                    projectPath.getFileName().toString())));
+            initParams.setCapabilities(clientCapabilities);
+            initParams.setInitializationOptions(initializationOptions);
+            var initialized = server.initialize(initParams).get(timeoutSeconds, TimeUnit.SECONDS);
+            server.initialized(new InitializedParams());
 
-        AutoCloseable closeable = () -> {
-            try {
-                server.shutdown().get(5, TimeUnit.SECONDS);
-                server.exit();
-            } catch (Exception e) {
-            }
-            try {
-                languageServerSocket.close();
-            } catch (Exception e) {
-            }
-            try {
-                serverSocket.close();
-            } catch (Exception e) {
-            }
-            try {
-                Class<?> cliHandler = loader.loadClass("org.netbeans.CLIHandler");
-                Method stopServer = cliHandler.getMethod("stopServer");
-                stopServer.invoke(null);
-            } catch (Exception e) {
-            }
-            try {
-                loader.close();
-            } catch (Exception e) {
-            }
-            restoreSystemProperties(previousProperties);
-        };
+            Socket finalLanguageServerSocket = languageServerSocket;
+            AutoCloseable closeable = () -> {
+                try {
+                    server.shutdown().get(5, TimeUnit.SECONDS);
+                    server.exit();
+                } catch (Exception e) {
+                }
+                closeBootstrapResources(finalLanguageServerSocket, serverSocket, loader, previousProperties);
+            };
 
-        return new Session(server, initialized.getCapabilities(), closeable, "oracle-embedded");
+            return new Session(server, initialized.getCapabilities(), closeable, "oracle-embedded");
+        } catch (Exception e) {
+            closeBootstrapResources(languageServerSocket, serverSocket, loader, previousProperties);
+            if (allowWorkspaceReset && shouldResetWorkspace(workspacePath, e)) {
+                _log.warn("Resetting embedded Java LSP workspace at {} after recoverable bootstrap failure", workspacePath);
+                deleteRecursively(workspacePath);
+                return start(projectPath, workspacePath, client, clientCapabilities, initializationOptions, timeoutSeconds, false);
+            }
+            throw e;
+        }
     }
 
     boolean hasExtensionPayload() {
@@ -158,7 +173,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
 
     private void runNetBeansBoot(
             ClassLoader loader,
-            Method main,
+            Method execute,
             String[] args,
             CompletableFuture<Socket> socketFuture) {
         Thread current = Thread.currentThread();
@@ -170,7 +185,22 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             try (var sink = new PrintStream(OutputStream.nullOutputStream(), true)) {
                 System.setOut(sink);
                 System.setErr(sink);
-                main.invoke(null, (Object) args);
+                var mainMethodReference = new AtomicReference<Method>();
+                int exitCode = ((Number) execute.invoke(null, args, System.in, sink, sink, mainMethodReference)).intValue();
+                if (exitCode != 0) {
+                    socketFuture.completeExceptionally(
+                            new IllegalStateException("Embedded NetBeans bootstrap exited with code " + exitCode));
+                    _log.warn("Embedded NetBeans bootstrap exited with code {}", exitCode);
+                    return;
+                }
+                Method mainMethod = mainMethodReference.get();
+                if (mainMethod == null) {
+                    socketFuture.completeExceptionally(
+                            new IllegalStateException("Embedded NetBeans bootstrap did not expose a main entrypoint"));
+                    _log.warn("Embedded NetBeans bootstrap completed without a main entrypoint");
+                    return;
+                }
+                mainMethod.invoke(null, (Object) args);
             } catch (Exception e) {
                 Throwable cause = e.getCause() == null ? e : e.getCause();
                 socketFuture.completeExceptionally(cause);
@@ -199,6 +229,90 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             } else {
                 System.setProperty(entry.getKey(), entry.getValue());
             }
+        }
+    }
+
+    static boolean shouldResetWorkspace(Path workspacePath, Throwable failure) {
+        if (workspacePath == null || failure == null) {
+            return false;
+        }
+        if (containsBootstrapExitCode(failure, "-255")) {
+            return true;
+        }
+        Path messagesLog = workspacePath.resolve("userdir").resolve("var").resolve("log").resolve("messages.log");
+        if (!Files.isRegularFile(messagesLog)) {
+            return false;
+        }
+        try {
+            String logText = Files.readString(messagesLog);
+            return logText.contains("ClassNotFoundException: org.netbeans.api.maven.MavenActions")
+                    || logText.contains("ClassNotFoundException: maven.actions.override");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static boolean containsBootstrapExitCode(Throwable failure, String code) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message != null && message.contains(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void closeBootstrapResources(
+            Socket languageServerSocket,
+            ServerSocket serverSocket,
+            URLClassLoader loader,
+            java.util.Map<String, String> previousProperties) {
+        try {
+            if (languageServerSocket != null) {
+                languageServerSocket.close();
+            }
+        } catch (Exception e) {
+        }
+        try {
+            if (serverSocket != null) {
+                serverSocket.close();
+            }
+        } catch (Exception e) {
+        }
+        try {
+            if (loader != null) {
+                loader.close();
+            }
+        } catch (Exception e) {
+        }
+        if (previousProperties != null) {
+            for (var entry : previousProperties.entrySet()) {
+                if (entry.getValue() == null) {
+                    System.clearProperty(entry.getKey());
+                } else {
+                    System.setProperty(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+    }
+
+    private static void deleteRecursively(Path path) throws IOException {
+        if (path == null || !Files.exists(path)) {
+            return;
+        }
+        try (var walk = Files.walk(path)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(entry -> {
+                try {
+                    Files.deleteIfExists(entry);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
+            throw e;
         }
     }
 

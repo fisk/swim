@@ -3,11 +3,15 @@ package org.fisk.swim.terminal;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextCharacter;
+import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.terminal.Terminal;
@@ -22,10 +26,30 @@ public final class TerminalContextTestSupport {
 
     public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure) {
         var stopCalls = new AtomicInteger();
+        var drawCalls = new CopyOnWriteArrayList<DrawCall>();
+        var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
+        var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var graphics = (TextGraphics) Proxy.newProxyInstance(
                 TextGraphics.class.getClassLoader(),
                 new Class<?>[] { TextGraphics.class },
-                (proxy, method, args) -> defaultValue(proxy, method.getReturnType(), columns, rows));
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                    case "setForegroundColor":
+                        foreground.set((TextColor) args[0]);
+                        return null;
+                    case "setBackgroundColor":
+                        background.set((TextColor) args[0]);
+                        return null;
+                    case "putString":
+                        if (args != null && args.length >= 3 && args[0] instanceof Integer x && args[1] instanceof Integer y
+                                && args[2] instanceof String text) {
+                            drawCalls.add(new DrawCall(x, y, text, foreground.get(), background.get()));
+                        }
+                        return proxy;
+                    default:
+                        return defaultValue(proxy, method.getReturnType(), columns, rows);
+                    }
+                });
         var terminal = (Terminal) Proxy.newProxyInstance(
                 Terminal.class.getClassLoader(),
                 new Class<?>[] { Terminal.class },
@@ -62,7 +86,7 @@ public final class TerminalContextTestSupport {
                 });
         var context = new TerminalContext(screen, terminal, graphics);
         setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls);
+        return new InstalledTerminalContext(context, stopCalls, drawCalls);
     }
 
     private static void setInstance(TerminalContext context) {
@@ -103,6 +127,9 @@ public final class TerminalContextTestSupport {
         return null;
     }
 
-    public record InstalledTerminalContext(TerminalContext context, AtomicInteger stopCalls) {
+    public record InstalledTerminalContext(TerminalContext context, AtomicInteger stopCalls, List<DrawCall> drawCalls) {
+    }
+
+    public record DrawCall(int x, int y, String text, TextColor foreground, TextColor background) {
     }
 }

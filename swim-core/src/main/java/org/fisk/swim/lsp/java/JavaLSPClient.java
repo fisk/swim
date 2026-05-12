@@ -84,6 +84,8 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
+import org.fisk.swim.EventThread;
+import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.AttributedString;
@@ -100,6 +102,16 @@ import com.googlecode.lanterna.TextColor;
 public class JavaLSPClient extends Thread implements LanguageMode {
     private static final Logger _log = LogFactory.createLog();
     private static final Gson _gson = new Gson();
+    static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
+    static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
+    static final TextColor SEMANTIC_PARAMETER = TextColor.Factory.fromString("#ffb86c");
+    static final TextColor SEMANTIC_MEMBER = TextColor.Factory.fromString("#ffd166");
+    static final TextColor SEMANTIC_FUNCTION = TextColor.Factory.fromString("#7ab8ff");
+    static final TextColor SEMANTIC_COMMENT = TextColor.Factory.fromString("#7ecb7e");
+    static final TextColor SEMANTIC_STRING = TextColor.Factory.fromString("#7fe3ff");
+    static final TextColor SEMANTIC_NUMBER = TextColor.Factory.fromString("#f5a3ff");
+    static final TextColor SEMANTIC_KEYWORD = TextColor.Factory.fromString("#ff6b6b");
+    static final TextColor SEMANTIC_READONLY = TextColor.Factory.fromString("#ffcf66");
 
     private final Object _lock = new Object();
     private boolean _started = false;
@@ -123,6 +135,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
     private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
+    private final Map<String, Integer> _semanticRefreshVersions = new HashMap<>();
     private final Object _completionLock = new Object();
     private final Object _snippetLock = new Object();
 
@@ -465,6 +478,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private synchronized void clearSemanticTokensCache() {
         _semanticTokensCache.clear();
+        _semanticRefreshVersions.clear();
     }
 
     private synchronized void clearSemanticTokensCache(String uri) {
@@ -1530,6 +1544,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setText(bufferContext.getBuffer().getString());
         _server.getTextDocumentService().didSave(params);
+        scheduleSemanticHighlightRefresh(bufferContext);
     }
 
     @Override
@@ -1542,6 +1557,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
         _server.getTextDocumentService().didOpen(params);
+        scheduleSemanticHighlightRefresh(bufferContext);
     }
 
     @Override
@@ -1575,6 +1591,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
         params.setContentChanges(contentChanges);
         _server.getTextDocumentService().didChange(params);
+        scheduleSemanticHighlightRefresh(bufferContext);
     }
 
     @Override
@@ -1597,6 +1614,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
         params.setContentChanges(contentChanges);
         _server.getTextDocumentService().didChange(params);
+        scheduleSemanticHighlightRefresh(bufferContext);
     }
 
     public ServerCapabilities getCapabilities() {
@@ -1616,21 +1634,21 @@ public class JavaLSPClient extends Thread implements LanguageMode {
 
     private TextColor semanticTokenColor(String tokenType, int modifiersBitset, List<String> modifiers) {
         if (hasModifier(modifiersBitset, modifiers, "deprecated")) {
-            return TextColor.ANSI.RED;
+            return SEMANTIC_KEYWORD;
         }
         if (hasModifier(modifiersBitset, modifiers, "readonly")) {
-            return TextColor.ANSI.YELLOW;
+            return SEMANTIC_READONLY;
         }
         return switch (tokenType) {
-        case "namespace", "decorator" -> TextColor.ANSI.CYAN;
-        case "type", "class", "enum", "interface", "struct" -> TextColor.ANSI.GREEN;
-        case "typeParameter", "parameter" -> TextColor.ANSI.MAGENTA;
-        case "property", "enumMember", "event" -> TextColor.ANSI.YELLOW;
-        case "function", "method", "macro" -> TextColor.ANSI.BLUE;
-        case "keyword", "modifier" -> TextColor.ANSI.RED;
-        case "comment" -> TextColor.ANSI.GREEN;
-        case "string" -> TextColor.ANSI.CYAN;
-        case "number", "regexp" -> TextColor.ANSI.MAGENTA;
+        case "namespace", "decorator" -> SEMANTIC_NAMESPACE;
+        case "type", "class", "enum", "interface", "struct" -> SEMANTIC_TYPE;
+        case "typeParameter", "parameter" -> SEMANTIC_PARAMETER;
+        case "property", "enumMember", "event" -> SEMANTIC_MEMBER;
+        case "function", "method", "macro" -> SEMANTIC_FUNCTION;
+        case "keyword", "modifier" -> SEMANTIC_KEYWORD;
+        case "comment" -> SEMANTIC_COMMENT;
+        case "string" -> SEMANTIC_STRING;
+        case "number", "regexp" -> SEMANTIC_NUMBER;
         case "operator" -> TextColor.ANSI.DEFAULT;
         default -> TextColor.ANSI.DEFAULT;
         };
@@ -1693,15 +1711,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
         }
 
-        List<SemanticHighlight> highlights = List.of();
-        try {
-            var legend = _capabilities.getSemanticTokensProvider().getLegend();
-            var params = new SemanticTokensParams(bufferContext.getBuffer().getTextDocumentID());
-            var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
-            highlights = decodeSemanticHighlights(bufferContext, tokens, legend);
-        } catch (Exception e) {
-            _log.debug("Semantic token request failed", e);
-        }
+        List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
 
         synchronized (this) {
             if (highlights.isEmpty()) {
@@ -1711,6 +1721,89 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
         }
         return highlights;
+    }
+
+    private List<SemanticHighlight> fetchSemanticHighlights(BufferContext bufferContext) {
+        try {
+            var legend = _capabilities.getSemanticTokensProvider().getLegend();
+            var params = new SemanticTokensParams(bufferContext.getBuffer().getTextDocumentID());
+            var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
+            return decodeSemanticHighlights(bufferContext, tokens, legend);
+        } catch (Exception e) {
+            _log.debug("Semantic token request failed", e);
+            return List.of();
+        }
+    }
+
+    private void scheduleSemanticHighlightRefresh(BufferContext bufferContext) {
+        if (!supportsSemanticTokens()) {
+            return;
+        }
+        String uri = bufferContext.getBuffer().getURI().toString();
+        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+        synchronized (this) {
+            Integer queuedVersion = _semanticRefreshVersions.get(uri);
+            if (queuedVersion != null && queuedVersion >= version) {
+                return;
+            }
+            _semanticRefreshVersions.put(uri, version);
+        }
+
+        var thread = new Thread(() -> refreshSemanticHighlights(uri, version, bufferContext), "swim-java-semantic-refresh");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void refreshSemanticHighlights(String uri, int version, BufferContext bufferContext) {
+        try {
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                if (!supportsSemanticTokens()) {
+                    return;
+                }
+                int currentVersion = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+                synchronized (this) {
+                    Integer queuedVersion = _semanticRefreshVersions.get(uri);
+                    if (queuedVersion == null || queuedVersion != version || currentVersion != version) {
+                        return;
+                    }
+                }
+                List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
+                if (!highlights.isEmpty()) {
+                    synchronized (this) {
+                        _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
+                        _semanticRefreshVersions.remove(uri);
+                    }
+                    requestSemanticRedraw(bufferContext);
+                    return;
+                }
+                Thread.sleep(250);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            synchronized (this) {
+                Integer queuedVersion = _semanticRefreshVersions.get(uri);
+                if (queuedVersion != null && queuedVersion == version) {
+                    _semanticRefreshVersions.remove(uri);
+                }
+            }
+        }
+    }
+
+    private void requestSemanticRedraw(BufferContext bufferContext) {
+        Runnable redraw = () -> {
+            bufferContext.getBufferView().setNeedsRedraw();
+            var window = Window.getInstance();
+            if (window != null && window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+        };
+        var eventThread = EventThread.getInstance();
+        if (eventThread.isAlive()) {
+            eventThread.enqueue(new RunnableEvent(redraw));
+        } else {
+            redraw.run();
+        }
     }
 
     private static Pattern _javaCommentPattern = Pattern.compile("(/\\*([^*]|[\\n]|(\\*+([^*/]|[\\n])))*\\*+/)|(//.*)", Pattern.MULTILINE);
