@@ -468,7 +468,7 @@ public class Window implements Drawable {
         _size = size;
         var cursor = _rootView.getCursor();
         if (cursor != null) {
-            screen.setCursorPosition(new TerminalPosition(cursor.getX(), cursor.getYRelative()));
+            screen.setCursorPosition(new TerminalPosition(cursor.getXOnScreen(), cursor.getYOnScreen()));
         }
         try {
             screen.refresh(RefreshType.DELTA);

@@ -97,11 +97,14 @@ public final class TreeViewController {
 
     public boolean expandSelectedDirectory() {
         TreeViewRow row = getSelectedRow();
-        if (row == null || !row.directory() || row.expanded()) {
+        if (row == null || !row.directory()) {
             return false;
         }
-        _expandedPaths.add(row.path());
-        return true;
+        if (!row.expanded()) {
+            _expandedPaths.add(row.path());
+            return true;
+        }
+        return moveSelectionToFirstChild(row);
     }
 
     public boolean collapseSelectedDirectoryOrParent() {
@@ -117,11 +120,13 @@ public final class TreeViewController {
         if (parent == null) {
             return false;
         }
-        if (!parent.equals(_rootPath) && _expandedPaths.remove(parent)) {
-            selectPath(parent);
-            return true;
+        if (parent.equals(_rootPath)) {
+            return selectPath(parent);
         }
-        return false;
+        if (_expandedPaths.remove(parent)) {
+            return selectPath(parent);
+        }
+        return selectPath(parent);
     }
 
     public TreeViewAction activateSelection() {
@@ -155,6 +160,20 @@ public final class TreeViewController {
         for (TreeViewNode child : node.getChildren()) {
             appendRows(child, depth + 1, rows);
         }
+    }
+
+    private boolean moveSelectionToFirstChild(TreeViewRow row) {
+        List<TreeViewRow> rows = getRows();
+        clampSelection(rows.size());
+        if (_selectionIndex + 1 >= rows.size()) {
+            return false;
+        }
+        TreeViewRow nextRow = rows.get(_selectionIndex + 1);
+        if (nextRow.depth() != row.depth() + 1) {
+            return false;
+        }
+        _selectionIndex += 1;
+        return true;
     }
 
     private void clampSelection() {

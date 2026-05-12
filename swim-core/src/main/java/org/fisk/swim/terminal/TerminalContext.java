@@ -9,6 +9,9 @@ import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 
 public class TerminalContext {
+    private record CreatedTerminal(Screen screen, Terminal terminal) {
+    }
+
     private static volatile TerminalContext _instance;
     private boolean _closed;
 
@@ -42,7 +45,7 @@ public class TerminalContext {
     private final TextGraphics _graphics;
 
     public TerminalContext() {
-        this(createTerminal(), null, null);
+        this(createTerminal(), null);
     }
 
     TerminalContext(Screen screen, Terminal terminal, TextGraphics graphics) {
@@ -51,13 +54,17 @@ public class TerminalContext {
         _graphics = graphics != null ? graphics : screen.newTextGraphics();
     }
 
-    private static Screen createTerminal() {
+    private TerminalContext(CreatedTerminal createdTerminal, TextGraphics graphics) {
+        this(createdTerminal.screen(), createdTerminal.terminal(), graphics);
+    }
+
+    private static CreatedTerminal createTerminal() {
         var factory = new DefaultTerminalFactory();
         try {
             Terminal terminal = factory.createTerminal();
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
-            return screen;
+            return new CreatedTerminal(screen, terminal);
         } catch (IOException e) {
             throw new RuntimeException("Can't create screen", e);
         }
@@ -70,6 +77,12 @@ public class TerminalContext {
         _closed = true;
         try {
             _screen.stopScreen();
+        } catch (IOException | IllegalStateException e) {
+        }
+        try {
+            if (_terminal != null) {
+                _terminal.close();
+            }
         } catch (IOException | IllegalStateException e) {
         }
     }

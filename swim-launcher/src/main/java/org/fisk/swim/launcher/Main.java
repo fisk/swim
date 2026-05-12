@@ -1,6 +1,9 @@
 package org.fisk.swim.launcher;
 
 import java.io.BufferedReader;
+import java.io.BufferedInputStream;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.module.Configuration;
@@ -53,6 +56,7 @@ public class Main implements SwimHost {
     private final Supplier<Path> _launcherLocationSupplier;
     private final CountDownLatch _exitLatch = new CountDownLatch(1);
     private final Map<String, SwimPanel> _panels = new ConcurrentHashMap<>();
+    private volatile boolean _reloading;
     private Path _buildRoot;
 
     public Main() {
@@ -252,11 +256,28 @@ public class Main implements SwimHost {
 
     private void reload(Path path, String successMessage) {
         synchronized (_reloadLock) {
-            SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader());
-            if (successMessage != null) {
-                next.showMessage(successMessage);
+            _reloading = true;
+            try {
+                refreshStandardInput();
+                SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader());
+                if (successMessage != null) {
+                    next.showMessage(successMessage);
+                }
+            } finally {
+                _reloading = false;
             }
         }
+    }
+
+    private static void refreshStandardInput() {
+        if (System.getProperty("surefire.test.class.path") != null) {
+            return;
+        }
+        try {
+            System.in.close();
+        } catch (IOException e) {
+        }
+        System.setIn(new BufferedInputStream(new FileInputStream(FileDescriptor.in)));
     }
 
     private static boolean rebuild(Path buildRoot) {
@@ -362,6 +383,11 @@ public class Main implements SwimHost {
     @Override
     public SwimPanel getPanel(String pluginId) {
         return _panels.get(pluginId);
+    }
+
+    @Override
+    public boolean isReloading() {
+        return _reloading;
     }
 
     @Override

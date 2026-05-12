@@ -89,12 +89,48 @@ class BufferTest {
         assertEquals(Range.create(0, 7).toString(), textLayout.getGlyphRange().toString());
     }
 
+    @Test
+    void newlineInsideElseBlockSplitsClosingBraceAndKeepsCursorOnIndentedLine() throws IOException {
+        var context = createJavaBufferContext("""
+                class Demo {
+                    void run() {
+                        if (flag) {
+                        } else {}
+                    }
+                }
+                """, 120);
+        var buffer = context.getBuffer();
+        int insertPosition = buffer.getString().indexOf("else {}") + "else {".length();
+        buffer.getCursor().setPosition(insertPosition);
+
+        buffer.insert("\n");
+        buffer.insert("value();");
+
+        assertEquals("""
+                class Demo {
+                    void run() {
+                        if (flag) {
+                        } else {
+                            value();
+                        }
+                    }
+                }
+                """, buffer.getString());
+        assertEquals(buffer.getString().indexOf("value();") + "value();".length(), buffer.getCursor().getPosition());
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }
 
     private BufferContext createBufferContext(String text, int width) throws IOException {
         Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".txt");
+        Files.writeString(path, text);
+        return new BufferContext(Rect.create(0, 0, width, 20), path);
+    }
+
+    private BufferContext createJavaBufferContext(String text, int width) throws IOException {
+        Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".java");
         Files.writeString(path, text);
         return new BufferContext(Rect.create(0, 0, width, 20), path);
     }

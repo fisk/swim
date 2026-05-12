@@ -4,7 +4,6 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
-import org.fisk.swim.lsp.java.JavaLSPClient;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.text.AttributedString;
@@ -29,26 +28,7 @@ public class NormalMode extends Mode {
         String leader = "<SPACE>";
         _fancyJump = new FancyJumpResponder(bufferContext, 'w');
         _rootResponder.addEventResponder(_fancyJump);
-        _rootResponder.addEventResponder(leader + " e i", () -> {
-            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
-            JavaLSPClient.getInstance().organizeImports(window.getBufferContext());
-        });
-        _rootResponder.addEventResponder(leader + " e f", () -> {
-            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
-            JavaLSPClient.getInstance().makeFinal(window.getBufferContext());
-        });
-        _rootResponder.addEventResponder(leader + " e a", () -> {
-            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
-            JavaLSPClient.getInstance().generateAccessors(window.getBufferContext());
-        });
-        _rootResponder.addEventResponder(leader + " e s", () -> {
-            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
-            JavaLSPClient.getInstance().generateToString(window.getBufferContext());
-        });
-        _rootResponder.addEventResponder(leader + " e l", () -> {
-            JavaLspPluginSupport.ensureLoaded(window.getBufferContext().getBuffer().getPath());
-            JavaLSPClient.getInstance().codeLens(window.getBufferContext());
-        });
+        JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
         _rootResponder.addEventResponder("i", () -> { window.switchToMode(window.getInputMode()); });
         _rootResponder.addEventResponder("v", () -> { window.switchToMode(window.getVisualMode()); });
         _rootResponder.addEventResponder("V", () -> { window.switchToMode(window.getVisualLineMode()); });

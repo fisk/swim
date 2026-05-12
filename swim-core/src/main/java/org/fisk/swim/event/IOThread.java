@@ -19,13 +19,17 @@ public class IOThread extends Thread {
     public void run() {
         while (!isInterrupted()) {
             try {
-                KeyStroke keyStroke = _screen.readInput();
+                KeyStroke keyStroke = _screen.pollInput();
                 if (keyStroke == null) {
+                    Thread.sleep(10);
                     continue;
                 }
                 var event = new KeyStrokeEvent(keyStroke);
                 EventThread.getInstance().enqueue(event);
-            } catch (IOException e) {
+            } catch (InterruptedException e) {
+                interrupt();
+                break;
+            } catch (IOException | RuntimeException e) {
                 break;
             }
         }

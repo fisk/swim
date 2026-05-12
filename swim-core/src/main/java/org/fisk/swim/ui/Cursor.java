@@ -39,8 +39,16 @@ public class Cursor {
         return _x;
     }
 
+    public int getXOnScreen() {
+        return absoluteOrigin().getX() + _x;
+    }
+
     public int getYRelative() {
         return _y - _bufferContext.getBufferView().getStartLine();
+    }
+
+    public int getYOnScreen() {
+        return absoluteOrigin().getY() + getYRelative();
     }
 
     public int getYAbsolute() {
@@ -222,5 +230,16 @@ public class Cursor {
         setPosition(_bufferContext.getBuffer().getLength());
         calculate();
         Window.getInstance().getBufferContext().getBufferView().adaptViewToCursor();
+    }
+
+    private Point absoluteOrigin() {
+        var view = _bufferContext.getBufferView();
+        int x = view.getBounds().getPoint().getX();
+        int y = view.getBounds().getPoint().getY();
+        for (var parent = view.getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 }

@@ -162,10 +162,11 @@ public class ModeLineView extends View {
     private AttributedString getLeftString() {
         var str = new AttributedString();
         TextColor modeColour = getModeColor();
-        str.append(" " + getMode() + " ", UiTheme.TEXT_ON_ACCENT, modeColour);
-        str.append(Powerline.SYMBOL_FILLED_RIGHT_ARROW, modeColour, _backgroundColour);
-        str.append(" " + getName() + " ", UiTheme.TEXT_PRIMARY, _backgroundColour);
-        str.append("  " + Powerline.SYMBOL_LN + " " + getLine() + " ", UiTheme.TEXT_MUTED, _backgroundColour);
+        UiTheme.appendSegment(str, getMode(), UiTheme.TEXT_ON_ACCENT, modeColour);
+        UiTheme.appendRightSeparator(str, modeColour, UiTheme.SURFACE_ACCENT);
+        UiTheme.appendSegment(str, getName(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
+        UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT, _backgroundColour);
+        str.append(" " + Powerline.SYMBOL_LN + " " + getLine() + " ", UiTheme.TEXT_MUTED, _backgroundColour);
         return str;
     }
 
@@ -173,12 +174,12 @@ public class ModeLineView extends View {
         var str = new AttributedString();
         String branch = getBranch();
         if (!branch.equals("")) {
-            str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_ACCENT, _backgroundColour);
-            str.append(" " + Powerline.SYMBOL_BRANCH + " " + branch + " ", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
+            UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ACCENT, _backgroundColour);
+            UiTheme.appendSegment(str, Powerline.SYMBOL_BRANCH + " " + branch, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
         }
-        str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_MUTED, str.length() == 0 ? _backgroundColour : UiTheme.SURFACE_ACCENT);
-        str.append(" " + _time + " ", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
-        str.append(Powerline.SYMBOL_LEFT_ARROW, UiTheme.SURFACE_ELEVATED, UiTheme.SURFACE_MUTED);
+        UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_MUTED, str.length() == 0 ? _backgroundColour : UiTheme.SURFACE_ACCENT);
+        UiTheme.appendSegment(str, _time, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
+        UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ELEVATED, UiTheme.SURFACE_MUTED);
         str.append(getHeapString());
         return str;
     }

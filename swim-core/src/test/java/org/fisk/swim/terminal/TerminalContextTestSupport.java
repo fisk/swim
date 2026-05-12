@@ -26,9 +26,11 @@ public final class TerminalContextTestSupport {
 
     public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure) {
         var stopCalls = new AtomicInteger();
+        var closeCalls = new AtomicInteger();
         var drawCalls = new CopyOnWriteArrayList<DrawCall>();
         var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
+        var cursorPosition = new AtomicReference<TerminalPosition>(new TerminalPosition(0, 0));
         var graphics = (TextGraphics) Proxy.newProxyInstance(
                 TextGraphics.class.getClassLoader(),
                 new Class<?>[] { TextGraphics.class },
@@ -53,7 +55,13 @@ public final class TerminalContextTestSupport {
         var terminal = (Terminal) Proxy.newProxyInstance(
                 Terminal.class.getClassLoader(),
                 new Class<?>[] { Terminal.class },
-                (proxy, method, args) -> defaultValue(proxy, method.getReturnType(), columns, rows));
+                (proxy, method, args) -> {
+                    if ("close".equals(method.getName())) {
+                        closeCalls.incrementAndGet();
+                        return null;
+                    }
+                    return defaultValue(proxy, method.getReturnType(), columns, rows);
+                });
         var screen = (Screen) Proxy.newProxyInstance(
                 Screen.class.getClassLoader(),
                 new Class<?>[] { Screen.class },
@@ -66,7 +74,12 @@ public final class TerminalContextTestSupport {
                     case "doResizeIfNecessary":
                         return null;
                     case "getCursorPosition":
-                        return new TerminalPosition(0, 0);
+                        return cursorPosition.get();
+                    case "setCursorPosition":
+                        if (args != null && args.length == 1 && args[0] instanceof TerminalPosition position) {
+                            cursorPosition.set(position);
+                        }
+                        return null;
                     case "getFrontCharacter":
                     case "getBackCharacter":
                     case "getCharacter":
@@ -86,7 +99,7 @@ public final class TerminalContextTestSupport {
                 });
         var context = new TerminalContext(screen, terminal, graphics);
         setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls, drawCalls);
+        return new InstalledTerminalContext(context, stopCalls, closeCalls, drawCalls, cursorPosition);
     }
 
     private static void setInstance(TerminalContext context) {
@@ -127,7 +140,12 @@ public final class TerminalContextTestSupport {
         return null;
     }
 
-    public record InstalledTerminalContext(TerminalContext context, AtomicInteger stopCalls, List<DrawCall> drawCalls) {
+    public record InstalledTerminalContext(
+            TerminalContext context,
+            AtomicInteger stopCalls,
+            AtomicInteger closeCalls,
+            List<DrawCall> drawCalls,
+            AtomicReference<TerminalPosition> cursorPosition) {
     }
 
     public record DrawCall(int x, int y, String text, TextColor foreground, TextColor background) {

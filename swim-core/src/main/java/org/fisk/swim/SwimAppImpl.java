@@ -42,6 +42,8 @@ public class SwimAppImpl implements SwimApp {
     }
 
     private static final class DefaultRuntimeBindings implements RuntimeBindings {
+        private static Thread _sharedIoThread;
+
         private static final class DefaultWindowAccess implements WindowAccess {
             @Override
             public void update(boolean forced) {
@@ -112,7 +114,13 @@ public class SwimAppImpl implements SwimApp {
 
         @Override
         public Thread createIoThread() {
-            return new IOThread(TerminalContext.getInstance().getScreen());
+            Thread existing = _sharedIoThread;
+            if (existing != null && existing.isAlive()) {
+                return existing;
+            }
+            Thread created = new IOThread(TerminalContext.getInstance().getScreen());
+            _sharedIoThread = created;
+            return created;
         }
 
         @Override
@@ -162,7 +170,9 @@ public class SwimAppImpl implements SwimApp {
         });
         eventThread.start();
         _ioThread = _bindings.createIoThread();
-        _ioThread.start();
+        if (!_ioThread.isAlive()) {
+            _ioThread.start();
+        }
         LOG.info("swim started");
     }
 
@@ -199,8 +209,9 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
+        boolean reloading = SwimRuntime.isReloading();
         Thread ioThread = _ioThread;
-        if (_ioThread != null) {
+        if (_ioThread != null && !reloading) {
             _ioThread.interrupt();
             _ioThread = null;
         }
@@ -210,8 +221,10 @@ public class SwimAppImpl implements SwimApp {
         if (window != null) {
             window.dispose();
         }
-        _bindings.shutdownTerminalContext();
-        if (ioThread != null && Thread.currentThread() != ioThread) {
+        if (!reloading) {
+            _bindings.shutdownTerminalContext();
+        }
+        if (!reloading && ioThread != null && Thread.currentThread() != ioThread) {
             try {
                 ioThread.join(2000);
             } catch (InterruptedException e) {

@@ -3,6 +3,7 @@ package org.fisk.swim.launcher;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -72,6 +73,28 @@ class PluginRegistryTest {
         assertNull(registry.currentApp());
         assertEquals(List.of("core-start", "plugin-load", "plugin-close", "plugin-load", "plugin-close", "core-close"),
                 Files.readAllLines(events));
+    }
+
+    @Test
+    void registryRestoresPreviousCoreWhenReplacementCoreFailsToLoad() throws Exception {
+        Path root = createSyntheticInstalledBuildRoot();
+        Path file = root.resolve("README.txt");
+        Path events = root.resolve("plugin-registry-events.txt");
+        Files.writeString(file, "hello");
+
+        var registry = new PluginRegistry();
+        var host = new RecordingHost(root);
+
+        SwimApp firstApp = registry.reload(root, file, host, Main.class.getClassLoader());
+        assertSame(firstApp, registry.currentApp());
+        assertEquals(List.of("core-start"), Files.readAllLines(events));
+
+        installFailingReplacementCore(root);
+
+        assertThrows(RuntimeException.class, () -> registry.reload(root, file, host, Main.class.getClassLoader()));
+
+        assertSame(firstApp.getClass(), registry.currentApp().getClass());
+        assertEquals(List.of("core-start", "core-close", "core-start"), Files.readAllLines(events));
     }
 
     private Path createSyntheticInstalledBuildRoot() throws Exception {
@@ -170,6 +193,40 @@ class PluginRegistryTest {
         jarDirectory(pluginClasses, plugins.resolve("marker-plugin-0.0.1-SNAPSHOT.jar"), "demo.marker.plugin",
                 Map.of("META-INF/services/org.fisk.swim.api.SwimPlugin", "fake.plugin.MarkerPlugin\n"));
         return root;
+    }
+
+    private void installFailingReplacementCore(Path root) throws Exception {
+        Path plugins = root.resolve("plugins");
+        Path compileDir = tempDir.resolve("compile-failing");
+        Path failingCoreClasses = compileDir.resolve("failing-core-classes");
+        Files.createDirectories(failingCoreClasses);
+        String classpath = System.getProperty("java.class.path");
+
+        compileJava(Map.of(
+                "fake/core/FailingApp.java", """
+                        package fake.core;
+                        import java.nio.file.Path;
+                        import org.fisk.swim.api.SwimApp;
+                        import org.fisk.swim.api.SwimHost;
+                        public final class FailingApp implements SwimApp {
+                            public void start(Path path, SwimHost host) {
+                                throw new IllegalStateException("boom");
+                            }
+                            public void refresh(boolean forced) {
+                            }
+                            public Path getCurrentPath() {
+                                return Path.of(".");
+                            }
+                            public void showMessage(String message) {
+                            }
+                            public void close() {
+                            }
+                        }
+                        """
+        ), failingCoreClasses, List.of(classpath));
+
+        jarDirectory(failingCoreClasses, plugins.resolve("swim-core-0.0.2-SNAPSHOT.jar"), "org.fisk.swim.core",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.FailingApp\n"));
     }
 
     private static void compileJava(Map<String, String> sources, Path classesDir, List<String> classpathEntries) throws Exception {

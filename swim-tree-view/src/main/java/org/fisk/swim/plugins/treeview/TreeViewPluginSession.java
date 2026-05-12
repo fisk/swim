@@ -13,6 +13,8 @@ public final class TreeViewPluginSession implements AutoCloseable {
     private final Path _projectRoot;
     private final TreeViewController _controller;
     private final TreeViewPanel _panel;
+    private Path _lastSyncedPath;
+    private boolean _manualNavigationActive;
 
     public TreeViewPluginSession(SwimPluginContext context) throws IOException {
         _context = Objects.requireNonNull(context);
@@ -50,11 +52,18 @@ public final class TreeViewPluginSession implements AutoCloseable {
     }
 
     public TreeViewCommandResult handleCommand(TreeViewCommand command) throws IOException {
-        return _panel.handleCommand(command);
+        TreeViewCommandResult result = _panel.handleCommand(command);
+        updateSyncTracking(command, result);
+        return result;
     }
 
     public TreeViewCommandResult handleInput(String input) throws IOException {
-        return _panel.handleInput(input, DEFAULT_INPUT_BINDINGS);
+        Objects.requireNonNull(input);
+        var command = DEFAULT_INPUT_BINDINGS.lookup(input);
+        if (command.isEmpty()) {
+            return TreeViewCommandResult.unhandled();
+        }
+        return handleCommand(command.get());
     }
 
     public TreeViewInteractionResult interact(TreeViewCommand command, int width, int height) throws IOException {
@@ -109,7 +118,14 @@ public final class TreeViewPluginSession implements AutoCloseable {
         if (!normalized.startsWith(_projectRoot)) {
             return false;
         }
-        return _panel.selectPath(normalized);
+        if (_manualNavigationActive && normalized.equals(_lastSyncedPath)) {
+            return false;
+        }
+        Path selectedPath = _controller.getSelectedPath();
+        boolean changed = _panel.selectPath(normalized);
+        _lastSyncedPath = normalized;
+        _manualNavigationActive = false;
+        return changed && !normalized.equals(selectedPath);
     }
 
     private TreeViewActionHandlerResult dispatchAction(TreeViewAction action, TreeViewActionHandler actionHandler) {
@@ -119,6 +135,25 @@ public final class TreeViewPluginSession implements AutoCloseable {
         }
         TreeViewActionHandlerResult result = actionHandler.handle(action);
         return result == null ? TreeViewActionHandlerResult.ignored() : result;
+    }
+
+    private void updateSyncTracking(TreeViewCommand command, TreeViewCommandResult result) {
+        if (!result.handled()) {
+            return;
+        }
+        switch (command) {
+            case MOVE_UP, MOVE_DOWN, EXPAND, COLLAPSE -> _manualNavigationActive = true;
+            case ACTIVATE -> {
+                if (result.action().type() == TreeViewActionType.OPEN_FILE) {
+                    _lastSyncedPath = result.action().path();
+                    _manualNavigationActive = false;
+                } else {
+                    _manualNavigationActive = true;
+                }
+            }
+            case REFRESH -> {
+            }
+        }
     }
 
     @Override

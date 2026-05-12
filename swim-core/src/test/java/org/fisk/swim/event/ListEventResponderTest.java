@@ -45,6 +45,47 @@ class ListEventResponderTest {
         assertEquals(Response.NO, result);
     }
 
+    @Test
+    void higherLayerYesOverridesLowerLayerYes() {
+        var lowerCalled = new AtomicInteger();
+        var higherCalled = new AtomicInteger();
+        var responder = new ListEventResponder();
+        responder.addEventResponder(stub(Response.YES, lowerCalled));
+        responder.addLayer().addEventResponder(stub(Response.YES, higherCalled));
+
+        assertEquals(Response.YES, responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false)))));
+
+        responder.respond();
+
+        assertEquals(0, lowerCalled.get());
+        assertEquals(1, higherCalled.get());
+    }
+
+    @Test
+    void higherLayerYesOverridesLowerLayerMaybe() {
+        var called = new AtomicInteger();
+        var responder = new ListEventResponder();
+        responder.addEventResponder(new TextEventResponder("x y", () -> {}));
+        responder.addLayer().addEventResponder(stub(Response.YES, called));
+
+        assertEquals(Response.YES, responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false)))));
+
+        responder.respond();
+
+        assertEquals(1, called.get());
+    }
+
+    @Test
+    void higherLayerMaybeBlocksLowerLayerYes() {
+        var responder = new ListEventResponder();
+        responder.addEventResponder(stub(Response.YES, new AtomicInteger()));
+        responder.addLayer().addEventResponder(new TextEventResponder("x y", () -> {}));
+
+        var result = responder.processEvent(new KeyStrokes(List.of(new KeyStroke('x', false, false))));
+
+        assertEquals(Response.MAYBE, result);
+    }
+
     private static EventResponder stub(Response response, AtomicInteger calls) {
         return new EventResponder() {
             @Override

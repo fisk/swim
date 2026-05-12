@@ -24,6 +24,16 @@ import org.slf4j.Logger;
 import com.googlecode.lanterna.TextColor;
 
 public class Buffer {
+    private static final class InsertPlan {
+        private final String _text;
+        private final int _cursorAdvance;
+
+        private InsertPlan(String text, int cursorAdvance) {
+            _text = text;
+            _cursorAdvance = cursorAdvance;
+        }
+    }
+
     private StringBuilder _string = new StringBuilder();
     private Path _path;
     private List<Cursor> _cursors = new ArrayList<>();
@@ -167,24 +177,83 @@ public class Buffer {
 
 
     public void insert(String str) {
-        if (str.equals("\n")) {
-            for (int i = 0; i < getIndentationLevel(); ++i) {
-                str += Settings.getIndentationString();
-            }
-        }
         int inserted = 0;
         for (var cursor: getCursorsOrdered()) {
             int position = cursor.getPosition() + inserted;
-            _undoLog.recordInsert(position, str);
-            rawInsert(position, str);
+            var plan = createInsertPlan(position, str);
+            _undoLog.recordInsert(position, plan._text);
+            rawInsert(position, plan._text);
             _bufferContext.getTextLayout().calculate();
-            cursor.setPosition(position + str.length());
+            cursor.setPosition(position + plan._cursorAdvance);
             _bufferContext.getBufferView().adaptViewToCursor();
-            inserted += str.length();
+            inserted += plan._text.length();
         }
         if (isIndentationEnd(str)) {
             reindentLine();
         }
+    }
+
+    private InsertPlan createInsertPlan(int position, String str) {
+        if (!"\n".equals(str)) {
+            return new InsertPlan(str, str.length());
+        }
+
+        String currentIndent = indentationOfLineAt(position);
+        char previous = previousNonWhitespaceOnLine(position);
+        char next = nextNonWhitespaceOnLine(position);
+
+        if (next == '}') {
+            String closingIndent = currentIndent;
+            String indent = closingIndent + Settings.getIndentationString();
+            String text = "\n" + indent + "\n" + closingIndent;
+            return new InsertPlan(text, 1 + indent.length());
+        }
+        String indent = previous == '{' ? currentIndent + Settings.getIndentationString() : currentIndent;
+        String text = "\n" + indent;
+        return new InsertPlan(text, text.length());
+    }
+
+    private char previousNonWhitespaceOnLine(int position) {
+        for (int i = position - 1; i >= 0; --i) {
+            char character = _string.charAt(i);
+            if (character == '\n') {
+                break;
+            }
+            if (!Character.isWhitespace(character)) {
+                return character;
+            }
+        }
+        return 0;
+    }
+
+    private char nextNonWhitespaceOnLine(int position) {
+        for (int i = position; i < _string.length(); ++i) {
+            char character = _string.charAt(i);
+            if (character == '\n') {
+                break;
+            }
+            if (!Character.isWhitespace(character)) {
+                return character;
+            }
+        }
+        return 0;
+    }
+
+    private String indentationOfLineAt(int position) {
+        int start = Math.max(0, Math.min(position, _string.length()));
+        while (start > 0 && _string.charAt(start - 1) != '\n') {
+            --start;
+        }
+        int end = start;
+        while (end < _string.length()) {
+            char character = _string.charAt(end);
+            if (character == ' ' || character == '\t') {
+                ++end;
+                continue;
+            }
+            break;
+        }
+        return _string.substring(start, end);
     }
 
     public void insert(int position, String str) {

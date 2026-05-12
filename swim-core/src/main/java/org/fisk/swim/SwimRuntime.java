@@ -68,4 +68,8 @@ public final class SwimRuntime {
         }
         return _host.getPanel(pluginId);
     }
+
+    public static boolean isReloading() {
+        return _host != null && _host.isReloading();
+    }
 }

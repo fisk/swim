@@ -1,6 +1,7 @@
 package org.fisk.swim.ui;
 
 import org.fisk.swim.text.AttributedString;
+import org.fisk.swim.text.Powerline;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
@@ -31,6 +32,8 @@ final class UiTheme {
 
     static final TextColor MENU_BACKGROUND = color("#0d151d");
     static final TextColor MENU_SECONDARY_BACKGROUND = color("#101b25");
+    static final TextColor MENU_SEGMENT_BACKGROUND = color("#15222d");
+    static final TextColor MENU_CONTEXT_BACKGROUND = color("#1d2d3a");
     static final TextColor MENU_ACCENT = color("#5ec4ff");
     static final TextColor MENU_CHAIN = color("#ffb454");
     static final TextColor MENU_HINT = color("#7ee787");
@@ -78,6 +81,18 @@ final class UiTheme {
     static String padRight(String text, int width) {
         String fitted = fit(text, width);
         return fitted + repeat(" ", width - fitted.length());
+    }
+
+    static void appendSegment(AttributedString line, String text, TextColor foreground, TextColor background) {
+        line.append(" " + text + " ", foreground, background);
+    }
+
+    static void appendRightSeparator(AttributedString line, TextColor fromBackground, TextColor toBackground) {
+        line.append(Powerline.SYMBOL_FILLED_RIGHT_ARROW, fromBackground, toBackground);
+    }
+
+    static void appendLeftSeparator(AttributedString line, TextColor fromBackground, TextColor toBackground) {
+        line.append(Powerline.SYMBOL_FILLED_LEFT_ARROW, fromBackground, toBackground);
     }
 
     static void fillRow(TextGraphics graphics, Point point, int width, TextColor background) {

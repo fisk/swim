@@ -172,8 +172,8 @@ public class CompletionPopupView extends View {
         var bufferView = _session.getBufferContext().getBufferView();
         var cursor = _session.getBufferContext().getBuffer().getCursor();
 
-        int anchorX = bufferView.getBounds().getPoint().getX() + cursor.getX();
-        int anchorY = bufferView.getBounds().getPoint().getY() + cursor.getYRelative();
+        int anchorX = cursor.getXOnScreen();
+        int anchorY = cursor.getYOnScreen();
 
         int x = Math.max(0, Math.min(anchorX, parentSize.getWidth() - width));
         int belowY = anchorY + 1;

@@ -125,26 +125,35 @@ public class KeyMenuView extends View {
 
     AttributedString buildHeaderLine() {
         var line = new AttributedString();
-        line.append(" SWIM ", UiTheme.MENU_BACKGROUND, UiTheme.MENU_ACCENT);
-        line.append(" " + _modeName + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.modeColor(_modeName));
+        TextColorTracker colors = new TextColorTracker(UiTheme.MENU_BACKGROUND);
+
+        UiTheme.appendSegment(line, "SWIM", UiTheme.MENU_BACKGROUND, UiTheme.MENU_ACCENT);
+        colors.background(UiTheme.MENU_ACCENT);
+        appendHeaderSegment(line, colors, _modeName, UiTheme.TEXT_ON_ACCENT, UiTheme.modeColor(_modeName));
         if (isDiscoverabilityActive()) {
             if (_path.isEmpty()) {
-                line.append(" explore key chains", UiTheme.TEXT_PRIMARY, UiTheme.MENU_BACKGROUND);
+                appendHeaderSegment(line, colors, "explore key chains", UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
             } else {
-                line.append(" chain ", UiTheme.TEXT_MUTED, UiTheme.MENU_BACKGROUND);
-                line.append(String.join(" ", _path), UiTheme.MENU_CHAIN, UiTheme.MENU_BACKGROUND);
+                appendHeaderSegment(line, colors, "chain", UiTheme.TEXT_MUTED, UiTheme.MENU_SEGMENT_BACKGROUND);
+                appendHeaderSegment(line, colors, String.join(" ", _path), UiTheme.MENU_CHAIN, UiTheme.MENU_CONTEXT_BACKGROUND);
             }
         } else {
-            line.append(" " + passiveHint(), UiTheme.TEXT_MUTED, UiTheme.MENU_BACKGROUND);
+            appendHeaderSegment(line, colors, passiveHint(), UiTheme.TEXT_MUTED, UiTheme.MENU_SEGMENT_BACKGROUND);
             if (_contextLabel != null && !_contextLabel.isBlank()) {
-                line.append("  " + _contextLabel, UiTheme.ACCENT_BLUE, UiTheme.MENU_BACKGROUND);
+                appendHeaderSegment(line, colors, _contextLabel, UiTheme.ACCENT_BLUE, UiTheme.MENU_CONTEXT_BACKGROUND);
             }
         }
+        appendHeaderReset(line, colors);
         return line;
     }
 
     AttributedString buildBodyLine() {
-        return AttributedString.create(bodyText(), UiTheme.TEXT_PRIMARY, UiTheme.MENU_SECONDARY_BACKGROUND);
+        var line = new AttributedString();
+        TextColorTracker colors = new TextColorTracker(UiTheme.MENU_SECONDARY_BACKGROUND);
+        UiTheme.appendSegment(line, bodyText(), UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
+        colors.background(UiTheme.MENU_SEGMENT_BACKGROUND);
+        appendBodyReset(line, colors);
+        return line;
     }
 
     String bodyText() {
@@ -381,6 +390,47 @@ public class KeyMenuView extends View {
 
         private boolean isTerminal() {
             return _terminal || _children.isEmpty();
+        }
+    }
+
+    private void appendHeaderSegment(
+            AttributedString line,
+            TextColorTracker colors,
+            String text,
+            com.googlecode.lanterna.TextColor foreground,
+            com.googlecode.lanterna.TextColor background) {
+        UiTheme.appendRightSeparator(line, colors.background(), background);
+        UiTheme.appendSegment(line, text, foreground, background);
+        colors.background(background);
+    }
+
+    private void appendHeaderReset(AttributedString line, TextColorTracker colors) {
+        if (!UiTheme.MENU_BACKGROUND.equals(colors.background())) {
+            UiTheme.appendRightSeparator(line, colors.background(), UiTheme.MENU_BACKGROUND);
+            colors.background(UiTheme.MENU_BACKGROUND);
+        }
+    }
+
+    private void appendBodyReset(AttributedString line, TextColorTracker colors) {
+        if (!UiTheme.MENU_SECONDARY_BACKGROUND.equals(colors.background())) {
+            UiTheme.appendRightSeparator(line, colors.background(), UiTheme.MENU_SECONDARY_BACKGROUND);
+            colors.background(UiTheme.MENU_SECONDARY_BACKGROUND);
+        }
+    }
+
+    private static final class TextColorTracker {
+        private com.googlecode.lanterna.TextColor _background;
+
+        private TextColorTracker(com.googlecode.lanterna.TextColor background) {
+            _background = background;
+        }
+
+        private com.googlecode.lanterna.TextColor background() {
+            return _background;
+        }
+
+        private void background(com.googlecode.lanterna.TextColor background) {
+            _background = background;
         }
     }
 }

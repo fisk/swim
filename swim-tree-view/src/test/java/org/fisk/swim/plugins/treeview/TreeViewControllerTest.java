@@ -57,6 +57,30 @@ class TreeViewControllerTest {
     }
 
     @Test
+    void collapsesRootChildBackToRootSelection() throws IOException {
+        Path rootFile = Files.writeString(_tempDir.resolve("guide.txt"), "guide\n");
+
+        TreeViewController controller = new TreeViewController(_tempDir);
+        assertTrue(controller.selectPath(rootFile));
+
+        assertTrue(controller.collapseSelectedDirectoryOrParent());
+        assertEquals(_tempDir.toAbsolutePath().normalize(), controller.getSelectedPath());
+    }
+
+    @Test
+    void expandingExpandedDirectoryMovesIntoFirstChild() throws IOException {
+        Path docsDir = Files.createDirectories(_tempDir.resolve("docs"));
+        Path guideFile = Files.writeString(docsDir.resolve("guide.txt"), "guide\n");
+
+        TreeViewController controller = new TreeViewController(_tempDir);
+        assertTrue(controller.selectPath(docsDir));
+
+        assertTrue(controller.expandSelectedDirectory());
+        assertTrue(controller.expandSelectedDirectory());
+        assertEquals(guideFile.toAbsolutePath().normalize(), controller.getSelectedPath());
+    }
+
+    @Test
     void keepsRootVisibleWhenRefreshing() throws IOException {
         Files.createDirectories(_tempDir.resolve("alpha"));
         TreeViewController controller = new TreeViewController(_tempDir);

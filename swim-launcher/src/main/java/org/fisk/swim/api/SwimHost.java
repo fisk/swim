@@ -13,6 +13,9 @@ public interface SwimHost {
     default SwimPanel getPanel(String pluginId) {
         return null;
     }
+    default boolean isReloading() {
+        return false;
+    }
     void requestExit();
     Path getBuildRoot();
 }

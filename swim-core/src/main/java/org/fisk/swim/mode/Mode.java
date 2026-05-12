@@ -35,6 +35,10 @@ public class Mode implements EventResponder, Drawable {
         _rootResponder.respond();
     }
 
+    public ListEventResponder.Layer addKeybindingLayer() {
+        return _rootResponder.addLayer();
+    }
+
     protected void setupNavigationResponders() {
         var window = _window;
         var bufferContext = window.getBufferContext();

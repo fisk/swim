@@ -111,6 +111,24 @@ class SwimAppImplTest {
     }
 
     @Test
+    void closeDuringReloadKeepsIoThreadAndTerminalAlive() {
+        FakeBindings bindings = new FakeBindings();
+        SwimAppImpl app = new SwimAppImpl(bindings);
+        RecordingHost host = new RecordingHost();
+        host.reloading = true;
+
+        app.start(Path.of("/tmp/reload-close.txt"), host);
+        app.close();
+
+        assertTrue(bindings.shutdownJavaLspCalled);
+        assertTrue(bindings.shutdownEventThreadCalled);
+        assertTrue(bindings.window.disposed);
+        assertTrue(bindings.clearRuntimeCalled);
+        assertTrue(!bindings.ioThread.interrupted);
+        assertTrue(!bindings.shutdownTerminalContextCalled);
+    }
+
+    @Test
     void defaultRuntimeBindingsDelegateToWindowEventThreadAndRuntimeStatics() throws Exception {
         var bindings = createDefaultBindings();
         TerminalContextTestSupport.install(80, 24);
@@ -191,6 +209,7 @@ class SwimAppImplTest {
         @Override
         public void setHost(SwimHost host) {
             this.host = host;
+            SwimRuntime.setHost(host);
         }
 
         @Override
@@ -320,6 +339,7 @@ class SwimAppImplTest {
 
     private static final class RecordingHost implements SwimHost {
         private Path reloadPath;
+        private boolean reloading;
 
         @Override
         public void requestReload(Path path) {
@@ -336,6 +356,11 @@ class SwimAppImplTest {
 
         @Override
         public void requestExit() {
+        }
+
+        @Override
+        public boolean isReloading() {
+            return reloading;
         }
 
         @Override

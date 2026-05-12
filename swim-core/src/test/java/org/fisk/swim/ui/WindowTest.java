@@ -12,6 +12,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LoggerContext;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguageModeProvider;
 import org.junit.jupiter.api.Test;
@@ -96,18 +99,24 @@ class WindowTest {
             }
         });
 
-        try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
-            var window = harness.getWindow();
-            var originalBufferContext = window.getBufferContext();
-            var originalBufferView = originalBufferContext.getBufferView();
-            window.switchToMode(window.getInputMode());
+        try {
+            withLoggerLevel("org.fisk.swim.ui.Window", Level.OFF, () -> {
+                try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
+                    var window = harness.getWindow();
+                    var originalBufferContext = window.getBufferContext();
+                    var originalBufferView = originalBufferContext.getBufferView();
+                    window.switchToMode(window.getInputMode());
 
-            assertFalse(window.setBufferPath(second));
+                    assertFalse(window.setBufferPath(second));
 
-            assertSame(originalBufferContext, window.getBufferContext());
-            assertSame(originalBufferView, window.getBufferContext().getBufferView());
-            assertEquals("one", window.getBufferContext().getBuffer().getString());
-            assertSame(window.getInputMode(), window.getCurrentMode());
+                    assertSame(originalBufferContext, window.getBufferContext());
+                    assertSame(originalBufferView, window.getBufferContext().getBufferView());
+                    assertEquals("one", window.getBufferContext().getBuffer().getString());
+                    assertSame(window.getInputMode(), window.getCurrentMode());
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
         } finally {
             swapLanguageModeProvider(previous);
         }
@@ -310,5 +319,18 @@ class WindowTest {
             parent = parent.getParent();
         }
         return Rect.create(x, y, view.getBounds().getSize().getWidth(), view.getBounds().getSize().getHeight());
+    }
+
+    private static void withLoggerLevel(String loggerName, Level level, Runnable runnable) {
+        LoggerContext context = (LoggerContext) LogManager.getContext(false);
+        var configuration = context.getConfiguration();
+        var loggerConfig = configuration.getLoggerConfig(loggerName);
+        Level previous = loggerConfig.getLevel();
+        org.apache.logging.log4j.core.config.Configurator.setLevel(loggerName, level);
+        try {
+            runnable.run();
+        } finally {
+            org.apache.logging.log4j.core.config.Configurator.setLevel(loggerName, previous);
+        }
     }
 }

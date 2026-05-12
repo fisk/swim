@@ -27,6 +27,7 @@ class TerminalContextTest {
         TerminalContext.shutdownInstance();
 
         assertEquals(1, installed.stopCalls().get());
+        assertEquals(1, installed.closeCalls().get());
     }
 
     @Test
@@ -36,5 +37,6 @@ class TerminalContextTest {
         TerminalContext.shutdownInstance();
 
         assertEquals(1, installed.stopCalls().get());
+        assertEquals(1, installed.closeCalls().get());
     }
 }

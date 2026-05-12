@@ -15,6 +15,8 @@ import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.PluginPanelView;
@@ -86,6 +88,143 @@ class ModeResponderTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.backspace());
             assertEquals("ab\ncd", buffer.getString());
+        }
+    }
+
+    @Test
+    void inputModeEnterInsideElseBlockKeepsTypingOnIndentedLine() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("ElseBlock.java", """
+                class Demo {
+                    void run() {
+                        if (flag) {
+                        } else {}
+                    }
+                }
+                """), 80, 16)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            int insertPosition = buffer.getString().indexOf("else {}") + "else {".length();
+            buffer.getCursor().setPosition(insertPosition);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.enter());
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('x'));
+
+            assertEquals("""
+                    class Demo {
+                        void run() {
+                            if (flag) {
+                            } else {
+                                x
+                            }
+                        }
+                    }
+                    """, buffer.getString());
+            assertEquals(buffer.getString().indexOf("x") + 1, buffer.getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void inputModeElseBlockCursorRendersOnInsertedLine() throws IOException {
+        var installedTerminal = TerminalContextTestSupport.install(80, 16);
+        try (var harness = HeadlessWindowHarness.create(writeFile("ElseCursor.java", """
+                class Demo {
+                    void run() {
+                        if (flag) {
+                        } else {}
+                    }
+                }
+                """), 80, 16)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            int insertPosition = buffer.getString().indexOf("else {}") + "else {".length();
+            buffer.getCursor().setPosition(insertPosition);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.enter());
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('x'));
+
+            window.update(true);
+
+            int xIndex = buffer.getString().indexOf("x");
+            var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(xIndex + 1);
+            var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
+            int expectedColumn = bufferBounds.getPoint().getX() + (xIndex + 1) - line.getStartPosition();
+            int expectedRow = bufferBounds.getPoint().getY() + line.getY();
+            var cursorPosition = installedTerminal.cursorPosition().get();
+            assertEquals(expectedColumn, cursorPosition.getColumn());
+            assertEquals(expectedRow, cursorPosition.getRow());
+        } finally {
+            TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
+    void appendInsideElseBlockKeepsCursorAndInsertedTextOnSameLine() throws IOException {
+        var installedTerminal = TerminalContextTestSupport.install(80, 16);
+        try (var harness = HeadlessWindowHarness.create(writeFile("ElseAppend.java", """
+                class Demo {
+                    void run() {
+                        if (flag) {
+                        } else {}
+                    }
+                }
+                """), 80, 16)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            int bracePosition = buffer.getString().indexOf("else {}") + "else ".length();
+            buffer.getCursor().setPosition(bracePosition);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.enter());
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('x'));
+
+            window.update(true);
+
+            assertEquals("""
+class Demo {
+    void run() {
+        if (flag) {
+        } else {
+            x
+        }
+    }
+}
+""", buffer.getString());
+            int xIndex = buffer.getString().indexOf("x");
+            var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(xIndex + 1);
+            var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
+            int expectedColumn = bufferBounds.getPoint().getX() + (xIndex + 1) - line.getStartPosition();
+            int expectedRow = bufferBounds.getPoint().getY() + line.getY();
+            var cursorPosition = installedTerminal.cursorPosition().get();
+            assertEquals(expectedColumn, cursorPosition.getColumn());
+            assertEquals(expectedRow, cursorPosition.getRow());
+        } finally {
+            TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
+    void cursorRendersAtAbsolutePositionInSplitPane() throws IOException {
+        var installedTerminal = TerminalContextTestSupport.install(80, 16);
+        try (var harness = HeadlessWindowHarness.create(writeFile("SplitCursor.java", "alpha\nbeta\n"), 80, 16)) {
+            Window window = harness.getWindow();
+            window.splitActiveBufferHorizontally();
+            var buffer = window.getBufferContext().getBuffer();
+            int index = buffer.getString().indexOf("beta") + 2;
+            buffer.getCursor().setPosition(index);
+
+            window.update(true);
+
+            var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(index);
+            var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
+            int expectedColumn = bufferBounds.getPoint().getX() + index - line.getStartPosition();
+            int expectedRow = bufferBounds.getPoint().getY() + line.getY();
+            var cursorPosition = installedTerminal.cursorPosition().get();
+            assertEquals(expectedColumn, cursorPosition.getColumn());
+            assertEquals(expectedRow, cursorPosition.getRow());
+        } finally {
+            TerminalContext.shutdownInstance();
         }
     }
 

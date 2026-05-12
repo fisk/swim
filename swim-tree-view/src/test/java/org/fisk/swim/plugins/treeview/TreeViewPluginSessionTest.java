@@ -43,6 +43,34 @@ class TreeViewPluginSessionTest {
         assertEquals(mainFile, session.snapshot(30, 5).selectedPath());
     }
 
+    @Test
+    void ignoresRedundantEditorSyncWhileNavigatingManually() throws IOException {
+        Path aFile = Files.writeString(_tempDir.resolve("A.java"), "class A {}\n");
+        Path bFile = Files.writeString(_tempDir.resolve("B.java"), "class B {}\n");
+        TreeViewPluginSession session = new TreeViewPluginSession(new TestPluginContext(_tempDir, aFile));
+
+        assertTrue(session.handleInput("down").handled());
+        assertEquals(bFile, session.snapshot(30, 5).selectedPath());
+
+        assertFalse(session.syncToPath(aFile));
+        assertEquals(bFile, session.snapshot(30, 5).selectedPath());
+    }
+
+    @Test
+    void resyncsWhenCurrentEditorPathChanges() throws IOException {
+        Path aFile = Files.writeString(_tempDir.resolve("A.java"), "class A {}\n");
+        Path bFile = Files.writeString(_tempDir.resolve("B.java"), "class B {}\n");
+        MutableTestPluginContext context = new MutableTestPluginContext(_tempDir, aFile);
+        TreeViewPluginSession session = new TreeViewPluginSession(context);
+
+        assertTrue(session.handleInput("up").handled());
+        assertEquals(_tempDir.toAbsolutePath().normalize(), session.snapshot(30, 5).selectedPath());
+
+        context.setCurrentPath(bFile);
+        assertTrue(session.syncToCurrentPath());
+        assertEquals(bFile, session.snapshot(30, 5).selectedPath());
+    }
+
     private record TestPluginContext(Path initialPath, Path currentPath) implements SwimPluginContext {
         @Override
         public Path getInitialPath() {
@@ -76,6 +104,56 @@ class TreeViewPluginSessionTest {
                 @Override
                 public Path getBuildRoot() {
                     return initialPath;
+                }
+            };
+        }
+    }
+
+    private static final class MutableTestPluginContext implements SwimPluginContext {
+        private final Path _initialPath;
+        private final AtomicReference<Path> _currentPath;
+
+        private MutableTestPluginContext(Path initialPath, Path currentPath) {
+            _initialPath = initialPath;
+            _currentPath = new AtomicReference<>(currentPath);
+        }
+
+        void setCurrentPath(Path currentPath) {
+            _currentPath.set(currentPath);
+        }
+
+        @Override
+        public Path getInitialPath() {
+            return _initialPath;
+        }
+
+        @Override
+        public Path getCurrentPath() {
+            return _currentPath.get();
+        }
+
+        @Override
+        public SwimHost getHost() {
+            return new SwimHost() {
+                @Override
+                public void requestReload(Path path) {
+                }
+
+                @Override
+                public void requestRebuildAndReload(Path path) {
+                }
+
+                @Override
+                public void requestLoadPlugin(String pluginId, Path path) {
+                }
+
+                @Override
+                public void requestExit() {
+                }
+
+                @Override
+                public Path getBuildRoot() {
+                    return _initialPath;
                 }
             };
         }
