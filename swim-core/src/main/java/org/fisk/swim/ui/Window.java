@@ -445,24 +445,28 @@ public class Window implements Drawable {
 
     public void update(boolean forced) {
         ensureLayoutState();
-        _log.info("Maybe relayout");
+        _log.debug("Maybe relayout");
         if (!forced && !_rootView.needsRedraw()) {
-            _log.info("Relayout not needed");
+            _log.debug("Relayout not needed");
             return;
         }
         var screen = TerminalContext.getInstance().getScreen();
-        var terminalSize = screen.doResizeIfNecessary();
+        var terminalContext = TerminalContext.getInstance();
+        var terminalSize = terminalContext.getTerminalSize();
+        if (terminalSize == null) {
+            terminalSize = screen.doResizeIfNecessary();
+        }
         if (terminalSize == null) {
             terminalSize = new TerminalSize(_rootView.getBounds().getSize().getWidth(),
                     _rootView.getBounds().getSize().getHeight());
         }
-        _log.info("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
+        _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
         var size = Size.create(terminalSize.getColumns(), terminalSize.getRows());
         if (_size == null || !_size.equals(size)) {
-            _log.info("Relayout");
+            _log.debug("Relayout");
             applyLayout(size);
         } else {
-            _log.info("Relayout not needed due to same size");
+            _log.debug("Relayout not needed due to same size");
         }
         _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
         _size = size;
@@ -544,9 +548,9 @@ public class Window implements Drawable {
     private void setupSplashScreen() {
         var terminalContext = TerminalContext.getInstance();
         var screen = terminalContext.getScreen();
-        var terminalSize = screen.getTerminalSize();
+        var terminalSize = terminalContext.getTerminalSize();
         var textGraphics = terminalContext.getGraphics();
-        _log.info("Draw splash screen");
+        _log.debug("Draw splash screen");
         var attrString = new AttributedString();
         var str = " swim is warming up ";
         attrString.append(str, UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_BLUE);
@@ -560,9 +564,9 @@ public class Window implements Drawable {
     private void setupViews(Path path) {
         ensureLayoutState();
         var terminalContext = TerminalContext.getInstance();
-        var terminalSize = terminalContext.getScreen().getTerminalSize();
+        var terminalSize = terminalContext.getTerminalSize();
 
-        _log.info("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
+        _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
 
         _bufferContext = new BufferContext(Rect.create(0, TOP_MENU_HEIGHT, terminalSize.getColumns(),
                 Math.max(0, terminalSize.getRows() - TOP_MENU_HEIGHT - 2)), path);

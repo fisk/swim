@@ -15,6 +15,7 @@ import org.apache.logging.log4j.core.layout.PatternLayout;
 final class SwimLogging {
     static final String LOG_DIR_PROPERTY = "swim.log.dir";
     static final String LOG_PATH_PROPERTY = "swim.log.path";
+    static final String LOG_LEVEL_PROPERTY = "swim.log.level";
 
     private static final String APPENDER_NAME = "SwimFileAppender";
 
@@ -56,8 +57,9 @@ final class SwimLogging {
                     .build();
             appender.start();
             config.addAppender(appender);
-            rootLogger.addAppender(appender, Level.DEBUG, null);
-            rootLogger.setLevel(Level.DEBUG);
+            Level logLevel = configuredLogLevel();
+            rootLogger.addAppender(appender, logLevel, null);
+            rootLogger.setLevel(logLevel);
             context.updateLoggers();
             System.setProperty(LOG_PATH_PROPERTY, logPath.toString());
             return logPath;
@@ -69,6 +71,15 @@ final class SwimLogging {
 
     static Path resolveLogPath() {
         return resolveLogDirectory().resolve("swim-" + ProcessHandle.current().pid() + ".log");
+    }
+
+    static Level configuredLogLevel() {
+        String configured = System.getProperty(LOG_LEVEL_PROPERTY, "").trim();
+        if (configured.isEmpty()) {
+            return Level.INFO;
+        }
+        Level level = Level.getLevel(configured.toUpperCase(java.util.Locale.ROOT));
+        return level == null ? Level.INFO : level;
     }
 
     private static Path resolveLogDirectory() {

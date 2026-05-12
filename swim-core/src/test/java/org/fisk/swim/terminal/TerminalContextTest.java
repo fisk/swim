@@ -1,6 +1,7 @@
 package org.fisk.swim.terminal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.io.IOException;
@@ -38,5 +39,20 @@ class TerminalContextTest {
 
         assertEquals(1, installed.stopCalls().get());
         assertEquals(1, installed.closeCalls().get());
+    }
+
+    @Test
+    void parseSttySizeParsesRowsAndColumns() {
+        assertEquals(80, TerminalContext.parseSttySize("24 80\n").getColumns());
+        assertEquals(24, TerminalContext.parseSttySize("24 80\n").getRows());
+    }
+
+    @Test
+    void parseSttySizeRejectsInvalidOutput() {
+        assertNull(TerminalContext.parseSttySize(null));
+        assertNull(TerminalContext.parseSttySize(""));
+        assertNull(TerminalContext.parseSttySize("80"));
+        assertNull(TerminalContext.parseSttySize("rows cols"));
+        assertNull(TerminalContext.parseSttySize("0 80"));
     }
 }

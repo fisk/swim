@@ -32,12 +32,15 @@ class LauncherProcessIT {
     Path tempDir;
 
     private static final String EXPECTED_JAVA_PROVIDER = "oracle-embedded";
+    private Boolean _interactiveScriptSupported;
 
     @Test
     @Timeout(30)
     void actualEditorCanSwitchFilesDeleteSaveAndQuit() throws Exception {
         Path script = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(script), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(script),
+                "script utility must support driving interactive child stdin");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
@@ -48,12 +51,18 @@ class LauncherProcessIT {
         Files.writeString(file, "source");
         Files.writeString(other, "xyz");
         String javaAgentArg = jacocoAgentArg(buildRoot);
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                script,
+                "java", javaAgentArg, "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString()),
+                "script utility must keep the launcher session stdin open long enough for interaction");
 
         var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
                 "java", javaAgentArg, "--module-path", launcherJar.toString(),
                 "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
         try {
-            waitForStartup();
+            waitForStartup(process);
             runCommand(process, "e " + other);
             type(process, "x");
             runCommand(process, "w");
@@ -73,6 +82,8 @@ class LauncherProcessIT {
     void actualEditorCanDeleteSaveAndQuit() throws Exception {
         Path script = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(script), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(script),
+                "script utility must support driving interactive child stdin");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
@@ -81,12 +92,18 @@ class LauncherProcessIT {
         Path file = tempDir.resolve("undo-redo.txt");
         Files.writeString(file, "abc");
         String javaAgentArg = jacocoAgentArg(buildRoot);
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                script,
+                "java", javaAgentArg, "--module-path", launcherJar.toString(),
+                "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString()),
+                "script utility must keep the launcher session stdin open long enough for interaction");
 
         var process = startProcess(buildRoot, launcherJar, script.toString(), "-q", "/dev/null",
                 "java", javaAgentArg, "--module-path", launcherJar.toString(),
                 "-m", "org.fisk.swim.launcher/org.fisk.swim.launcher.Main", file.toString());
         try {
-            waitForStartup();
+            waitForStartup(process);
             type(process, "x");
             runCommand(process, "w");
             runCommand(process, "q");
@@ -134,6 +151,8 @@ class LauncherProcessIT {
     void installedLauncherBinaryStartsWithoutStaleJdepsWarning() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
+                "script utility must support driving interactive child stdin");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
@@ -142,12 +161,17 @@ class LauncherProcessIT {
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Path file = tempDir.resolve("script-launch.txt");
         Files.writeString(file, "abc");
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                scriptUtility,
+                launcherBinary.toString(), file.toString()),
+                "script utility must keep the installed launcher session stdin open long enough for interaction");
 
         var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
                 launcherBinary.toString(), file.toString());
 
         try {
-            waitForStartup();
+            waitForStartup(process);
             assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
             assertTrue(!process.output().toString().contains("package com.sun.tools.classfile not in jdk.jdeps"),
                     "Installed launcher binary emitted stale jdk.jdeps warning.\n" + process.output());
@@ -165,10 +189,56 @@ class LauncherProcessIT {
     }
 
     @Test
+    @Timeout(30)
+    void installedLauncherBinaryRendersInitialScreenWithoutInput() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
+                "script utility must support driving interactive child stdin");
+        Assumptions.assumeTrue(scriptCanCaptureTranscript(scriptUtility),
+                "script transcript capture is required for startup render verification");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
+
+        Path file = buildRoot.resolve("README.md");
+        Assumptions.assumeTrue(Files.isRegularFile(file), "README.md missing");
+        Path transcript = tempDir.resolve("startup.typescript");
+
+        var process = startProcess(buildRoot, launcherBinary, transcript, scriptUtility.toString(), "-q", "-F", transcript.toString(),
+                launcherBinary.toString(), file.toString());
+
+        try {
+            waitForStartup(process);
+            assertTrue(process.process().isAlive(),
+                    "Installed launcher binary died during initial render.\n" + process.output());
+            assertTrue(waitForFileText(transcript, "Loaded SWIM core", java.time.Duration.ofSeconds(15)),
+                    "Installed launcher binary did not render the startup notice without input.\nTranscript:\n"
+                            + Files.readString(transcript) + "\nOutput:\n" + process.output());
+            assertTrue(waitForFileText(transcript, "README.md", java.time.Duration.ofSeconds(5)),
+                    "Installed launcher binary did not render the opened file name without input.\nTranscript:\n"
+                            + Files.readString(transcript) + "\nOutput:\n" + process.output());
+            assertTrue(waitForFileText(transcript, "SWIM stands for", java.time.Duration.ofSeconds(5)),
+                    "Installed launcher binary did not render buffer contents without input.\nTranscript:\n"
+                            + Files.readString(transcript) + "\nOutput:\n" + process.output());
+            runCommand(process, "q");
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
+            assertTrue(exited, "Installed launcher binary did not exit after startup render check.\n" + process.output());
+        } finally {
+            destroyIfAlive(process.process());
+        }
+    }
+
+    @Test
     @Timeout(45)
     void installedLauncherBinaryUsesEmbeddedProvider() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
+                "script utility must support driving interactive child stdin");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
@@ -194,6 +264,11 @@ class LauncherProcessIT {
                 package demo;
                 class Main {}
                 """);
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                scriptUtility,
+                launcherBinary.toString(), javaFile.toString()),
+                "script utility must keep the installed launcher session stdin open long enough for interaction");
 
         var process = startProcess(
                 buildRoot,
@@ -202,7 +277,7 @@ class LauncherProcessIT {
                 scriptUtility.toString(), "-q", "/dev/null",
                 launcherBinary.toString(), javaFile.toString());
         try {
-            waitForStartup();
+            waitForStartup(process);
             assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
             Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
             assertTrue(logFile != null,
@@ -234,6 +309,8 @@ class LauncherProcessIT {
     void installedLauncherBinaryKeepsRunningWhenOpeningRepositoryJavaFile() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
+                "script utility must support driving interactive child stdin");
 
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
@@ -243,11 +320,16 @@ class LauncherProcessIT {
         Path javaFile = buildRoot.resolve("swim-core").resolve("src").resolve("main").resolve("java")
                 .resolve("org").resolve("fisk").resolve("swim").resolve("lsp").resolve("java").resolve("JavaLSPClient.java");
         Assumptions.assumeTrue(Files.isRegularFile(javaFile), "Repository Java file missing");
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                scriptUtility,
+                launcherBinary.toString(), javaFile.toString()),
+                "script utility must keep the installed launcher session stdin open long enough for interaction");
 
         var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
                 launcherBinary.toString(), javaFile.toString());
         try {
-            waitForStartup();
+            waitForStartup(process);
             assertTrue(process.process().isAlive(), "Installed launcher binary died while opening repository Java file.\n" + process.output());
 
             type(process, "jjjjjjjjjj");
@@ -278,11 +360,16 @@ class LauncherProcessIT {
 
         Path file = tempDir.resolve("rebuild-check.txt");
         Files.writeString(file, "rebuild check\n");
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                scriptUtility,
+                launcherBinary.toString(), file.toString()),
+                "script utility must keep the installed launcher session stdin open long enough for interaction");
 
         var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
                 launcherBinary.toString(), file.toString());
         try {
-            waitForStartup();
+            waitForStartup(process);
             assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
 
             Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
@@ -352,7 +439,16 @@ class LauncherProcessIT {
                 "Launcher process logged an exception during rebuild workflow.\n" + process.output());
     }
 
-    private static void waitForStartup() throws InterruptedException {
+    private static void waitForStartup(StartedProcess process) throws Exception {
+        Path transcript = process.transcript();
+        if (transcript != null) {
+            if (waitForFileText(transcript, "Loaded SWIM core", java.time.Duration.ofSeconds(6))) {
+                return;
+            }
+            if (waitForFileText(transcript, "SWIM stands for", java.time.Duration.ofSeconds(1))) {
+                return;
+            }
+        }
         Thread.sleep(3500);
     }
 
@@ -476,10 +572,18 @@ class LauncherProcessIT {
     }
 
     private StartedProcess startProcess(Path workdir, Path launcherJar, String... command) throws IOException {
-        return startProcess(workdir, launcherJar, Map.of(), command);
+        return startProcess(workdir, launcherJar, null, Map.of(), command);
+    }
+
+    private StartedProcess startProcess(Path workdir, Path launcherJar, Path transcript, String... command) throws IOException {
+        return startProcess(workdir, launcherJar, transcript, Map.of(), command);
     }
 
     private StartedProcess startProcess(Path workdir, Path launcherJar, Map<String, String> environment, String... command) throws IOException {
+        return startProcess(workdir, launcherJar, null, environment, command);
+    }
+
+    private StartedProcess startProcess(Path workdir, Path launcherJar, Path transcript, Map<String, String> environment, String... command) throws IOException {
         Assumptions.assumeTrue(Files.isRegularFile(launcherJar), "Launcher jar missing");
 
         var processBuilder = new ProcessBuilder(command);
@@ -491,7 +595,89 @@ class LauncherProcessIT {
         var gobbler = new Thread(() -> readOutput(process, output), "launcher-process-it-output");
         gobbler.setDaemon(true);
         gobbler.start();
-        return new StartedProcess(process, output);
+        return new StartedProcess(process, output, transcript);
+    }
+
+    private boolean scriptCanCaptureTranscript(Path scriptUtility) throws Exception {
+        Path transcript = tempDir.resolve("script-probe.typescript");
+        Files.deleteIfExists(transcript);
+        var process = new ProcessBuilder(scriptUtility.toString(), "-q", transcript.toString(),
+                "/bin/sh", "-c", "printf READY; sleep 2")
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        try {
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+            boolean observedReady = false;
+            while (System.nanoTime() < deadline) {
+                if (Files.isRegularFile(transcript) && Files.readString(transcript).contains("READY")) {
+                    observedReady = true;
+                    break;
+                }
+                Thread.sleep(100);
+            }
+            if (!process.waitFor(java.time.Duration.ofSeconds(5))) {
+                process.destroyForcibly();
+                process.waitFor(java.time.Duration.ofSeconds(5));
+            }
+            return observedReady;
+        } finally {
+            destroyIfAlive(process);
+        }
+    }
+
+    private boolean scriptCanDriveInteractiveCommand(Path scriptUtility) throws Exception {
+        if (_interactiveScriptSupported != null) {
+            return _interactiveScriptSupported;
+        }
+        var process = new ProcessBuilder(scriptUtility.toString(), "-q", "/dev/null",
+                "/bin/sh", "-c", "sleep 10")
+                .directory(tempDir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        try {
+            Thread.sleep(4000);
+            if (!process.isAlive()) {
+                _interactiveScriptSupported = false;
+                return false;
+            }
+            try {
+                write(process, "PING\n".getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                _interactiveScriptSupported = false;
+                return false;
+            }
+            _interactiveScriptSupported = process.isAlive();
+            return _interactiveScriptSupported;
+        } finally {
+            destroyIfAlive(process);
+        }
+    }
+
+    private boolean scriptCanKeepCommandStdinOpen(Path workdir, Path scriptUtility, String... command) throws Exception {
+        var fullCommand = new String[command.length + 3];
+        fullCommand[0] = scriptUtility.toString();
+        fullCommand[1] = "-q";
+        fullCommand[2] = "/dev/null";
+        System.arraycopy(command, 0, fullCommand, 3, command.length);
+        var process = new ProcessBuilder(fullCommand)
+                .directory(workdir.toFile())
+                .redirectErrorStream(true)
+                .start();
+        try {
+            Thread.sleep(4000);
+            if (!process.isAlive()) {
+                return false;
+            }
+            try {
+                write(process, "PING\n".getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                return false;
+            }
+            return process.isAlive();
+        } finally {
+            destroyIfAlive(process);
+        }
     }
 
     private static String jacocoAgentArg(Path buildRoot) {
@@ -502,7 +688,7 @@ class LauncherProcessIT {
         return "-javaagent:" + agent + "=destfile=" + execFile + ",append=true";
     }
 
-    private record StartedProcess(Process process, StringBuilder output) {
+    private record StartedProcess(Process process, StringBuilder output, Path transcript) {
     }
 
     private Path createSyntheticBuildRoot() throws Exception {

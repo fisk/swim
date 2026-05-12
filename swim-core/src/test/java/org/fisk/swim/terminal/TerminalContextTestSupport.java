@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -25,6 +26,10 @@ public final class TerminalContextTestSupport {
     }
 
     public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure) {
+        return install(columns, rows, stopFailure, () -> new TerminalSize(columns, rows));
+    }
+
+    public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure, Supplier<TerminalSize> terminalSizeSupplier) {
         var stopCalls = new AtomicInteger();
         var closeCalls = new AtomicInteger();
         var drawCalls = new CopyOnWriteArrayList<DrawCall>();
@@ -97,7 +102,7 @@ public final class TerminalContextTestSupport {
                         return defaultValue(proxy, method.getReturnType(), columns, rows);
                     }
                 });
-        var context = new TerminalContext(screen, terminal, graphics);
+        var context = new TerminalContext(screen, terminal, graphics, terminalSizeSupplier);
         setInstance(context);
         return new InstalledTerminalContext(context, stopCalls, closeCalls, drawCalls, cursorPosition);
     }

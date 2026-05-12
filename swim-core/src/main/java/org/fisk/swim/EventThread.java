@@ -68,7 +68,7 @@ public class EventThread extends Thread {
             while (_running) {
                 try {
                     event = _events.poll(1, TimeUnit.SECONDS);
-                    _log.info("Poked event");
+                    _log.debug("Poked event");
                     if (event != null) {
                         break;
                     }
@@ -79,19 +79,19 @@ public class EventThread extends Thread {
             }
             if (event instanceof KeyStrokeEvent) {
                 try {
-                    _log.info("Received key stroke event");
+                    _log.debug("Received key stroke event");
                     var keyEvent = (KeyStrokeEvent) event;
                     events.add(keyEvent.getKeyStroke());
                     var keys = new KeyStrokes(events);
                     switch (_responder.processEvent(keys)) {
                     case MAYBE:
-                        _log.info("Maybe");
+                        _log.debug("Maybe");
                         break;
                     case YES:
-                        _log.info("Yes");
+                        _log.debug("Yes");
                         _responder.respond();
                     case NO:
-                        _log.info("No/Clear");
+                        _log.debug("No/Clear");
                         events.clear();
                         break;
                     }
@@ -99,7 +99,7 @@ public class EventThread extends Thread {
                     _log.error("Error processing event: ", e);
                 }
             } else if (event instanceof RunnableEvent) {
-                _log.info("Received runnable event");
+                _log.debug("Received runnable event");
                 var runnableEvent = (RunnableEvent) event;
                 try {
                     runnableEvent.execute();
@@ -107,7 +107,7 @@ public class EventThread extends Thread {
                     _log.error("Error processing event: ", e);
                 }
             }
-            _log.info("Run post-event hooks");
+            _log.debug("Run post-event hooks");
             for (Runnable runnable: _onEventRunnables) {
                 try {
                     runnable.run();
@@ -115,7 +115,7 @@ public class EventThread extends Thread {
                     _log.error("Error processing event: ", e);
                 }
             }
-            _log.info("Ran post-event hooks");
+            _log.debug("Ran post-event hooks");
         }
     }
 
@@ -123,7 +123,7 @@ public class EventThread extends Thread {
         while (true) {
             try {
                 if (_events.offer(event, 1, TimeUnit.SECONDS)) {
-                    _log.info("Sent event");
+                    _log.debug("Sent event");
                     return;
                 }
             } catch (InterruptedException e) {}

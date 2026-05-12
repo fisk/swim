@@ -31,11 +31,11 @@ public class BufferView extends View {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var textGraphics = terminalContext.getGraphics();
-        _log.info("Draw buffer view");
+        _log.debug("Draw buffer view");
         var mode = Window.getInstance().getCurrentMode();
         mode.draw(rect);
         var attrString = _bufferContext.getBuffer().getAttributedString();
-        _log.info("Attributed string length: " + attrString.length());
+        _log.debug("Attributed string length: " + attrString.length());
         _bufferContext.getTextLayout().getGlyphs().forEach((glyph) -> {
             var character = attrString.getCharacter(glyph.getPosition());
             character = mode.decorate(glyph, character);
@@ -62,7 +62,7 @@ public class BufferView extends View {
     public void adaptViewToCursor() {
         int cursorY = getCursor().getYAbsolute();
         var height = getBounds().getSize().getHeight();
-        _log.info("Cursor Y" + cursorY  + " height: " + height + " _startLine: " + _startLine);
+        _log.debug("Cursor Y" + cursorY  + " height: " + height + " _startLine: " + _startLine);
         if (cursorY >= _startLine + height) {
             _startLine = cursorY - height + 1;
         } else if (cursorY < _startLine) {

@@ -11,6 +11,7 @@
     <module>swim-launcher</module>
     <module>swim-core</module>
     <module>swim-java-lsp</module>
+    <module>swim-clangd-lsp</module>
     <module>swim-tree-view</module>
   </modules>
 

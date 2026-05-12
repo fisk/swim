@@ -31,6 +31,7 @@ The launcher binary in `image/bin/swim` is built from a custom `jlink` image. Ru
 
 - `swim-core-...jar`: the editor core plugin
 - `swim-java-lsp-...jar`: Java language support
+- `swim-clangd-lsp-...jar`: C/C++ language support via `clangd`
 - `swim-tree-view-...jar`: the project tree plugin
 - `runtime-libs/`: shared runtime dependencies for the plugin layer
 
@@ -124,6 +125,14 @@ Normal-mode Java shortcuts use the `<Space> e` prefix:
 | `<Space> e a` | Generate accessors |
 | `<Space> e s` | Generate `toString()` |
 | `<Space> e l` | Show code lens information |
+
+## C And C++ Support
+
+C and C++ files (`.c`, `.h`, `.cpp`, `.hpp`) use the separate `swim-clangd-lsp` plugin.
+
+- Install `clangd` so it is available on `PATH`.
+- Keep a `compile_commands.json` in the project root or in a `build/` directory under that root.
+- SWIM loads the plugin on demand when one of those file types is opened.
 
 ## Nemo
 

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.nio.file.Path;
 import java.text.DateFormat;
 import java.util.Date;
 import java.util.Timer;
@@ -26,6 +27,8 @@ public class ModeLineView extends View {
     private TextColor _foregroundColour;
     private final Timer _timer;
     private final MemoryMXBean _memoryBean;
+    private Path _cachedBranchRoot;
+    private String _cachedBranch = "";
 
     private String getTime() {
         var format = DateFormat.getTimeInstance(2);
@@ -43,27 +46,48 @@ public class ModeLineView extends View {
         if (path == null) {
             return "*scratch*";
         }
-        var root = ProjectPaths.getProjectRootPath();
+        var root = ProjectPaths.getProjectRootPath(path);
         if (root != null) {
             return root.relativize(path).toString();
         } else {
             return buffer.getPath().toString();
         }
     }
-    
+
     private String getBranch() {
-        try {
-            if (ProjectPaths.hasRepository()) {
-                var repo = new FileRepositoryBuilder()
-                        .setGitDir(ProjectPaths.getProjectRootPath().resolve(".git").toFile())
-                        .build();
-                return repo.getBranch();
-            } else {
-                return "";
-            }
-        } catch (IOException e) {
+        Path path = currentPath();
+        Path root = ProjectPaths.getProjectRootPath(path);
+        if (root == null) {
+            _cachedBranchRoot = null;
+            _cachedBranch = "";
             return "";
         }
+        if (root.equals(_cachedBranchRoot)) {
+            return _cachedBranch;
+        }
+        try {
+            Path gitDir = root.resolve(".git");
+            if (!gitDir.toFile().exists()) {
+                _cachedBranchRoot = root;
+                _cachedBranch = "";
+                return "";
+            }
+            try (var repo = new FileRepositoryBuilder()
+                    .setGitDir(gitDir.toFile())
+                    .build()) {
+                _cachedBranchRoot = root;
+                _cachedBranch = repo.getBranch();
+                return _cachedBranch;
+            }
+        } catch (IOException e) {
+            _cachedBranchRoot = root;
+            _cachedBranch = "";
+            return "";
+        }
+    }
+
+    private Path currentPath() {
+        return Window.getInstance().getBufferContext().getBuffer().getPath();
     }
     
     static long heapCapacityBytes(MemoryUsage usage) {
