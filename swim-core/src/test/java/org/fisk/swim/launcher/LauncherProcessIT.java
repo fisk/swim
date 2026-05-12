@@ -264,6 +264,56 @@ class LauncherProcessIT {
     }
 
     @Test
+    @Timeout(120)
+    void installedLauncherBinaryCanRebuildAndStillQuit() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
+        Set<Path> existingLogs = listLogFiles();
+
+        Path file = tempDir.resolve("rebuild-check.txt");
+        Files.writeString(file, "rebuild check\n");
+
+        var process = startProcess(buildRoot, launcherBinary, scriptUtility.toString(), "-q", "/dev/null",
+                launcherBinary.toString(), file.toString());
+        try {
+            waitForStartup();
+            assertTrue(process.process().isAlive(), "Installed launcher binary should still be alive after startup");
+
+            Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
+            assertTrue(logFile != null,
+                    "Expected launcher binary to create a new /tmp/swim-*.log file. Output:\n" + process.output());
+
+            runCommand(process, "rebuild");
+
+            boolean restarted = waitForOccurrences(
+                    logFile,
+                    "org.fisk.swim.SwimAppImpl - swim started",
+                    2,
+                    java.time.Duration.ofSeconds(90));
+            assertTrue(restarted,
+                    "Installed launcher binary did not restart cleanly after :rebuild.\nLog:\n"
+                            + Files.readString(logFile) + "\nOutput:\n" + process.output());
+            assertTrue(process.process().isAlive(),
+                    "Installed launcher binary died during :rebuild.\nLog:\n" + Files.readString(logFile)
+                            + "\nOutput:\n" + process.output());
+
+            runCommand(process, "q");
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(15));
+            assertTrue(exited,
+                    "Installed launcher binary did not exit after :rebuild followed by :q.\nLog:\n"
+                            + Files.readString(logFile) + "\nOutput:\n" + process.output());
+        } finally {
+            destroyIfAlive(process.process());
+        }
+    }
+
+    @Test
     @Timeout(20)
     void launcherProcessExitsWhenCoreRequestsExit() throws Exception {
         Path buildRoot = createSyntheticBuildRoot();
@@ -377,6 +427,27 @@ class LauncherProcessIT {
             }
         }
         return null;
+    }
+
+    private static boolean waitForOccurrences(Path file, String text, int expectedCount, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (Files.isRegularFile(file) && countOccurrences(Files.readString(file), text) >= expectedCount) {
+                return true;
+            }
+            Thread.sleep(250);
+        }
+        return Files.isRegularFile(file) && countOccurrences(Files.readString(file), text) >= expectedCount;
+    }
+
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        int index = 0;
+        while ((index = text.indexOf(needle, index)) >= 0) {
+            count++;
+            index += needle.length();
+        }
+        return count;
     }
 
     private static boolean waitForFileText(Path file, String text, java.time.Duration timeout) throws Exception {
