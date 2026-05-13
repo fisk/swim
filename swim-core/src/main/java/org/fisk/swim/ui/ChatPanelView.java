@@ -27,6 +27,7 @@ public class ChatPanelView extends View {
     private final Consumer<String> _onCommand;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
+    private int _cursorOffset;
     private int _inputScrollLine;
     private int _startLine;
     private boolean _pending;
@@ -56,6 +57,10 @@ public class ChatPanelView extends View {
 
     String getInputText() {
         return _input.toString();
+    }
+
+    int getCursorOffset() {
+        return _cursorOffset;
     }
 
     int getInputScrollLine() {
@@ -210,7 +215,38 @@ public class ChatPanelView extends View {
 
     private void ensureInputVisible() {
         int maxVisibleInputLines = Math.max(1, getBounds().getSize().getHeight() - 1);
-        _inputScrollLine = Math.max(0, inputLines().size() - maxVisibleInputLines);
+        int cursorLine = cursorLine();
+        if (cursorLine < _inputScrollLine) {
+            _inputScrollLine = cursorLine;
+            return;
+        }
+        int maxScroll = Math.max(0, inputLines().size() - maxVisibleInputLines);
+        int visibleBottomExclusive = _inputScrollLine + maxVisibleInputLines;
+        if (cursorLine >= visibleBottomExclusive) {
+            _inputScrollLine = Math.min(maxScroll, cursorLine - maxVisibleInputLines + 1);
+            return;
+        }
+        _inputScrollLine = Math.min(_inputScrollLine, maxScroll);
+    }
+
+    private int cursorLine() {
+        if (_cursorOffset <= 0) {
+            return 0;
+        }
+        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        return TextPanelView.wrapText(_input.substring(0, _cursorOffset), width).size() - 1;
+    }
+
+    private int cursorColumn(int cursorLine) {
+        if (_cursorOffset <= 0) {
+            return 0;
+        }
+        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        var wrapped = TextPanelView.wrapText(_input.substring(0, _cursorOffset), width);
+        if (wrapped.isEmpty()) {
+            return 0;
+        }
+        return wrapped.get(Math.max(0, Math.min(cursorLine, wrapped.size() - 1))).length();
     }
 
     private void scrollToBottom() {
@@ -246,12 +282,53 @@ public class ChatPanelView extends View {
         case ArrowUp:
             _responseAction = () -> scrollUp(1);
             return Response.YES;
-        case Backspace:
-            if (_input.isEmpty()) {
+        case ArrowLeft:
+            if (_cursorOffset == 0) {
                 return Response.NO;
             }
             _responseAction = () -> {
-                _input.deleteCharAt(_input.length() - 1);
+                _cursorOffset--;
+                ensureInputVisible();
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        case ArrowRight:
+            if (_cursorOffset >= _input.length()) {
+                return Response.NO;
+            }
+            _responseAction = () -> {
+                _cursorOffset++;
+                ensureInputVisible();
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        case Home:
+            if (_cursorOffset == 0) {
+                return Response.NO;
+            }
+            _responseAction = () -> {
+                _cursorOffset = 0;
+                ensureInputVisible();
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        case End:
+            if (_cursorOffset >= _input.length()) {
+                return Response.NO;
+            }
+            _responseAction = () -> {
+                _cursorOffset = _input.length();
+                ensureInputVisible();
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        case Backspace:
+            if (_cursorOffset == 0) {
+                return Response.NO;
+            }
+            _responseAction = () -> {
+                _input.deleteCharAt(_cursorOffset - 1);
+                _cursorOffset--;
                 ensureInputVisible();
                 setNeedsRedraw();
             };
@@ -259,7 +336,8 @@ public class ChatPanelView extends View {
         case Enter:
             if (event.isShiftDown()) {
                 _responseAction = () -> {
-                    _input.append('\n');
+                    _input.insert(_cursorOffset, '\n');
+                    _cursorOffset++;
                     ensureInputVisible();
                     setNeedsRedraw();
                 };
@@ -271,6 +349,7 @@ public class ChatPanelView extends View {
             }
             _responseAction = () -> {
                 _input.setLength(0);
+                _cursorOffset = 0;
                 _inputScrollLine = 0;
                 if (message.startsWith(":")) {
                     _onCommand.accept(message);
@@ -278,6 +357,7 @@ public class ChatPanelView extends View {
                     _onSubmit.accept(message);
                 } else {
                     _input.append(message);
+                    _cursorOffset = _input.length();
                 }
                 setNeedsRedraw();
             };
@@ -285,7 +365,8 @@ public class ChatPanelView extends View {
         case Character:
             char character = event.getCharacter();
             _responseAction = () -> {
-                _input.append(character);
+                _input.insert(_cursorOffset, character);
+                _cursorOffset++;
                 ensureInputVisible();
                 setNeedsRedraw();
             };
@@ -329,12 +410,19 @@ public class ChatPanelView extends View {
         int inputHeight = Math.max(1, rect.getSize().getHeight() - 1 - bodyHeight);
         int inputStart = Math.min(_inputScrollLine, Math.max(0, inputLines.size() - 1));
         int inputY = rect.getPoint().getY() + rect.getSize().getHeight() - inputHeight;
+        int cursorLine = cursorLine();
+        int cursorColumn = cursorColumn(cursorLine);
         for (int i = 0; i < inputHeight && inputStart + i < inputLines.size(); i++) {
             var input = new AttributedString();
             String prefix = i == 0 ? " me> " : " ".repeat(ME_PREFIX.length() + 1);
             input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
             input.append(inputLines.get(inputStart + i),
                     _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+            if (_input.length() > 0 && inputStart + i == cursorLine) {
+                int caretIndex = Math.max(0, Math.min(cursorColumn, inputLines.get(inputStart + i).length()));
+                input.insert(prefix.length() + caretIndex,
+                        new AttributedString(" ", UiTheme.COMMAND_BACKGROUND, UiTheme.TEXT_PRIMARY));
+            }
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY + i), width, input,
                     UiTheme.TEXT_MUTED, UiTheme.COMMAND_BACKGROUND);
         }

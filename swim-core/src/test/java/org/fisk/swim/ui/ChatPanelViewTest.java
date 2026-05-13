@@ -35,6 +35,7 @@ class ChatPanelViewTest {
 
         assertEquals("hi", submitted.get());
         assertEquals("", view.getInputText());
+        assertEquals(0, view.getCursorOffset());
     }
 
     @Test
@@ -48,6 +49,50 @@ class ChatPanelViewTest {
 
         assertEquals(null, submitted.get());
         assertEquals("h\ni", view.getInputText());
+    }
+
+    @Test
+    void arrowKeysMoveCursorAndInsertAtCursor() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke(KeyType.ArrowLeft));
+        dispatch(view, new KeyStroke('b', false, false));
+
+        assertEquals("abc", view.getInputText());
+        assertEquals(2, view.getCursorOffset());
+    }
+
+    @Test
+    void homeAndEndMoveToLineBoundaries() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke(KeyType.Home));
+        assertEquals(0, view.getCursorOffset());
+        dispatch(view, new KeyStroke('x', false, false));
+        dispatch(view, new KeyStroke(KeyType.End));
+        assertEquals(view.getInputText().length(), view.getCursorOffset());
+        dispatch(view, new KeyStroke('y', false, false));
+
+        assertEquals("xabcy", view.getInputText());
+    }
+
+    @Test
+    void backspaceDeletesBeforeCursor() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke(KeyType.ArrowLeft));
+        dispatch(view, new KeyStroke(KeyType.Backspace));
+
+        assertEquals("ac", view.getInputText());
+        assertEquals(1, view.getCursorOffset());
     }
 
     @Test
