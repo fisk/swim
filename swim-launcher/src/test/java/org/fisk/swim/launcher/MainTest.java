@@ -101,6 +101,17 @@ class MainTest {
     }
 
     @Test
+    void launcherCanLoadCoreLayerWhenCoreRequiresSystemModuleOutsideBootGraph() throws Exception {
+        Path root = createSyntheticBuildRootRequiringSqlRowset();
+
+        ModuleLayer layer = Main.createCoreLayer(root, Main.class.getClassLoader());
+        SwimApp app = ServiceLoader.load(layer, SwimApp.class).findFirst().orElseThrow();
+
+        assertEquals("fake.core.RowsetApp", app.getClass().getName());
+        app.close();
+    }
+
+    @Test
     void sharedLibFilterOnlyExcludesLauncherArtifacts() {
         assertTrue(Main.isSharedLib(Path.of("swim-launcher-0.0.1-SNAPSHOT.jar")));
         assertFalse(Main.isSharedLib(Path.of("lanterna-3.1.3.jar")));
@@ -477,6 +488,81 @@ class MainTest {
         return root;
     }
 
+    private Path createSyntheticBuildRootRequiringSqlRowset() throws Exception {
+        Path root = tempDir.resolve("swim-rowset");
+        Path target = root.resolve("swim-core").resolve("target");
+        Path runtimeLibs = target.resolve("runtime-libs");
+        Files.createDirectories(runtimeLibs);
+        Files.writeString(root.resolve("pom.xml"), "<project />");
+        Files.createDirectories(root.resolve("swim-core"));
+
+        Path compileDir = tempDir.resolve("compile-rowset");
+        Path helperClasses = compileDir.resolve("helper-classes");
+        Path coreClasses = compileDir.resolve("core-classes");
+        Files.createDirectories(helperClasses);
+        Files.createDirectories(coreClasses);
+
+        compileJavaModule(Map.of(
+                "module-info.java", """
+                        module fake.helper {
+                            requires java.sql.rowset;
+                            exports fake.dep;
+                        }
+                        """,
+                "fake/dep/Helper.java", """
+                        package fake.dep;
+                        import javax.sql.rowset.CachedRowSet;
+                        import javax.sql.rowset.RowSetProvider;
+                        public final class Helper {
+                            public static String value() {
+                                try {
+                                    CachedRowSet rowSet = RowSetProvider.newFactory().createCachedRowSet();
+                                    return rowSet == null ? "missing" : "ok";
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        }
+                        """
+        ), helperClasses, List.of());
+
+        Path helperJar = runtimeLibs.resolve("rowset-helper.jar");
+        jarDirectory(helperClasses, helperJar, null, Map.of());
+
+        compileJava(Map.of(
+                "fake/core/RowsetApp.java", """
+                        package fake.core;
+                        import java.nio.file.Path;
+                        import org.fisk.swim.api.SwimApp;
+                        import org.fisk.swim.api.SwimHost;
+                        import fake.dep.Helper;
+                        public final class RowsetApp implements SwimApp {
+                            private Path path;
+                            public void start(Path path, SwimHost host) {
+                                this.path = path;
+                                if (!"ok".equals(Helper.value())) {
+                                    throw new IllegalStateException("rowset helper unavailable");
+                                }
+                            }
+                            public void refresh(boolean forced) {
+                            }
+                            public Path getCurrentPath() {
+                                return path;
+                            }
+                            public void showMessage(String message) {
+                            }
+                            public void close() {
+                            }
+                        }
+                        """
+        ), coreClasses, List.of(System.getProperty("java.class.path"), helperJar.toString()));
+
+        Path coreJar = target.resolve("swim-core-0.0.1-SNAPSHOT.jar");
+        jarDirectory(coreClasses, coreJar, "org.fisk.swim.core",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.RowsetApp\n"));
+        return root;
+    }
+
     private static void compileJava(Map<String, String> sources, Path classesDir, List<String> classpathEntries) throws Exception {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -502,6 +588,35 @@ class MainTest {
                     null, units);
             if (!task.call()) {
                 throw new IllegalStateException("Compilation failed for synthetic launcher test sources");
+            }
+        }
+    }
+
+    private static void compileJavaModule(Map<String, String> sources, Path classesDir, List<String> modulePathEntries) throws Exception {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        if (compiler == null) {
+            throw new IllegalStateException("No system Java compiler available");
+        }
+        Path sourcesDir = classesDir.getParent().resolve(classesDir.getFileName().toString() + "-src");
+        Files.createDirectories(sourcesDir);
+        for (var entry : sources.entrySet()) {
+            Path file = sourcesDir.resolve(entry.getKey());
+            Files.createDirectories(file.getParent());
+            Files.writeString(file, entry.getValue());
+        }
+
+        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(null, null, null)) {
+            var sourceFiles = Files.walk(sourcesDir)
+                    .filter(path -> path.getFileName().toString().endsWith(".java"))
+                    .map(Path::toFile)
+                    .toList();
+            var units = fileManager.getJavaFileObjectsFromFiles(sourceFiles);
+            String modulePath = String.join(System.getProperty("path.separator"), modulePathEntries);
+            var task = compiler.getTask(null, fileManager, null,
+                    List.of("-d", classesDir.toString(), "--module-path", modulePath),
+                    null, units);
+            if (!task.call()) {
+                throw new IllegalStateException("Compilation failed for synthetic launcher module sources");
             }
         }
     }
