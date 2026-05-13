@@ -32,6 +32,7 @@ public class ChatPanelView extends View {
     private int _startLine;
     private boolean _pending;
     private long _pendingStartedAtMillis;
+    private Integer _contextUsagePercent;
     private long _pendingRefreshGeneration;
     private Runnable _responseAction;
 
@@ -69,6 +70,10 @@ public class ChatPanelView extends View {
 
     boolean isPending() {
         return _pending;
+    }
+
+    Integer getContextUsagePercent() {
+        return _contextUsagePercent;
     }
 
     List<String> getDisplayLines() {
@@ -119,6 +124,15 @@ public class ChatPanelView extends View {
             _pendingRefreshGeneration++;
         }
         scrollToBottom();
+        setNeedsRedraw();
+    }
+
+    public void setContextUsagePercent(Integer contextUsagePercent) {
+        if (contextUsagePercent == null) {
+            _contextUsagePercent = null;
+        } else {
+            _contextUsagePercent = Math.max(0, Math.min(100, contextUsagePercent));
+        }
         setNeedsRedraw();
     }
 
@@ -322,17 +336,6 @@ public class ChatPanelView extends View {
                 setNeedsRedraw();
             };
             return Response.YES;
-        case Backspace:
-            if (_cursorOffset == 0) {
-                return Response.NO;
-            }
-            _responseAction = () -> {
-                _input.deleteCharAt(_cursorOffset - 1);
-                _cursorOffset--;
-                ensureInputVisible();
-                setNeedsRedraw();
-            };
-            return Response.YES;
         case Enter:
             if (event.isShiftDown()) {
                 _responseAction = () -> {
@@ -344,26 +347,37 @@ public class ChatPanelView extends View {
                 return Response.YES;
             }
             String message = _input.toString().trim();
-            if (message.isEmpty()) {
+            if (message.equals("")) {
                 return Response.NO;
             }
             _responseAction = () -> {
+                if (message.startsWith(":")) {
+                    _onCommand.accept(message);
+                } else {
+                    _onSubmit.accept(message);
+                }
                 _input.setLength(0);
                 _cursorOffset = 0;
                 _inputScrollLine = 0;
-                if (message.startsWith(":")) {
-                    _onCommand.accept(message);
-                } else if (!_pending) {
-                    _onSubmit.accept(message);
-                } else {
-                    _input.append(message);
-                    _cursorOffset = _input.length();
-                }
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        case Backspace:
+            if (_cursorOffset == 0) {
+                return Response.NO;
+            }
+            _responseAction = () -> {
+                _input.deleteCharAt(_cursorOffset - 1);
+                _cursorOffset--;
+                ensureInputVisible();
                 setNeedsRedraw();
             };
             return Response.YES;
         case Character:
-            char character = event.getCharacter();
+            Character character = event.getCharacter();
+            if (character == null) {
+                return Response.NO;
+            }
             if (event.isCtrlDown()) {
                 if (character == 'a' || character == 'A') {
                     if (_cursorOffset == 0) {
@@ -420,6 +434,10 @@ public class ChatPanelView extends View {
         title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         title.append(_pending ? " waiting for Nemo " : " ready ", _pending ? UiTheme.ACCENT_GOLD : UiTheme.ACCENT_GREEN,
                 UiTheme.SURFACE_ACCENT);
+        if (_contextUsagePercent != null) {
+            title.append(" ctx " + _contextUsagePercent + "% ", contextUsageColour(_contextUsagePercent),
+                    UiTheme.SURFACE_ACCENT);
+        }
         title.append(" esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
@@ -452,5 +470,15 @@ public class ChatPanelView extends View {
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY + i), width, input,
                     UiTheme.TEXT_MUTED, UiTheme.COMMAND_BACKGROUND);
         }
+    }
+
+    private static TextColor contextUsageColour(int usagePercent) {
+        if (usagePercent >= 90) {
+            return UiTheme.ACCENT_RED;
+        }
+        if (usagePercent >= 75) {
+            return UiTheme.ACCENT_GOLD;
+        }
+        return UiTheme.ACCENT_GREEN;
     }
 }

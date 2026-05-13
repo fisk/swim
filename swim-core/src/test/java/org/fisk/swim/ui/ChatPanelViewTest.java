@@ -204,6 +204,20 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void contextUsagePercentIsStoredAndClamped() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        view.setContextUsagePercent(120);
+        assertEquals(100, view.getContextUsagePercent());
+
+        view.setContextUsagePercent(-5);
+        assertEquals(0, view.getContextUsagePercent());
+
+        view.setContextUsagePercent(null);
+        assertEquals(null, view.getContextUsagePercent());
+    }
+
+    @Test
     void replyPromptPrefixesUseDistinctColours() throws Exception {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
 
