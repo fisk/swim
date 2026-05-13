@@ -21,6 +21,7 @@ import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.fisk.swim.EventThread;
@@ -782,10 +783,39 @@ public class NemoClient {
 
     private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
+        var paths = gitAddPathspecs(root, arguments);
+        if (paths.isEmpty()) {
+            return runShellCommand(configuration, root, "git add -- .");
+        }
+        String joinedPathspecs = paths.stream()
+                .map(NemoClient::shellQuote)
+                .collect(Collectors.joining(" "));
+        return runShellCommand(configuration, root, "git add -- " + joinedPathspecs);
+    }
+
+    private static List<String> gitAddPathspecs(Path root, JsonObject arguments) throws IOException {
+        var pathspecs = new ArrayList<String>();
         String rawPath = stringArgument(arguments, "path", "");
+        if (!rawPath.isBlank()) {
+            pathspecs.add(toGitPathspec(root, rawPath));
+        }
+        if (arguments.has("paths") && arguments.get("paths").isJsonArray()) {
+            for (var element : arguments.getAsJsonArray("paths")) {
+                if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString()) {
+                    continue;
+                }
+                String raw = element.getAsString();
+                if (!raw.isBlank()) {
+                    pathspecs.add(toGitPathspec(root, raw));
+                }
+            }
+        }
+        return pathspecs.stream().distinct().toList();
+    }
+
+    private static String toGitPathspec(Path root, String rawPath) throws IOException {
         Path path = resolvePathInsideWorkspace(root, rawPath);
-        String pathspec = root.equals(path) ? "." : root.relativize(path).toString();
-        return runShellCommand(configuration, root, "git add -- " + shellQuote(pathspec));
+        return root.equals(path) ? "." : root.relativize(path).toString();
     }
 
     private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {

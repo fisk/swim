@@ -504,6 +504,91 @@ class NemoClientTest {
         assertEquals("Update note", runGitCapture(project, "git log -1 --pretty=%s").trim());
     }
 
+    @Test
+    void gitAddStagesMultiplePathsFromArray() throws Exception {
+        Path project = tempDir.resolve("repo-multi-add");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("a.txt"), "a\n");
+        Files.createDirectories(project.resolve("dir"));
+        Files.writeString(project.resolve("dir/b.txt"), "b\n");
+        runGit(project, "git init");
+        runGit(project, "git config user.email 'nemo@example.com'");
+        runGit(project, "git config user.name 'Nemo'");
+        runGit(project, "git add .");
+        runGit(project, "git commit -m init");
+        Files.writeString(project.resolve("a.txt"), "aa\n");
+        Files.writeString(project.resolve("dir/b.txt"), "bb\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), project.resolve("a.txt"));
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                true,
+                true,
+                true,
+                50,
+                4000,
+                5);
+
+        String addResult = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("10", "git_add", json(Map.of("paths", List.of("a.txt", "dir/b.txt")))));
+
+        assertTrue(addResult.contains("exit_code: 0"));
+        String cachedDiff = runGitCapture(project, "git diff --cached --name-only");
+        assertTrue(cachedDiff.contains("a.txt"));
+        assertTrue(cachedDiff.contains("dir/b.txt"));
+    }
+
+    @Test
+    void gitAddFallsBackToWholeWorkspaceWhenPathIsBlank() throws Exception {
+        Path project = tempDir.resolve("repo-add-all");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("note.txt"), "one\n");
+        runGit(project, "git init");
+        runGit(project, "git config user.email 'nemo@example.com'");
+        runGit(project, "git config user.name 'Nemo'");
+        runGit(project, "git add .");
+        runGit(project, "git commit -m init");
+        Files.writeString(project.resolve("note.txt"), "two\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), project.resolve("note.txt"));
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                true,
+                true,
+                true,
+                50,
+                4000,
+                5);
+
+        String addResult = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("11", "git_add", json(Map.of("path", ""))));
+
+        assertTrue(addResult.contains("exit_code: 0"));
+        assertTrue(runGitCapture(project, "git diff --cached --name-only").contains("note.txt"));
+    }
+
     private static void runGit(Path cwd, String command) throws IOException, InterruptedException {
         var process = new ProcessBuilder("zsh", "-lc", command)
                 .directory(cwd.toFile())
