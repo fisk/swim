@@ -341,11 +341,34 @@ public class NemoClient {
                 var output = new JsonObject();
                 output.addProperty("type", "function_call_output");
                 output.addProperty("call_id", call.callId());
-                output.addProperty("output", executeTool(configuration, context, call));
+                output.addProperty("output", executeToolSafely(configuration, context, call));
                 toolOutputs.add(output);
             }
             appendToolRound(inputHistory, response, toolOutputs);
         }
+    }
+
+    static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call)
+            throws InterruptedException {
+        try {
+            return executeTool(configuration, context, call);
+        } catch (IOException e) {
+            _log.warn("Nemo tool {} failed", call.name(), e);
+            return formatToolError(call, e);
+        }
+    }
+
+    private static String formatToolError(ToolCall call, IOException error) {
+        StringBuilder message = new StringBuilder();
+        message.append("Tool ").append(call.name()).append(" failed: ");
+        String detail = error.getMessage();
+        if (detail == null || detail.isBlank()) {
+            message.append(error.getClass().getSimpleName());
+        } else {
+            message.append(detail);
+        }
+        message.append(". Recover by inspecting the path and retrying with the correct tool for that path type.");
+        return message.toString();
     }
 
     static void appendToolRound(JsonArray inputHistory, JsonObject response, JsonArray toolOutputs) {
@@ -599,10 +622,16 @@ public class NemoClient {
     }
 
     private static Path requireDirectory(Path path, String rawPath) throws IOException {
-        if (!Files.isDirectory(path)) {
-            throw new IOException("Not a directory: " + rawPath);
+        if (Files.isDirectory(path)) {
+            return path;
         }
-        return path;
+        if (Files.isRegularFile(path)) {
+            Path parent = path.getParent();
+            if (parent != null && Files.isDirectory(parent)) {
+                return parent;
+            }
+        }
+        throw new IOException("Not a directory: " + rawPath);
     }
 
     private static String listFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {

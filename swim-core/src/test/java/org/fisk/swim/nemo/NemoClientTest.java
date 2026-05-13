@@ -288,6 +288,80 @@ class NemoClientTest {
     }
 
     @Test
+    void runCommandTreatsFileCwdAsItsParentDirectory() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Path srcDir = project.resolve("src");
+        Files.createDirectories(srcDir);
+        Path file = srcDir.resolve("Main.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                50,
+                4000,
+                5);
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("4c", "run_command", json(Map.of(
+                        "cwd", "src/Main.txt",
+                        "command", "pwd"))));
+
+        assertTrue(output.contains(srcDir.toString()));
+    }
+
+    @Test
+    void executeToolSafelyReturnsRecoverableMessageForToolErrors() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("Main.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                50,
+                4000,
+                5);
+
+        String output = NemoClient.executeToolSafely(configuration, context,
+                new NemoClient.ToolCall("4d", "run_command", json(Map.of(
+                        "cwd", "missing.txt",
+                        "command", "pwd"))));
+
+        assertTrue(output.startsWith("Tool run_command failed:"));
+        assertTrue(output.contains("Recover by inspecting the path"));
+    }
+
+    @Test
     void executesWriteFileToolAndSynchronizesCurrentBuffer() throws Exception {
         Path project = tempDir.resolve("workspace");
         Path file = project.resolve("src/Main.txt");
