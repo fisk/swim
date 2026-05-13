@@ -43,7 +43,7 @@ class ChatPanelViewTest {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
 
         dispatch(view, new KeyStroke('h', false, false));
-        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, false, true));
         dispatch(view, new KeyStroke('i', false, false));
 
         assertEquals(null, submitted.get());
@@ -59,18 +59,30 @@ class ChatPanelViewTest {
         dispatch(view, new KeyStroke('3', false, false));
         dispatch(view, new KeyStroke('4', false, false));
         dispatch(view, new KeyStroke('5', false, false));
-        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
         dispatch(view, new KeyStroke('6', false, false));
         dispatch(view, new KeyStroke('7', false, false));
         dispatch(view, new KeyStroke('8', false, false));
         dispatch(view, new KeyStroke('9', false, false));
-        dispatch(view, new KeyStroke('0', false, false));
-        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, false, true));
         dispatch(view, new KeyStroke('a', false, false));
         dispatch(view, new KeyStroke('b', false, false));
         dispatch(view, new KeyStroke('c', false, false));
         dispatch(view, new KeyStroke('d', false, false));
         dispatch(view, new KeyStroke('e', false, false));
+        dispatch(view, new KeyStroke('f', false, false));
+        dispatch(view, new KeyStroke('g', false, false));
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke('i', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, false, true));
+        dispatch(view, new KeyStroke('j', false, false));
+        dispatch(view, new KeyStroke('k', false, false));
+        dispatch(view, new KeyStroke('l', false, false));
+        dispatch(view, new KeyStroke('m', false, false));
+        dispatch(view, new KeyStroke('n', false, false));
+        dispatch(view, new KeyStroke('o', false, false));
+        dispatch(view, new KeyStroke('p', false, false));
+        dispatch(view, new KeyStroke('q', false, false));
+        dispatch(view, new KeyStroke('r', false, false));
 
         assertTrue(view.getInputScrollLine() > 0);
     }

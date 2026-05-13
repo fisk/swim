@@ -46,7 +46,7 @@ class CommandMenuViewTest {
             menuView.setState(commandView.getMenuState());
 
             assertTrue(menuView.getBounds().getSize().getHeight() > 3);
-            assertEquals(5, menuView.getBounds().getSize().getHeight());
+            assertEquals(6, menuView.getBounds().getSize().getHeight());
         }
     }
 

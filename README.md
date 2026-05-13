@@ -134,6 +134,78 @@ C and C++ files (`.c`, `.h`, `.cpp`, `.hpp`) use the separate `swim-clangd-lsp` 
 - Keep a `compile_commands.json` in the project root or in a `build/` directory under that root.
 - SWIM loads the plugin on demand when one of those file types is opened.
 
+## Writing A Plugin
+
+Plugins are regular Java components loaded through the runtime plugin layer in `plugins/`.
+
+The main plugin API lives under `swim-launcher/src/main/java/org/fisk/swim/api/`.
+
+### Core Interfaces
+
+- `SwimPlugin`
+  - implement this for every plugin
+  - `load(SwimPluginContext context)` is the main entry point
+  - `getId()` defaults to the class name
+  - `getLoadOrder()` defaults to `100`
+  - `loadOnStartup()` defaults to `true`
+  - `close()` is called when the plugin is shut down
+
+- `SwimPluginContext`
+  - `getHost()` gives access to host-level actions
+  - `getInitialPath()` returns the path SWIM started with
+  - `getCurrentPath()` returns the current active path
+
+- `SwimHost`
+  - `requestReload(Path path)` reloads the runtime
+  - `requestRebuildAndReload(Path path)` rebuilds, then reloads
+  - `requestLoadPlugin(String pluginId, Path path)` requests loading another plugin
+  - `requestExit()` exits SWIM
+  - `getBuildRoot()` returns the active build root
+  - panel support:
+    - `registerPanel(String pluginId, SwimPanel panel)`
+    - `unregisterPanel(String pluginId)`
+    - `getPanel(String pluginId)`
+    - `isReloading()`
+
+- `SwimPanel`
+  - use this when your plugin exposes a side or bottom panel
+  - `getId()` returns the panel id
+  - `getTitle()` returns the displayed title
+  - `render(int width, int height)` returns panel lines
+  - `handleInput(String input, int width, int height)` handles panel input
+  - `syncToCurrentPath(Path path)` is optional and can track editor focus
+
+- `SwimPanelResult`
+  - panel input handlers return this record
+  - fields: `handled`, `openFile`, `message`
+  - helper constructors: `ignored()`, `success()`, `success(Path openFile)`, `successMessage(String message)`
+
+### Minimal Plugin Shape
+
+```java
+public final class MyPlugin implements SwimPlugin {
+    @Override
+    public void load(SwimPluginContext context) {
+        // initialize here
+    }
+
+    @Override
+    public void close() {
+        // cleanup here
+    }
+}
+```
+
+### Panel Plugin Shape
+
+If your plugin provides UI, register a `SwimPanel` from `load(...)` using the `SwimHost` from the plugin context.
+
+### Examples In This Repo
+
+- `swim-tree-view` shows a panel-oriented plugin
+- `swim-java-lsp` shows a language-support plugin
+- `swim-clangd-lsp` shows another minimal LSP-style plugin
+
 ## Nemo
 
 SWIM includes `:nemo`, a built-in AI assistant for the current workspace.
