@@ -240,7 +240,9 @@ tool.command_timeout_seconds=20
 
 Inside the Nemo chat pane:
 
+- the live input prompt is `!`, but sent chat messages appear in history as `me>`
 - type normally and press `Enter` to send
+- type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands like `:sessions`, `:workers`, and `:switch`
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:new [title]` creates a session

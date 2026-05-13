@@ -45,7 +45,7 @@ public class CommandView extends View {
     private ListEventResponder _responders = new ListEventResponder();
     private boolean _searchForward;
     private String _searchString;
-    private static final Logger _log = LogFactory.createLog();    
+    private static final Logger _log = LogFactory.createLog();
 
     private boolean isSearch() {
         return "/".equals(_prompt) || "?".equals(_prompt);
@@ -335,12 +335,16 @@ public class CommandView extends View {
     }
 
     private List<CommandSpec> matchingCommandSpecs() {
-        if (!isCommandPrompt()) {
-            return List.of();
-        }
-        String prefix = commandPrefix();
+        return matchingCommandSpecs(commandPrefix());
+    }
+
+    private static List<CommandSpec> matchingCommandSpecs(String prefix) {
+        return matchingCommandSpecs(prefix, COMMAND_SPECS);
+    }
+
+    private static List<CommandSpec> matchingCommandSpecs(String prefix, List<CommandSpec> commandSpecs) {
         var matches = new ArrayList<CommandSpec>();
-        for (var spec : COMMAND_SPECS) {
+        for (var spec : commandSpecs) {
             if (prefix.isBlank() || spec.matches(prefix)) {
                 matches.add(spec);
             }
@@ -350,10 +354,10 @@ public class CommandView extends View {
     }
 
     private String commandPrefix() {
-        if (_command == null) {
-            return "";
-        }
-        String text = _command.toString();
+        return commandPrefix(_command == null ? "" : _command.toString());
+    }
+
+    private static String commandPrefix(String text) {
         int start = 0;
         while (start < text.length() && Character.isWhitespace(text.charAt(start))) {
             start++;
@@ -376,7 +380,7 @@ public class CommandView extends View {
         }
         setNeedsRedraw();
     }
-    
+
     private void open(String pathString) {
         if (pathString.equals("")) {
             _message = "Wrong number of parameters";
@@ -463,8 +467,7 @@ public class CommandView extends View {
         if (_command == null || !isCommandPrompt()) {
             return CommandMenuState.hidden();
         }
-        var matches = matchingCommandSpecs();
-        return new CommandMenuState(true, commandPrefix(), List.copyOf(matches), normalizeSelection(matches.size()));
+        return CommandMenuState.forCommandText(_command.toString(), normalizeSelection(matchingCommandSpecs().size()));
     }
 
     public void activate(String prompt) {
@@ -501,7 +504,7 @@ public class CommandView extends View {
         COMPLETE_MATCH
     }
 
-    static record CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
+    public static record CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
         boolean expectsArgument() {
             return !arguments.isBlank();
         }
@@ -555,12 +558,27 @@ public class CommandView extends View {
         }
     }
 
-    static record CommandMenuState(boolean visible, String prefix, List<CommandSpec> matches, int selection) {
-        static CommandMenuState hidden() {
+    public static record CommandMenuState(boolean visible, String prefix, List<CommandSpec> matches, int selection) {
+        public static CommandMenuState hidden() {
             return new CommandMenuState(false, "", List.of(), 0);
         }
 
-        CommandSpec selectedMatch() {
+        public static CommandMenuState forCommandText(String text) {
+            return forCommandText(text, 0);
+        }
+
+        public static CommandMenuState forCommandText(String text, int selection) {
+            return forCommandText(text, selection, matchingCommandSpecs(commandPrefix(text == null ? "" : text)));
+        }
+
+        public static CommandMenuState forCommandText(String text, int selection, List<CommandSpec> commandSpecs) {
+            String prefix = commandPrefix(text == null ? "" : text);
+            var matches = List.copyOf(matchingCommandSpecs(prefix, commandSpecs));
+            int normalizedSelection = matches.isEmpty() ? 0 : Math.max(0, Math.min(selection, matches.size() - 1));
+            return new CommandMenuState(true, prefix, matches, normalizedSelection);
+        }
+
+        public CommandSpec selectedMatch() {
             if (matches.isEmpty()) {
                 return null;
             }

@@ -15,7 +15,8 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class ChatPanelView extends View {
-    private static final String ME_PREFIX = "me> ";
+    private static final String HISTORY_ME_PREFIX = "me> ";
+    private static final String INPUT_PREFIX = "! ";
     private static final String NEMO_PREFIX = "nemo> ";
     private static final String THINKING_TEXT = "*thinking*";
 
@@ -25,6 +26,8 @@ public class ChatPanelView extends View {
     private final String _title;
     private final Consumer<String> _onSubmit;
     private final Consumer<String> _onCommand;
+    private final Consumer<String> _onCommandInputChanged;
+    private final java.util.function.Function<String, CommandView.CommandMenuState> _commandMenuStateProvider;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
     private int _cursorOffset;
@@ -37,14 +40,27 @@ public class ChatPanelView extends View {
     private Runnable _responseAction;
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit) {
-        this(bounds, title, onSubmit, ignored -> {});
+        this(bounds, title, onSubmit, ignored -> {}, ignored -> {}, CommandView.CommandMenuState::forCommandText);
     }
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand) {
+        this(bounds, title, onSubmit, onCommand, ignored -> {}, CommandView.CommandMenuState::forCommandText);
+    }
+
+    public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand,
+            Consumer<String> onCommandInputChanged) {
+        this(bounds, title, onSubmit, onCommand, onCommandInputChanged, CommandView.CommandMenuState::forCommandText);
+    }
+
+    public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand,
+            Consumer<String> onCommandInputChanged,
+            java.util.function.Function<String, CommandView.CommandMenuState> commandMenuStateProvider) {
         super(bounds);
         _title = title;
         _onSubmit = onSubmit;
         _onCommand = onCommand;
+        _onCommandInputChanged = onCommandInputChanged;
+        _commandMenuStateProvider = commandMenuStateProvider;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
@@ -136,6 +152,18 @@ public class ChatPanelView extends View {
         setNeedsRedraw();
     }
 
+    public CommandView.CommandMenuState getCommandMenuState() {
+        String text = _input.toString();
+        if (!text.startsWith(":")) {
+            return CommandView.CommandMenuState.hidden();
+        }
+        return _commandMenuStateProvider.apply(text.substring(1));
+    }
+
+    public boolean isCommandInputActive() {
+        return _input.toString().startsWith(":");
+    }
+
     static String formatThinkingText(long elapsedSeconds) {
         long minutes = elapsedSeconds / 60;
         long seconds = elapsedSeconds % 60;
@@ -174,7 +202,7 @@ public class ChatPanelView extends View {
 
     private static String prefixForSpeaker(String speaker) {
         return switch (speaker) {
-        case "me" -> ME_PREFIX;
+        case "me" -> HISTORY_ME_PREFIX;
         case "nemo" -> NEMO_PREFIX;
         default -> speaker + "> ";
         };
@@ -185,8 +213,8 @@ public class ChatPanelView extends View {
     }
 
     private AttributedString renderLine(String line, TextColor background) {
-        if (line.startsWith(ME_PREFIX)) {
-            return renderPromptLine(ME_PREFIX, line.substring(ME_PREFIX.length()), UiTheme.CHAT_ME, background);
+        if (line.startsWith(HISTORY_ME_PREFIX)) {
+            return renderPromptLine(HISTORY_ME_PREFIX, line.substring(HISTORY_ME_PREFIX.length()), UiTheme.CHAT_ME, background);
         }
         if (line.startsWith(NEMO_PREFIX)) {
             return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), UiTheme.CHAT_NEMO, background);
@@ -212,8 +240,25 @@ public class ChatPanelView extends View {
         }
     }
 
+    private void refreshChrome() {
+        var window = Window.getInstance();
+        if (window != null) {
+            window.refreshChromeState();
+            if (window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+            return;
+        }
+        setNeedsRedraw();
+    }
+
+    private void notifyCommandInputChanged() {
+        _onCommandInputChanged.accept(_input.toString());
+        refreshChrome();
+    }
+
     List<String> inputLines() {
-        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
         String text = _input.length() == 0 ? "type a message or :abort" : _input.toString();
         var wrapped = TextPanelView.wrapText(text, width);
         return wrapped.isEmpty() ? List.of("") : wrapped;
@@ -247,7 +292,7 @@ public class ChatPanelView extends View {
         if (_cursorOffset <= 0) {
             return 0;
         }
-        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
         return TextPanelView.wrapText(_input.substring(0, _cursorOffset), width).size() - 1;
     }
 
@@ -255,7 +300,7 @@ public class ChatPanelView extends View {
         if (_cursorOffset <= 0) {
             return 0;
         }
-        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
         var wrapped = TextPanelView.wrapText(_input.substring(0, _cursorOffset), width);
         if (wrapped.isEmpty()) {
             return 0;
@@ -303,7 +348,7 @@ public class ChatPanelView extends View {
             _responseAction = () -> {
                 _cursorOffset--;
                 ensureInputVisible();
-                setNeedsRedraw();
+                refreshChrome();
             };
             return Response.YES;
         case ArrowRight:
@@ -313,7 +358,7 @@ public class ChatPanelView extends View {
             _responseAction = () -> {
                 _cursorOffset++;
                 ensureInputVisible();
-                setNeedsRedraw();
+                refreshChrome();
             };
             return Response.YES;
         case Home:
@@ -323,7 +368,7 @@ public class ChatPanelView extends View {
             _responseAction = () -> {
                 _cursorOffset = 0;
                 ensureInputVisible();
-                setNeedsRedraw();
+                refreshChrome();
             };
             return Response.YES;
         case End:
@@ -333,7 +378,7 @@ public class ChatPanelView extends View {
             _responseAction = () -> {
                 _cursorOffset = _input.length();
                 ensureInputVisible();
-                setNeedsRedraw();
+                refreshChrome();
             };
             return Response.YES;
         case Enter:
@@ -342,7 +387,7 @@ public class ChatPanelView extends View {
                     _input.insert(_cursorOffset, '\n');
                     _cursorOffset++;
                     ensureInputVisible();
-                    setNeedsRedraw();
+                    notifyCommandInputChanged();
                 };
                 return Response.YES;
             }
@@ -359,7 +404,7 @@ public class ChatPanelView extends View {
                 _input.setLength(0);
                 _cursorOffset = 0;
                 _inputScrollLine = 0;
-                setNeedsRedraw();
+                notifyCommandInputChanged();
             };
             return Response.YES;
         case Backspace:
@@ -370,7 +415,7 @@ public class ChatPanelView extends View {
                 _input.deleteCharAt(_cursorOffset - 1);
                 _cursorOffset--;
                 ensureInputVisible();
-                setNeedsRedraw();
+                notifyCommandInputChanged();
             };
             return Response.YES;
         case Character:
@@ -386,7 +431,7 @@ public class ChatPanelView extends View {
                     _responseAction = () -> {
                         _cursorOffset = 0;
                         ensureInputVisible();
-                        setNeedsRedraw();
+                        refreshChrome();
                     };
                     return Response.YES;
                 }
@@ -397,7 +442,7 @@ public class ChatPanelView extends View {
                     _responseAction = () -> {
                         _cursorOffset = _input.length();
                         ensureInputVisible();
-                        setNeedsRedraw();
+                        refreshChrome();
                     };
                     return Response.YES;
                 }
@@ -407,7 +452,7 @@ public class ChatPanelView extends View {
                 _input.insert(_cursorOffset, character);
                 _cursorOffset++;
                 ensureInputVisible();
-                setNeedsRedraw();
+                notifyCommandInputChanged();
             };
             return Response.YES;
         default:
@@ -457,7 +502,7 @@ public class ChatPanelView extends View {
         int cursorColumn = cursorColumn(cursorLine);
         for (int i = 0; i < inputHeight && inputStart + i < inputLines.size(); i++) {
             var input = new AttributedString();
-            String prefix = i == 0 ? " me> " : " ".repeat(ME_PREFIX.length() + 1);
+            String prefix = i == 0 ? " ! " : " ".repeat(INPUT_PREFIX.length() + 1);
             input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
             TextColor textColour = _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY;
             String inputLine = inputLines.get(inputStart + i);

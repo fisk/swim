@@ -1362,7 +1362,9 @@ public class NemoClient {
         return new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0),
                 formatPanelTitle(conversation),
                 message -> submit(conversation, message),
-                command -> handleCommand(conversation, command));
+                command -> handleCommand(conversation, command),
+                ignored -> {},
+                NemoClient::nemoCommandMenuState);
     }
 
     private void replayConversationIntoVisiblePanel(Conversation conversation) {
@@ -1447,6 +1449,21 @@ public class NemoClient {
         worker.setDaemon(true);
         conversation._worker = worker;
         worker.start();
+    }
+
+    private static final List<org.fisk.swim.ui.CommandView.CommandSpec> NEMO_COMMAND_SPECS = List.of(
+            new org.fisk.swim.ui.CommandView.CommandSpec("abort", List.of(), "[session-id|all]", "stop the current or selected worker"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("sessions", List.of(), "", "list Nemo sessions for this workspace"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("workers", List.of(), "", "list active Nemo workers"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("new", List.of(), "[title]", "create a new Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("switch", List.of(), "<session-id>", "switch to another Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("rename", List.of(), "<title>", "rename the current Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("help", List.of(), "", "list Nemo chat commands"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
+
+    private static org.fisk.swim.ui.CommandView.CommandMenuState nemoCommandMenuState(String text) {
+        return org.fisk.swim.ui.CommandView.CommandMenuState.forCommandText(text, 0, NEMO_COMMAND_SPECS);
     }
 
     private synchronized void handleCommand(Conversation conversation, String command) {

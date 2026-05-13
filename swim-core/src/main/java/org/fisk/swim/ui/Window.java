@@ -379,7 +379,12 @@ public class Window implements Drawable {
             _keyMenuView.setNeedsRedraw();
         }
         if (_commandMenuView != null) {
-            _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
+            EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+            if (responder instanceof ChatPanelView chatPanelView && chatPanelView.isCommandInputActive()) {
+                _commandMenuView.setState(chatPanelView.getCommandMenuState());
+            } else {
+                _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
+            }
         }
         if (_modeLineView != null) {
             _modeLineView.setNeedsRedraw();

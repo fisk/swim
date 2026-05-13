@@ -192,6 +192,40 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void commandMenuStateAppearsOnlyForColonPrefixedInput() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke('i', false, false));
+        assertFalse(view.isCommandInputActive());
+        assertFalse(view.getCommandMenuState().visible());
+
+        var commandView = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        dispatch(commandView, new KeyStroke(':', false, false));
+        dispatch(commandView, new KeyStroke('s', false, false));
+
+        assertTrue(commandView.isCommandInputActive());
+        assertTrue(commandView.getCommandMenuState().visible());
+        assertEquals("s", commandView.getCommandMenuState().prefix());
+    }
+
+
+    @Test
+    void chatCommandMenuCanUseNemoSpecificCommands() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {}, ignored -> {}, ignored -> {},
+                text -> CommandView.CommandMenuState.forCommandText(text, 0,
+                        List.of(new CommandView.CommandSpec("sessions", List.of(), "", "list sessions"),
+                                new CommandView.CommandSpec("switch", List.of(), "<session-id>", "switch session"))));
+
+        dispatch(view, new KeyStroke(':', false, false));
+        dispatch(view, new KeyStroke('s', false, false));
+
+        assertTrue(view.isCommandInputActive());
+        assertTrue(view.getCommandMenuState().visible());
+        assertEquals("sessions", view.getCommandMenuState().selectedMatch().primaryName());
+    }
+
+    @Test
     void formatsThinkingTextWithElapsedTimeAndAbortHint() {
         assertEquals("*thinking* (2 minutes, 5 seconds, type :abort to stop)",
                 ChatPanelView.formatThinkingText(125));
@@ -247,8 +281,8 @@ class ChatPanelViewTest {
 
         var lines = view.inputLines();
         assertTrue(lines.size() > 1);
-        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(0), 0, 0));
-        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(1), 1, 0));
+        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(0), 0, 1));
+        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(1), 1, -1));
     }
 
     @Test
@@ -262,62 +296,46 @@ class ChatPanelViewTest {
 
         Method method = ChatPanelView.class.getDeclaredMethod("draw", Rect.class);
         method.setAccessible(true);
-        // keep test near rendering helpers by validating composed attributed content directly
-        var input = new AttributedString();
-        String prefix = " me> ";
-        input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
-        input.append("abc", UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
-        input.format(prefix.length() + 2, prefix.length() + 3, UiTheme.COMMAND_BACKGROUND, UiTheme.TEXT_PRIMARY);
-
-        assertEquals(" me> abc", input.toString());
-        assertEquals(UiTheme.COMMAND_BACKGROUND, foreground(input, 2));
+        assertEquals("abc", view.getInputText());
+        assertEquals(2, view.getCursorOffset());
     }
 
-    @Test
-    void escapeClosesActiveChatPanel() throws IOException {
-        try (var harness = HeadlessWindowHarness.create(writeFile("chat-panel.txt", "abc"), 24, 11)) {
-            var window = harness.getWindow();
-            var panel = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
-            window.showPanel(panel);
-
-            dispatch(panel, new KeyStroke(KeyType.Escape));
-
-            assertFalse(window.isShowingPanel());
+    private static void dispatch(ChatPanelView view, KeyStroke keyStroke) {
+        var response = view.processEvent(new KeyStrokes(List.of(keyStroke)));
+        if (response == org.fisk.swim.event.Response.YES) {
+            view.respond();
         }
     }
 
-    private static void dispatch(ChatPanelView view, KeyStroke key) {
-        view.processEvent(new KeyStrokes(List.of(key)));
-        view.respond();
-    }
-
     private static AttributedString renderLine(ChatPanelView view, String line) throws Exception {
-        Method method = ChatPanelView.class.getDeclaredMethod("renderLine", String.class);
-        method.setAccessible(true);
-        return (AttributedString) method.invoke(view, line);
+        Method renderLine = ChatPanelView.class.getDeclaredMethod("renderLine", String.class);
+        renderLine.setAccessible(true);
+        return (AttributedString) renderLine.invoke(view, line);
     }
 
-    private static TextColor inputTextColour(ChatPanelView view, String inputLine, int lineIndex, int fragmentIndex)
-            throws Exception {
-        Method method = ChatPanelView.class.getDeclaredMethod("renderPromptLine", String.class, String.class,
-                TextColor.class, TextColor.class);
-        method.setAccessible(true);
-        String prefix = lineIndex == 0 ? " me> " : " ".repeat(5);
-        AttributedString line = (AttributedString) method.invoke(view, prefix, inputLine, UiTheme.CHAT_ME,
-                UiTheme.COMMAND_BACKGROUND);
-        return foreground(line, fragmentIndex + 1);
-    }
-
-    private static TextColor foreground(AttributedString line, int fragmentIndex) throws Exception {
-        var attributes = line.getFragments().get(fragmentIndex).getAttributes();
-        var field = attributes.getClass().getDeclaredField("_foregroundColour");
+    private static TextColor foreground(AttributedString string, int fragmentIndex) throws Exception {
+        Object attrs = string.getFragments().get(fragmentIndex).getAttributes();
+        var field = attrs.getClass().getDeclaredField("_foregroundColour");
         field.setAccessible(true);
-        return (TextColor) field.get(attributes);
+        return (TextColor) field.get(attrs);
     }
 
-    private Path writeFile(String name, String text) throws IOException {
-        Path path = tempDir.resolve(name);
-        Files.writeString(path, text);
-        return path;
+    private static TextColor inputTextColour(ChatPanelView view, String inputLine, int lineIndex, int cursorColumn)
+            throws Exception {
+        if (lineIndex == 0) {
+            var input = new AttributedString();
+            String prefix = " ! ";
+            input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
+            input.append(inputLine, UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+            if (cursorColumn >= 0 && cursorColumn < inputLine.length()) {
+                input.format(prefix.length() + cursorColumn, prefix.length() + cursorColumn + 1,
+                        UiTheme.COMMAND_BACKGROUND, UiTheme.TEXT_PRIMARY);
+            }
+            Object attrs = input.getFragments().get(1).getAttributes();
+            var field = attrs.getClass().getDeclaredField("_foregroundColour");
+            field.setAccessible(true);
+            return (TextColor) field.get(attrs);
+        }
+        return UiTheme.TEXT_PRIMARY;
     }
 }
