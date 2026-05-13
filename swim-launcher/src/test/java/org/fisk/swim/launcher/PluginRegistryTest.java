@@ -41,7 +41,7 @@ class PluginRegistryTest {
         var registry = new PluginRegistry();
         var host = new RecordingHost(root);
 
-        SwimApp app = registry.reload(root, file, host, Main.class.getClassLoader());
+        SwimApp app = registry.reload(root, file, host, Main.class.getClassLoader(), null);
 
         assertSame(app, registry.currentApp());
         assertEquals(List.of("core", "marker-plugin"), registry.availablePluginIds());
@@ -85,13 +85,13 @@ class PluginRegistryTest {
         var registry = new PluginRegistry();
         var host = new RecordingHost(root);
 
-        SwimApp firstApp = registry.reload(root, file, host, Main.class.getClassLoader());
+        SwimApp firstApp = registry.reload(root, file, host, Main.class.getClassLoader(), null);
         assertSame(firstApp, registry.currentApp());
         assertEquals(List.of("core-start"), Files.readAllLines(events));
 
         installFailingReplacementCore(root);
 
-        assertThrows(RuntimeException.class, () -> registry.reload(root, file, host, Main.class.getClassLoader()));
+        assertThrows(RuntimeException.class, () -> registry.reload(root, file, host, Main.class.getClassLoader(), null));
 
         assertSame(firstApp.getClass(), registry.currentApp().getClass());
         assertEquals(List.of("core-start", "core-close", "core-start"), Files.readAllLines(events));

@@ -275,8 +275,11 @@ class MainTest {
         FakeApp next = new FakeApp();
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
-        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
             previous.close();
+            if (beforeLoad != null) {
+                beforeLoad.run();
+            }
             next.start(path, host);
             next.refresh(true);
             return next;
@@ -315,7 +318,7 @@ class MainTest {
         FakeApp previous = new FakeApp();
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
-        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
             previous.close();
             throw new IllegalStateException("boom");
         };
@@ -357,7 +360,7 @@ class MainTest {
         FakeApp previous = new FakeApp();
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
-        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
             previous.close();
             throw new IllegalStateException("boom");
         };
@@ -376,8 +379,11 @@ class MainTest {
         FakeApp next = new FakeApp();
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
-        plugins.reloadAction = (buildRoot, path, host, parentLoader) -> {
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
             previous.close();
+            if (beforeLoad != null) {
+                beforeLoad.run();
+            }
             next.start(path, host);
             next.refresh(true);
             return next;
@@ -578,15 +584,15 @@ class MainTest {
     }
 
     private static final class FakePluginController implements Main.PluginController {
-        private ReloadAction reloadAction = (buildRoot, path, host, parentLoader) -> {
+        private ReloadAction reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
             throw new AssertionError("reload not expected");
         };
         private SwimApp currentApp;
         private boolean unloadAllCalled;
 
         @Override
-        public SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader) {
-            SwimApp reloaded = reloadAction.reload(buildRoot, path, host, parentLoader);
+        public SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
+            SwimApp reloaded = reloadAction.reload(buildRoot, path, host, parentLoader, beforeLoad);
             currentApp = reloaded;
             return reloaded;
         }
@@ -618,7 +624,7 @@ class MainTest {
 
     @FunctionalInterface
     private interface ReloadAction {
-        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader);
+        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad);
     }
 
     private static final class FakeApp implements SwimApp {

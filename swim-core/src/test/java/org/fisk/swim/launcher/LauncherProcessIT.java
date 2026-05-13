@@ -399,6 +399,52 @@ class LauncherProcessIT {
     }
 
     @Test
+    @Timeout(120)
+    void installedLauncherBinaryRemainsInteractiveAfterRebuildInTmux() throws Exception {
+        Assumptions.assumeTrue(tmuxAvailable(), "tmux is required for rebuild interactivity test");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
+        Set<Path> existingLogs = listLogFiles();
+        String session = "swimrebuild-" + System.nanoTime();
+
+        try {
+            startTmuxSession(session, buildRoot, launcherBinary.toString(), buildRoot.resolve("README.md").toString());
+            waitForTmuxPaneText(session, "Loaded SWIM core", java.time.Duration.ofSeconds(15));
+
+            Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
+            assertTrue(logFile != null, "Expected launcher binary to create a new /tmp/swim-*.log file.");
+
+            tmuxSendKeys(session, ":", "rebuild", "Enter");
+            boolean restarted = waitForOccurrences(
+                    logFile,
+                    "org.fisk.swim.SwimAppImpl - swim started",
+                    2,
+                    java.time.Duration.ofSeconds(90));
+            assertTrue(restarted,
+                    "Installed launcher binary did not restart cleanly after :rebuild.\nLog:\n"
+                            + Files.readString(logFile));
+
+            tmuxSendKeys(session, "j");
+            boolean moved = waitForTmuxPaneText(session, "8: 2, 1", java.time.Duration.ofSeconds(10));
+            assertTrue(moved,
+                    "Installed launcher binary did not respond to movement after :rebuild.\nPane:\n"
+                            + captureTmuxPane(session) + "\nLog:\n" + Files.readString(logFile));
+
+            tmuxSendKeys(session, ":", "q", "Enter");
+            boolean exited = waitForTmuxSessionExit(session, java.time.Duration.ofSeconds(10));
+            assertTrue(exited,
+                    "Installed launcher binary did not exit after :rebuild and post-rebuild input.\nPane:\n"
+                            + captureTmuxPane(session) + "\nLog:\n" + Files.readString(logFile));
+        } finally {
+            killTmuxSession(session);
+        }
+    }
+
+    @Test
     @Timeout(20)
     void launcherProcessExitsWhenCoreRequestsExit() throws Exception {
         Path buildRoot = createSyntheticBuildRoot();
@@ -555,6 +601,102 @@ class LauncherProcessIT {
         return Files.isRegularFile(file) && Files.readString(file).contains(text);
     }
 
+    private static boolean tmuxAvailable() {
+        try {
+            var process = new ProcessBuilder("tmux", "-V")
+                    .redirectErrorStream(true)
+                    .start();
+            return process.waitFor() == 0;
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return false;
+        }
+    }
+
+    private static void startTmuxSession(String session, Path workdir, String... command) throws Exception {
+        var tmuxCommand = new java.util.ArrayList<String>();
+        tmuxCommand.add("tmux");
+        tmuxCommand.add("new-session");
+        tmuxCommand.add("-d");
+        tmuxCommand.add("-s");
+        tmuxCommand.add(session);
+        tmuxCommand.add("-x");
+        tmuxCommand.add("187");
+        tmuxCommand.add("-y");
+        tmuxCommand.add("51");
+        tmuxCommand.add("cd " + shellQuote(workdir.toString()) + " && " + joinShellCommand(command));
+        var process = new ProcessBuilder(tmuxCommand)
+                .redirectErrorStream(true)
+                .start();
+        if (process.waitFor() != 0) {
+            throw new IOException("tmux new-session failed");
+        }
+    }
+
+    private static void tmuxSendKeys(String session, String... keys) throws Exception {
+        var command = new java.util.ArrayList<String>();
+        command.add("tmux");
+        command.add("send-keys");
+        command.add("-t");
+        command.add(session);
+        command.addAll(List.of(keys));
+        var process = new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start();
+        if (process.waitFor() != 0) {
+            throw new IOException("tmux send-keys failed");
+        }
+    }
+
+    private static String captureTmuxPane(String session) throws Exception {
+        var process = new ProcessBuilder("tmux", "capture-pane", "-pt", session)
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.waitFor() != 0) {
+            return "";
+        }
+        return output;
+    }
+
+    private static boolean waitForTmuxPaneText(String session, String text, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (captureTmuxPane(session).contains(text)) {
+                return true;
+            }
+            Thread.sleep(100);
+        }
+        return captureTmuxPane(session).contains(text);
+    }
+
+    private static boolean waitForTmuxSessionExit(String session, java.time.Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (!tmuxSessionExists(session)) {
+                return true;
+            }
+            Thread.sleep(100);
+        }
+        return !tmuxSessionExists(session);
+    }
+
+    private static boolean tmuxSessionExists(String session) throws Exception {
+        var process = new ProcessBuilder("tmux", "has-session", "-t", session)
+                .redirectErrorStream(true)
+                .start();
+        return process.waitFor() == 0;
+    }
+
+    private static void killTmuxSession(String session) throws Exception {
+        var process = new ProcessBuilder("tmux", "kill-session", "-t", session)
+                .redirectErrorStream(true)
+                .start();
+        process.waitFor();
+    }
+
     private static Set<Path> listLogFiles() throws Exception {
         Set<Path> logs = new HashSet<>();
         Path tmpDir = Path.of("/tmp");
@@ -687,6 +829,21 @@ class LauncherProcessIT {
     }
 
     private record StartedProcess(Process process, StringBuilder output, Path transcript) {
+    }
+
+    private static String joinShellCommand(String... command) {
+        var builder = new StringBuilder();
+        for (int i = 0; i < command.length; i++) {
+            if (i > 0) {
+                builder.append(' ');
+            }
+            builder.append(shellQuote(command[i]));
+        }
+        return builder.toString();
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private Path createSyntheticBuildRoot() throws Exception {

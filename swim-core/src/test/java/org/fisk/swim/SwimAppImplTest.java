@@ -111,7 +111,7 @@ class SwimAppImplTest {
     }
 
     @Test
-    void closeDuringReloadKeepsIoThreadAndTerminalAlive() {
+    void closeDuringReloadStillResetsIoAndTerminalForFreshStartup() {
         FakeBindings bindings = new FakeBindings();
         SwimAppImpl app = new SwimAppImpl(bindings);
         RecordingHost host = new RecordingHost();
@@ -124,8 +124,8 @@ class SwimAppImplTest {
         assertTrue(bindings.shutdownEventThreadCalled);
         assertTrue(bindings.window.disposed);
         assertTrue(bindings.clearRuntimeCalled);
-        assertTrue(!bindings.ioThread.interrupted);
-        assertTrue(!bindings.shutdownTerminalContextCalled);
+        assertTrue(bindings.ioThread.interrupted);
+        assertTrue(bindings.shutdownTerminalContextCalled);
     }
 
     @Test

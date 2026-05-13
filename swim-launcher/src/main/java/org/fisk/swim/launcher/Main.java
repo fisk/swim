@@ -42,7 +42,7 @@ public class Main implements SwimHost {
     }
 
     interface PluginController {
-        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader);
+        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad);
         SwimApp currentApp();
         List<String> loadedPluginIds();
         void loadPlugin(String id, Path path, SwimHost host);
@@ -258,10 +258,8 @@ public class Main implements SwimHost {
         synchronized (_reloadLock) {
             _reloading = true;
             try {
-                if (shouldRefreshStandardInput()) {
-                    refreshStandardInput();
-                }
-                SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader());
+                Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
+                SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader(), beforeLoad);
                 if (successMessage != null) {
                     next.showMessage(successMessage);
                 }
@@ -282,10 +280,6 @@ public class Main implements SwimHost {
     private static void refreshStandardInput() {
         if (System.getProperty("surefire.test.class.path") != null) {
             return;
-        }
-        try {
-            System.in.close();
-        } catch (IOException e) {
         }
         System.setIn(new BufferedInputStream(new FileInputStream(FileDescriptor.in)));
     }

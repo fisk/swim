@@ -30,11 +30,14 @@ final class PluginRegistry implements Main.PluginController {
     private LoadedPlugins _loadedPlugins = LoadedPlugins.empty();
 
     @Override
-    public synchronized SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader) {
+    public synchronized SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
         LoadedPlugins previous = _loadedPlugins;
         LoadedPlugins next = discover(buildRoot, parentLoader);
         try {
             previous.unloadAll();
+            if (beforeLoad != null) {
+                beforeLoad.run();
+            }
             next.loadAll(path, host);
             _loadedPlugins = next;
             return next.app();

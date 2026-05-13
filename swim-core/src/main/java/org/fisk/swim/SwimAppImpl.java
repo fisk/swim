@@ -42,8 +42,6 @@ public class SwimAppImpl implements SwimApp {
     }
 
     private static final class DefaultRuntimeBindings implements RuntimeBindings {
-        private static Thread _sharedIoThread;
-
         private static final class DefaultWindowAccess implements WindowAccess {
             @Override
             public void update(boolean forced) {
@@ -114,13 +112,7 @@ public class SwimAppImpl implements SwimApp {
 
         @Override
         public Thread createIoThread() {
-            Thread existing = _sharedIoThread;
-            if (existing != null && existing.isAlive()) {
-                return existing;
-            }
-            Thread created = new IOThread(TerminalContext.getInstance().getScreen());
-            _sharedIoThread = created;
-            return created;
+            return new IOThread(TerminalContext.getInstance().getScreen());
         }
 
         @Override
@@ -209,9 +201,8 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
-        boolean reloading = SwimRuntime.isReloading();
         Thread ioThread = _ioThread;
-        if (_ioThread != null && !reloading) {
+        if (_ioThread != null) {
             _ioThread.interrupt();
             _ioThread = null;
         }
@@ -221,10 +212,8 @@ public class SwimAppImpl implements SwimApp {
         if (window != null) {
             window.dispose();
         }
-        if (!reloading) {
-            _bindings.shutdownTerminalContext();
-        }
-        if (!reloading && ioThread != null && Thread.currentThread() != ioThread) {
+        _bindings.shutdownTerminalContext();
+        if (ioThread != null && Thread.currentThread() != ioThread) {
             try {
                 ioThread.join(2000);
             } catch (InterruptedException e) {
