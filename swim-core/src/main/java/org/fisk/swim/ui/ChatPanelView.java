@@ -19,7 +19,7 @@ public class ChatPanelView extends View {
     private static final String NEMO_PREFIX = "nemo> ";
     private static final String THINKING_TEXT = "*thinking*";
 
-    record ChatMessage(String speaker, String text) {
+    public record ChatMessage(String speaker, String text) {
     }
 
     private final String _title;
@@ -120,7 +120,10 @@ public class ChatPanelView extends View {
     static String formatThinkingText(long elapsedSeconds) {
         long minutes = elapsedSeconds / 60;
         long seconds = elapsedSeconds % 60;
-        return THINKING_TEXT + " (" + minutes + " minutes, " + seconds + " seconds, type :abort to stop)";
+        String elapsed = minutes > 0
+                ? minutes + " minutes, " + seconds + " seconds"
+                : seconds + " seconds";
+        return THINKING_TEXT + " (" + elapsed + ", type :abort to stop)";
     }
 
     private long elapsedSeconds() {

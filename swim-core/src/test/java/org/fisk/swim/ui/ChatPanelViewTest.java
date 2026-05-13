@@ -136,6 +136,12 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void omitsZeroMinutesFromThinkingText() {
+        assertEquals("*thinking* (11 seconds, type :abort to stop)",
+                ChatPanelView.formatThinkingText(11));
+    }
+
+    @Test
     void replyPromptPrefixesUseDistinctColours() throws Exception {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
 
