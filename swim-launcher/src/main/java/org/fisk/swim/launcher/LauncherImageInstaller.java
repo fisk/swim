@@ -263,7 +263,17 @@ public final class LauncherImageInstaller {
                 fi
                 LOG_FILE="$LOG_DIR/swim-$$.log"
                 exec 2>>"$LOG_FILE"
-                "$DIR/java" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main "$@"
+                TTY_PATH=$(tty 2>&1)
+                TTY_SIZE=$(stty size 2>&1)
+                case "$TTY_SIZE" in
+                    [0-9]*" "[0-9]*)
+                        SWIM_TTY_ROWS=${TTY_SIZE%% *}
+                        SWIM_TTY_COLS=${TTY_SIZE##* }
+                        SWIM_TTY_PATH=$TTY_PATH
+                        export SWIM_TTY_ROWS SWIM_TTY_COLS SWIM_TTY_PATH
+                        ;;
+                esac
+                exec "$DIR/java" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main "$@"
                 """.formatted(shellQuote(options));
         Files.writeString(launcherScript, script, StandardCharsets.UTF_8);
         launcherScript.toFile().setExecutable(true, false);

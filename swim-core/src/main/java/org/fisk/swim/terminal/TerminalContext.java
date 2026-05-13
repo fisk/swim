@@ -1,16 +1,21 @@
 package org.fisk.swim.terminal;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.function.Supplier;
 
+import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
+import com.googlecode.lanterna.TextColor;
+import com.googlecode.lanterna.SGR;
 import com.googlecode.lanterna.graphics.TextGraphics;
+import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
+import com.googlecode.lanterna.terminal.TerminalResizeListener;
 
 public class TerminalContext {
     private record CreatedTerminal(Screen screen, Terminal terminal) {
@@ -69,9 +74,9 @@ public class TerminalContext {
     }
 
     private static CreatedTerminal createTerminal() {
-        var factory = new DefaultTerminalFactory();
         try {
-            Terminal terminal = factory.createTerminal();
+            var factory = new DefaultTerminalFactory();
+            Terminal terminal = wrapTerminal(factory.createTerminal(), TerminalContext::queryTerminalSizeFromTty);
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
             return new CreatedTerminal(screen, terminal);
@@ -146,25 +151,279 @@ public class TerminalContext {
     }
 
     private static TerminalSize queryTerminalSizeFromTty() {
-        Path tty = Path.of("/dev/tty");
-        if (!Files.isReadable(tty)) {
-            return null;
-        }
         try {
-            var process = new ProcessBuilder("stty", "size")
-                    .redirectInput(ProcessBuilder.Redirect.from(tty.toFile()))
-                    .redirectErrorStream(true)
-                    .start();
-            String output = new String(process.getInputStream().readAllBytes());
-            if (process.waitFor() != 0) {
-                return null;
+            TerminalSize ttyPathSize = queryConfiguredTtySize();
+            if (ttyPathSize != null) {
+                return ttyPathSize;
             }
-            return parseSttySize(output);
+            TerminalSize envSize = queryEnvironmentSize();
+            if (envSize != null) {
+                return envSize;
+            }
+            TerminalSize sttySize = querySttySize();
+            if (sttySize != null) {
+                return sttySize;
+            }
+            return queryTputSize();
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
             return null;
+        }
+    }
+
+    private static TerminalSize queryConfiguredTtySize() throws IOException, InterruptedException {
+        String ttyPath = System.getenv("SWIM_TTY_PATH");
+        if (ttyPath == null || ttyPath.isBlank()) {
+            return null;
+        }
+        String output = runSttyOnPath(ttyPath, "-f");
+        if (output == null) {
+            output = runSttyOnPath(ttyPath, "-F");
+        }
+        return parseSttySize(output);
+    }
+
+    private static TerminalSize queryEnvironmentSize() {
+        String swimRows = System.getenv("SWIM_TTY_ROWS");
+        String swimCols = System.getenv("SWIM_TTY_COLS");
+        Integer rows = parsePositiveInt(swimRows);
+        Integer cols = parsePositiveInt(swimCols);
+        if (rows != null && cols != null) {
+            return new TerminalSize(cols, rows);
+        }
+
+        String lines = System.getenv("LINES");
+        String columns = System.getenv("COLUMNS");
+        rows = parsePositiveInt(lines);
+        cols = parsePositiveInt(columns);
+        if (rows != null && cols != null) {
+            return new TerminalSize(cols, rows);
+        }
+        return null;
+    }
+
+    private static TerminalSize querySttySize() throws IOException, InterruptedException {
+        String output = runTerminalQuery("stty", "size");
+        return parseSttySize(output);
+    }
+
+    private static TerminalSize queryTputSize() throws IOException, InterruptedException {
+        String columnsOutput = runTerminalQuery("tput", "cols");
+        String rowsOutput = runTerminalQuery("tput", "lines");
+        Integer columns = parsePositiveInt(columnsOutput);
+        Integer rows = parsePositiveInt(rowsOutput);
+        if (columns == null || rows == null) {
+            return null;
+        }
+        return new TerminalSize(columns, rows);
+    }
+
+    private static String runTerminalQuery(String... command) throws IOException, InterruptedException {
+        var process = new ProcessBuilder(command)
+                .redirectInput(ProcessBuilder.Redirect.INHERIT)
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        if (process.waitFor() != 0) {
+            return null;
+        }
+        return output;
+    }
+
+    private static String runSttyOnPath(String ttyPath, String option) throws IOException, InterruptedException {
+        var process = new ProcessBuilder("stty", option, ttyPath, "size")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        if (process.waitFor() != 0) {
+            return null;
+        }
+        return output;
+    }
+
+    static Integer parsePositiveInt(String output) {
+        if (output == null) {
+            return null;
+        }
+        String trimmed = output.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        try {
+            int value = Integer.parseInt(trimmed);
+            return value > 0 ? value : null;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    static Terminal wrapTerminal(Terminal terminal, Supplier<TerminalSize> terminalSizeSupplier) {
+        if (terminal == null) {
+            throw new IllegalArgumentException("terminal must not be null");
+        }
+        return new SizeAwareTerminal(terminal, terminalSizeSupplier);
+    }
+
+    private static final class SizeAwareTerminal implements Terminal {
+        private final Terminal _delegate;
+        private final Supplier<TerminalSize> _terminalSizeSupplier;
+        private final Map<TerminalResizeListener, TerminalResizeListener> _resizeListeners = new IdentityHashMap<>();
+
+        private SizeAwareTerminal(Terminal delegate, Supplier<TerminalSize> terminalSizeSupplier) {
+            _delegate = delegate;
+            _terminalSizeSupplier = terminalSizeSupplier;
+        }
+
+        @Override
+        public void enterPrivateMode() throws IOException {
+            _delegate.enterPrivateMode();
+        }
+
+        @Override
+        public void exitPrivateMode() throws IOException {
+            _delegate.exitPrivateMode();
+        }
+
+        @Override
+        public void clearScreen() throws IOException {
+            _delegate.clearScreen();
+        }
+
+        @Override
+        public void setCursorPosition(int x, int y) throws IOException {
+            _delegate.setCursorPosition(x, y);
+        }
+
+        @Override
+        public void setCursorPosition(TerminalPosition position) throws IOException {
+            _delegate.setCursorPosition(position);
+        }
+
+        @Override
+        public TerminalPosition getCursorPosition() throws IOException {
+            return _delegate.getCursorPosition();
+        }
+
+        @Override
+        public void setCursorVisible(boolean visible) throws IOException {
+            _delegate.setCursorVisible(visible);
+        }
+
+        @Override
+        public void putCharacter(char c) throws IOException {
+            _delegate.putCharacter(c);
+        }
+
+        @Override
+        public void putString(String string) throws IOException {
+            _delegate.putString(string);
+        }
+
+        @Override
+        public TextGraphics newTextGraphics() throws IOException {
+            return _delegate.newTextGraphics();
+        }
+
+        @Override
+        public void enableSGR(SGR sgr) throws IOException {
+            _delegate.enableSGR(sgr);
+        }
+
+        @Override
+        public void disableSGR(SGR sgr) throws IOException {
+            _delegate.disableSGR(sgr);
+        }
+
+        @Override
+        public void resetColorAndSGR() throws IOException {
+            _delegate.resetColorAndSGR();
+        }
+
+        @Override
+        public void setForegroundColor(TextColor color) throws IOException {
+            _delegate.setForegroundColor(color);
+        }
+
+        @Override
+        public void setBackgroundColor(TextColor color) throws IOException {
+            _delegate.setBackgroundColor(color);
+        }
+
+        @Override
+        public synchronized void addResizeListener(TerminalResizeListener listener) {
+            if (listener == null) {
+                return;
+            }
+            var wrapped = new TerminalResizeListener() {
+                @Override
+                public void onResized(Terminal ignored, TerminalSize size) {
+                    listener.onResized(SizeAwareTerminal.this, getTerminalSizeUnchecked(size));
+                }
+            };
+            _resizeListeners.put(listener, wrapped);
+            _delegate.addResizeListener(wrapped);
+        }
+
+        @Override
+        public synchronized void removeResizeListener(TerminalResizeListener listener) {
+            var wrapped = _resizeListeners.remove(listener);
+            if (wrapped != null) {
+                _delegate.removeResizeListener(wrapped);
+            }
+        }
+
+        @Override
+        public TerminalSize getTerminalSize() throws IOException {
+            TerminalSize supplied = getTerminalSizeUnchecked(null);
+            if (supplied != null) {
+                return supplied;
+            }
+            return _delegate.getTerminalSize();
+        }
+
+        private TerminalSize getTerminalSizeUnchecked(TerminalSize fallback) {
+            if (_terminalSizeSupplier != null) {
+                try {
+                    TerminalSize supplied = _terminalSizeSupplier.get();
+                    if (supplied != null) {
+                        return supplied;
+                    }
+                } catch (RuntimeException e) {
+                }
+            }
+            return fallback;
+        }
+
+        @Override
+        public byte[] enquireTerminal(int timeout, java.util.concurrent.TimeUnit unit) throws IOException {
+            return _delegate.enquireTerminal(timeout, unit);
+        }
+
+        @Override
+        public void bell() throws IOException {
+            _delegate.bell();
+        }
+
+        @Override
+        public void flush() throws IOException {
+            _delegate.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            _delegate.close();
+        }
+
+        @Override
+        public KeyStroke pollInput() throws IOException {
+            return _delegate.pollInput();
+        }
+
+        @Override
+        public KeyStroke readInput() throws IOException {
+            return _delegate.readInput();
         }
     }
 }

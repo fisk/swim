@@ -300,6 +300,17 @@ class MainTest {
     }
 
     @Test
+    void standardInputRefreshOnlyRunsWhenAnAppIsAlreadyLoaded() {
+        FakePluginController plugins = new FakePluginController();
+
+        assertFalse(Main.shouldRefreshStandardInput(plugins));
+
+        plugins.currentApp = new FakeApp();
+
+        assertTrue(Main.shouldRefreshStandardInput(plugins));
+    }
+
+    @Test
     void requestReloadFailureShowsMessageOnExistingApp() throws Exception {
         FakeApp previous = new FakeApp();
         FakePluginController plugins = new FakePluginController();

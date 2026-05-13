@@ -55,4 +55,14 @@ class TerminalContextTest {
         assertNull(TerminalContext.parseSttySize("rows cols"));
         assertNull(TerminalContext.parseSttySize("0 80"));
     }
+
+    @Test
+    void parsePositiveIntRejectsMissingZeroAndInvalidValues() {
+        assertNull(TerminalContext.parsePositiveInt(null));
+        assertNull(TerminalContext.parsePositiveInt(""));
+        assertNull(TerminalContext.parsePositiveInt("0"));
+        assertNull(TerminalContext.parsePositiveInt("-1"));
+        assertNull(TerminalContext.parsePositiveInt("cols"));
+        assertEquals(80, TerminalContext.parsePositiveInt("80\n"));
+    }
 }

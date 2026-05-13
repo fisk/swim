@@ -193,8 +193,6 @@ class LauncherProcessIT {
     void installedLauncherBinaryRendersInitialScreenWithoutInput() throws Exception {
         Path scriptUtility = Path.of("/usr/bin/script");
         Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
-        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
-                "script utility must support driving interactive child stdin");
         Assumptions.assumeTrue(scriptCanCaptureTranscript(scriptUtility),
                 "script transcript capture is required for startup render verification");
 

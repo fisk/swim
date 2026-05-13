@@ -3,12 +3,11 @@ package org.fisk.swim.event;
 import java.io.IOException;
 
 import org.fisk.swim.EventThread;
-
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.screen.Screen;
 
 public class IOThread extends Thread {
-    private Screen _screen;
+    private final Screen _screen;
 
     public IOThread(Screen screen) {
         setDaemon(true);
@@ -19,7 +18,7 @@ public class IOThread extends Thread {
     public void run() {
         while (!isInterrupted()) {
             try {
-                KeyStroke keyStroke = _screen.pollInput();
+                KeyStroke keyStroke = _screen == null ? null : _screen.pollInput();
                 if (keyStroke == null) {
                     Thread.sleep(10);
                     continue;

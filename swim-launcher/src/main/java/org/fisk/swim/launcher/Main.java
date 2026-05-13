@@ -258,7 +258,9 @@ public class Main implements SwimHost {
         synchronized (_reloadLock) {
             _reloading = true;
             try {
-                refreshStandardInput();
+                if (shouldRefreshStandardInput()) {
+                    refreshStandardInput();
+                }
                 SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader());
                 if (successMessage != null) {
                     next.showMessage(successMessage);
@@ -267,6 +269,14 @@ public class Main implements SwimHost {
                 _reloading = false;
             }
         }
+    }
+
+    static boolean shouldRefreshStandardInput(PluginController plugins) {
+        return plugins != null && plugins.currentApp() != null;
+    }
+
+    private boolean shouldRefreshStandardInput() {
+        return shouldRefreshStandardInput(_plugins);
     }
 
     private static void refreshStandardInput() {
