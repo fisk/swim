@@ -141,6 +141,67 @@ class NemoClientTest {
     }
 
     @Test
+    void extractContextUsagePercentUsesUsageLimitsWhenPresent() {
+        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
+                {
+                  "usage": {
+                    "input_tokens": 5000,
+                    "input_tokens_limit": 20000
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertEquals(25, NemoClient.extractContextUsagePercent(response));
+    }
+
+    @Test
+    void extractContextUsagePercentReturnsNullWithoutKnownLimit() {
+        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
+                {
+                  "usage": {
+                    "input_tokens": 5000
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertEquals(null, NemoClient.extractContextUsagePercent(response));
+    }
+
+    @Test
+    void extractContextUsagePercentFindsNestedGatewayFields() {
+        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
+                {
+                  "usage": {
+                    "prompt_tokens": 6000
+                  },
+                  "metadata": {
+                    "model": {
+                      "context_length": 24000
+                    }
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertEquals(25, NemoClient.extractContextUsagePercent(response));
+    }
+
+    @Test
+    void extractContextUsagePercentSupportsCamelCaseFieldNames() {
+        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
+                {
+                  "usage": {
+                    "inputTokens": 3000
+                  },
+                  "limits": {
+                    "maxContextTokens": 12000
+                  }
+                }
+                """).getAsJsonObject();
+
+        assertEquals(25, NemoClient.extractContextUsagePercent(response));
+    }
+
+    @Test
     void compactsNonJsonErrorBodies() {
         assertEquals("upstream auth failed", NemoClient.compactRawBody("upstream auth failed"));
     }

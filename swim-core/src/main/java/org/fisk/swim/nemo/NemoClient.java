@@ -83,6 +83,9 @@ public class NemoClient {
     record ToolCall(String callId, String name, JsonObject arguments) {
     }
 
+    record ResponseResult(String text, Integer contextUsagePercent) {
+    }
+
     private static final class Conversation {
         private final String _id;
         private final Path _workspaceRoot;
@@ -95,6 +98,7 @@ public class NemoClient {
         private ChatPanelView _panelView;
         private boolean _pending;
         private long _pendingStartedAtMillis;
+        private Integer _contextUsagePercent;
         private long _requestSequence;
         private long _activeRequestId;
         private Thread _worker;
@@ -311,7 +315,7 @@ public class NemoClient {
         return parseJsonObject(response.body());
     }
 
-    private String request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
+    private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
         JsonArray inputHistory = new JsonArray();
         inputHistory.add(createUserInputMessage(buildInput(context, turns)));
 
@@ -334,7 +338,7 @@ public class NemoClient {
             JsonObject response = sendRequest(configuration, payload);
             var toolCalls = extractToolCalls(response);
             if (toolCalls.isEmpty()) {
-                return extractOutputText(response.toString());
+                return new ResponseResult(extractOutputText(response.toString()), extractContextUsagePercent(response));
             }
 
             JsonArray toolOutputs = new JsonArray();
@@ -988,6 +992,79 @@ public class NemoClient {
         return builder.toString();
     }
 
+    static Integer extractContextUsagePercent(JsonObject response) {
+        Integer inputTokens = firstIntAnywhere(response,
+                "input_tokens",
+                "prompt_tokens",
+                "total_input_tokens",
+                "inputTokens",
+                "promptTokens",
+                "totalInputTokens");
+        Integer maxTokens = firstIntAnywhere(response,
+                "input_tokens_limit",
+                "max_input_tokens",
+                "context_window",
+                "context_window_tokens",
+                "max_context_tokens",
+                "max_prompt_tokens",
+                "max_input_tokens_per_request",
+                "context_length",
+                "contextLength",
+                "inputTokensLimit",
+                "maxInputTokens",
+                "maxContextTokens",
+                "maxPromptTokens");
+        if (inputTokens == null || maxTokens == null || maxTokens <= 0) {
+            return null;
+        }
+        return (int) Math.round((inputTokens * 100.0) / maxTokens);
+    }
+
+    private static Integer firstIntAnywhere(JsonElement element, String... names) {
+        return firstIntAnywhere(element, 0, names);
+    }
+
+    private static Integer firstIntAnywhere(JsonElement element, int depth, String... names) {
+        if (element == null || element.isJsonNull() || depth > 8) {
+            return null;
+        }
+        if (element.isJsonObject()) {
+            JsonObject object = element.getAsJsonObject();
+            Integer direct = firstInt(object, names);
+            if (direct != null) {
+                return direct;
+            }
+            for (var entry : object.entrySet()) {
+                Integer nested = firstIntAnywhere(entry.getValue(), depth + 1, names);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+            return null;
+        }
+        if (element.isJsonArray()) {
+            for (var child : element.getAsJsonArray()) {
+                Integer nested = firstIntAnywhere(child, depth + 1, names);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Integer firstInt(JsonObject object, String... names) {
+        for (String name : names) {
+            if (object.has(name) && !object.get(name).isJsonNull()) {
+                try {
+                    return object.get(name).getAsInt();
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
     private static String extractErrorMessage(String responseBody, int statusCode) {
         try {
             JsonObject root = parseJsonObject(responseBody);
@@ -1298,6 +1375,7 @@ public class NemoClient {
         } else {
             conversation._panelView.setPending(false);
         }
+        conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
     }
 
     private List<ChatPanelView.ChatMessage> mapTurnsToMessages(Conversation conversation) {
@@ -1344,17 +1422,20 @@ public class NemoClient {
 
         conversation._pending = true;
         conversation._pendingStartedAtMillis = System.currentTimeMillis();
+        conversation._contextUsagePercent = null;
         long requestId = ++conversation._requestSequence;
         conversation._activeRequestId = requestId;
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(true, conversation._pendingStartedAtMillis);
+            conversation._panelView.setContextUsagePercent(null);
         }
 
         var promptTurns = new ArrayList<>(conversation._turns);
         var worker = new Thread(() -> {
             try {
-                String response = request(conversation._configuration, conversation._context, promptTurns);
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
+                ResponseResult response = request(conversation._configuration, conversation._context, promptTurns);
+                EventThread.getInstance().enqueue(
+                        new RunnableEvent(() -> handleResponse(conversation, requestId, response.text(), response.contextUsagePercent())));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
@@ -1622,23 +1703,26 @@ public class NemoClient {
         conversation._worker = null;
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
+            conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
         }
         if (worker != null) {
             worker.interrupt();
         }
     }
 
-    private synchronized void handleResponse(Conversation conversation, long requestId, String response) {
+    private synchronized void handleResponse(Conversation conversation, long requestId, String response, Integer contextUsagePercent) {
         if (conversation._activeRequestId != requestId) {
             return;
         }
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
+        conversation._contextUsagePercent = contextUsagePercent;
         conversation._activeRequestId = 0;
         conversation._worker = null;
         appendTurn(conversation, new ChatTurn("nemo", response));
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
+            conversation._panelView.setContextUsagePercent(contextUsagePercent);
         }
     }
 
@@ -1648,11 +1732,13 @@ public class NemoClient {
         }
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
+        conversation._contextUsagePercent = null;
         conversation._activeRequestId = 0;
         conversation._worker = null;
         appendAssistantNote(conversation, response);
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
+            conversation._panelView.setContextUsagePercent(null);
         }
     }
 
