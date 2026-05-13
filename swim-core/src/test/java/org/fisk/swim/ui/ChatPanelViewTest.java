@@ -38,6 +38,44 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void shiftEnterAddsNewlineWithoutSubmitting() {
+        var submitted = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
+
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
+        dispatch(view, new KeyStroke('i', false, false));
+
+        assertEquals(null, submitted.get());
+        assertEquals("h\ni", view.getInputText());
+    }
+
+    @Test
+    void multilineInputScrollsIntoView() {
+        var view = new ChatPanelView(Rect.create(0, 0, 10, 4), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('1', false, false));
+        dispatch(view, new KeyStroke('2', false, false));
+        dispatch(view, new KeyStroke('3', false, false));
+        dispatch(view, new KeyStroke('4', false, false));
+        dispatch(view, new KeyStroke('5', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
+        dispatch(view, new KeyStroke('6', false, false));
+        dispatch(view, new KeyStroke('7', false, false));
+        dispatch(view, new KeyStroke('8', false, false));
+        dispatch(view, new KeyStroke('9', false, false));
+        dispatch(view, new KeyStroke('0', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, true));
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke('d', false, false));
+        dispatch(view, new KeyStroke('e', false, false));
+
+        assertTrue(view.getInputScrollLine() > 0);
+    }
+
+    @Test
     void appendMessageAddsPrefixedTranscriptLines() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
 

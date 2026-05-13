@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -64,6 +65,19 @@ class WindowTest {
             assertFalse(window.isShowingPanel());
             assertEquals(originalHeight, window.getBufferContext().getBufferView().getBounds().getSize().getHeight());
             assertSame(window.getBufferContext().getBufferView(), HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+        }
+    }
+
+    @Test
+    void showChatPanelUsesLargerVerticalShare() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("chat-panel-layout.txt", "abc"), 24, 11)) {
+            var window = harness.getWindow();
+            var panel = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+
+            window.showPanel(panel);
+
+            assertEquals("{0, 2, 24, 2}", absoluteBounds(window.getBufferContext().getBufferView()).toString());
+            assertEquals("{0, 4, 24, 5}", absoluteBounds(panel).toString());
         }
     }
 
@@ -235,6 +249,19 @@ class WindowTest {
     }
 
     @Test
+    void narrowWindowExpandsTopMenuHeight() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("narrow-menu.txt", "abc"), 18, 11)) {
+            var window = harness.getWindow();
+
+            invoke(window, "applyLayout", new Class<?>[] { Size.class }, Size.create(18, 11));
+
+            assertTrue(window.getKeyMenuView().getBounds().getSize().getHeight() > 2);
+            assertEquals(window.getKeyMenuView().getBounds().getSize().getHeight(),
+                    window.getBufferContext().getBufferView().getBounds().getPoint().getY());
+        }
+    }
+
+    @Test
     void typingCommandPrefixUpdatesPopupMatches() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
@@ -248,6 +275,17 @@ class WindowTest {
             assertEquals("r", state.prefix());
             assertEquals("reload", state.matches().get(0).primaryName());
             assertEquals("rebuild", state.matches().get(1).primaryName());
+        }
+    }
+
+    @Test
+    void commandPopupUsesAvailableVerticalSpaceForMoreMatches() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+
+            window.getCommandView().activate(":");
+
+            assertEquals(9, window.getCommandMenuView().getBounds().getSize().getHeight());
         }
     }
 
@@ -332,5 +370,11 @@ class WindowTest {
         } finally {
             org.apache.logging.log4j.core.config.Configurator.setLevel(loggerName, previous);
         }
+    }
+
+    private static Object invoke(Object target, String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        Method method = target.getClass().getDeclaredMethod(methodName, parameterTypes);
+        method.setAccessible(true);
+        return method.invoke(target, args);
     }
 }

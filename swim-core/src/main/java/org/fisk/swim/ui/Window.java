@@ -31,6 +31,7 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 public class Window implements Drawable {
+    private static final int MIN_TOP_MENU_HEIGHT = 2;
     public enum Direction {
         LEFT,
         RIGHT,
@@ -40,8 +41,6 @@ public class Window implements Drawable {
 
     private static Logger _log = LogFactory.createLog();
     private static Window _instance;
-    private static final int TOP_MENU_HEIGHT = 2;
-
     private View _rootView;
     private KeyMenuView _keyMenuView;
     private View _workspaceView;
@@ -497,7 +496,8 @@ public class Window implements Drawable {
     }
 
     public void showPanel(View panelView) {
-        showPanel(panelView, SplitView.Orientation.VERTICAL, 2.0 / 3.0, false);
+        double ratio = panelView instanceof ChatPanelView ? 0.30 : 2.0 / 3.0;
+        showPanel(panelView, SplitView.Orientation.VERTICAL, ratio, false);
     }
 
     public boolean showSidePanel(View panelView, boolean leftSide, double ratio) {
@@ -568,14 +568,15 @@ public class Window implements Drawable {
 
         _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
 
-        _bufferContext = new BufferContext(Rect.create(0, TOP_MENU_HEIGHT, terminalSize.getColumns(),
-                Math.max(0, terminalSize.getRows() - TOP_MENU_HEIGHT - 2)), path);
+        int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.getRows());
+        _bufferContext = new BufferContext(Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
+                Math.max(0, terminalSize.getRows() - initialMenuHeight - 2)), path);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
 
         _rootView = new View(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
         _rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
 
-        _keyMenuView = new KeyMenuView(Rect.create(0, 0, terminalSize.getColumns(), Math.min(TOP_MENU_HEIGHT,
+        _keyMenuView = new KeyMenuView(Rect.create(0, 0, terminalSize.getColumns(), Math.min(MIN_TOP_MENU_HEIGHT,
                 terminalSize.getRows())));
         _keyMenuView.setResizeMask(View.RESIZE_MASK_TOP | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
                 | View.RESIZE_MASK_HEIGHT);
@@ -791,7 +792,11 @@ public class Window implements Drawable {
             return;
         }
         _rootView.setBounds(Rect.create(0, 0, size.getWidth(), size.getHeight()));
-        int menuHeight = Math.min(TOP_MENU_HEIGHT, size.getHeight());
+        int menuHeight = MIN_TOP_MENU_HEIGHT;
+        if (_keyMenuView != null) {
+            menuHeight = _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
+        }
+        menuHeight = Math.min(menuHeight, size.getHeight());
         int footerRows = Math.min(2, Math.max(0, size.getHeight() - menuHeight));
         int modeLineHeight = footerRows == 2 ? 1 : 0;
         int commandHeight = footerRows >= 1 ? 1 : 0;

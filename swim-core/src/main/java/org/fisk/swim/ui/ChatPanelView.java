@@ -27,6 +27,7 @@ public class ChatPanelView extends View {
     private final Consumer<String> _onCommand;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
+    private int _inputScrollLine;
     private int _startLine;
     private boolean _pending;
     private long _pendingStartedAtMillis;
@@ -55,6 +56,10 @@ public class ChatPanelView extends View {
 
     String getInputText() {
         return _input.toString();
+    }
+
+    int getInputScrollLine() {
+        return _inputScrollLine;
     }
 
     boolean isPending() {
@@ -178,8 +183,24 @@ public class ChatPanelView extends View {
         }
     }
 
+    private List<String> inputLines() {
+        int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
+        String text = _input.length() == 0 ? "type a message or :abort" : _input.toString();
+        var wrapped = TextPanelView.wrapText(text, width);
+        return wrapped.isEmpty() ? List.of("") : wrapped;
+    }
+
+    private int inputHeight() {
+        return Math.max(1, inputLines().size());
+    }
+
     private int bodyHeight() {
-        return Math.max(0, getBounds().getSize().getHeight() - 2);
+        return Math.max(0, getBounds().getSize().getHeight() - inputHeight() - 1);
+    }
+
+    private void ensureInputVisible() {
+        int maxVisibleInputLines = Math.max(1, getBounds().getSize().getHeight() - 1);
+        _inputScrollLine = Math.max(0, inputLines().size() - maxVisibleInputLines);
     }
 
     private void scrollToBottom() {
@@ -221,16 +242,26 @@ public class ChatPanelView extends View {
             }
             _responseAction = () -> {
                 _input.deleteCharAt(_input.length() - 1);
+                ensureInputVisible();
                 setNeedsRedraw();
             };
             return Response.YES;
         case Enter:
+            if (event.isShiftDown()) {
+                _responseAction = () -> {
+                    _input.append('\n');
+                    ensureInputVisible();
+                    setNeedsRedraw();
+                };
+                return Response.YES;
+            }
             String message = _input.toString().trim();
             if (message.isEmpty()) {
                 return Response.NO;
             }
             _responseAction = () -> {
                 _input.setLength(0);
+                _inputScrollLine = 0;
                 if (message.startsWith(":")) {
                     _onCommand.accept(message);
                 } else if (!_pending) {
@@ -245,6 +276,7 @@ public class ChatPanelView extends View {
             char character = event.getCharacter();
             _responseAction = () -> {
                 _input.append(character);
+                ensureInputVisible();
                 setNeedsRedraw();
             };
             return Response.YES;
@@ -283,12 +315,18 @@ public class ChatPanelView extends View {
                     renderLine(lines.get(_startLine + i), background), UiTheme.TEXT_MUTED, background);
         }
 
-        int inputY = rect.getPoint().getY() + rect.getSize().getHeight() - 1;
-        var input = new AttributedString();
-        input.append(" me> ", UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
-        input.append(_input.length() == 0 ? "type a message or :abort" : _input.toString(),
-                _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
-        UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY), width, input, UiTheme.TEXT_MUTED,
-                UiTheme.COMMAND_BACKGROUND);
+        var inputLines = inputLines();
+        int inputHeight = Math.max(1, rect.getSize().getHeight() - 1 - bodyHeight);
+        int inputStart = Math.min(_inputScrollLine, Math.max(0, inputLines.size() - 1));
+        int inputY = rect.getPoint().getY() + rect.getSize().getHeight() - inputHeight;
+        for (int i = 0; i < inputHeight && inputStart + i < inputLines.size(); i++) {
+            var input = new AttributedString();
+            String prefix = i == 0 ? " me> " : " ".repeat(ME_PREFIX.length() + 1);
+            input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
+            input.append(inputLines.get(inputStart + i),
+                    _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY + i), width, input,
+                    UiTheme.TEXT_MUTED, UiTheme.COMMAND_BACKGROUND);
+        }
     }
 }

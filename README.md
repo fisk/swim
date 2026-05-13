@@ -56,7 +56,7 @@ Normal mode uses familiar Vim-style keys:
 | `/` or `?` | Search |
 | `m` | Project file list |
 | `t` | Tree view plugin |
-| `Esc` | Open Nemo chat |
+| `Esc` | Start Nemo / open Nemo chat |
 
 ## Discoverability
 

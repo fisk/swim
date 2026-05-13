@@ -107,12 +107,39 @@ class KeyMenuViewTest {
     void bodyLineUsesSegmentBlockAndResetsToBaseBackground() throws Exception {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
 
-        AttributedString line = view.buildBodyLine();
+        AttributedString line = view.buildBodyLines(80).get(0);
 
         assertTrue(fragmentText(line, 0).contains("move h/j/k/l"));
         assertEquals(UiTheme.MENU_SEGMENT_BACKGROUND, background(line, 0));
         assertEquals(Powerline.SYMBOL_FILLED_RIGHT_ARROW, fragmentText(line, 1));
         assertEquals(UiTheme.MENU_SECONDARY_BACKGROUND, background(line, 1));
+    }
+
+    @Test
+    void defaultBodyIncludesEscForStartingNemo() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        assertTrue(view.bodyText().contains("Esc Nemo chat"));
+    }
+
+    @Test
+    void narrowMenuWrapsBodyIntoMultipleLines() {
+        var view = new KeyMenuView(Rect.create(0, 0, 18, 4));
+
+        var lines = view.buildBodyLines(18);
+
+        assertTrue(lines.size() > 1);
+        assertTrue(view.preferredHeight(18, 12) > 2);
+    }
+
+    @Test
+    void escShowsNemoChainDescription() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        view.observe(HeadlessWindowHarness.escape());
+
+        assertEquals("", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("Esc Nemo chat"));
     }
 
     @Test

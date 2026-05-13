@@ -8,6 +8,8 @@ import org.fisk.swim.text.AttributedString;
 public class CommandMenuView extends View {
     private static final int MIN_WIDTH = 28;
     private static final int MAX_WIDTH = 84;
+    private static final int MIN_BODY_ROWS = 1;
+    private static final int MIN_DETAIL_WIDTH = 16;
 
     private CommandView.CommandMenuState _state = CommandView.CommandMenuState.hidden();
 
@@ -125,13 +127,45 @@ public class CommandMenuView extends View {
         }
 
         int width = Math.min(parentSize.getWidth(), preferredWidth());
-        int contentRows = _state.matches().isEmpty()
-                ? 1
-                : Math.min(CommandView.MAX_VISIBLE_COMMANDS, _state.matches().size());
-        int height = Math.min(parentSize.getHeight(), contentRows + 1);
+        int maxBodyRows = Math.max(0, parentSize.getHeight() - 1);
+        int desiredBodyRows = preferredBodyRows(width, maxBodyRows);
+        int contentRows = Math.min(desiredBodyRows, maxBodyRows);
+        int height = Math.min(parentSize.getHeight(), 1 + contentRows);
         int x = 0;
         int y = Math.max(0, parentSize.getHeight() - 1 - height);
         return Rect.create(x, y, width, height);
+    }
+
+    private int preferredBodyRows(int width, int maxBodyRows) {
+        if (_state.matches().isEmpty()) {
+            return MIN_BODY_ROWS;
+        }
+        int desiredBodyRows = Math.min(CommandView.MAX_VISIBLE_COMMANDS, _state.matches().size());
+        if (maxBodyRows <= desiredBodyRows) {
+            return desiredBodyRows;
+        }
+
+        int labelWidth = preferredLabelWidth(width, _state.matches());
+        int detailWidth = Math.max(1, width - labelWidth - 3);
+        if (detailWidth >= MIN_DETAIL_WIDTH) {
+            return desiredBodyRows;
+        }
+
+        int totalRows = 0;
+        for (var match : _state.matches()) {
+            totalRows += rowsNeeded(width, labelWidth, match);
+            if (totalRows >= maxBodyRows) {
+                return maxBodyRows;
+            }
+        }
+        return Math.max(desiredBodyRows, totalRows);
+    }
+
+    private int rowsNeeded(int width, int labelWidth, CommandView.CommandSpec match) {
+        int detailWidth = Math.max(1, width - labelWidth - 3);
+        int detailLength = match.detail().length();
+        int wrappedDetailRows = Math.max(1, (detailLength + detailWidth - 1) / detailWidth);
+        return Math.max(1, wrappedDetailRows);
     }
 
     private int preferredWidth() {

@@ -13,6 +13,7 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
 public class KeyMenuView extends View {
+    private static final int MIN_HEIGHT = 2;
     enum FocusContext {
         BUFFER,
         COMMAND,
@@ -147,23 +148,26 @@ public class KeyMenuView extends View {
         return line;
     }
 
-    AttributedString buildBodyLine() {
-        var line = new AttributedString();
-        TextColorTracker colors = new TextColorTracker(UiTheme.MENU_SECONDARY_BACKGROUND);
-        UiTheme.appendSegment(line, bodyText(), UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
-        colors.background(UiTheme.MENU_SEGMENT_BACKGROUND);
-        appendBodyReset(line, colors);
-        return line;
-    }
-
     String bodyText() {
         if (!isDiscoverabilityActive()) {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "move h/j/k/l  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
+    }
+
+    int preferredHeight(int width, int totalHeight) {
+        if (width <= 0 || totalHeight <= 0) {
+            return 0;
+        }
+        if (width >= 24) {
+            return Math.min(MIN_HEIGHT, totalHeight);
+        }
+        int maxMenuHeight = Math.max(1, totalHeight - 3);
+        int preferred = 1 + buildBodyLines(width).size();
+        return Math.max(1, Math.min(Math.max(MIN_HEIGHT, preferred), maxMenuHeight));
     }
 
     String getBreadcrumb() {
@@ -176,10 +180,28 @@ public class KeyMenuView extends View {
         var graphics = TerminalContext.getInstance().getGraphics();
         int width = rect.getSize().getWidth();
         UiTheme.drawLine(graphics, rect.getPoint(), width, buildHeaderLine(), UiTheme.TEXT_MUTED, UiTheme.MENU_BACKGROUND);
-        if (rect.getSize().getHeight() > 1) {
-            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width,
-                    buildBodyLine(), UiTheme.TEXT_MUTED, UiTheme.MENU_SECONDARY_BACKGROUND);
+        var bodyLines = buildBodyLines(width);
+        for (int i = 0; i < rect.getSize().getHeight() - 1 && i < bodyLines.size(); i++) {
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), width,
+                    bodyLines.get(i), UiTheme.TEXT_MUTED, UiTheme.MENU_SECONDARY_BACKGROUND);
         }
+    }
+
+    List<AttributedString> buildBodyLines(int width) {
+        var wrapped = TextPanelView.wrapText(bodyText(), Math.max(1, width - 2));
+        if (wrapped.isEmpty()) {
+            wrapped = List.of("");
+        }
+        var lines = new ArrayList<AttributedString>();
+        for (String wrappedLine : wrapped) {
+            var line = new AttributedString();
+            TextColorTracker colors = new TextColorTracker(UiTheme.MENU_SECONDARY_BACKGROUND);
+            UiTheme.appendSegment(line, wrappedLine, UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
+            colors.background(UiTheme.MENU_SEGMENT_BACKGROUND);
+            appendBodyReset(line, colors);
+            lines.add(line);
+        }
+        return lines;
     }
 
     private boolean advance(String token) {
@@ -318,6 +340,7 @@ public class KeyMenuView extends View {
         root.child("V", leaf("visual line"));
         root.child("<CTRL>-v", leaf("visual block"));
         root.child("m", leaf("project files"));
+        root.child("<ESC>", leaf("start Nemo chat"));
         root.child("/", leaf("search forward"));
         root.child("?", leaf("search backward"));
         root.child("n", leaf("next match"));
