@@ -251,6 +251,18 @@ class NemoClientTest {
     }
 
     @Test
+    void reportsRecoverableHintForMavenProjectListCommandsWithoutAlsoMake() {
+        assertTrue(NemoClient.mavenAlsoMakeHint(
+                "mvn -q -pl swim-core -Dtest=NemoChatIT,ChatPanelViewTest test").contains(" -am"));
+        assertEquals(
+                null,
+                NemoClient.mavenAlsoMakeHint("mvn -q -pl swim-core -am -Dtest=NemoChatIT test"));
+        assertEquals(
+                null,
+                NemoClient.mavenAlsoMakeHint("printf 'ok'"));
+    }
+
+    @Test
     void executesRunCommandWhenModelRepeatsWorkspaceDirectoryName() throws Exception {
         Path project = tempDir.resolve(".swim");
         Files.createDirectories(project);
@@ -359,6 +371,42 @@ class NemoClientTest {
 
         assertTrue(output.startsWith("Tool run_command failed:"));
         assertTrue(output.contains("Recover by inspecting the path"));
+    }
+
+    @Test
+    void runCommandReturnsRecoverableHintForMavenProjectSelectionWithoutAlsoMake() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("Main.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = new NemoClient.Configuration(
+                "token",
+                "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"),
+                Map.of(),
+                project,
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                false,
+                50,
+                4000,
+                5);
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("4e", "run_command", json(Map.of(
+                        "command", "mvn -q -pl swim-core -Dtest=NemoChatIT,ChatPanelViewTest test"))));
+
+        assertTrue(output.startsWith("Tool run_command failed:"));
+        assertTrue(output.contains("must also include -am"));
     }
 
     @Test

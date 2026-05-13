@@ -709,6 +709,10 @@ public class NemoClient {
         String rawCwd = stringArgument(arguments, "cwd", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
+        String mavenHint = mavenAlsoMakeHint(command);
+        if (mavenHint != null) {
+            return mavenHint;
+        }
 
         var process = new ProcessBuilder("zsh", "-lc", command)
                 .directory(cwd.toFile())
@@ -732,6 +736,33 @@ public class NemoClient {
                 stdout,
                 "stderr:",
                 stderr));
+    }
+
+    static String mavenAlsoMakeHint(String command) {
+        if (command == null) {
+            return null;
+        }
+        String trimmed = command.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        boolean maven = trimmed.equals("mvn")
+                || trimmed.startsWith("mvn ")
+                || trimmed.equals("mvnw")
+                || trimmed.startsWith("mvnw ")
+                || trimmed.startsWith("./mvnw ")
+                || trimmed.equals("./mvnw");
+        if (!maven) {
+            return null;
+        }
+        boolean hasProjects = trimmed.matches(".*(^|\\s)(-pl|--projects)(\\s|=).*");
+        boolean alsoMake = trimmed.matches(".*(^|\\s)(-am|--also-make)(\\s|$).*");
+        if (hasProjects && !alsoMake) {
+            return "Tool run_command failed: Maven commands that use -pl/--projects in this repository must also include "
+                    + "-am/--also-make so dependent reactor modules are built too. "
+                    + "Retry with: " + command + " -am";
+        }
+        return null;
     }
 
     private static String writeFile(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
