@@ -93,6 +93,13 @@ public class ChatPanelView extends View {
         setNeedsRedraw();
     }
 
+    public void setMessages(List<ChatMessage> messages) {
+        _messages.clear();
+        _messages.addAll(messages);
+        scrollToBottom();
+        setNeedsRedraw();
+    }
+
     public void setPending(boolean pending) {
         setPending(pending, System.currentTimeMillis());
     }

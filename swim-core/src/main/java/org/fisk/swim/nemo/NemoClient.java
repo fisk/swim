@@ -1214,23 +1214,37 @@ public class NemoClient {
 
         conversation._panelView = createPanelView(conversation);
         window.showPanel(conversation._panelView);
+        replayConversationIntoVisiblePanel(conversation);
         _activeSessionId = conversation._id;
         _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
         persistSessions();
     }
 
     private ChatPanelView createPanelView(Conversation conversation) {
-        var panelView = new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0),
+        return new ChatPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0),
                 formatPanelTitle(conversation),
                 message -> submit(conversation, message),
                 command -> handleCommand(conversation, command));
-        for (var turn : conversation._turns) {
-            panelView.appendMessage(turn.speaker(), turn.text());
+    }
+
+    private void replayConversationIntoVisiblePanel(Conversation conversation) {
+        if (!isPanelVisible(conversation)) {
+            return;
         }
+        conversation._panelView.setMessages(mapTurnsToMessages(conversation));
         if (conversation._pending) {
-            panelView.setPending(true, conversation._pendingStartedAtMillis);
+            conversation._panelView.setPending(true, conversation._pendingStartedAtMillis);
+        } else {
+            conversation._panelView.setPending(false);
         }
-        return panelView;
+    }
+
+    private List<ChatPanelView.ChatMessage> mapTurnsToMessages(Conversation conversation) {
+        var messages = new ArrayList<ChatPanelView.ChatMessage>();
+        for (var turn : conversation._turns) {
+            messages.add(new ChatPanelView.ChatMessage(turn.speaker(), turn.text()));
+        }
+        return messages;
     }
 
     private static String formatPanelTitle(Conversation conversation) {

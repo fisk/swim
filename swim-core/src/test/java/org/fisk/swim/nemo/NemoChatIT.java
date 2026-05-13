@@ -183,6 +183,54 @@ class NemoChatIT {
         }
     }
 
+
+    @Test
+    @Timeout(15)
+    void restoresPersistedHistoryImmediatelyWhenOpeningPane() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo.conf"), "");
+        Files.writeString(configDir.resolve("nemo/sessions.json"),
+                """
+                        {
+                          "next_session_number": 2,
+                          "active_session_id": "session-1",
+                          "workspace_sessions": {
+                            "%s": "session-1"
+                          },
+                          "sessions": [
+                            {
+                              "id": "session-1",
+                              "title": "Session 1",
+                              "workspace_root": "%s",
+                              "created_at_millis": 1,
+                              "updated_at_millis": 2,
+                              "turns": [
+                                { "speaker": "me", "text": "Earlier question", "include_in_prompt": true },
+                                { "speaker": "nemo", "text": "Earlier answer", "include_in_prompt": true }
+                              ]
+                            }
+                          ]
+                        }
+                        """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
+        Path file = writeFile("chat.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+                var transcript = displayLines(panel);
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("me> Earlier question")));
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("nemo> Earlier answer")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
     @Test
     @Timeout(20)
     void listsAndAbortsWorkersAcrossSessions() throws Exception {
