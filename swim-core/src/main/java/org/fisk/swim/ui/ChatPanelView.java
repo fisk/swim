@@ -23,11 +23,24 @@ public class ChatPanelView extends View {
     public record ChatMessage(String speaker, String text) {
     }
 
+    public record PromptStyle(String inputPrefix, String historyPrefix, String emptyHint, String titleReadyLabel,
+            String titlePendingLabel) {
+        public static PromptStyle nemo() {
+            return new PromptStyle(INPUT_PREFIX, HISTORY_ME_PREFIX, "type a message or :abort", " ready ",
+                    " waiting for Nemo ");
+        }
+
+        public static PromptStyle shell() {
+            return new PromptStyle("> ", "> ", "type a shell command", " shell ready ", " shell busy ");
+        }
+    }
+
     private final String _title;
     private final Consumer<String> _onSubmit;
     private final Consumer<String> _onCommand;
     private final Consumer<String> _onCommandInputChanged;
     private final java.util.function.Function<String, CommandView.CommandMenuState> _commandMenuStateProvider;
+    private final PromptStyle _promptStyle;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
     private int _cursorOffset;
@@ -40,27 +53,38 @@ public class ChatPanelView extends View {
     private Runnable _responseAction;
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit) {
-        this(bounds, title, onSubmit, ignored -> {}, ignored -> {}, CommandView.CommandMenuState::forCommandText);
+        this(bounds, title, onSubmit, ignored -> {}, ignored -> {}, CommandView.CommandMenuState::forCommandText,
+                PromptStyle.nemo());
     }
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand) {
-        this(bounds, title, onSubmit, onCommand, ignored -> {}, CommandView.CommandMenuState::forCommandText);
+        this(bounds, title, onSubmit, onCommand, ignored -> {}, CommandView.CommandMenuState::forCommandText,
+                PromptStyle.nemo());
     }
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand,
             Consumer<String> onCommandInputChanged) {
-        this(bounds, title, onSubmit, onCommand, onCommandInputChanged, CommandView.CommandMenuState::forCommandText);
+        this(bounds, title, onSubmit, onCommand, onCommandInputChanged, CommandView.CommandMenuState::forCommandText,
+                PromptStyle.nemo());
     }
 
     public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand,
             Consumer<String> onCommandInputChanged,
             java.util.function.Function<String, CommandView.CommandMenuState> commandMenuStateProvider) {
+        this(bounds, title, onSubmit, onCommand, onCommandInputChanged, commandMenuStateProvider, PromptStyle.nemo());
+    }
+
+    public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit, Consumer<String> onCommand,
+            Consumer<String> onCommandInputChanged,
+            java.util.function.Function<String, CommandView.CommandMenuState> commandMenuStateProvider,
+            PromptStyle promptStyle) {
         super(bounds);
         _title = title;
         _onSubmit = onSubmit;
         _onCommand = onCommand;
         _onCommandInputChanged = onCommandInputChanged;
         _commandMenuStateProvider = commandMenuStateProvider;
+        _promptStyle = promptStyle == null ? PromptStyle.nemo() : promptStyle;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
@@ -200,9 +224,9 @@ public class ChatPanelView extends View {
         thread.start();
     }
 
-    private static String prefixForSpeaker(String speaker) {
+    private String prefixForSpeaker(String speaker) {
         return switch (speaker) {
-        case "me" -> HISTORY_ME_PREFIX;
+        case "me" -> _promptStyle.historyPrefix();
         case "nemo" -> NEMO_PREFIX;
         default -> speaker + "> ";
         };
@@ -213,8 +237,9 @@ public class ChatPanelView extends View {
     }
 
     private AttributedString renderLine(String line, TextColor background) {
-        if (line.startsWith(HISTORY_ME_PREFIX)) {
-            return renderPromptLine(HISTORY_ME_PREFIX, line.substring(HISTORY_ME_PREFIX.length()), UiTheme.CHAT_ME, background);
+        if (line.startsWith(_promptStyle.historyPrefix())) {
+            return renderPromptLine(_promptStyle.historyPrefix(), line.substring(_promptStyle.historyPrefix().length()),
+                    UiTheme.CHAT_ME, background);
         }
         if (line.startsWith(NEMO_PREFIX)) {
             return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), UiTheme.CHAT_NEMO, background);
@@ -258,8 +283,8 @@ public class ChatPanelView extends View {
     }
 
     List<String> inputLines() {
-        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
-        String text = _input.length() == 0 ? "type a message or :abort" : _input.toString();
+        int width = Math.max(1, getBounds().getSize().getWidth() - (_promptStyle.inputPrefix().length() + 1));
+        String text = _input.length() == 0 ? _promptStyle.emptyHint() : _input.toString();
         var wrapped = TextPanelView.wrapText(text, width);
         return wrapped.isEmpty() ? List.of("") : wrapped;
     }
@@ -292,7 +317,7 @@ public class ChatPanelView extends View {
         if (_cursorOffset <= 0) {
             return 0;
         }
-        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
+        int width = Math.max(1, getBounds().getSize().getWidth() - (_promptStyle.inputPrefix().length() + 1));
         return TextPanelView.wrapText(_input.substring(0, _cursorOffset), width).size() - 1;
     }
 
@@ -300,7 +325,7 @@ public class ChatPanelView extends View {
         if (_cursorOffset <= 0) {
             return 0;
         }
-        int width = Math.max(1, getBounds().getSize().getWidth() - (INPUT_PREFIX.length() + 1));
+        int width = Math.max(1, getBounds().getSize().getWidth() - (_promptStyle.inputPrefix().length() + 1));
         var wrapped = TextPanelView.wrapText(_input.substring(0, _cursorOffset), width);
         if (wrapped.isEmpty()) {
             return 0;
@@ -477,7 +502,8 @@ public class ChatPanelView extends View {
 
         var title = new AttributedString();
         title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        title.append(_pending ? " waiting for Nemo " : " ready ", _pending ? UiTheme.ACCENT_GOLD : UiTheme.ACCENT_GREEN,
+        title.append(_pending ? _promptStyle.titlePendingLabel() : _promptStyle.titleReadyLabel(),
+                _pending ? UiTheme.ACCENT_GOLD : UiTheme.ACCENT_GREEN,
                 UiTheme.SURFACE_ACCENT);
         if (_contextUsagePercent != null) {
             title.append(" ctx " + _contextUsagePercent + "% ", contextUsageColour(_contextUsagePercent),
@@ -502,7 +528,7 @@ public class ChatPanelView extends View {
         int cursorColumn = cursorColumn(cursorLine);
         for (int i = 0; i < inputHeight && inputStart + i < inputLines.size(); i++) {
             var input = new AttributedString();
-            String prefix = i == 0 ? " ! " : " ".repeat(INPUT_PREFIX.length() + 1);
+            String prefix = i == 0 ? " " + _promptStyle.inputPrefix() : " ".repeat(_promptStyle.inputPrefix().length() + 1);
             input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
             TextColor textColour = _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY;
             String inputLine = inputLines.get(inputStart + i);
