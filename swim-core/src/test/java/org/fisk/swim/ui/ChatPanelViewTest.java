@@ -82,6 +82,23 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void ctrlAAndCtrlEMoveToLineBoundaries() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke('a', true, false));
+        assertEquals(0, view.getCursorOffset());
+        dispatch(view, new KeyStroke('x', false, false));
+        dispatch(view, new KeyStroke('e', true, false));
+        assertEquals(view.getInputText().length(), view.getCursorOffset());
+        dispatch(view, new KeyStroke('y', false, false));
+
+        assertEquals("xabcy", view.getInputText());
+    }
+
+    @Test
     void backspaceDeletesBeforeCursor() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
 
@@ -200,6 +217,27 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void multilinePromptUsesPrimaryTextColourOnEveryLine() throws Exception {
+        var view = new ChatPanelView(Rect.create(0, 0, 10, 4), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke('d', false, false));
+        dispatch(view, new KeyStroke('e', false, false));
+        dispatch(view, new KeyStroke('f', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter, false, false, true));
+        dispatch(view, new KeyStroke('g', false, false));
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke('i', false, false));
+
+        var lines = view.inputLines();
+        assertTrue(lines.size() > 1);
+        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(0), 0, 0));
+        assertEquals(UiTheme.TEXT_PRIMARY, inputTextColour(view, lines.get(1), 1, 0));
+    }
+
+    @Test
     void escapeClosesActiveChatPanel() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("chat-panel.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();
@@ -221,6 +259,17 @@ class ChatPanelViewTest {
         Method method = ChatPanelView.class.getDeclaredMethod("renderLine", String.class);
         method.setAccessible(true);
         return (AttributedString) method.invoke(view, line);
+    }
+
+    private static TextColor inputTextColour(ChatPanelView view, String inputLine, int lineIndex, int fragmentIndex)
+            throws Exception {
+        Method method = ChatPanelView.class.getDeclaredMethod("renderPromptLine", String.class, String.class,
+                TextColor.class, TextColor.class);
+        method.setAccessible(true);
+        String prefix = lineIndex == 0 ? " me> " : " ".repeat(5);
+        AttributedString line = (AttributedString) method.invoke(view, prefix, inputLine, UiTheme.CHAT_ME,
+                UiTheme.COMMAND_BACKGROUND);
+        return foreground(line, fragmentIndex + 1);
     }
 
     private static TextColor foreground(AttributedString line, int fragmentIndex) throws Exception {

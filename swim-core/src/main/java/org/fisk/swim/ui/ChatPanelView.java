@@ -198,7 +198,7 @@ public class ChatPanelView extends View {
         }
     }
 
-    private List<String> inputLines() {
+    List<String> inputLines() {
         int width = Math.max(1, getBounds().getSize().getWidth() - (ME_PREFIX.length() + 1));
         String text = _input.length() == 0 ? "type a message or :abort" : _input.toString();
         var wrapped = TextPanelView.wrapText(text, width);
@@ -364,6 +364,31 @@ public class ChatPanelView extends View {
             return Response.YES;
         case Character:
             char character = event.getCharacter();
+            if (event.isCtrlDown()) {
+                if (character == 'a' || character == 'A') {
+                    if (_cursorOffset == 0) {
+                        return Response.NO;
+                    }
+                    _responseAction = () -> {
+                        _cursorOffset = 0;
+                        ensureInputVisible();
+                        setNeedsRedraw();
+                    };
+                    return Response.YES;
+                }
+                if (character == 'e' || character == 'E') {
+                    if (_cursorOffset >= _input.length()) {
+                        return Response.NO;
+                    }
+                    _responseAction = () -> {
+                        _cursorOffset = _input.length();
+                        ensureInputVisible();
+                        setNeedsRedraw();
+                    };
+                    return Response.YES;
+                }
+                return Response.NO;
+            }
             _responseAction = () -> {
                 _input.insert(_cursorOffset, character);
                 _cursorOffset++;
@@ -416,12 +441,11 @@ public class ChatPanelView extends View {
             var input = new AttributedString();
             String prefix = i == 0 ? " me> " : " ".repeat(ME_PREFIX.length() + 1);
             input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
-            input.append(inputLines.get(inputStart + i),
-                    _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+            TextColor textColour = _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY;
+            input.append(inputLines.get(inputStart + i), textColour, UiTheme.COMMAND_BACKGROUND);
             if (_input.length() > 0 && inputStart + i == cursorLine) {
                 int caretIndex = Math.max(0, Math.min(cursorColumn, inputLines.get(inputStart + i).length()));
-                input.insert(prefix.length() + caretIndex,
-                        new AttributedString(" ", UiTheme.COMMAND_BACKGROUND, UiTheme.TEXT_PRIMARY));
+                input.insert(" ", prefix.length() + caretIndex, UiTheme.COMMAND_BACKGROUND, textColour);
             }
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY + i), width, input,
                     UiTheme.TEXT_MUTED, UiTheme.COMMAND_BACKGROUND);
