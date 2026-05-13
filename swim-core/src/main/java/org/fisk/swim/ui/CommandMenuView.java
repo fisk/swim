@@ -7,7 +7,6 @@ import org.fisk.swim.text.AttributedString;
 
 public class CommandMenuView extends View {
     private static final int MIN_WIDTH = 28;
-    private static final int MAX_WIDTH = 84;
     private static final int MIN_BODY_ROWS = 1;
     private static final int MIN_DETAIL_WIDTH = 16;
 
@@ -126,7 +125,7 @@ public class CommandMenuView extends View {
             return Rect.create(0, 0, 0, 0);
         }
 
-        int width = Math.min(parentSize.getWidth(), preferredWidth());
+        int width = Math.max(MIN_WIDTH, parentSize.getWidth());
         int maxBodyRows = Math.max(0, parentSize.getHeight() - 1);
         int desiredBodyRows = preferredBodyRows(width, maxBodyRows);
         int contentRows = Math.min(desiredBodyRows, maxBodyRows);
@@ -166,14 +165,6 @@ public class CommandMenuView extends View {
         int detailLength = match.detail().length();
         int wrappedDetailRows = Math.max(1, (detailLength + detailWidth - 1) / detailWidth);
         return Math.max(1, wrappedDetailRows);
-    }
-
-    private int preferredWidth() {
-        int width = MIN_WIDTH;
-        for (var match : _state.matches()) {
-            width = Math.max(width, match.label().length() + 2 + match.detail().length() + 2);
-        }
-        return Math.min(MAX_WIDTH, width);
     }
 
     private int preferredLabelWidth(int contentWidth, List<CommandView.CommandSpec> visibleMatches) {

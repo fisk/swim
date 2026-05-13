@@ -28,6 +28,7 @@ class CommandMenuViewTest {
 
             menuView.setState(commandView.getMenuState());
 
+            assertEquals(80, menuView.getBounds().getSize().getWidth());
             assertEquals(3, menuView.getBounds().getSize().getHeight());
         }
     }
@@ -45,6 +46,7 @@ class CommandMenuViewTest {
 
             menuView.setState(commandView.getMenuState());
 
+            assertEquals(28, menuView.getBounds().getSize().getWidth());
             assertTrue(menuView.getBounds().getSize().getHeight() > 3);
             assertEquals(6, menuView.getBounds().getSize().getHeight());
         }
@@ -60,6 +62,7 @@ class CommandMenuViewTest {
         menuView.setState(new CommandView.CommandMenuState(true, "r", matches, 0));
         menuView.resize(Size.create(28, 4));
 
+        assertEquals(28, menuView.getBounds().getSize().getWidth());
         assertEquals(4, menuView.getBounds().getSize().getHeight());
     }
 }

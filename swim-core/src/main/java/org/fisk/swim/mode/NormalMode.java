@@ -140,6 +140,9 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder(":", () -> {
             window.getCommandView().activate(":");
         });
+        _rootResponder.addEventResponder("!", () -> {
+            NemoClient.getInstance().run(window.getBufferContext(), "");
+        });
         _rootResponder.addEventResponder("*", () -> {
             var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {

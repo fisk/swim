@@ -442,10 +442,12 @@ public class ChatPanelView extends View {
             String prefix = i == 0 ? " me> " : " ".repeat(ME_PREFIX.length() + 1);
             input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
             TextColor textColour = _input.length() == 0 ? UiTheme.TEXT_SUBTLE : UiTheme.TEXT_PRIMARY;
-            input.append(inputLines.get(inputStart + i), textColour, UiTheme.COMMAND_BACKGROUND);
-            if (_input.length() > 0 && inputStart + i == cursorLine) {
-                int caretIndex = Math.max(0, Math.min(cursorColumn, inputLines.get(inputStart + i).length()));
-                input.insert(" ", prefix.length() + caretIndex, UiTheme.COMMAND_BACKGROUND, textColour);
+            String inputLine = inputLines.get(inputStart + i);
+            input.append(inputLine, textColour, UiTheme.COMMAND_BACKGROUND);
+            if (_input.length() > 0 && inputStart + i == cursorLine && cursorColumn < inputLine.length()) {
+                int caretIndex = Math.max(0, cursorColumn);
+                input.format(prefix.length() + caretIndex, prefix.length() + caretIndex + 1,
+                        UiTheme.COMMAND_BACKGROUND, textColour);
             }
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), inputY + i), width, input,
                     UiTheme.TEXT_MUTED, UiTheme.COMMAND_BACKGROUND);

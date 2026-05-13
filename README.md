@@ -52,7 +52,8 @@ Normal mode uses familiar Vim-style keys:
 | `u` / `Ctrl-r` | Undo / redo |
 | `i` | Enter insert mode |
 | `v`, `V`, `Ctrl-v` | Visual, visual-line, visual-block |
-| `:` | Command line |
+| `:` | Open command line |
+| `!` | Start Nemo / open Nemo chat |
 | `/` or `?` | Search |
 | `m` | Project file list |
 | `t` | Tree view plugin |
@@ -65,7 +66,9 @@ SWIM now exposes more of the editor while you work:
 - The two-line top menu shows normal-mode key chains and updates live as you type prefixes.
 - When the command line is active, the top menu switches to command-specific hints.
 - Typing `:` opens a command popup with matching commands for the current prefix.
+- The command popup uses the full window width and can grow taller when longer descriptions need more room.
 - `Up` and `Down` move through command matches, and `Tab` completes the selected command.
+- Typing `!` or `Esc` opens the Nemo chat pane.
 
 This makes it possible to explore commands and key chains without memorizing everything up front.
 
@@ -208,7 +211,9 @@ If your plugin provides UI, register a `SwimPanel` from `load(...)` using the `S
 
 ## Nemo
 
-SWIM includes `:nemo`, a built-in AI assistant for the current workspace.
+SWIM includes a built-in AI assistant for the current workspace.
+
+Open Nemo from normal mode with `!` or `Esc`.
 
 Nemo reads configuration from `~/.swim/nemo.conf`:
 

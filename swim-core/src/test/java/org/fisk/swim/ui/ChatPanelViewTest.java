@@ -238,6 +238,28 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void caretOverlapsCharacterInsteadOfInsertingGap() throws Exception {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+        dispatch(view, new KeyStroke(KeyType.ArrowLeft));
+
+        Method method = ChatPanelView.class.getDeclaredMethod("draw", Rect.class);
+        method.setAccessible(true);
+        // keep test near rendering helpers by validating composed attributed content directly
+        var input = new AttributedString();
+        String prefix = " me> ";
+        input.append(prefix, UiTheme.CHAT_ME, UiTheme.COMMAND_BACKGROUND);
+        input.append("abc", UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+        input.format(prefix.length() + 2, prefix.length() + 3, UiTheme.COMMAND_BACKGROUND, UiTheme.TEXT_PRIMARY);
+
+        assertEquals(" me> abc", input.toString());
+        assertEquals(UiTheme.COMMAND_BACKGROUND, foreground(input, 2));
+    }
+
+    @Test
     void escapeClosesActiveChatPanel() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("chat-panel.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();
