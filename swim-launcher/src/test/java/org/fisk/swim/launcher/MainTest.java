@@ -189,7 +189,7 @@ class MainTest {
                 "-Djava.awt.headless=true"));
 
         String content = Files.readString(launcher);
-        assertTrue(content.contains("JLINK_VM_OPTIONS='-XX:+UseZGC --add-opens=java.base/java.net=ALL-UNNAMED -Djava.awt.headless=true'"));
+        assertTrue(content.contains("JLINK_VM_OPTIONS='-XX:+UseZGC -Xmx1g --add-opens=java.base/java.net=ALL-UNNAMED -Djava.awt.headless=true'"));
         assertTrue(content.contains("exec 2>>\"$LOG_FILE\""));
         assertTrue(content.contains("\"$DIR/java\" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\""));
     }

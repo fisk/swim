@@ -248,7 +248,7 @@ public final class LauncherImageInstaller {
         if (!Files.isRegularFile(launcherScript)) {
             return;
         }
-        String options = "-XX:+UseZGC";
+        String options = "-XX:+UseZGC -Xmx1g";
         if (!launcherOptions.isEmpty()) {
             options += " " + String.join(" ", launcherOptions);
         }
