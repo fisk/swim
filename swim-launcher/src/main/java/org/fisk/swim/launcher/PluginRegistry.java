@@ -182,20 +182,7 @@ final class PluginRegistry implements Main.PluginController {
     }
 
     static ModuleLayer createPluginLayer(Path buildRoot, List<Path> pluginJars, ModuleLayer coreLayer, ClassLoader parentLoader) {
-        var modulePath = new ArrayList<Path>(pluginJars);
-        Path libs = Main.resolveCoreArtifactDirectory(buildRoot).resolve("runtime-libs");
-        if (Files.isDirectory(libs)) {
-            try (var stream = Files.list(libs)) {
-                stream.filter(path -> path.getFileName().toString().endsWith(".jar"))
-                        .filter(path -> !Main.isSharedLib(path))
-                        .sorted()
-                        .forEach(modulePath::add);
-            } catch (IOException e) {
-                throw new RuntimeException("Unable to inspect plugin runtime libs directory " + libs, e);
-            }
-        }
-
-        var finder = ModuleFinder.of(modulePath.toArray(Path[]::new));
+        var finder = ModuleFinder.of(pluginJars.toArray(Path[]::new));
         var roots = new HashSet<String>();
         for (Path path : pluginJars) {
             roots.add(describeModule(path));

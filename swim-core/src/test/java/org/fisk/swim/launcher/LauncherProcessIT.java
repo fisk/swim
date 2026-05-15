@@ -8,6 +8,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -338,6 +339,73 @@ class LauncherProcessIT {
             runCommand(process, "q");
             boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
             assertTrue(exited, "Installed launcher binary did not exit after repository Java workflow.\n" + process.output());
+        } finally {
+            destroyIfAlive(process.process());
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    void installedLauncherBinaryCanOpenMailPanelWithCopiedRuntimeFiles() throws Exception {
+        Path scriptUtility = Path.of("/usr/bin/script");
+        Assumptions.assumeTrue(Files.isExecutable(scriptUtility), "script utility is required for launcher process test");
+        Assumptions.assumeTrue(scriptCanDriveInteractiveCommand(scriptUtility),
+                "script utility must support driving interactive child stdin");
+
+        Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
+        Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
+
+        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
+        Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
+                buildRoot,
+                scriptUtility,
+                launcherBinary.toString(), buildRoot.resolve("README.md").toString()),
+                "script utility must keep the installed launcher session stdin open long enough for interaction");
+
+        Path tempHome = tempDir.resolve("home");
+        Path tempSwim = tempHome.resolve(".swim");
+        Path tempEmail = tempSwim.resolve("email");
+        Files.createDirectories(tempEmail);
+        Path currentEmail = buildRoot.resolve("email");
+        if (Files.isDirectory(currentEmail)) {
+            try (var stream = Files.list(currentEmail)) {
+                for (Path file : stream.toList()) {
+                    if (Files.isRegularFile(file)) {
+                        Files.copy(file, tempEmail.resolve(file.getFileName().toString()),
+                                StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            }
+        }
+
+        Set<Path> existingLogs = listLogFiles();
+        var process = startProcess(
+                buildRoot,
+                launcherBinary,
+                Map.of("HOME", tempHome.toString()),
+                scriptUtility.toString(), "-q", "/dev/null",
+                launcherBinary.toString(), buildRoot.resolve("README.md").toString());
+        try {
+            waitForStartup(process);
+            Path logFile = waitForNewLogFile(existingLogs, java.time.Duration.ofSeconds(10));
+            assertTrue(logFile != null, "Expected launcher binary to create a new /tmp/swim-*.log file.");
+            assertTrue(process.process().isAlive(),
+                    "Installed launcher binary died before opening mail panel.\n" + process.output());
+
+            type(process, "e");
+            Thread.sleep(1500);
+
+            assertTrue(process.process().isAlive(),
+                    "Installed launcher binary died after pressing e.\nOutput:\n" + process.output()
+                            + "\nLog:\n" + Files.readString(logFile));
+            assertTrue(!waitForFileText(logFile, "Failed to initialize mail plugin", java.time.Duration.ofSeconds(1)),
+                    "Mail plugin failed to initialize.\nOutput:\n" + process.output()
+                            + "\nLog:\n" + Files.readString(logFile));
+
+            runCommand(process, "q");
+            boolean exited = process.process().waitFor(java.time.Duration.ofSeconds(10));
+            assertTrue(exited, "Installed launcher binary did not exit after mail panel test.\n" + process.output());
         } finally {
             destroyIfAlive(process.process());
         }

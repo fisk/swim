@@ -123,6 +123,13 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void defaultBodyIncludesMailShortcut() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        assertTrue(view.bodyText().contains("mail e"));
+    }
+
+    @Test
     void narrowMenuWrapsBodyIntoMultipleLines() {
         var view = new KeyMenuView(Rect.create(0, 0, 18, 4));
 

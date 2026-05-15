@@ -97,6 +97,22 @@ class PluginRegistryTest {
         assertEquals(List.of("core-start", "core-close", "core-start"), Files.readAllLines(events));
     }
 
+    @Test
+    void registryLoadsPluginThatDependsOnSharedRuntimeLibFromCoreLayer() throws Exception {
+        Path root = createSyntheticInstalledBuildRootWithPluginDependency();
+        Path file = root.resolve("README.txt");
+        Path events = root.resolve("plugin-registry-events.txt");
+        Files.writeString(file, "hello");
+
+        var registry = new PluginRegistry();
+        var host = new RecordingHost(root);
+
+        registry.reload(root, file, host, Main.class.getClassLoader(), null);
+        registry.loadPlugin("marker-plugin", file, host);
+
+        assertEquals(List.of("core-start", "plugin-load:ok"), Files.readAllLines(events));
+    }
+
     private Path createSyntheticInstalledBuildRoot() throws Exception {
         Path root = tempDir.resolve("swim");
         Path plugins = root.resolve("plugins");
@@ -187,6 +203,117 @@ class PluginRegistryTest {
                         }
                         """
         ), pluginClasses, List.of(classpath));
+
+        jarDirectory(coreClasses, plugins.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "org.fisk.swim.core",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.RecordingApp\n"));
+        jarDirectory(pluginClasses, plugins.resolve("marker-plugin-0.0.1-SNAPSHOT.jar"), "demo.marker.plugin",
+                Map.of("META-INF/services/org.fisk.swim.api.SwimPlugin", "fake.plugin.MarkerPlugin\n"));
+        return root;
+    }
+
+    private Path createSyntheticInstalledBuildRootWithPluginDependency() throws Exception {
+        Path root = tempDir.resolve("swim-deps");
+        Path plugins = root.resolve("plugins");
+        Path runtimeLibs = plugins.resolve("runtime-libs");
+        Files.createDirectories(runtimeLibs);
+        Files.createDirectories(root.resolve("swim-core"));
+        Files.writeString(root.resolve("pom.xml"), "<project />");
+
+        Path compileDir = tempDir.resolve("compile-deps");
+        Path helperClasses = compileDir.resolve("helper-classes");
+        Path coreClasses = compileDir.resolve("core-classes");
+        Path pluginClasses = compileDir.resolve("plugin-classes");
+        Files.createDirectories(helperClasses);
+        Files.createDirectories(coreClasses);
+        Files.createDirectories(pluginClasses);
+        String classpath = System.getProperty("java.class.path");
+
+        compileJava(Map.of(
+                "fake/dep/Helper.java", """
+                        package fake.dep;
+                        public final class Helper {
+                            public static String value() {
+                                return "ok";
+                            }
+                        }
+                        """
+        ), helperClasses, List.of(classpath));
+        Path helperJar = runtimeLibs.resolve("helper-lib.jar");
+        jarDirectory(helperClasses, helperJar, null, Map.of());
+
+        compileJava(Map.of(
+                "fake/core/RecordingApp.java", """
+                        package fake.core;
+                        import java.nio.file.Files;
+                        import java.nio.file.Path;
+                        import java.nio.file.StandardOpenOption;
+                        import org.fisk.swim.api.SwimApp;
+                        import org.fisk.swim.api.SwimHost;
+                        public final class RecordingApp implements SwimApp {
+                            private SwimHost host;
+                            public void start(Path path, SwimHost host) {
+                                this.host = host;
+                                append("core-start");
+                            }
+                            public void refresh(boolean forced) {
+                            }
+                            public Path getCurrentPath() {
+                                return Path.of(".");
+                            }
+                            public void showMessage(String message) {
+                            }
+                            public void close() {
+                            }
+                            private void append(String event) {
+                                try {
+                                    Files.writeString(host.getBuildRoot().resolve("plugin-registry-events.txt"),
+                                            event + System.lineSeparator(),
+                                            StandardOpenOption.CREATE,
+                                            StandardOpenOption.APPEND);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        }
+                        """
+        ), coreClasses, List.of(classpath, helperJar.toString()));
+
+        compileJava(Map.of(
+                "fake/plugin/MarkerPlugin.java", """
+                        package fake.plugin;
+                        import java.nio.file.Files;
+                        import java.nio.file.Path;
+                        import java.nio.file.StandardOpenOption;
+                        import org.fisk.swim.api.SwimPlugin;
+                        import org.fisk.swim.api.SwimPluginContext;
+                        import fake.dep.Helper;
+                        public final class MarkerPlugin implements SwimPlugin {
+                            private Path events;
+                            public String getId() {
+                                return "marker-plugin";
+                            }
+                            public boolean loadOnStartup() {
+                                return false;
+                            }
+                            public void load(SwimPluginContext context) {
+                                events = context.getHost().getBuildRoot().resolve("plugin-registry-events.txt");
+                                append("plugin-load:" + Helper.value());
+                            }
+                            public void close() {
+                            }
+                            private void append(String event) {
+                                try {
+                                    Files.writeString(events,
+                                            event + System.lineSeparator(),
+                                            StandardOpenOption.CREATE,
+                                            StandardOpenOption.APPEND);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        }
+                        """
+        ), pluginClasses, List.of(classpath, helperJar.toString()));
 
         jarDirectory(coreClasses, plugins.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "org.fisk.swim.core",
                 Map.of("META-INF/services/org.fisk.swim.api.SwimApp", "fake.core.RecordingApp\n"));

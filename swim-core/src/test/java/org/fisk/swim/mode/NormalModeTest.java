@@ -6,9 +6,19 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
+import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.MailPanelView;
+import org.fisk.swim.ui.ShellPanelView;
+import org.fisk.swim.mail.MailClient;
+import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailPluginRegistry;
+import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadSummary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -23,8 +33,8 @@ class NormalModeTest {
 
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());
-        Files.createDirectories(tempDir.resolve(".swim"));
-        Files.writeString(tempDir.resolve(".swim/nemo.conf"), "");
+        Files.createDirectories(tempDir.resolve(".swim/nemo"));
+        Files.writeString(tempDir.resolve(".swim/nemo/nemo.conf"), "");
         resetNemoClientForTests();
         try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
             var window = harness.getWindow();
@@ -38,11 +48,104 @@ class NormalModeTest {
         }
     }
 
+    @Test
+    void greaterThanStartsShellPanel() throws Exception {
+        Path path = tempDir.resolve("greater-than-opens-shell.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('>'));
+
+            assertTrue(window.getPanelView() instanceof ShellPanelView);
+        }
+    }
+
+    @Test
+    void eStartsMailPanel() throws Exception {
+        Path path = tempDir.resolve("mail-opens-panel.txt");
+        Files.writeString(path, "abc");
+
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        MailPluginRegistry.register(new FakeMailClient(tempDir.resolve(".swim/email")));
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('e'));
+
+            assertTrue(window.getPanelView() instanceof MailPanelView);
+            assertTrue("swim-email".equals(host.pluginId));
+        } finally {
+            MailPluginRegistry.clear();
+            SwimRuntime.clear();
+        }
+    }
+
     private static void resetNemoClientForTests() throws Exception {
         Class<?> nemoClientClass = Class.forName("org.fisk.swim.nemo.NemoClient");
         Object instance = nemoClientClass.getMethod("getInstance").invoke(null);
         Method reset = nemoClientClass.getDeclaredMethod("resetForTests");
         reset.setAccessible(true);
         reset.invoke(instance);
+    }
+
+    private static final class RecordingHost implements SwimHost {
+        private String pluginId;
+
+        @Override
+        public void requestReload(Path path) {
+        }
+
+        @Override
+        public void requestRebuildAndReload(Path path) {
+        }
+
+        @Override
+        public void requestLoadPlugin(String pluginId, Path path) {
+            this.pluginId = pluginId;
+        }
+
+        @Override
+        public void requestExit() {
+        }
+
+        @Override
+        public Path getBuildRoot() {
+            return Path.of("/tmp");
+        }
+    }
+
+    private static final class FakeMailClient implements MailClient {
+        private final Path _dataPath;
+
+        private FakeMailClient(Path dataPath) {
+            _dataPath = dataPath;
+        }
+
+        @Override
+        public MailSnapshot snapshot() {
+            return new MailSnapshot(
+                    List.of(),
+                    List.of(new MailThreadSummary(1L, "account", "Subject", "sender@example.com",
+                            "Snippet", "2026-05-13T00:00:00Z", true, 1, List.of("tag"))),
+                    "status");
+        }
+
+        @Override
+        public MailMessageDetail loadMessage(long threadId) {
+            return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com", "dest@example.com",
+                    "2026-05-13T00:00:00Z", "Body", List.of("tag"));
+        }
+
+        @Override
+        public void refresh() {
+        }
+
+        @Override
+        public Path getDataPath() {
+            return _dataPath;
+        }
     }
 }

@@ -190,7 +190,7 @@ class NemoChatIT {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");
         Files.createDirectories(configDir.resolve("nemo"));
-        Files.writeString(configDir.resolve("nemo.conf"), "");
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), "");
         Files.writeString(configDir.resolve("nemo/sessions.json"),
                 """
                         {
@@ -283,8 +283,8 @@ class NemoChatIT {
     void renamesAndDeletesSessionsAndPersistsMetadata() throws Exception {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");
-        Files.createDirectories(configDir);
-        Files.writeString(configDir.resolve("nemo.conf"), "");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), "");
         Path file = writeFile("chat.txt", "class Demo {}\n");
         try {
             try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
@@ -409,8 +409,8 @@ class NemoChatIT {
 
     private void writeConfig(HttpServer server) throws IOException {
         Path configDir = tempDir.resolve(".swim");
-        Files.createDirectories(configDir);
-        Files.writeString(configDir.resolve("nemo.conf"), String.join("\n",
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
                 "api_key=test-token",
                 "model=gpt-5.4",
                 "responses_url=http://127.0.0.1:" + server.getAddress().getPort() + "/responses",

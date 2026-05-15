@@ -126,6 +126,38 @@ class NemoClientTest {
     }
 
     @Test
+    void configAndStatePathsLiveUnderNemoDirectory() {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            assertEquals(tempDir.resolve(".swim/nemo/nemo.conf"), NemoClient.getConfigPath());
+            assertEquals(tempDir.resolve(".swim/nemo/sessions.json"), NemoClient.getStatePath());
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void loadConfigurationMigratesLegacyConfigIntoNemoDirectory() throws IOException {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            Path swimDir = tempDir.resolve(".swim");
+            Files.createDirectories(swimDir);
+            Path legacyConfig = swimDir.resolve("nemo.conf");
+            Files.writeString(legacyConfig, "api_key=token\n");
+
+            var configuration = NemoClient.loadConfiguration(NemoClient.getConfigPath());
+
+            assertEquals("token", configuration.apiKey());
+            assertTrue(Files.isRegularFile(NemoClient.getConfigPath()));
+            assertFalse(Files.exists(legacyConfig));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void explicitResponsesUrlWinsOverBaseUrl() {
         assertEquals("https://example.invalid/custom/responses",
                 NemoClient.buildResponsesUri("https://example.invalid/custom/responses", "https://ignored.invalid").toString());

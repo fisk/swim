@@ -438,6 +438,9 @@ public class Window implements Drawable {
         if (responder instanceof TextPanelView textPanelView) {
             return textPanelView.getTitle();
         }
+        if (responder instanceof ShellPanelView) {
+            return "shell input active";
+        }
         if (responder instanceof ChatPanelView chatPanelView) {
             return chatPanelView.getTitle();
         }

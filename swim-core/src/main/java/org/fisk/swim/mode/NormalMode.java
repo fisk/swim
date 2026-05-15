@@ -5,10 +5,12 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
+import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.PluginPanelView;
+import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.ui.Window;
 
 public class NormalMode extends Mode {
@@ -134,6 +136,9 @@ public class NormalMode extends Mode {
                 window.showList(FileIndex.createFileList(), "Project Files");
             }
         });
+        _rootResponder.addEventResponder("e", () -> {
+            MailUiSupport.toggle(window);
+        });
         _rootResponder.addEventResponder("t", () -> {
             toggleTreeView();
         });
@@ -142,6 +147,14 @@ public class NormalMode extends Mode {
         });
         _rootResponder.addEventResponder("!", () -> {
             NemoClient.getInstance().run(window.getBufferContext(), "");
+        });
+        _rootResponder.addEventResponder(">", () -> {
+            try {
+                var shellView = ShellPanelView.createDefault(window, org.fisk.swim.ui.Rect.create(0, 0, 0, 0));
+                window.showPanel(shellView);
+            } catch (java.io.IOException e) {
+                window.getCommandView().setMessage("Failed to start shell: " + e.getMessage());
+            }
         });
         _rootResponder.addEventResponder("*", () -> {
             var word = window.getBufferContext().getBuffer().getInnerWord();

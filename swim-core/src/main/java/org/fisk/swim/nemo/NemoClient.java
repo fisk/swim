@@ -145,12 +145,20 @@ public class NemoClient {
             int toolCommandTimeoutSeconds) {
     }
 
+    static Path getConfigDirectory() {
+        return Paths.get(System.getProperty("user.home"), ".swim", "nemo");
+    }
+
     static Path getConfigPath() {
+        return getConfigDirectory().resolve("nemo.conf");
+    }
+
+    static Path getLegacyConfigPath() {
         return Paths.get(System.getProperty("user.home"), ".swim", "nemo.conf");
     }
 
     static Path getStatePath() {
-        return Paths.get(System.getProperty("user.home"), ".swim", "nemo", "sessions.json");
+        return getConfigDirectory().resolve("sessions.json");
     }
 
     static String buildInput(BufferContext context, String question) {
@@ -186,6 +194,7 @@ public class NemoClient {
     }
 
     static Configuration loadConfiguration(Path configPath) {
+        configPath = migrateLegacyConfigIfNeeded(configPath);
         var properties = new Properties();
         if (Files.isRegularFile(configPath)) {
             try (InputStream input = Files.newInputStream(configPath)) {
@@ -254,6 +263,28 @@ public class NemoClient {
                 intProperty(properties, "tool.max_results", _defaultMaxResults),
                 intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
                 intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
+    }
+
+    private static Path migrateLegacyConfigIfNeeded(Path configPath) {
+        Path legacyConfigPath = getLegacyConfigPath();
+        if (configPath.equals(legacyConfigPath)) {
+            return configPath;
+        }
+        if (Files.isRegularFile(configPath) || !Files.isRegularFile(legacyConfigPath)) {
+            return configPath;
+        }
+        try {
+            Files.createDirectories(configPath.getParent());
+            try {
+                Files.move(legacyConfigPath, configPath, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.move(legacyConfigPath, configPath);
+            }
+            return configPath;
+        } catch (IOException e) {
+            _log.warn("Unable to migrate Nemo config from {} to {}", legacyConfigPath, configPath, e);
+            return legacyConfigPath;
+        }
     }
 
     private static String property(Properties properties, String key) {

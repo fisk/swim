@@ -153,7 +153,7 @@ public class KeyMenuView extends View {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  mail e  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
     }
@@ -278,7 +278,7 @@ public class KeyMenuView extends View {
             if (_commandText != null && _commandText.startsWith("focus")) {
                 return "Up/down pick  •  Tab complete  •  focus left/right/up/down  •  next/prev  •  Enter run";
             }
-            return "Up/down pick  •  Tab complete  •  split/vsplit  •  close/only  •  focus  •  Enter run";
+            return "Up/down pick  •  Tab complete  •  split/vsplit  •  close/only  •  focus  •  mail  •  Enter run";
         }
         if (_commandText != null && _commandText.startsWith("focus")) {
             return "focus left/right/up/down  •  focus next/prev  •  Enter run  •  Esc cancel";
@@ -340,6 +340,7 @@ public class KeyMenuView extends View {
         root.child("V", leaf("visual line"));
         root.child("<CTRL>-v", leaf("visual block"));
         root.child("m", leaf("project files"));
+        root.child("e", leaf("email"));
         root.child("<ESC>", leaf("start Nemo chat"));
         root.child("/", leaf("search forward"));
         root.child("?", leaf("search backward"));

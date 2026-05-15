@@ -54,8 +54,10 @@ Normal mode uses familiar Vim-style keys:
 | `v`, `V`, `Ctrl-v` | Visual, visual-line, visual-block |
 | `:` | Open command line |
 | `!` | Start Nemo / open Nemo chat |
+| `>` | Open shell panel |
 | `/` or `?` | Search |
 | `m` | Project file list |
+| `e` | Mail client |
 | `t` | Tree view plugin |
 | `Esc` | Start Nemo / open Nemo chat |
 
@@ -69,6 +71,7 @@ SWIM now exposes more of the editor while you work:
 - The command popup uses the full window width and can grow taller when longer descriptions need more room.
 - `Up` and `Down` move through command matches, and `Tab` completes the selected command.
 - Typing `!` or `Esc` opens the Nemo chat pane.
+- Typing `>` opens a shell panel using your configured `$SHELL` (for example `zsh`).
 
 This makes it possible to explore commands and key chains without memorizing everything up front.
 
@@ -136,6 +139,121 @@ C and C++ files (`.c`, `.h`, `.cpp`, `.hpp`) use the separate `swim-clangd-lsp` 
 - Install `clangd` so it is available on `PATH`.
 - Keep a `compile_commands.json` in the project root or in a `build/` directory under that root.
 - SWIM loads the plugin on demand when one of those file types is opened.
+
+## Mail Client
+
+The mail client ships as the separate `swim-email` plugin and stores its runtime state under `~/.swim/email`.
+
+- Press `e` in normal mode to open or close the mail pane.
+- Mail state is stored in `~/.swim/email/mail.db`.
+- Account configuration lives in `~/.swim/email/accounts.json`.
+- Tag rules live in `~/.swim/email/tag-rules.json`.
+
+Current account config shape:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "work",
+      "name": "Work",
+      "protocol": "IMAP",
+      "host": "mail.example.com",
+      "port": 993,
+      "username": "me@example.com",
+      "passwordEnv": "SWIM_MAIL_PASSWORD",
+      "folder": "INBOX"
+    }
+  ]
+}
+```
+
+Current tag rule shape:
+
+```json
+{
+  "rules": [
+    {
+      "tag": "vip",
+      "field": "sender",
+      "contains": "boss@example.com"
+    }
+  ]
+}
+```
+
+Supported fields for tag rules are:
+
+- `sender`
+- `recipient`
+- `subject`
+- `body`
+
+Current sync behavior:
+
+- IMAP imports recent mail into SQLite and groups messages into threads.
+- POP3 imports recent inbox mail into SQLite.
+- IMAP accounts can also use OAuth2 device-code login and cache tokens in `~/.swim/email/oauth-tokens.json`.
+- SMTP send is available for configured accounts, including OAuth2 token reuse for Microsoft 365.
+- Tags are reapplied whenever rules change or mail is refreshed.
+- Exchange accounts can use EWS with `authType` set to `BASIC` or `PASSWORD`.
+- The current EWS adapter supports distinguished folders such as `INBOX`, `SentItems`, `Drafts`, `DeletedItems`, and `JunkEmail`.
+- NTLM and custom EWS folder traversal are not finished yet.
+
+Example on-prem Exchange account:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "exchange",
+      "name": "Exchange",
+      "protocol": "EXCHANGE",
+      "ewsUrl": "https://mail.example.com/EWS/Exchange.asmx",
+      "username": "DOMAIN\\\\user",
+      "passwordEnv": "SWIM_EXCHANGE_PASSWORD",
+      "folder": "INBOX",
+      "authType": "BASIC"
+    }
+  ]
+}
+```
+
+Example Microsoft 365 / Exchange Online IMAP account with OAuth2:
+
+```json
+{
+  "accounts": [
+    {
+      "id": "oracle",
+      "name": "Oracle Mail",
+      "protocol": "IMAP",
+      "host": "outlook.office365.com",
+      "port": 993,
+      "smtpHost": "smtp.office365.com",
+      "smtpPort": 587,
+      "username": "you@example.com",
+      "folder": "INBOX",
+      "authType": "OAUTH2",
+      "tenant": "organizations",
+      "clientId": "YOUR-ENTRA-PUBLIC-CLIENT-ID"
+    }
+  ]
+}
+```
+
+For OAuth2 IMAP:
+
+- Open the mail panel with `e`.
+- If no cached token is present, SWIM shows a Microsoft device-code login message in the panel.
+- Complete the browser login, including any federated Oracle sign-in, then press `r` in the mail panel to refresh.
+
+Compose and send:
+
+- Press `c` in the mail panel to compose a reply/new message from the selected thread context.
+- `Tab` and `Shift-Tab` move between `To`, `Subject`, and `Body`.
+- `Ctrl-s` sends the message using the selected account’s SMTP settings.
+- `Esc` cancels compose mode.
 
 ## Writing A Plugin
 
@@ -215,7 +333,7 @@ SWIM includes a built-in AI assistant for the current workspace.
 
 Open Nemo from normal mode with `!` or `Esc`.
 
-Nemo reads configuration from `~/.swim/nemo.conf`:
+Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
 
 ```properties
 api_key=your_api_key_here
@@ -254,6 +372,21 @@ Inside the Nemo chat pane:
 - `:q` closes the pane
 
 Session state is persisted under `~/.swim/nemo/sessions.json`, so chat history survives editor restarts.
+
+## Shell
+
+Open the shell panel from normal mode with `>`.
+
+Inside the shell pane:
+
+- the live prompt is `>`
+- line editing supports the same in-panel cursor movement used by Nemo (`Left`, `Right`, `Home`, `End`, `Ctrl-a`, `Ctrl-e`, insert at cursor, backspace at cursor)
+- press `Enter` to send the current line to your login shell
+- type `:` at the start of the input for shell-panel commands such as `:q`
+- `Esc` closes the shell pane
+- the panel launches the shell from `$SHELL`, falling back to `zsh` when unset
+- shell output is streamed back into the pane as commands run
+
 
 ## Reloading
 

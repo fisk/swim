@@ -363,7 +363,10 @@ public class Main implements SwimHost {
         } catch (RuntimeException e) {
             SwimApp loaded = _plugins.currentApp();
             if (loaded != null) {
-                loaded.showMessage("Plugin load failed: " + pluginId);
+                String detail = detailedPluginLoadMessage(e);
+                loaded.showMessage(detail == null || detail.isBlank()
+                        ? "Plugin load failed: " + pluginId
+                        : "Plugin load failed: " + pluginId + " (" + detail + ")");
             }
         }
     }
@@ -417,6 +420,15 @@ public class Main implements SwimHost {
 
     SwimApp getLoadedApp() {
         return _plugins.currentApp();
+    }
+
+    private static String detailedPluginLoadMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return current.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
     }
 
     List<String> getLoadedPluginIds() {

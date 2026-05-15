@@ -10,6 +10,9 @@ build
 /image/
 /plugins/
 /workspace/
+/email/
+/email/accounts.json
+/nemo.conf
 /nemo/
 /deps/oracle.oracle-java/
 /deps/oracle.oracle-java.vsix

@@ -16,6 +16,7 @@ import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.help.HelpIndex;
+import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.utils.LogFactory;
@@ -32,6 +33,7 @@ public class CommandView extends View {
             new CommandSpec("only", List.of(), "", "keep only the active pane"),
             new CommandSpec("focus", List.of(), "left|right|up|down|next|prev", "move focus between panes"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
+            new CommandSpec("mail", List.of(), "", "open the mail client"),
             new CommandSpec("nemo", List.of(), "<question>", "ask Nemo about the current file"),
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
@@ -218,6 +220,9 @@ public class CommandView extends View {
         case "h":
         case "help":
             Window.getInstance().showList(HelpIndex.createHelpList(), "SWIM Help");
+            break;
+        case "mail":
+            MailUiSupport.toggle(Window.getInstance());
             break;
         case "nemo":
             org.fisk.swim.nemo.NemoClient.getInstance().run(Window.getInstance().getBufferContext(), argument);

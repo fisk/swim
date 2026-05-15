@@ -10,9 +10,16 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.mail.MailClient;
+import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailPluginRegistry;
+import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.ui.MailPanelView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -178,6 +185,25 @@ class CommandViewTest {
         }
     }
 
+    @Test
+    void mailCommandOpensMailPanel() throws Exception {
+        Path path = tempDir.resolve("mail-command.txt");
+        Files.writeString(path, "abc");
+
+        SwimRuntime.setHost(new RecordingHost());
+        MailPluginRegistry.register(new FakeMailClient(tempDir.resolve(".swim/email")));
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "mail");
+
+            assertTrue(window.getPanelView() instanceof MailPanelView);
+        } finally {
+            MailPluginRegistry.clear();
+            SwimRuntime.clear();
+        }
+    }
+
     private static void invokeRunCommand(CommandView commandView, String command) throws Exception {
         Method method = CommandView.class.getDeclaredMethod("runCommand", String.class);
         method.setAccessible(true);
@@ -186,5 +212,60 @@ class CommandViewTest {
 
     private static Rect absoluteBounds(View view) {
         return view.getBounds();
+    }
+
+    private static final class RecordingHost implements SwimHost {
+        @Override
+        public void requestReload(Path path) {
+        }
+
+        @Override
+        public void requestRebuildAndReload(Path path) {
+        }
+
+        @Override
+        public void requestLoadPlugin(String pluginId, Path path) {
+        }
+
+        @Override
+        public void requestExit() {
+        }
+
+        @Override
+        public Path getBuildRoot() {
+            return Path.of("/tmp");
+        }
+    }
+
+    private static final class FakeMailClient implements MailClient {
+        private final Path _dataPath;
+
+        private FakeMailClient(Path dataPath) {
+            _dataPath = dataPath;
+        }
+
+        @Override
+        public MailSnapshot snapshot() {
+            return new MailSnapshot(
+                    List.of(),
+                    List.of(new MailThreadSummary(1L, "account", "Subject", "sender@example.com",
+                            "Snippet", "2026-05-13T00:00:00Z", true, 1, List.of())),
+                    "status");
+        }
+
+        @Override
+        public MailMessageDetail loadMessage(long threadId) {
+            return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com", "dest@example.com",
+                    "2026-05-13T00:00:00Z", "Body", List.of());
+        }
+
+        @Override
+        public void refresh() {
+        }
+
+        @Override
+        public Path getDataPath() {
+            return _dataPath;
+        }
     }
 }

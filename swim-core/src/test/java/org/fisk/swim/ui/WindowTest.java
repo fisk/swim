@@ -106,6 +106,59 @@ class WindowTest {
     }
 
     @Test
+    void shellPanelUsesShellSpecificCommandCompletionPopup() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var holder = new ShellPanelView[1];
+            holder[0] = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell",
+                    command -> {
+                    }, "/bin/sh");
+
+            window.showPanel(holder[0]);
+            HeadlessWindowHarness.dispatch(holder[0], HeadlessWindowHarness.key(':'));
+            HeadlessWindowHarness.dispatch(holder[0], HeadlessWindowHarness.key('q'));
+
+            var state = window.getCommandMenuView().getState();
+            assertTrue(state.visible());
+            assertEquals("q", state.prefix());
+            assertEquals("q", state.matches().get(0).primaryName());
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("shell input active"));
+        }
+    }
+
+    @Test
+    void shellPanelEscapeClosesPanel() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
+            }, "/bin/sh");
+
+            window.showPanel(shell);
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
+
+            assertFalse(window.isShowingPanel());
+        }
+    }
+
+    @Test
+    void closingShellPanelStopsShellProcess() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
+            }, "/bin/sh");
+            window.showPanel(shell);
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
+
+            var processField = ShellPanelView.class.getDeclaredField("_process");
+            processField.setAccessible(true);
+            Process process = (Process) processField.get(shell);
+            process.waitFor();
+            assertFalse(process.isAlive());
+        }
+    }
+
+    @Test
     void searchActivationUpdatesTopMenuContext() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();
