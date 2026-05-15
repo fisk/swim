@@ -51,6 +51,7 @@ public final class JavaLspPluginSupport {
         }
 
         var layer = mode.addKeybindingLayer();
+        layer.addEventResponder("g d", () -> withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext())));
         layer.addEventResponder(leader + " e i", () -> organizeImports(window));
         layer.addEventResponder(leader + " e f", () -> withLoadedClient(window, client -> client.makeFinal(window.getBufferContext())));
         layer.addEventResponder(leader + " e a", () -> withLoadedClient(window, client -> client.generateAccessors(window.getBufferContext())));

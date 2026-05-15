@@ -6,6 +6,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.lsp.java.JavaLSPClient;
 import org.fisk.swim.event.IOThread;
 import org.fisk.swim.event.RunnableEvent;
@@ -97,6 +98,7 @@ public class SwimAppImpl implements SwimApp {
         @Override
         public WindowAccess createWindow(Path path) {
             Window.createInstance(path);
+            ClangdLspPluginSupport.ensureStartedForProject(path);
             return WINDOW;
         }
 

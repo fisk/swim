@@ -28,7 +28,7 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
 final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
-    private static final int MAX_ITEMS = 500;
+    private static final int PAGE_SIZE = 500;
 
     private final EwsTransport _transport;
 
@@ -51,26 +51,37 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
             return MailSyncBatch.failure("EWS currently supports distinguished folders only");
         }
 
-        String findResponse = _transport.post(account, buildFindItemRequest(folderId));
-        Document findDocument = parseXml(findResponse);
-        String error = responseError(findDocument);
-        if (error != null) {
-            return MailSyncBatch.failure(error);
-        }
+        List<ImportedMailMessage> messages = new ArrayList<>();
+        int offset = 0;
+        while (true) {
+            String findResponse = _transport.post(account, buildFindItemRequest(folderId, offset));
+            Document findDocument = parseXml(findResponse);
+            String error = responseError(findDocument);
+            if (error != null) {
+                return MailSyncBatch.failure(error);
+            }
 
-        List<EwsItemRef> itemRefs = parseFindItems(findDocument);
-        if (itemRefs.isEmpty()) {
+            List<EwsItemRef> itemRefs = parseFindItems(findDocument);
+            if (itemRefs.isEmpty()) {
+                break;
+            }
+
+            String getItemResponse = _transport.post(account, buildGetItemRequest(itemRefs));
+            Document getItemDocument = parseXml(getItemResponse);
+            error = responseError(getItemDocument);
+            if (error != null) {
+                return MailSyncBatch.failure(error);
+            }
+
+            messages.addAll(parseMessages(account, folderId, getItemDocument));
+            if (includesLastItemInRange(findDocument)) {
+                break;
+            }
+            offset += itemRefs.size();
+        }
+        if (messages.isEmpty()) {
             return MailSyncBatch.success(List.of(), "0 messages");
         }
-
-        String getItemResponse = _transport.post(account, buildGetItemRequest(itemRefs));
-        Document getItemDocument = parseXml(getItemResponse);
-        error = responseError(getItemDocument);
-        if (error != null) {
-            return MailSyncBatch.failure(error);
-        }
-
-        List<ImportedMailMessage> messages = parseMessages(account, folderId, getItemDocument);
         return MailSyncBatch.success(messages, messages.size() + " messages");
     }
 
@@ -94,7 +105,7 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
         return null;
     }
 
-    private static String buildFindItemRequest(String folderId) {
+    private static String buildFindItemRequest(String folderId, int offset) {
         return """
                 <?xml version="1.0" encoding="utf-8"?>
                 <soap:Envelope
@@ -109,14 +120,14 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
                       <m:ItemShape>
                         <t:BaseShape>IdOnly</t:BaseShape>
                       </m:ItemShape>
-                      <m:IndexedPageItemView MaxEntriesReturned="%d" Offset="0" BasePoint="Beginning" />
+                      <m:IndexedPageItemView MaxEntriesReturned="%d" Offset="%d" BasePoint="Beginning" />
                       <m:ParentFolderIds>
                         <t:DistinguishedFolderId Id="%s" />
                       </m:ParentFolderIds>
                     </m:FindItem>
                   </soap:Body>
                 </soap:Envelope>
-                """.formatted(MAX_ITEMS, xmlEscape(folderId));
+                """.formatted(PAGE_SIZE, offset, xmlEscape(folderId));
     }
 
     private static String buildGetItemRequest(List<EwsItemRef> itemRefs) {
@@ -173,6 +184,18 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
             }
         }
         return itemRefs;
+    }
+
+    private static boolean includesLastItemInRange(Document document) throws Exception {
+        NodeList rootFolders = nodes(document, "//*[local-name()='RootFolder']");
+        if (rootFolders.getLength() == 0) {
+            return true;
+        }
+        Node node = rootFolders.item(0);
+        if (!(node instanceof Element element)) {
+            return true;
+        }
+        return Boolean.parseBoolean(element.getAttribute("IncludesLastItemInRange"));
     }
 
     private static List<ImportedMailMessage> parseMessages(

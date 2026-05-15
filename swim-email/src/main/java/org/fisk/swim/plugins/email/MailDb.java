@@ -14,6 +14,7 @@ import org.fisk.swim.mail.MailAccountSummary;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
 
 final class MailDb {
@@ -245,7 +246,7 @@ final class MailDb {
         insertMessages(connection, threadId, List.of(message));
     }
 
-    static MailSnapshot loadSnapshot(Connection connection, EmailPaths paths) throws SQLException {
+    static MailSnapshot loadSnapshot(Connection connection, EmailPaths paths, int threadLimit) throws SQLException {
         List<MailAccountSummary> accounts = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement("""
                 select a.id, a.name, a.protocol,
@@ -270,31 +271,57 @@ final class MailDb {
             }
         }
 
-        List<MailThreadSummary> threads = new ArrayList<>();
-        try (PreparedStatement statement = connection.prepareStatement("""
-                select id, account_id, subject, participants, snippet, last_message_at, unread_count, message_count
-                from threads
-                order by coalesce(last_message_at, '') desc, id desc
-                limit 500
-                """);
-                ResultSet resultSet = statement.executeQuery()) {
-            while (resultSet.next()) {
-                long threadId = resultSet.getLong(1);
-                threads.add(new MailThreadSummary(
-                        threadId,
-                        resultSet.getString(2),
-                        resultSet.getString(3),
-                        resultSet.getString(4),
-                        resultSet.getString(5),
-                        resultSet.getString(6),
-                        resultSet.getInt(7) > 0,
-                        resultSet.getInt(8),
-                        loadTagsForThread(connection, threadId)));
-            }
-        }
+        List<MailThreadSummary> threads = loadThreadPage(connection, "", 0, threadLimit).threads();
 
         String status = statusMessage(accounts, threads, paths);
         return new MailSnapshot(accounts, threads, status);
+    }
+
+    static MailThreadPage loadThreadPage(Connection connection, String query, int offset, int limit) throws SQLException {
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(0, limit);
+        String normalizedQuery = normalizeSearchQuery(query);
+        int totalCount = countThreads(connection, normalizedQuery);
+        if (safeLimit == 0 || safeOffset >= totalCount) {
+            return new MailThreadPage(List.of(), totalCount);
+        }
+
+        List<MailThreadSummary> threads = new ArrayList<>();
+        StringBuilder sql = new StringBuilder("""
+                select t.id, t.account_id, t.subject, t.participants, t.snippet, t.last_message_at, t.unread_count, t.message_count
+                from threads t
+                """);
+        if (!normalizedQuery.isBlank()) {
+            sql.append("where ").append(threadSearchPredicate("t")).append("\n");
+        }
+        sql.append("""
+                order by coalesce(t.last_message_at, '') desc, t.id desc
+                limit ? offset ?
+                """);
+        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            int index = 1;
+            if (!normalizedQuery.isBlank()) {
+                index = bindSearchParameters(statement, index, normalizedQuery);
+            }
+            statement.setInt(index++, safeLimit);
+            statement.setInt(index, safeOffset);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    long threadId = resultSet.getLong(1);
+                    threads.add(new MailThreadSummary(
+                            threadId,
+                            resultSet.getString(2),
+                            resultSet.getString(3),
+                            resultSet.getString(4),
+                            resultSet.getString(5),
+                            resultSet.getString(6),
+                            resultSet.getInt(7) > 0,
+                            resultSet.getInt(8),
+                            loadTagsForThread(connection, threadId)));
+                }
+            }
+        }
+        return new MailThreadPage(threads, totalCount);
     }
 
     static MailMessageDetail loadMessage(Connection connection, long threadId) throws SQLException {
@@ -477,6 +504,63 @@ final class MailDb {
 
     private static String normalizeWhitespace(String text) {
         return text == null ? "" : text.replaceAll("\\s+", " ").trim();
+    }
+
+    private static String normalizeSearchQuery(String query) {
+        return query == null ? "" : query.toLowerCase(java.util.Locale.ROOT).trim();
+    }
+
+    private static int countThreads(Connection connection, String query) throws SQLException {
+        StringBuilder sql = new StringBuilder("select count(*) from threads t\n");
+        if (!query.isBlank()) {
+            sql.append("where ").append(threadSearchPredicate("t"));
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            if (!query.isBlank()) {
+                bindSearchParameters(statement, 1, query);
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() ? resultSet.getInt(1) : 0;
+            }
+        }
+    }
+
+    private static String threadSearchPredicate(String threadAlias) {
+        return """
+                (
+                    lower(coalesce(%1$s.subject, '')) like ?
+                    or lower(coalesce(%1$s.participants, '')) like ?
+                    or lower(coalesce(%1$s.snippet, '')) like ?
+                    or exists (
+                        select 1
+                        from messages m
+                        where m.thread_id = %1$s.id
+                          and (
+                              lower(coalesce(m.subject, '')) like ?
+                              or lower(coalesce(m.from_name, '')) like ?
+                              or lower(coalesce(m.from_email, '')) like ?
+                              or lower(coalesce(m.to_summary, '')) like ?
+                              or lower(coalesce(m.snippet, '')) like ?
+                              or lower(coalesce(m.body_text, '')) like ?
+                          )
+                    )
+                    or exists (
+                        select 1
+                        from message_tags mt
+                        join messages tm on tm.id = mt.message_id
+                        where tm.thread_id = %1$s.id
+                          and lower(coalesce(mt.tag_name, '')) like ?
+                    )
+                )
+                """.formatted(threadAlias);
+    }
+
+    private static int bindSearchParameters(PreparedStatement statement, int index, String query) throws SQLException {
+        String like = "%" + query + "%";
+        for (int i = 0; i < 10; i++) {
+            statement.setString(index++, like);
+        }
+        return index;
     }
 
     private static void execute(Connection connection, String sql) throws SQLException {

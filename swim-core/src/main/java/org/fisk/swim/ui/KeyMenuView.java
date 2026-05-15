@@ -18,6 +18,7 @@ public class KeyMenuView extends View {
         BUFFER,
         COMMAND,
         LIST_PANEL,
+        SEARCH_PANEL,
         TEXT_PANEL,
         CHAT_PANEL,
         PANEL,
@@ -153,7 +154,7 @@ public class KeyMenuView extends View {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  mail e  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
     }
@@ -234,6 +235,7 @@ public class KeyMenuView extends View {
             return switch (_focusContext) {
             case COMMAND -> "command line active";
             case LIST_PANEL -> "list navigation";
+            case SEARCH_PANEL -> "project search";
             case TEXT_PANEL -> "panel scroll";
             case CHAT_PANEL -> "chat input active";
             case PANEL -> "panel focus";
@@ -252,6 +254,7 @@ public class KeyMenuView extends View {
             return switch (_focusContext) {
             case COMMAND -> commandBodyText();
             case LIST_PANEL -> "type to filter  •  arrows move  •  Enter open  •  Esc close";
+            case SEARCH_PANEL -> "type to search project  •  arrows move  •  Enter open  •  Esc close";
             case TEXT_PANEL -> "j/k or arrows scroll  •  q or Esc close";
             case CHAT_PANEL -> _chatPending
                     ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close"
@@ -278,12 +281,12 @@ public class KeyMenuView extends View {
             if (_commandText != null && _commandText.startsWith("focus")) {
                 return "Up/down pick  •  Tab complete  •  focus left/right/up/down  •  next/prev  •  Enter run";
             }
-            return "Up/down pick  •  Tab complete  •  split/vsplit  •  close/only  •  focus  •  mail  •  Enter run";
+            return "Up/down pick  •  Tab complete  •  split/vsplit  •  close/only  •  focus  •  grep  •  Enter run";
         }
         if (_commandText != null && _commandText.startsWith("focus")) {
             return "focus left/right/up/down  •  focus next/prev  •  Enter run  •  Esc cancel";
         }
-        return "split/vsplit  •  close/only  •  focus left/right/up/down  •  Enter run  •  Esc cancel";
+        return "split/vsplit  •  close/only  •  focus left/right/up/down  •  grep  •  Enter run  •  Esc cancel";
     }
 
     private static String tokenFor(KeyStroke keyStroke) {
@@ -318,7 +321,9 @@ public class KeyMenuView extends View {
         root.child("j", leaf("down"));
         root.child("k", leaf("up"));
         root.child("l", leaf("right"));
-        root.child("g", branch("goto").child("g", leaf("top of buffer")));
+        root.child("g", branch("goto")
+                .child("g", leaf("top of buffer"))
+                .child("d", leaf("definition")));
         root.child("d", branch("delete")
                 .child("i", branch("inner").child("w", leaf("inner word")))
                 .child("w", leaf("word"))
@@ -340,6 +345,7 @@ public class KeyMenuView extends View {
         root.child("V", leaf("visual line"));
         root.child("<CTRL>-v", leaf("visual block"));
         root.child("m", leaf("project files"));
+        root.child("M", leaf("project search"));
         root.child("e", leaf("email"));
         root.child("<ESC>", leaf("start Nemo chat"));
         root.child("/", leaf("search forward"));

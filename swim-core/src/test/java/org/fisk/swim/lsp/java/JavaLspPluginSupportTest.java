@@ -34,6 +34,22 @@ class JavaLspPluginSupportTest {
     }
 
     @Test
+    void normalModeGDTriggersDefinitionLookupForJavaBuffers() throws IOException {
+        var client = new RecordingJavaLspClient();
+        JavaLSPClient.installInstance(client);
+        try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('d'));
+
+            assertEquals(1, client.goToDefinitionCalls);
+            assertSame(window.getNormalMode(), window.getCurrentMode());
+        } finally {
+            JavaLSPClient.shutdownInstalledInstance();
+        }
+    }
+
+    @Test
     void normalModeOKeepsDefaultOpenBelowForNonJavaBuffers() throws IOException {
         JavaLSPClient.shutdownInstalledInstance();
         try (var harness = HeadlessWindowHarness.create(writeFile("notes.txt", "alpha"), 40, 12)) {
@@ -55,6 +71,7 @@ class JavaLspPluginSupportTest {
 
     private static final class RecordingJavaLspClient extends JavaLSPClient {
         private int organizeImportsCalls;
+        private int goToDefinitionCalls;
 
         private RecordingJavaLspClient() {
             super(new JavaLspProvider() {
@@ -79,6 +96,11 @@ class JavaLspPluginSupportTest {
         @Override
         public void organizeImports(BufferContext bufferContext) {
             organizeImportsCalls++;
+        }
+
+        @Override
+        public void goToDefinition(BufferContext bufferContext) {
+            goToDefinitionCalls++;
         }
     }
 }

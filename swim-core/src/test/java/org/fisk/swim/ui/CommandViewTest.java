@@ -204,6 +204,23 @@ class CommandViewTest {
         }
     }
 
+    @Test
+    void grepCommandOpensProjectSearchPanelWithQuery() throws Exception {
+        Path root = tempDir.resolve("search-command-workspace");
+        Files.createDirectories(root.resolve(".git"));
+        Path path = root.resolve("Main.java");
+        Files.writeString(path, "needle\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "grep needle");
+
+            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+            assertEquals("needle", ((ProjectSearchPanelView) window.getPanelView()).getQuery());
+        }
+    }
+
     private static void invokeRunCommand(CommandView commandView, String command) throws Exception {
         Method method = CommandView.class.getDeclaredMethod("runCommand", String.class);
         method.setAccessible(true);

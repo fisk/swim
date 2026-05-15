@@ -60,6 +60,17 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void gotoPrefixShowsDefinitionContinuation() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        view.observe(HeadlessWindowHarness.key('g'));
+
+        assertEquals("g", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("g top of buffer"));
+        assertTrue(view.bodyText().contains("d definition"));
+    }
+
+    @Test
     void nonNormalModesFallBackToPassiveHints() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
         view.observe(HeadlessWindowHarness.key('d'));
@@ -127,6 +138,25 @@ class KeyMenuViewTest {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
 
         assertTrue(view.bodyText().contains("mail e"));
+    }
+
+    @Test
+    void defaultBodyIncludesProjectSearchShortcut() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        assertTrue(view.bodyText().contains("grep M"));
+    }
+
+    @Test
+    void projectSearchContextShowsPanelHints() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        view.setBufferFocused(false);
+        view.setFocusContext(KeyMenuView.FocusContext.SEARCH_PANEL);
+        view.setContextLabel("Project Search");
+
+        assertTrue(view.buildHeaderLine().toString().contains("project search"));
+        assertTrue(view.bodyText().contains("type to search project"));
     }
 
     @Test

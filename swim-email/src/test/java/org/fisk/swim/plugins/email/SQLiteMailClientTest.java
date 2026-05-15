@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import org.fisk.swim.mail.MailDraft;
@@ -292,6 +295,94 @@ class SQLiteMailClientTest {
                 assertEquals(1, snapshot.threads().size());
                 assertEquals("Status", snapshot.threads().get(0).subject());
                 assertTrue(client.loadMessage(snapshot.threads().get(0).threadId()).bodyText().contains("Looks good"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void loadThreadsPaginatesAndSearchesDatabaseContent() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            try (var client = new SQLiteMailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"));
+                    var connection = DriverManager.getConnection("jdbc:sqlite:" + paths.databasePath());
+                    var threadInsert = connection.prepareStatement("""
+                            insert into threads (id, account_id, folder_name, subject, participants, snippet, last_message_at, unread_count, message_count)
+                            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """);
+                    var messageInsert = connection.prepareStatement("""
+                            insert into messages (id, account_id, thread_id, subject, from_name, from_email, to_summary, sent_at, received_at, snippet, body_text, is_read)
+                            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """)) {
+                OffsetDateTime start = OffsetDateTime.of(2026, 5, 13, 8, 0, 0, 0, ZoneOffset.UTC);
+                for (int i = 1; i <= 120; i++) {
+                    String timestamp = start.plusMinutes(i).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+                    threadInsert.setLong(1, i);
+                    threadInsert.setString(2, "work");
+                    threadInsert.setString(3, "INBOX");
+                    threadInsert.setString(4, "Thread " + i);
+                    threadInsert.setString(5, "Boss");
+                    threadInsert.setString(6, i == 65 ? "Generic snippet" : "Snippet " + i);
+                    threadInsert.setString(7, timestamp);
+                    threadInsert.setInt(8, i % 5 == 0 ? 1 : 0);
+                    threadInsert.setInt(9, 1);
+                    threadInsert.addBatch();
+
+                    messageInsert.setLong(1, i);
+                    messageInsert.setString(2, "work");
+                    messageInsert.setLong(3, i);
+                    messageInsert.setString(4, "Thread " + i);
+                    messageInsert.setString(5, "Boss");
+                    messageInsert.setString(6, "boss@example.com");
+                    messageInsert.setString(7, "me@example.com");
+                    messageInsert.setString(8, timestamp);
+                    messageInsert.setString(9, timestamp);
+                    messageInsert.setString(10, "Snippet " + i);
+                    messageInsert.setString(11, i == 65 ? "Oracle migration plan and rollout details." : "Body " + i);
+                    messageInsert.setInt(12, 1);
+                    messageInsert.addBatch();
+                }
+                threadInsert.executeBatch();
+                messageInsert.executeBatch();
+
+                var firstPage = client.loadThreads("", 0, 50);
+                var secondPage = client.loadThreads("", 50, 50);
+                var finalPage = client.loadThreads("", 100, 50);
+                var searchPage = client.loadThreads("migration", 0, 10);
+
+                assertEquals(120, firstPage.totalCount());
+                assertEquals(50, firstPage.threads().size());
+                assertEquals(50, secondPage.threads().size());
+                assertEquals(20, finalPage.threads().size());
+                assertEquals(120L, firstPage.threads().get(0).threadId());
+                assertEquals(70L, secondPage.threads().get(0).threadId());
+                assertEquals(20L, finalPage.threads().get(0).threadId());
+                assertEquals(1, searchPage.totalCount());
+                assertEquals(65L, searchPage.threads().get(0).threadId());
             }
         } finally {
             System.setProperty("user.home", originalUserHome);

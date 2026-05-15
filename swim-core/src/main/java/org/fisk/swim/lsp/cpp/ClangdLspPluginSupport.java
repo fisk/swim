@@ -23,9 +23,29 @@ public final class ClangdLspPluginSupport {
         SwimRuntime.loadPlugin(PLUGIN_ID);
     }
 
+    public static void ensureStartedForProject(Path path) {
+        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+            return;
+        }
+        ensureLoaded(path);
+        startClientIfNeeded(path, getClient());
+    }
+
     public static LanguageMode createLanguageMode(Path path) {
         ensureLoaded(path);
-        var client = getClient();
+        var client = startClientIfNeeded(path, getClient());
+        return client;
+    }
+
+    public static void install() {
+        ClangdLspClient.installInstance(new ClangdLspClient());
+    }
+
+    public static void shutdown() {
+        ClangdLspClient.shutdownInstalledInstance();
+    }
+
+    private static ClangdLspClient startClientIfNeeded(Path path, ClangdLspClient client) {
         if (client.isEnabled() && !client.hasStarted()) {
             try {
                 client.startServer(path);
@@ -36,13 +56,5 @@ public final class ClangdLspPluginSupport {
             }
         }
         return client;
-    }
-
-    public static void install() {
-        ClangdLspClient.installInstance(new ClangdLspClient());
-    }
-
-    public static void shutdown() {
-        ClangdLspClient.shutdownInstalledInstance();
     }
 }

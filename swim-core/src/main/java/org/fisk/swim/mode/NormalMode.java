@@ -10,6 +10,7 @@ import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.PluginPanelView;
+import org.fisk.swim.ui.ProjectSearchUiSupport;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.ui.Window;
 
@@ -135,6 +136,9 @@ public class NormalMode extends Mode {
             } else {
                 window.showList(FileIndex.createFileList(), "Project Files");
             }
+        });
+        _rootResponder.addEventResponder("M", () -> {
+            ProjectSearchUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("e", () -> {
             MailUiSupport.toggle(window);

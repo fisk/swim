@@ -12,11 +12,13 @@ import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailSendResult;
+import org.fisk.swim.mail.MailThreadPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 final class SQLiteMailClient implements MailClient {
     private static final Logger LOG = LoggerFactory.getLogger(SQLiteMailClient.class);
+    private static final int SNAPSHOT_THREAD_LIMIT = 100;
 
     private final EmailPaths _paths;
     private final Connection _connection;
@@ -56,11 +58,23 @@ final class SQLiteMailClient implements MailClient {
     public MailSnapshot snapshot() {
         synchronized (_dbLock) {
             try {
-                return MailDb.loadSnapshot(_connection, _paths);
+                return MailDb.loadSnapshot(_connection, _paths, SNAPSHOT_THREAD_LIMIT);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail snapshot", e);
                 return new MailSnapshot(java.util.List.of(), java.util.List.of(),
                         "Failed to load mail from " + _paths.databasePath() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    @Override
+    public MailThreadPage loadThreads(String query, int offset, int limit) {
+        synchronized (_dbLock) {
+            try {
+                return MailDb.loadThreadPage(_connection, query, offset, limit);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail threads", e);
+                return new MailThreadPage(java.util.List.of(), 0);
             }
         }
     }

@@ -1,7 +1,9 @@
 package org.fisk.swim.lsp.java;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -28,9 +30,12 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
+import org.eclipse.lsp4j.Location;
+import org.eclipse.lsp4j.LocationLink;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.JavaDefinitionPopupView;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -268,6 +273,95 @@ class JavaLSPClientTest {
 
         assertEquals(JavaLSPClient.SEMANTIC_TYPE, foregroundColour(coloured.getCharacter(6)));
         assertTrue(requests.get() >= 3);
+    }
+
+    @Test
+    void goToDefinitionJumpsDirectlyWhenThereIsOneTarget() throws Exception {
+        Path current = tempDir.resolve("Current.txt");
+        Path target = tempDir.resolve("Target.txt");
+        Files.writeString(current, "alpha\n");
+        Files.writeString(target, "zero\nbeta\n");
+
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+        setField(client, "_projectPath", tempDir);
+        setField(client, "_server", new DefinitionLanguageServer(Either.forLeft(List.of(
+                new Location(target.toUri().toString(), new Range(new Position(1, 2), new Position(1, 6)))))));
+
+        try (var harness = HeadlessWindowHarness.create(current, 80, 16)) {
+            var window = harness.getWindow();
+
+            client.goToDefinition(window.getBufferContext());
+
+            assertEquals(target.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertEquals(window.getBufferContext().getTextLayout().getIndexForPhysicalLineCharacter(1, 2),
+                    window.getBufferContext().getBuffer().getCursor().getPosition());
+            assertSame(window.getBufferContext().getBufferView(), window.getRootView().getFirstResponder());
+        }
+    }
+
+    @Test
+    void goToDefinitionShowsPopupWhenThereAreMultipleTargets() throws Exception {
+        Path current = tempDir.resolve("CurrentMulti.txt");
+        Path targetOne = tempDir.resolve("TargetOne.txt");
+        Path targetTwo = tempDir.resolve("TargetTwo.txt");
+        Files.writeString(current, "alpha\n");
+        Files.writeString(targetOne, "first\n");
+        Files.writeString(targetTwo, "second\nline\n");
+
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+        setField(client, "_projectPath", tempDir);
+        setField(client, "_server", new DefinitionLanguageServer(Either.forRight(List.of(
+                new LocationLink(targetOne.toUri().toString(),
+                        new Range(new Position(0, 0), new Position(0, 5)),
+                        new Range(new Position(0, 0), new Position(0, 5))),
+                new LocationLink(targetTwo.toUri().toString(),
+                        new Range(new Position(1, 1), new Position(1, 4)),
+                        new Range(new Position(1, 1), new Position(1, 4)))))));
+
+        try (var harness = HeadlessWindowHarness.create(current, 80, 16)) {
+            var window = harness.getWindow();
+
+            client.goToDefinition(window.getBufferContext());
+
+            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            assertEquals(2, popup.getSession().size());
+            assertTrue(popup.getSession().getEntries().get(0).label().contains("TargetOne.txt:1:1"));
+        }
+    }
+
+    @Test
+    void definitionPopupEnterJumpsToSelectedTarget() throws Exception {
+        Path current = tempDir.resolve("CurrentPopup.txt");
+        Path targetOne = tempDir.resolve("TargetPopupOne.txt");
+        Path targetTwo = tempDir.resolve("TargetPopupTwo.txt");
+        Files.writeString(current, "alpha\n");
+        Files.writeString(targetOne, "first\n");
+        Files.writeString(targetTwo, "zero\nchosen\n");
+
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+        setField(client, "_projectPath", tempDir);
+        setField(client, "_server", new DefinitionLanguageServer(Either.forLeft(List.of(
+                new Location(targetOne.toUri().toString(), new Range(new Position(0, 0), new Position(0, 3))),
+                new Location(targetTwo.toUri().toString(), new Range(new Position(1, 2), new Position(1, 6)))))));
+
+        try (var harness = HeadlessWindowHarness.create(current, 80, 16)) {
+            var window = harness.getWindow();
+            client.goToDefinition(window.getBufferContext());
+
+            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
+            HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
+
+            assertEquals(targetTwo.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertEquals(window.getBufferContext().getTextLayout().getIndexForPhysicalLineCharacter(1, 2),
+                    window.getBufferContext().getBuffer().getCursor().getPosition());
+            assertSame(window.getBufferContext().getBufferView(), window.getRootView().getFirstResponder());
+        }
     }
 
     @Test
@@ -539,6 +633,60 @@ class JavaLSPClientTest {
         @Override
         public TextDocumentService getTextDocumentService() {
             return _textDocumentService;
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class DefinitionLanguageServer implements LanguageServer {
+        private final Either<List<? extends Location>, List<? extends LocationLink>> _response;
+
+        private DefinitionLanguageServer(Either<List<? extends Location>, List<? extends LocationLink>> response) {
+            _response = response;
+        }
+
+        @Override
+        public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return new TextDocumentService() {
+                @Override
+                public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+                }
+
+                @Override
+                public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+                }
+
+                @Override
+                public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+                }
+
+                @Override
+                public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+                }
+
+                @Override
+                public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(
+                        org.eclipse.lsp4j.DefinitionParams params) {
+                    return CompletableFuture.completedFuture(_response);
+                }
+            };
         }
 
         @Override

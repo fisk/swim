@@ -13,6 +13,7 @@ import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.MailPanelView;
+import org.fisk.swim.ui.ProjectSearchPanelView;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
@@ -80,6 +81,22 @@ class NormalModeTest {
         } finally {
             MailPluginRegistry.clear();
             SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void uppercaseMStartsProjectSearchPanel() throws Exception {
+        Path root = tempDir.resolve("search-workspace");
+        Files.createDirectories(root.resolve(".git"));
+        Path path = root.resolve("Main.java");
+        Files.writeString(path, "class Main {}\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('M'));
+
+            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
         }
     }
 

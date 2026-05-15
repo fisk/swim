@@ -1,4 +1,0 @@
---patch-module
-org.fisk.swim.email=_
---add-reads
-org.fisk.swim.email=ALL-UNNAMED

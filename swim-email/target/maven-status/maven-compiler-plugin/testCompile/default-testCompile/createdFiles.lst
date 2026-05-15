@@ -1,8 +1,0 @@
-org/fisk/swim/plugins/email/MicrosoftOAuth2ClientTest.class
-org/fisk/swim/plugins/email/ExchangeEwsMailSyncAdapterTest.class
-org/fisk/swim/plugins/email/SmtpMailSupportTest.class
-org/fisk/swim/plugins/email/JakartaMailSupportTest.class
-org/fisk/swim/plugins/email/MicrosoftOAuth2ClientTest$FakeBrowserLauncher.class
-org/fisk/swim/plugins/email/MicrosoftOAuth2ClientTest$FakeTransport.class
-org/fisk/swim/plugins/email/ExchangeEwsMailSyncAdapterTest$FakeTransport.class
-org/fisk/swim/plugins/email/SQLiteMailClientTest.class

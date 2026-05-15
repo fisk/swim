@@ -43,14 +43,17 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
         var keyMenuView = new KeyMenuView(Rect.create(0, 0, width, 2));
         var commandMenuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        var mailNotificationView = new MailNotificationView(Rect.create(0, 0, 0, 0));
         rootView.addSubview(keyMenuView);
         rootView.addSubview(bufferContext.getBufferView());
         rootView.addSubview(commandMenuView);
+        rootView.addSubview(mailNotificationView);
         rootView.setFirstResponder(bufferContext.getBufferView());
 
         setField(window, "_rootView", rootView);
         setField(window, "_keyMenuView", keyMenuView);
         setField(window, "_commandMenuView", commandMenuView);
+        setField(window, "_mailNotificationView", mailNotificationView);
         setField(window, "_workspaceView", bufferContext.getBufferView());
         setField(window, "_activeView", bufferContext.getBufferView());
         setField(window, "_activeBufferView", bufferContext.getBufferView());
@@ -85,12 +88,14 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         var commandView = new CommandView(Rect.create(0, height - 1, width, 1));
         commandView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         var commandMenuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        var mailNotificationView = new MailNotificationView(Rect.create(0, 0, 0, 0));
 
         rootView.addSubview(keyMenuView);
         rootView.addSubview(modeLineView);
         rootView.addSubview(commandView);
         rootView.addSubview(bufferContext.getBufferView());
         rootView.addSubview(commandMenuView);
+        rootView.addSubview(mailNotificationView);
         rootView.setFirstResponder(bufferContext.getBufferView());
 
         setField(window, "_rootView", rootView);
@@ -101,6 +106,7 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         setField(window, "_modeLineView", modeLineView);
         setField(window, "_commandView", commandView);
         setField(window, "_commandMenuView", commandMenuView);
+        setField(window, "_mailNotificationView", mailNotificationView);
         setField(window, "_size", Size.create(width, height));
         setField(window, "_bufferContext", bufferContext);
         var bufferContextsByView = new IdentityHashMap<BufferView, org.fisk.swim.text.BufferContext>();

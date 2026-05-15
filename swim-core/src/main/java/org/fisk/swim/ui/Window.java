@@ -11,6 +11,8 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
+import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
+import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mode.InputMode;
 import org.fisk.swim.mode.Mode;
 import org.fisk.swim.mode.NormalMode;
@@ -49,6 +51,7 @@ public class Window implements Drawable {
     private ModeLineView _modeLineView;
     private CommandView _commandView;
     private CommandMenuView _commandMenuView;
+    private MailNotificationView _mailNotificationView;
     private Size _size;
     private BufferContext _bufferContext;
     private IdentityHashMap<BufferView, BufferContext> _bufferContextsByView;
@@ -118,6 +121,7 @@ public class Window implements Drawable {
             _log.error("Failed to open buffer " + path, e);
             return false;
         }
+        ClangdLspPluginSupport.ensureStartedForProject(path);
 
         var nextBufferView = nextBufferContext.getBufferView();
         registerBufferView(nextBufferContext, nextBufferView);
@@ -353,6 +357,7 @@ public class Window implements Drawable {
         if (_modeLineView != null) {
             _modeLineView.close();
         }
+        MailStatusService.shutdownInstance();
         _instance = null;
     }
 
@@ -392,6 +397,9 @@ public class Window implements Drawable {
         if (_commandView != null) {
             _commandView.setNeedsRedraw();
         }
+        if (_mailNotificationView != null) {
+            _mailNotificationView.setNeedsRedraw();
+        }
     }
 
     private KeyMenuView.FocusContext focusContextFor(EventResponder responder) {
@@ -403,6 +411,12 @@ public class Window implements Drawable {
         }
         if (responder instanceof ListView) {
             return KeyMenuView.FocusContext.LIST_PANEL;
+        }
+        if (responder instanceof JavaDefinitionPopupView) {
+            return KeyMenuView.FocusContext.LIST_PANEL;
+        }
+        if (responder instanceof ProjectSearchPanelView) {
+            return KeyMenuView.FocusContext.SEARCH_PANEL;
         }
         if (responder instanceof TextPanelView) {
             return KeyMenuView.FocusContext.TEXT_PANEL;
@@ -434,6 +448,12 @@ public class Window implements Drawable {
         }
         if (responder instanceof ListView listView) {
             return listView.getTitle();
+        }
+        if (responder instanceof JavaDefinitionPopupView popupView) {
+            return popupView.getTitle();
+        }
+        if (responder instanceof ProjectSearchPanelView searchPanelView) {
+            return searchPanelView.getTitle();
         }
         if (responder instanceof TextPanelView textPanelView) {
             return textPanelView.getTitle();
@@ -503,9 +523,9 @@ public class Window implements Drawable {
         return _panelView;
     }
 
-    public void showPanel(View panelView) {
+    public boolean showPanel(View panelView) {
         double ratio = panelView instanceof ChatPanelView ? 0.30 : 2.0 / 3.0;
-        showPanel(panelView, SplitView.Orientation.VERTICAL, ratio, false);
+        return showPanel(panelView, SplitView.Orientation.VERTICAL, ratio, false);
     }
 
     public boolean showSidePanel(View panelView, boolean leftSide, double ratio) {
@@ -551,6 +571,13 @@ public class Window implements Drawable {
         if (_activeBufferView != null) {
             activateView(_activeBufferView);
         }
+    }
+
+    public boolean openBufferLocation(Path path, int lineNumber, int columnNumber) {
+        if (!setBufferPath(path)) {
+            return false;
+        }
+        return revealBufferLocation(getBufferContext(), lineNumber, columnNumber);
     }
 
     private void setupSplashScreen() {
@@ -610,9 +637,15 @@ public class Window implements Drawable {
                 | View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_WIDTH | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_commandMenuView);
 
+        _mailNotificationView = new MailNotificationView(Rect.create(0, 0, 0, 0));
+        _mailNotificationView.setResizeMask(View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_TOP
+                | View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_WIDTH | View.RESIZE_MASK_HEIGHT);
+        _rootView.addSubview(_mailNotificationView);
+
         _rootView.setFirstResponder(_workspaceView);
         _size = _rootView.getBounds().getSize();
         applyLayout(_size);
+        MailStatusService.getInstance();
     }
 
     private void setupBindings() {
@@ -826,6 +859,9 @@ public class Window implements Drawable {
         if (_commandMenuView != null) {
             _commandMenuView.syncBounds();
         }
+        if (_mailNotificationView != null) {
+            _mailNotificationView.syncBounds();
+        }
     }
 
     private void registerBufferView(BufferContext bufferContext, BufferView bufferView) {
@@ -866,6 +902,34 @@ public class Window implements Drawable {
             return _activeBufferView;
         }
         return _bufferContext != null ? _bufferContext.getBufferView() : null;
+    }
+
+    private boolean revealBufferLocation(BufferContext bufferContext, int lineNumber, int columnNumber) {
+        if (bufferContext == null) {
+            return false;
+        }
+        int targetLine = Math.max(1, lineNumber);
+        int targetColumn = Math.max(1, columnNumber);
+        String text = bufferContext.getBuffer().getString();
+        int index = 0;
+        int currentLine = 1;
+        while (index < text.length() && currentLine < targetLine) {
+            if (text.charAt(index++) == '\n') {
+                currentLine++;
+            }
+        }
+        int currentColumn = 1;
+        while (index < text.length() && currentColumn < targetColumn && text.charAt(index) != '\n') {
+            index++;
+            currentColumn++;
+        }
+        bufferContext.getBuffer().getCursor().setPosition(index);
+        bufferContext.getBufferView().adaptViewToCursor();
+        bufferContext.getBufferView().setNeedsRedraw();
+        if (_modeLineView != null) {
+            _modeLineView.setNeedsRedraw();
+        }
+        return true;
     }
 
     private View findFocusableView(View view) {

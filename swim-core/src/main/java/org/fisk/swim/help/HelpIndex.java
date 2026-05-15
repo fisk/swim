@@ -46,6 +46,7 @@ public class HelpIndex {
                 "h j k l move left, down, up, right.",
                 "^ and $ jump to the start and end of the line.",
                 "gg jumps to the top of the buffer and G jumps to the end.",
+                "w<char> jumps to visible word starts and shows hints when needed.",
                 "f<char> and F<char> find the next or previous matching character.",
                 "/ starts forward search, ? starts backward search, n/N repeat it.");
         addSection(items, "Editing",
@@ -62,9 +63,11 @@ public class HelpIndex {
                 "Ctrl-v enters VISUAL BLOCK mode.");
         addSection(items, "Panels and commands",
                 "m toggles the project file list.",
+                "M toggles whole-project text search.",
                 "t toggles the tree view on the left.",
                 ":help shows this tutorial.",
                 ":e <path> opens a file and creates it if it does not exist.",
+                ":grep <text> searches project contents and shows matching lines.",
                 ":split opens another view below the active buffer.",
                 ":vsplit opens another view to the right of the active buffer.",
                 ":focus left|right|up|down|next|prev moves between panes.",

@@ -29,7 +29,6 @@ import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 
 final class JakartaMailSupport {
-    private static final int DEFAULT_MESSAGE_LIMIT = 500;
     private static final Pattern RE_PREFIX = Pattern.compile("^(?:(?:re|fw|fwd)\\s*:\\s*)+", Pattern.CASE_INSENSITIVE);
 
     private JakartaMailSupport() {
@@ -87,8 +86,7 @@ final class JakartaMailSupport {
                 if (count == 0) {
                     return MailSyncBatch.success(List.of(), "0 messages");
                 }
-                int start = Math.max(1, count - DEFAULT_MESSAGE_LIMIT + 1);
-                Message[] messages = folder.getMessages(start, count);
+                Message[] messages = folder.getMessages();
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
                 fetchProfile.add(FetchProfile.Item.FLAGS);

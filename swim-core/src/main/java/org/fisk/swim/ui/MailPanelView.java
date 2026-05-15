@@ -10,6 +10,7 @@ import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
@@ -19,8 +20,12 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class MailPanelView extends View {
+    private static final int THREAD_PAGE_SIZE = 100;
+    private static final int THREAD_PREFETCH_THRESHOLD = 10;
+
     private enum Mode {
         BROWSE,
+        SEARCH,
         COMPOSE
     }
 
@@ -40,6 +45,9 @@ public class MailPanelView extends View {
         SCROLL_BODY_DOWN,
         SCROLL_BODY_UP,
         CLOSE,
+        START_SEARCH,
+        APPLY_SEARCH,
+        CANCEL_SEARCH,
         START_COMPOSE,
         SEND_COMPOSE,
         CANCEL_COMPOSE,
@@ -56,6 +64,8 @@ public class MailPanelView extends View {
 
     private final MailClient _client;
     private MailSnapshot _snapshot;
+    private List<MailThreadSummary> _threads = List.of();
+    private int _totalThreadCount;
     private MailMessageDetail _selectedMessage;
     private int _selectedIndex;
     private int _threadScrollOffset;
@@ -71,6 +81,9 @@ public class MailPanelView extends View {
     private int _composeBodyRow;
     private int _composeBodyColumn;
     private String _statusMessage = "";
+    private String _searchQuery = "";
+    private StringBuilder _searchInput = new StringBuilder();
+    private int _searchCursor;
     private Action _pendingAction = Action.NONE;
     private Character _pendingCharacter;
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
@@ -83,7 +96,7 @@ public class MailPanelView extends View {
         _client = client;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         reload();
-        if (_snapshot != null && (_snapshot.accounts().isEmpty() || cachedMessageCount() < 500)) {
+        if (_snapshot != null && (_snapshot.accounts().isEmpty() || _snapshot.threads().size() < THREAD_PAGE_SIZE)) {
             refreshClientAsync("Refreshing mail...");
         }
     }
@@ -120,6 +133,21 @@ public class MailPanelView extends View {
             }
             return _pendingAction == Action.NONE ? org.fisk.swim.event.Response.NO : org.fisk.swim.event.Response.YES;
         }
+        if (_mode == Mode.SEARCH) {
+            _pendingAction = switch (event.getKeyType()) {
+            case Escape -> Action.CANCEL_SEARCH;
+            case Enter -> Action.APPLY_SEARCH;
+            case Backspace -> Action.BACKSPACE;
+            case ArrowLeft -> Action.MOVE_LEFT;
+            case ArrowRight -> Action.MOVE_RIGHT;
+            case Character -> {
+                _pendingCharacter = event.getCharacter();
+                yield Action.INSERT_CHAR;
+            }
+            default -> Action.NONE;
+            };
+            return _pendingAction == Action.NONE ? org.fisk.swim.event.Response.NO : org.fisk.swim.event.Response.YES;
+        }
 
         _pendingAction = switch (event.getKeyType()) {
         case ArrowDown -> Action.MOVE_DOWN;
@@ -130,6 +158,7 @@ public class MailPanelView extends View {
         case 'k' -> Action.MOVE_UP;
         case 'g' -> Action.TOP;
         case 'G' -> Action.BOTTOM;
+        case '/', '?' -> Action.START_SEARCH;
         case 'r' -> Action.REFRESH;
         case 'd' -> Action.SCROLL_BODY_DOWN;
         case 'u' -> Action.SCROLL_BODY_UP;
@@ -162,11 +191,14 @@ public class MailPanelView extends View {
             }
         }
         case TOP -> moveTo(0);
-        case BOTTOM -> moveTo(Math.max(0, _snapshot.threads().size() - 1));
+        case BOTTOM -> moveTo(Math.max(0, Math.max(_totalThreadCount, _threads.size()) - 1));
         case REFRESH -> refreshClient();
         case SCROLL_BODY_DOWN -> scrollBody(5);
         case SCROLL_BODY_UP -> scrollBody(-5);
         case CLOSE -> close();
+        case START_SEARCH -> startSearch();
+        case APPLY_SEARCH -> applySearch();
+        case CANCEL_SEARCH -> cancelSearch();
         case START_COMPOSE -> startComposeFromSelection();
         case SEND_COMPOSE -> sendCompose();
         case CANCEL_COMPOSE -> cancelCompose();
@@ -174,11 +206,35 @@ public class MailPanelView extends View {
         case PREVIOUS_FIELD -> advanceComposeField(-1);
         case OPEN_LINK -> openActionableUrl();
         case COPY_LINK -> copyActionableUrl();
-        case MOVE_LEFT -> moveComposeHorizontal(-1);
-        case MOVE_RIGHT -> moveComposeHorizontal(1);
+        case MOVE_LEFT -> {
+            if (_mode == Mode.COMPOSE) {
+                moveComposeHorizontal(-1);
+            } else if (_mode == Mode.SEARCH) {
+                moveSearchHorizontal(-1);
+            }
+        }
+        case MOVE_RIGHT -> {
+            if (_mode == Mode.COMPOSE) {
+                moveComposeHorizontal(1);
+            } else if (_mode == Mode.SEARCH) {
+                moveSearchHorizontal(1);
+            }
+        }
         case INSERT_NEWLINE -> insertComposeNewline();
-        case BACKSPACE -> backspaceCompose();
-        case INSERT_CHAR -> insertComposeCharacter(_pendingCharacter);
+        case BACKSPACE -> {
+            if (_mode == Mode.COMPOSE) {
+                backspaceCompose();
+            } else if (_mode == Mode.SEARCH) {
+                backspaceSearch();
+            }
+        }
+        case INSERT_CHAR -> {
+            if (_mode == Mode.COMPOSE) {
+                insertComposeCharacter(_pendingCharacter);
+            } else if (_mode == Mode.SEARCH) {
+                insertSearchCharacter(_pendingCharacter);
+            }
+        }
         default -> {
         }
         }
@@ -211,12 +267,22 @@ public class MailPanelView extends View {
             int height) {
         var header = new AttributedString();
         header.append(" Mail ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(" j/k select  c compose/reply  r refresh  d/u scroll body  o open-link  y copy-link  q close ",
+        header.append(" j/k select  / search  c compose/reply  r refresh  d/u scroll body  o open-link  y copy-link  q close ",
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         int bodyTop = rect.getPoint().getY() + 1;
         int bodyHeight = Math.max(0, height - 1);
+        if (_mode == Mode.SEARCH || !_searchQuery.isBlank()) {
+            String line = _mode == Mode.SEARCH
+                    ? " Search: " + withCursor(_searchInput.toString(), _searchCursor)
+                    : " Filter: " + _searchQuery + "  (" + _threads.size() + "/" + _totalThreadCount + " loaded)";
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), bodyTop), width,
+                    AttributedString.create(line, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED),
+                    UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+            bodyTop++;
+            bodyHeight = Math.max(0, bodyHeight - 1);
+        }
         int leftWidth = Math.max(26, Math.min(width / 2, (int) Math.round(width * 0.38)));
         if (width - leftWidth <= 2) {
             leftWidth = Math.max(1, width / 2);
@@ -332,6 +398,30 @@ public class MailPanelView extends View {
         _composeBodyColumn = 0;
         _composeAccountId = selectedAccountId();
         _statusMessage = "";
+        setNeedsRedraw();
+    }
+
+    private void startSearch() {
+        _mode = Mode.SEARCH;
+        _searchInput = new StringBuilder(_searchQuery);
+        _searchCursor = _searchInput.length();
+        setNeedsRedraw();
+    }
+
+    private void applySearch() {
+        _searchQuery = _searchInput.toString().trim();
+        _mode = Mode.BROWSE;
+        _selectedIndex = 0;
+        _threadScrollOffset = 0;
+        _detailScrollOffset = 0;
+        reloadThreads();
+        setNeedsRedraw();
+    }
+
+    private void cancelSearch() {
+        _mode = Mode.BROWSE;
+        _searchInput = new StringBuilder(_searchQuery);
+        _searchCursor = _searchInput.length();
         setNeedsRedraw();
     }
 
@@ -503,19 +593,44 @@ public class MailPanelView extends View {
         setNeedsRedraw();
     }
 
+    private void moveSearchHorizontal(int delta) {
+        _searchCursor = clamp(_searchCursor + delta, 0, _searchInput.length());
+        setNeedsRedraw();
+    }
+
+    private void backspaceSearch() {
+        if (_searchCursor <= 0) {
+            return;
+        }
+        _searchInput.deleteCharAt(_searchCursor - 1);
+        _searchCursor--;
+        setNeedsRedraw();
+    }
+
+    private void insertSearchCharacter(Character character) {
+        if (character == null) {
+            return;
+        }
+        _searchInput.insert(_searchCursor, character);
+        _searchCursor++;
+        setNeedsRedraw();
+    }
+
     private void moveSelection(int delta) {
         moveTo(_selectedIndex + delta);
     }
 
     private void moveTo(int index) {
-        if (_snapshot.threads().isEmpty()) {
+        ensureThreadsLoadedThrough(index);
+        if (_threads.isEmpty()) {
             _selectedIndex = 0;
             _selectedMessage = null;
             return;
         }
-        _selectedIndex = Math.max(0, Math.min(index, _snapshot.threads().size() - 1));
+        _selectedIndex = Math.max(0, Math.min(index, _threads.size() - 1));
         _detailScrollOffset = 0;
         loadSelectedMessage();
+        prefetchThreadsIfNeeded();
         setNeedsRedraw();
     }
 
@@ -534,20 +649,63 @@ public class MailPanelView extends View {
             refreshClientAsync("Refreshing mail...");
             return;
         }
-        if (_selectedIndex >= _snapshot.threads().size()) {
-            _selectedIndex = Math.max(0, _snapshot.threads().size() - 1);
-        }
-        loadSelectedMessage();
+        reloadThreads();
         setNeedsRedraw();
     }
 
     private void loadSelectedMessage() {
-        if (_snapshot == null || _snapshot.threads().isEmpty()) {
+        if (_threads.isEmpty()) {
             _selectedMessage = null;
             return;
         }
-        long threadId = _snapshot.threads().get(_selectedIndex).threadId();
+        long threadId = _threads.get(_selectedIndex).threadId();
         _selectedMessage = _client.loadMessage(threadId);
+    }
+
+    private void reloadThreads() {
+        _threads = new ArrayList<>();
+        _totalThreadCount = 0;
+        appendThreadPage();
+        if (_selectedIndex >= _threads.size()) {
+            _selectedIndex = Math.max(0, _threads.size() - 1);
+        }
+        loadSelectedMessage();
+    }
+
+    private void ensureThreadsLoadedThrough(int index) {
+        if (index < 0) {
+            return;
+        }
+        while (index >= _threads.size() && hasMoreThreads()) {
+            if (!appendThreadPage()) {
+                break;
+            }
+        }
+    }
+
+    private void prefetchThreadsIfNeeded() {
+        if (_selectedIndex >= _threads.size() - THREAD_PREFETCH_THRESHOLD) {
+            appendThreadPage();
+        }
+    }
+
+    private boolean appendThreadPage() {
+        if (!_threads.isEmpty() && !hasMoreThreads()) {
+            return false;
+        }
+        MailThreadPage page = _client.loadThreads(_searchQuery, _threads.size(), THREAD_PAGE_SIZE);
+        _totalThreadCount = page.totalCount();
+        if (page.threads().isEmpty()) {
+            return false;
+        }
+        var combined = new ArrayList<>(_threads);
+        combined.addAll(page.threads());
+        _threads = combined;
+        return true;
+    }
+
+    private boolean hasMoreThreads() {
+        return _threads.size() < _totalThreadCount;
     }
 
     private void drawThreadColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
@@ -580,10 +738,9 @@ public class MailPanelView extends View {
 
         int availableThreadRows = Math.max(0, height - row);
         adjustThreadScroll(availableThreadRows);
-        List<MailThreadSummary> threads = _snapshot.threads();
-        for (int visible = 0; visible < availableThreadRows && _threadScrollOffset + visible < threads.size(); visible++) {
+        for (int visible = 0; visible < availableThreadRows && _threadScrollOffset + visible < _threads.size(); visible++) {
             int threadIndex = _threadScrollOffset + visible;
-            MailThreadSummary thread = threads.get(threadIndex);
+            MailThreadSummary thread = _threads.get(threadIndex);
             boolean selected = threadIndex == _selectedIndex;
             TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
                     : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
@@ -668,6 +825,9 @@ public class MailPanelView extends View {
     }
 
     private String emptyStateText() {
+        if (!_searchQuery.isBlank()) {
+            return "No mail matched \"" + _searchQuery + "\".";
+        }
         if (_snapshot != null && !_snapshot.statusMessage().isBlank()) {
             return _snapshot.statusMessage();
         }
@@ -684,7 +844,7 @@ public class MailPanelView extends View {
         } else if (_selectedIndex >= _threadScrollOffset + availableThreadRows) {
             _threadScrollOffset = _selectedIndex - availableThreadRows + 1;
         }
-        int maxOffset = Math.max(0, _snapshot.threads().size() - availableThreadRows);
+        int maxOffset = Math.max(0, _threads.size() - availableThreadRows);
         _threadScrollOffset = Math.max(0, Math.min(_threadScrollOffset, maxOffset));
     }
 
@@ -696,8 +856,8 @@ public class MailPanelView extends View {
     }
 
     private String selectedAccountId() {
-        if (_selectedIndex >= 0 && _selectedIndex < _snapshot.threads().size()) {
-            return safe(_snapshot.threads().get(_selectedIndex).accountId(), "");
+        if (_selectedIndex >= 0 && _selectedIndex < _threads.size()) {
+            return safe(_threads.get(_selectedIndex).accountId(), "");
         }
         if (!_snapshot.accounts().isEmpty()) {
             return safe(_snapshot.accounts().getFirst().id(), "");

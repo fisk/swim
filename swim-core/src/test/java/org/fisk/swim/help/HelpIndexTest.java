@@ -20,6 +20,7 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  :vsplit opens another view to the right of the active buffer."));
         assertTrue(rendered.contains("Pane shortcuts"));
         assertTrue(rendered.contains("  Press i to enter INSERT mode and type text."));
+        assertTrue(rendered.contains("  w<char> jumps to visible word starts and shows hints when needed."));
         assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
     }
 

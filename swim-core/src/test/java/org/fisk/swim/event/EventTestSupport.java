@@ -22,11 +22,15 @@ final class EventTestSupport {
     }
 
     static TestContext createContext(Path tempDir, String text) throws IOException {
+        return createContext(tempDir, text, 80, 20);
+    }
+
+    static TestContext createContext(Path tempDir, String text, int width, int height) throws IOException {
         Path path = tempDir.resolve("event-" + text.hashCode() + ".txt");
         Files.writeString(path, text);
 
-        var bufferContext = new BufferContext(Rect.create(0, 0, 80, 20), path);
-        var rootView = new View(Rect.create(0, 0, 80, 20));
+        var bufferContext = new BufferContext(Rect.create(0, 0, width, height), path);
+        var rootView = new View(Rect.create(0, 0, width, height));
         rootView.addSubview(bufferContext.getBufferView());
         rootView.setFirstResponder(bufferContext.getBufferView());
 

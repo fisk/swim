@@ -32,6 +32,7 @@ public class CommandView extends View {
             new CommandSpec("close", List.of(), "", "close the active pane"),
             new CommandSpec("only", List.of(), "", "keep only the active pane"),
             new CommandSpec("focus", List.of(), "left|right|up|down|next|prev", "move focus between panes"),
+            new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
             new CommandSpec("mail", List.of(), "", "open the mail client"),
             new CommandSpec("nemo", List.of(), "<question>", "ask Nemo about the current file"),
@@ -216,6 +217,10 @@ public class CommandView extends View {
             break;
         case "focus":
             focus(argument);
+            break;
+        case "grep":
+        case "search":
+            ProjectSearchUiSupport.open(Window.getInstance(), argument);
             break;
         case "h":
         case "help":

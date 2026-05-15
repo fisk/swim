@@ -2,164 +2,189 @@ package org.fisk.swim.event;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.TextLayout.Glyph;
-import org.fisk.swim.utils.LogFactory;
-import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class FancyJumpResponder implements EventResponder {
-    private static final Logger _log = LogFactory.createLog();
-    
-    private BufferContext _bufferContext;
-    private List<WordResponder> _installedResponders = new ArrayList<>();
-    private TextEventResponder _prefixResponder;
-    private EventResponder _responder;
-    
+    private static final String HINT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    private final BufferContext _bufferContext;
+    private final TextEventResponder _prefixResponder;
+
+    private List<HintTarget> _activeTargets = List.of();
+    private String _typedHint = "";
+    private HintTarget _selectedTarget;
+
     public FancyJumpResponder(BufferContext bufferContext, char prefix) {
         _bufferContext = bufferContext;
-        _prefixResponder = new TextEventResponder(Character.toString(prefix), () -> {});
+        _prefixResponder = new TextEventResponder(Character.toString(prefix), () -> {
+        });
     }
 
-    private class WordResponder implements EventResponder {
-        private int _position;
-        private TextEventResponder _responder;
-        private String _matchStringRaw;
-        private int _matches = 0;
-        
-        public WordResponder(int position, int number, int max, char character) {
-            _position = position;
-            var str = new StringBuilder();
-            max = (int)Math.floor(Math.log((double)max) / Math.log(52.0));
-            int i;
-            for (i = 0;; ++i) {
-                int c = number % 52;
-                str.append(" ");
-                if (c < 26) {
-                    str.append(Character.toString('a' + c));
-                } else {
-                    str.append(Character.toString('A' + c - 26));
-                }
-                if (number < 52) {
-                    break;
-                } else {
-                    number /= 52;
-                }
-            }
-            for (; i < max; ++i) {
-                str.append(" a");
-            }
-            str.reverse();
-            _matchStringRaw = str.toString().replace(" ", "");
-            _log.info("Word match: " + str);
-            _responder = new TextEventResponder(str.toString(), () -> {
-                _log.info("Respond 3");
-                _bufferContext.getBuffer().getCursor().setPosition(_position);
-                _bufferContext.getBufferView().adaptViewToCursor();
-                _installedResponders.clear();
-            });
-        }
-        
-        @Override
-        public Response processEvent(KeyStrokes events) {
-            var result = _responder.processEvent(events);
-            switch (result) {
-            case YES:
-                break;
-            case NO:
-                break;
-            case MAYBE:
-                _matches = _matchStringRaw.length() - events.remaining();
-                break;
-            }
-            return result;
-        }
-        
-        @Override
-        public void respond() {
-            _log.info("Respond 2");
-            _responder.respond();
-        }
-
-        public AttributedString decorate(Glyph glyph, AttributedString character) {
-            if (glyph.getPosition() != _position) {
-                return character;
-            }
-            return AttributedString.create(_matchStringRaw.substring(_matches, _matches + 1), 
-                    TextColor.ANSI.RED, TextColor.ANSI.DEFAULT);
-        }
+    private record HintTarget(int position, String label) {
     }
-    
+
     @Override
     public Response processEvent(KeyStrokes events) {
-        _installedResponders.clear();
-        _log.info("Proc 0");
+        clearState();
         var result = _prefixResponder.processEvent(events);
         if (result != Response.YES) {
+            return result;
+        }
+        if (events.consumed()) {
+            return Response.MAYBE;
+        }
+
+        var searchKey = events.current();
+        if (searchKey.getKeyType() != KeyType.Character) {
             return Response.NO;
         }
 
-        if (events.consumed()) {
-            return Response.MAYBE;
-        }
-        
-        var key = events.current();
-        
-        if (key.getKeyType() != KeyType.Character) {
+        var targets = findVisibleTargets(searchKey.getCharacter());
+        if (targets.isEmpty()) {
             return Response.NO;
         }
-        var responders = new ListEventResponder();
-        var range = _bufferContext.getTextLayout().getGlyphRange();
-        if (range.getLength() == 0) {
-            return Response.NO;
-        }
-        var pattern = Pattern.compile("\\b" + Pattern.quote(Character.toString(key.getCharacter())), Pattern.MULTILINE);
-        var str = _bufferContext.getBuffer().getString().substring(range.getStart(), range.getEnd());
-        var matcher = pattern.matcher(str);
-        var matches = new ArrayList<Integer>();
-        while (matcher.find()) {
-            matches.add(matcher.start());
-        }
-        int number = 0;
-        var iter = matches.iterator();
-        while (iter.hasNext()) {
-            int match = iter.next();
-            _log.info("Adding word responder: " + (range.getStart() + match) + ", " + number);
-            var responder = new WordResponder(range.getStart() + match, number++, matches.size(), key.getCharacter());
-            responders.addEventResponder(responder);
-            _installedResponders.add(responder);
-        }
-        if (number == 0) {
-            return Response.NO;
-        }
-        
+
         events.consume(1);
-        
-        if (events.consumed()) {
-            return Response.MAYBE;
+        if (targets.size() == 1) {
+            _selectedTarget = targets.get(0);
+            _activeTargets = List.of();
+            _typedHint = "";
+            return Response.YES;
         }
-        
-        result = responders.processEvent(events);
-        
-        _responder = responders;
-        
-        return result;
+
+        _activeTargets = targets;
+        _typedHint = "";
+
+        while (!events.consumed()) {
+            var hintKey = events.current();
+            if (hintKey.getKeyType() != KeyType.Character) {
+                clearState();
+                return Response.NO;
+            }
+
+            _typedHint += hintKey.getCharacter();
+            targets = filterTargetsByPrefix(targets, _typedHint);
+            if (targets.isEmpty()) {
+                clearState();
+                return Response.NO;
+            }
+
+            _activeTargets = targets;
+            events.consume(1);
+            if (targets.size() == 1) {
+                _selectedTarget = targets.get(0);
+                _activeTargets = List.of();
+                _typedHint = "";
+                return Response.YES;
+            }
+        }
+
+        return Response.MAYBE;
     }
 
     @Override
     public void respond() {
-        _responder.respond();
+        if (_selectedTarget == null) {
+            return;
+        }
+        _bufferContext.getBuffer().getCursor().setPosition(_selectedTarget.position());
+        _bufferContext.getBufferView().adaptViewToCursor();
+        clearState();
     }
 
     public AttributedString decorate(Glyph glyph, AttributedString character) {
-        for (var responder: _installedResponders) {
-            character = responder.decorate(glyph, character);
+        if (_activeTargets.isEmpty()) {
+            return character;
+        }
+        for (var target : _activeTargets) {
+            if (target.position() == glyph.getPosition()) {
+                int hintIndex = Math.min(_typedHint.length(), target.label().length() - 1);
+                return AttributedString.create(target.label().substring(hintIndex, hintIndex + 1),
+                        TextColor.ANSI.RED, TextColor.ANSI.DEFAULT);
+            }
         }
         return character;
+    }
+
+    private void clearState() {
+        _activeTargets = List.of();
+        _typedHint = "";
+        _selectedTarget = null;
+    }
+
+    private List<HintTarget> findVisibleTargets(char searchCharacter) {
+        var positions = new ArrayList<Integer>();
+        _bufferContext.getTextLayout().getGlyphs().forEach(glyph -> {
+            if (glyph.getCharacter().length() == 1
+                    && glyph.getCharacter().charAt(0) == searchCharacter
+                    && isWordStart(glyph.getPosition())) {
+                positions.add(glyph.getPosition());
+            }
+        });
+
+        int labelWidth = requiredLabelWidth(positions.size());
+        var targets = new ArrayList<HintTarget>(positions.size());
+        for (int i = 0; i < positions.size(); ++i) {
+            targets.add(new HintTarget(positions.get(i), encodeLabel(i, labelWidth)));
+        }
+        return targets;
+    }
+
+    private boolean isWordStart(int position) {
+        var text = _bufferContext.getBuffer().getString();
+        if (position < 0 || position >= text.length()) {
+            return false;
+        }
+        char current = text.charAt(position);
+        if (!isWordCharacter(current)) {
+            return false;
+        }
+        if (position == 0) {
+            return true;
+        }
+        return !isWordCharacter(text.charAt(position - 1));
+    }
+
+    private boolean isWordCharacter(char character) {
+        return Character.isLetterOrDigit(character) || character == '_';
+    }
+
+    private int requiredLabelWidth(int count) {
+        if (count <= 1) {
+            return 1;
+        }
+        int digits = 1;
+        long capacity = HINT_ALPHABET.length();
+        while (count > capacity) {
+            digits++;
+            capacity *= HINT_ALPHABET.length();
+        }
+        return digits;
+    }
+
+    private String encodeLabel(int number, int width) {
+        int radix = HINT_ALPHABET.length();
+        char[] label = new char[width];
+        for (int i = width - 1; i >= 0; --i) {
+            label[i] = HINT_ALPHABET.charAt(number % radix);
+            number /= radix;
+        }
+        return new String(label);
+    }
+
+    private List<HintTarget> filterTargetsByPrefix(List<HintTarget> targets, String prefix) {
+        var filtered = new ArrayList<HintTarget>();
+        for (var target : targets) {
+            if (target.label().startsWith(prefix)) {
+                filtered.add(target);
+            }
+        }
+        return filtered;
     }
 }

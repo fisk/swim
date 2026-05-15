@@ -68,6 +68,21 @@ class ModeResponderTest {
     }
 
     @Test
+    void normalModeWordJumpUsesVisibleHints() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("jump.txt", "alpha beta bravo"), 30, 6)) {
+            Window window = harness.getWindow();
+            var cursor = window.getBufferContext().getBuffer().getCursor();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key('w'),
+                    HeadlessWindowHarness.key('b'),
+                    HeadlessWindowHarness.key('b'));
+
+            assertEquals(11, cursor.getPosition());
+        }
+    }
+
+    @Test
     void inputModeCharacterAndArrowRespondersUpdateAllCursors() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("input.txt", "ab\ncd"), 20, 7)) {
             Window window = harness.getWindow();

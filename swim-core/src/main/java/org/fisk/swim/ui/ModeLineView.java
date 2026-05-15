@@ -13,6 +13,7 @@ import java.util.TimerTask;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
@@ -196,12 +197,20 @@ public class ModeLineView extends View {
 
     private AttributedString getRightString() {
         var str = new AttributedString();
+        TextColor currentBackground = _backgroundColour;
+        int unreadCount = MailStatusService.getInstance().currentStatus().unreadCount();
+        if (unreadCount > 0) {
+            UiTheme.appendLeftSeparator(str, UiTheme.ACCENT_GREEN, currentBackground);
+            UiTheme.appendSegment(str, "mail " + unreadCount, UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GREEN);
+            currentBackground = UiTheme.ACCENT_GREEN;
+        }
         String branch = getBranch();
         if (!branch.equals("")) {
-            UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ACCENT, _backgroundColour);
+            UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ACCENT, currentBackground);
             UiTheme.appendSegment(str, Powerline.SYMBOL_BRANCH + " " + branch, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
+            currentBackground = UiTheme.SURFACE_ACCENT;
         }
-        UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_MUTED, str.length() == 0 ? _backgroundColour : UiTheme.SURFACE_ACCENT);
+        UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_MUTED, currentBackground);
         UiTheme.appendSegment(str, _time, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
         UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ELEVATED, UiTheme.SURFACE_MUTED);
         str.append(getHeapString());

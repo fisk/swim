@@ -8,9 +8,18 @@ import java.lang.reflect.Method;
 import java.lang.management.MemoryUsage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.List;
 
 import com.googlecode.lanterna.TextColor;
 
+import org.fisk.swim.mail.MailAccountSummary;
+import org.fisk.swim.mail.MailClient;
+import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailPluginRegistry;
+import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailStatusService;
+import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 import org.junit.jupiter.api.Test;
@@ -122,6 +131,29 @@ class ModeLineViewTest {
         });
     }
 
+    @Test
+    void rightSegmentsShowUnreadMailCountWhenAvailable() throws Exception {
+        MailPluginRegistry.register(new FakeMailClient(
+                new MailSnapshot(
+                        List.of(new MailAccountSummary("account", "Inbox", "imap", 12, 7, "", "")),
+                        List.of(),
+                        "")));
+        try (var harness = HeadlessWindowHarness.create(writeFile("mode-line-mail.txt", "abc"), 60, 8)) {
+            MailStatusService.getInstance().pollNow();
+
+            AttributedString rendered = invoke(harness.getWindow().getModeLineView(), "getRightString", AttributedString.class);
+
+            assertEquals(Powerline.SYMBOL_FILLED_LEFT_ARROW, fragmentText(rendered, 0));
+            assertEquals(UiTheme.MODELINE_BACKGROUND, background(rendered, 0));
+            assertEquals(UiTheme.ACCENT_GREEN, foreground(rendered, 0));
+            assertEquals(" mail 7 ", fragmentText(rendered, 1));
+            assertEquals(UiTheme.ACCENT_GREEN, background(rendered, 1));
+        } finally {
+            MailPluginRegistry.clear();
+            MailStatusService.shutdownInstance();
+        }
+    }
+
     private Path writeFile(String name, String text) throws IOException {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
@@ -169,6 +201,37 @@ class ModeLineViewTest {
                 .start();
         if (process.waitFor() != 0) {
             throw new IOException(new String(process.getInputStream().readAllBytes()));
+        }
+    }
+
+    private static final class FakeMailClient implements MailClient {
+        private final ArrayDeque<MailSnapshot> _snapshots = new ArrayDeque<>();
+        private MailSnapshot _current = new MailSnapshot(List.of(), List.of(), "");
+
+        private FakeMailClient(MailSnapshot... snapshots) {
+            _snapshots.addAll(List.of(snapshots));
+        }
+
+        @Override
+        public MailSnapshot snapshot() {
+            return _current;
+        }
+
+        @Override
+        public MailMessageDetail loadMessage(long threadId) {
+            return new MailMessageDetail(threadId, threadId, "", "", "", "", "", List.of());
+        }
+
+        @Override
+        public void refresh() {
+            if (!_snapshots.isEmpty()) {
+                _current = _snapshots.removeFirst();
+            }
+        }
+
+        @Override
+        public Path getDataPath() {
+            return Path.of(".");
         }
     }
 }
