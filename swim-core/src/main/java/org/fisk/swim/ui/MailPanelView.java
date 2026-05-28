@@ -87,6 +87,7 @@ public class MailPanelView extends View {
     private Action _pendingAction = Action.NONE;
     private Character _pendingCharacter;
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
+    private final AtomicBoolean _sendInFlight = new AtomicBoolean();
     private String _lastActionableUrl;
     private boolean _awaitingOAuthCompletion;
     private long _oauthPollGeneration;
@@ -96,7 +97,7 @@ public class MailPanelView extends View {
         _client = client;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         reload();
-        if (_snapshot != null && (_snapshot.accounts().isEmpty() || _snapshot.threads().size() < THREAD_PAGE_SIZE)) {
+        if (shouldAutoRefreshOnOpen()) {
             refreshClientAsync("Refreshing mail...");
         }
     }
@@ -426,8 +427,8 @@ public class MailPanelView extends View {
     }
 
     private void sendCompose() {
-        if (!_refreshInFlight.compareAndSet(false, true)) {
-            announce("Mail action already in progress");
+        if (!_sendInFlight.compareAndSet(false, true)) {
+            announce("Mail send already in progress");
             return;
         }
         _statusMessage = "Sending mail...";
@@ -440,11 +441,16 @@ public class MailPanelView extends View {
         Thread thread = new Thread(() -> {
             MailSendResult result = _client.sendDraft(draft);
             EventThread.getInstance().enqueue(new RunnableEvent(() -> {
-                _refreshInFlight.set(false);
+                _sendInFlight.set(false);
                 _statusMessage = result.message();
                 if (result.success()) {
                     _mode = Mode.BROWSE;
-                    refreshClientAsync(result.message());
+                    reload();
+                    if (!_refreshInFlight.get()) {
+                        refreshClientAsync(result.message());
+                    } else {
+                        setNeedsRedraw();
+                    }
                 } else {
                     announce(result.message());
                 }
@@ -466,11 +472,17 @@ public class MailPanelView extends View {
             announce("No URL available");
             return;
         }
-        _awaitingOAuthCompletion = true;
-        startOAuthCompletionPoll();
-        announce(ExternalResourceSupport.openUrl(url)
-                ? "Opened URL. Waiting for sign-in to complete..."
-                : "Could not open URL");
+        if (ExternalResourceSupport.openUrl(url)) {
+            _awaitingOAuthCompletion = true;
+            startOAuthCompletionPoll();
+            announce("Opened URL. Waiting for sign-in to complete...");
+            return;
+        }
+        _awaitingOAuthCompletion = false;
+        _oauthPollGeneration++;
+        announce(ExternalResourceSupport.copyText(url)
+                ? "Could not open URL. Copied sign-in link for manual use"
+                : "Could not open URL. Press y to copy the sign-in link");
     }
 
     private void copyActionableUrl() {
@@ -651,6 +663,17 @@ public class MailPanelView extends View {
         }
         reloadThreads();
         setNeedsRedraw();
+    }
+
+    private boolean shouldAutoRefreshOnOpen() {
+        if (_snapshot == null) {
+            return false;
+        }
+        if (_snapshot.accounts().isEmpty()) {
+            return true;
+        }
+        return _snapshot.accounts().stream()
+                .anyMatch(account -> account.lastSyncAt() == null || account.lastSyncAt().isBlank());
     }
 
     private void loadSelectedMessage() {

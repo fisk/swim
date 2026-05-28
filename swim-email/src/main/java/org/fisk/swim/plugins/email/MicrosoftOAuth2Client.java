@@ -26,6 +26,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import org.fisk.swim.launcher.DesktopSupport;
 
 final class MicrosoftOAuth2Client {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -443,16 +444,9 @@ final class MicrosoftOAuth2Client {
     private static final class SystemBrowserLauncher implements BrowserLauncher {
         @Override
         public void open(URI uri) throws IOException {
-            String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-            ProcessBuilder builder;
-            if (osName.contains("mac")) {
-                builder = new ProcessBuilder("open", uri.toString());
-            } else if (osName.contains("win")) {
-                builder = new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", uri.toString());
-            } else {
-                builder = new ProcessBuilder("xdg-open", uri.toString());
+            if (!DesktopSupport.openUri(uri)) {
+                throw new IOException("Unable to open browser");
             }
-            builder.start();
         }
     }
 

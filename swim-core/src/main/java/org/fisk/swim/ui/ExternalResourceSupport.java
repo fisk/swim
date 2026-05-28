@@ -1,31 +1,27 @@
 package org.fisk.swim.ui;
 
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Locale;
+import java.net.URI;
 
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.launcher.DesktopSupport;
 
 final class ExternalResourceSupport {
+    interface UrlOpener {
+        boolean open(String url);
+    }
+
+    interface TextCopier {
+        boolean copy(String text);
+    }
+
+    private static volatile UrlOpener _urlOpener = ExternalResourceSupport::openUrlWithSystem;
+    private static volatile TextCopier _textCopier = ExternalResourceSupport::copyTextWithSystem;
+
     private ExternalResourceSupport() {
     }
 
     static boolean openUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return false;
-        }
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        List<String> command;
-        if (os.contains("mac")) {
-            command = List.of("open", url);
-        } else if (os.contains("win")) {
-            command = List.of("rundll32", "url.dll,FileProtocolHandler", url);
-        } else {
-            command = List.of("xdg-open", url);
-        }
-        return start(command);
+        return _urlOpener.open(url);
     }
 
     static boolean copyText(String text) {
@@ -33,41 +29,34 @@ final class ExternalResourceSupport {
             return false;
         }
         Copy.getInstance().setText(text, false);
-
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (os.contains("mac")) {
-            return pipeTo(List.of("pbcopy"), text);
-        }
-        if (os.contains("win")) {
-            return pipeTo(List.of("clip"), text);
-        }
-        if (pipeTo(List.of("wl-copy"), text)) {
-            return true;
-        }
-        return pipeTo(List.of("xclip", "-selection", "clipboard"), text);
+        return _textCopier.copy(text);
     }
 
-    private static boolean start(List<String> command) {
+    private static boolean openUrlWithSystem(String url) {
+        if (url == null || url.isBlank()) {
+            return false;
+        }
         try {
-            new ProcessBuilder(command).start();
-            return true;
-        } catch (IOException e) {
+            return DesktopSupport.openUri(URI.create(url));
+        } catch (IllegalArgumentException e) {
             return false;
         }
     }
 
-    private static boolean pipeTo(List<String> command, String text) {
-        try {
-            Process process = new ProcessBuilder(command).start();
-            try (var writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-                writer.write(text);
-            }
-            return process.waitFor() == 0;
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            return false;
-        }
+    private static boolean copyTextWithSystem(String text) {
+        return DesktopSupport.copyText(text);
+    }
+
+    static void setUrlOpenerForTesting(UrlOpener urlOpener) {
+        _urlOpener = urlOpener == null ? ExternalResourceSupport::openUrlWithSystem : urlOpener;
+    }
+
+    static void setTextCopierForTesting(TextCopier textCopier) {
+        _textCopier = textCopier == null ? ExternalResourceSupport::copyTextWithSystem : textCopier;
+    }
+
+    static void resetForTesting() {
+        _urlOpener = ExternalResourceSupport::openUrlWithSystem;
+        _textCopier = ExternalResourceSupport::copyTextWithSystem;
     }
 }
