@@ -6,7 +6,9 @@ build
 /swim-core/target/
 /swim-launcher/target/
 /swim-java-lsp/target/
+/swim-clangd-lsp/target/
 /swim-tree-view/target/
+/swim-email/target/
 /image/
 /plugins/
 /workspace/
