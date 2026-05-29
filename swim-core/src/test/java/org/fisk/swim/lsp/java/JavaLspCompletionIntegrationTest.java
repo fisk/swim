@@ -40,7 +40,7 @@ class JavaLspCompletionIntegrationTest {
 
     @Test
     void inputModeNavigatesAndAppliesCompletionPopup() throws Exception {
-        var client = new JavaLSPClient();
+        var client = new TestJavaLspClient();
         setField(client, "_enabled", true);
         setField(client, "_server", new CompletionLanguageServer());
         var capabilities = new ServerCapabilities();
@@ -48,7 +48,7 @@ class JavaLspCompletionIntegrationTest {
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
 
-        try (var harness = HeadlessWindowHarness.create(writeFile("completion-input.txt", ""), 32, 8)) {
+        try (var harness = HeadlessWindowHarness.create(writeFile("completion-input.java", ""), 32, 8)) {
             var window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
@@ -66,7 +66,7 @@ class JavaLspCompletionIntegrationTest {
 
     @Test
     void typingCommitCharacterAcceptsCompletionAndPreservesDelimiter() throws Exception {
-        var client = new JavaLSPClient();
+        var client = new TestJavaLspClient();
         setField(client, "_enabled", true);
         setField(client, "_server", new CompletionLanguageServer());
         var options = new CompletionOptions(Boolean.FALSE, List.of("."));
@@ -76,7 +76,7 @@ class JavaLspCompletionIntegrationTest {
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
 
-        try (var harness = HeadlessWindowHarness.create(writeFile("completion-commit.txt", ""), 32, 8)) {
+        try (var harness = HeadlessWindowHarness.create(writeFile("completion-commit.java", ""), 32, 8)) {
             var window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
@@ -90,7 +90,7 @@ class JavaLspCompletionIntegrationTest {
 
     @Test
     void pageDownAdvancesSelectionByPopupPage() throws Exception {
-        var client = new JavaLSPClient();
+        var client = new TestJavaLspClient();
         setField(client, "_enabled", true);
         setField(client, "_server", new PagingCompletionLanguageServer());
         var capabilities = new ServerCapabilities();
@@ -98,7 +98,7 @@ class JavaLspCompletionIntegrationTest {
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
 
-        try (var harness = HeadlessWindowHarness.create(writeFile("completion-page.txt", ""), 48, 10)) {
+        try (var harness = HeadlessWindowHarness.create(writeFile("completion-page.java", ""), 48, 10)) {
             var window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
@@ -113,7 +113,7 @@ class JavaLspCompletionIntegrationTest {
 
     @Test
     void snippetCompletionReplacesPlaceholderAndTabsForward() throws Exception {
-        var client = new JavaLSPClient();
+        var client = new TestJavaLspClient();
         setField(client, "_enabled", true);
         setField(client, "_server", new SnippetCompletionLanguageServer());
         var capabilities = new ServerCapabilities();
@@ -121,7 +121,7 @@ class JavaLspCompletionIntegrationTest {
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
 
-        try (var harness = HeadlessWindowHarness.create(writeFile("completion-snippet.txt", ""), 48, 10)) {
+        try (var harness = HeadlessWindowHarness.create(writeFile("completion-snippet.java", ""), 48, 10)) {
             var window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
@@ -151,9 +151,33 @@ class JavaLspCompletionIntegrationTest {
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
-        Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        field.set(target, value);
+        Class<?> type = target.getClass();
+        while (type != null) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(target, value);
+                return;
+            } catch (NoSuchFieldException e) {
+                type = type.getSuperclass();
+            }
+        }
+        throw new NoSuchFieldException(name);
+    }
+
+    private static final class TestJavaLspClient extends JavaLSPClient {
+        @Override
+        public boolean hasStarted() {
+            return true;
+        }
+
+        @Override
+        public synchronized void startServer(Path filePath) {
+        }
+
+        @Override
+        public void ensureInit() {
+        }
     }
 
     private static final class CompletionLanguageServer implements LanguageServer {

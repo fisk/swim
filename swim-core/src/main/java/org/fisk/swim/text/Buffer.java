@@ -95,6 +95,10 @@ public class Buffer {
         return _string.substring(position, position + 1);
     }
 
+    public LanguageMode getLanguageMode() {
+        return _languageMode;
+    }
+
     public void undo() {
         int position = _undoLog.undo();
         if (position == -1) {

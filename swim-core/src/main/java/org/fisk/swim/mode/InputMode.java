@@ -3,7 +3,7 @@ package org.fisk.swim.mode;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
-import org.fisk.swim.lsp.java.JavaLSPClient;
+import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.ui.Window;
 
 import com.googlecode.lanterna.input.KeyType;
@@ -20,8 +20,9 @@ public class InputMode extends Mode {
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
         _rootResponder.addEventResponder("<ESC>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             window.switchToMode(window.getNormalMode());
             buffer.getCursor().goLeft();
         });
@@ -44,7 +45,7 @@ public class InputMode extends Mode {
             @Override
             public void respond() {
                 buffer.insert(Character.toString(_character));
-                JavaLSPClient.getInstance().handleInsertedCharacter(bufferContext, _character);
+                languageMode(buffer).handleInsertedCharacter(bufferContext, _character);
                 bufferContext.getBufferView().setNeedsRedraw();
                 window.getModeLineView().setNeedsRedraw();
             }
@@ -52,38 +53,44 @@ public class InputMode extends Mode {
         _rootResponder.addEventResponder("<BACKSPACE>", () -> {
             int previousPosition = buffer.getCursor().getPosition();
             buffer.removeBefore();
-            if (JavaLSPClient.getInstance().hasActiveSnippet() && previousPosition > 0) {
-                JavaLSPClient.getInstance().handleSnippetBackspace(previousPosition - 1, previousPosition);
+            var languageMode = languageMode(buffer);
+            if (languageMode.hasActiveSnippet() && previousPosition > 0) {
+                languageMode.handleSnippetBackspace(previousPosition - 1, previousPosition);
             }
-            JavaLSPClient.getInstance().handleBackspace(bufferContext);
+            languageMode.handleBackspace(bufferContext);
         });
         _rootResponder.addEventResponder("<ENTER>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             buffer.insert("\n");
         });
         _rootResponder.addEventResponder("<LEFT>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             for (var c: buffer.getCursors()) {
                 c.goLeft();
             }
         });
         _rootResponder.addEventResponder("<RIGHT>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             for (var c: buffer.getCursors()) {
                 c.goRight();
             }
         });
         _rootResponder.addEventResponder("<DOWN>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             cursor.goDown();
         });
         _rootResponder.addEventResponder("<UP>", () -> {
-            JavaLSPClient.getInstance().cancelCompletion();
-            JavaLSPClient.getInstance().cancelSnippet();
+            var languageMode = languageMode(buffer);
+            languageMode.cancelCompletion();
+            languageMode.cancelSnippet();
             cursor.goUp();
         });
         _rootResponder.addEventResponder(new EventResponder() {
@@ -115,7 +122,7 @@ public class InputMode extends Mode {
                     return Response.NO;
                 }
                 var event = events.current();
-                var completion = JavaLSPClient.getInstance();
+                var completion = languageMode(buffer);
                 boolean visible = completion.hasCompletionSession();
                 boolean snippetActive = completion.hasActiveSnippet();
 
@@ -193,7 +200,7 @@ public class InputMode extends Mode {
 
             @Override
             public void respond() {
-                var completion = JavaLSPClient.getInstance();
+                var completion = languageMode(buffer);
                 switch (_action) {
                 case SNIPPET_TYPE:
                     completion.handleSnippetCharacter(bufferContext, _typedCharacter);
@@ -241,5 +248,9 @@ public class InputMode extends Mode {
                 }
             }
         });
+    }
+
+    private static LanguageMode languageMode(org.fisk.swim.text.Buffer buffer) {
+        return buffer.getLanguageMode();
     }
 }

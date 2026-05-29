@@ -1000,6 +1000,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         showCompletionSession(session);
     }
 
+    @Override
     public boolean triggerCompletion(BufferContext bufferContext) {
         if (!supportsCompletion()) {
             return false;
@@ -1010,6 +1011,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public void handleInsertedCharacter(BufferContext bufferContext, char insertedCharacter) {
         if (hasActiveSnippet()) {
             return;
@@ -1030,6 +1032,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public void handleBackspace(BufferContext bufferContext) {
         if (hasActiveSnippet()) {
             return;
@@ -1044,12 +1047,14 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public boolean hasCompletionSession() {
         synchronized (_completionLock) {
             return _completionSession != null;
         }
     }
 
+    @Override
     public boolean selectNextCompletion() {
         synchronized (_completionLock) {
             if (_completionSession == null) {
@@ -1063,6 +1068,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean selectPreviousCompletion() {
         synchronized (_completionLock) {
             if (_completionSession == null) {
@@ -1076,6 +1082,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean pageNextCompletion() {
         synchronized (_completionLock) {
             if (_completionSession == null) {
@@ -1089,6 +1096,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean pagePreviousCompletion() {
         synchronized (_completionLock) {
             if (_completionSession == null) {
@@ -1102,6 +1110,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean isCommitCharacter(char character) {
         synchronized (_completionLock) {
             if (_completionSession == null) {
@@ -1123,6 +1132,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public boolean cancelCompletion() {
         CompletionPopupView popupView;
         synchronized (_completionLock) {
@@ -1190,18 +1200,21 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean hasActiveSnippet() {
         synchronized (_snippetLock) {
             return _snippetSession != null && _snippetSession.isActive();
         }
     }
 
+    @Override
     public void cancelSnippet() {
         synchronized (_snippetLock) {
             _snippetSession = null;
         }
     }
 
+    @Override
     public boolean jumpToNextSnippetStop(BufferContext bufferContext) {
         synchronized (_snippetLock) {
             if (_snippetSession == null) {
@@ -1215,6 +1228,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public boolean jumpToPreviousSnippetStop(BufferContext bufferContext) {
         synchronized (_snippetLock) {
             if (_snippetSession == null) {
@@ -1224,6 +1238,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public boolean handleSnippetCharacter(BufferContext bufferContext, char character) {
         synchronized (_snippetLock) {
             if (_snippetSession == null) {
@@ -1240,6 +1255,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
+    @Override
     public void handleSnippetBackspace(int startPosition, int endPosition) {
         synchronized (_snippetLock) {
             if (_snippetSession != null) {
@@ -1365,6 +1381,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         applyCommand(bufferContext, item.getCommand());
     }
 
+    @Override
     public boolean acceptCompletion(BufferContext bufferContext) {
         JavaCompletionSession session;
         synchronized (_completionLock) {
@@ -1379,6 +1396,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return true;
     }
 
+    @Override
     public boolean acceptCompletionWithCharacter(BufferContext bufferContext, char character) {
         if (!acceptCompletion(bufferContext)) {
             return false;
