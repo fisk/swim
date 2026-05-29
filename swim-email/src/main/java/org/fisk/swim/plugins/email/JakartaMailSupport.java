@@ -26,10 +26,12 @@ import jakarta.mail.Session;
 import jakarta.mail.Store;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMultipart;
+import jakarta.mail.search.HeaderTerm;
 import jakarta.mail.util.ByteArrayDataSource;
 
 final class JakartaMailSupport {
     private static final Pattern RE_PREFIX = Pattern.compile("^(?:(?:re|fw|fwd)\\s*:\\s*)+", Pattern.CASE_INSENSITIVE);
+    private static final int DEFAULT_MAX_MESSAGES_PER_SYNC = Integer.getInteger("swim.mail.max.messages", 250);
 
     private JakartaMailSupport() {
     }
@@ -40,6 +42,16 @@ final class JakartaMailSupport {
 
     static MailSyncBatch fetchPop3(EmailAccountConfig account) throws Exception {
         return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX");
+    }
+
+    static String loadImapBody(EmailAccountConfig account, String folderName, String internetMessageId) throws Exception {
+        return loadBody(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), folderName,
+                internetMessageId);
+    }
+
+    static String loadPop3Body(EmailAccountConfig account, String internetMessageId) throws Exception {
+        return loadBody(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX",
+                internetMessageId);
     }
 
     private static MailSyncBatch fetch(
@@ -71,11 +83,7 @@ final class JakartaMailSupport {
         Session session = Session.getInstance(properties);
         Store store = session.getStore(storeProtocol);
         try {
-            if (account.port() == null) {
-                store.connect(account.host(), account.username(), password);
-            } else {
-                store.connect(account.host(), account.port(), account.username(), password);
-            }
+            connectStore(store, account, password);
             Folder folder = store.getFolder(folderName);
             try {
                 if (folder == null || !folder.exists()) {
@@ -86,7 +94,8 @@ final class JakartaMailSupport {
                 if (count == 0) {
                     return MailSyncBatch.success(List.of(), "0 messages");
                 }
-                Message[] messages = folder.getMessages();
+                int start = syncStartIndex(count, DEFAULT_MAX_MESSAGES_PER_SYNC);
+                Message[] messages = folder.getMessages(start, count);
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
                 fetchProfile.add(FetchProfile.Item.FLAGS);
@@ -99,7 +108,46 @@ final class JakartaMailSupport {
                     imported.add(toImportedMessage(account, folderName, message));
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
-                return MailSyncBatch.success(imported, imported.size() + " messages");
+                return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start));
+            } finally {
+                if (folder.isOpen()) {
+                    folder.close(false);
+                }
+            }
+        } finally {
+            store.close();
+        }
+    }
+
+    private static String loadBody(
+            EmailAccountConfig account,
+            String storeProtocol,
+            Properties properties,
+            String folderName,
+            String internetMessageId) throws Exception {
+        if (internetMessageId == null || internetMessageId.isBlank()) {
+            return "";
+        }
+        if (account.host() == null || account.host().isBlank() || account.username() == null || account.username().isBlank()) {
+            return "";
+        }
+
+        String password = resolveSecret(account, storeProtocol, properties);
+        Session session = Session.getInstance(properties);
+        Store store = session.getStore(storeProtocol);
+        try {
+            connectStore(store, account, password);
+            Folder folder = store.getFolder(folderName == null || folderName.isBlank() ? "INBOX" : folderName);
+            try {
+                if (folder == null || !folder.exists()) {
+                    return "";
+                }
+                folder.open(Folder.READ_ONLY);
+                Message[] matches = folder.search(new HeaderTerm("Message-ID", internetMessageId));
+                if (matches == null || matches.length == 0) {
+                    return "";
+                }
+                return extractText(matches[matches.length - 1]);
             } finally {
                 if (folder.isOpen()) {
                     folder.close(false);
@@ -163,6 +211,32 @@ final class JakartaMailSupport {
         return SecretResolver.resolve(account.passwordEnv());
     }
 
+    private static String resolveSecret(EmailAccountConfig account, String storeProtocol, Properties properties)
+            throws IOException {
+        if (account.usesOAuth2()) {
+            MicrosoftOAuth2Client.AcquireResult tokenResult = new MicrosoftOAuth2Client(EmailPaths.fromUserHome())
+                    .acquireToken(account, storeProtocol);
+            if (!tokenResult.hasToken()) {
+                throw new IOException(tokenResult.statusMessage());
+            }
+            configureOAuth2(properties, storeProtocol);
+            return tokenResult.accessToken();
+        }
+        String password = resolvePassword(account);
+        if (password == null) {
+            throw new IOException("Missing password env '" + account.passwordEnv() + "'");
+        }
+        return password;
+    }
+
+    private static void connectStore(Store store, EmailAccountConfig account, String password) throws MessagingException {
+        if (account.port() == null) {
+            store.connect(account.host(), account.username(), password);
+        } else {
+            store.connect(account.host(), account.port(), account.username(), password);
+        }
+    }
+
     private static String effectiveFolder(EmailAccountConfig account) {
         return account.folder() == null || account.folder().isBlank() ? "INBOX" : account.folder().trim();
     }
@@ -184,8 +258,8 @@ final class JakartaMailSupport {
         String fromEmail = email(fromAddress);
         String toSummary = summarizeAddresses(message.getRecipients(Message.RecipientType.TO));
         String subject = message.getSubject();
-        String bodyText = extractText(message);
-        String snippetSource = normalizeWhitespace(bodyText);
+        String bodyText = "";
+        String snippetSource = normalizeWhitespace(subject);
         String snippet = snippetSource.length() > 180 ? snippetSource.substring(0, 180) : snippetSource;
         return new ImportedMailMessage(
                 account.normalizedId(),
@@ -224,6 +298,28 @@ final class JakartaMailSupport {
         String value = subject == null ? "" : subject.strip();
         value = RE_PREFIX.matcher(value).replaceFirst("");
         return value.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    static int syncStartIndex(int totalMessages, int maxMessagesPerSync) {
+        if (totalMessages <= 0) {
+            return 1;
+        }
+        if (maxMessagesPerSync <= 0 || totalMessages <= maxMessagesPerSync) {
+            return 1;
+        }
+        return totalMessages - maxMessagesPerSync + 1;
+    }
+
+    static String syncStatus(int importedMessages, int totalMessages, int startIndex) {
+        if (importedMessages <= 0) {
+            return "0 messages";
+        }
+        if (startIndex <= 1) {
+            return importedMessages + " messages";
+        }
+        int skipped = Math.max(0, startIndex - 1);
+        return "Fetched latest " + importedMessages + " of " + totalMessages + " messages (" + skipped
+                + " older messages skipped)";
     }
 
     private static String extractText(Part part) throws MessagingException, IOException {

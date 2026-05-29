@@ -181,7 +181,14 @@ class MailPanelViewTest {
 
         try {
             refreshed.await(2, TimeUnit.SECONDS);
-            Thread.sleep(50);
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (System.nanoTime() < deadline) {
+                var detail = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
+                if (detail != null && detail.messageId() != 0L) {
+                    break;
+                }
+                Thread.sleep(10);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -278,7 +285,7 @@ class MailPanelViewTest {
     }
 
     @Test
-    void searchReloadsThreadsUsingEnteredQuery() {
+    void searchReloadsThreadsUsingEnteredQuery() throws Exception {
         AtomicReference<String> lastQuery = new AtomicReference<>("");
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -325,13 +332,18 @@ class MailPanelViewTest {
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('s'));
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.enter());
 
+        long searchDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(7L).equals(lastLoadedThread.get()) && System.nanoTime() < searchDeadline) {
+            Thread.sleep(10);
+        }
+
         assertEquals("boss", lastQuery.get());
         assertEquals(7L, lastLoadedThread.get());
         assertEquals("boss", HeadlessWindowHarness.getField(panel, "_searchQuery", String.class));
     }
 
     @Test
-    void movingToBottomLoadsAdditionalThreadPages() {
+    void movingToBottomLoadsAdditionalThreadPages() throws Exception {
         var offsets = new ArrayList<Integer>();
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -379,8 +391,116 @@ class MailPanelViewTest {
 
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('G'));
 
+        long loadDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(150L).equals(lastLoadedThread.get()) && System.nanoTime() < loadDeadline) {
+            Thread.sleep(10);
+        }
+
         assertTrue(offsets.contains(100));
         assertEquals(150L, lastLoadedThread.get());
+    }
+
+    @Test
+    void navigationDoesNotBlockWhenMessageLoadingIsSlow() throws Exception {
+        CountDownLatch firstLoadStarted = new CountDownLatch(1);
+        CountDownLatch allowLoadsToFinish = new CountDownLatch(1);
+        AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "2026-05-15T08:00:00Z", "")),
+                        sampleThreads(3),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                lastLoadedThread.set(threadId);
+                firstLoadStarted.countDown();
+                try {
+                    allowLoadsToFinish.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        assertTrue(firstLoadStarted.await(2, TimeUnit.SECONDS));
+
+        long startedAt = System.nanoTime();
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('j'));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+        assertTrue(elapsedMs < 500, "navigation should not wait for loadMessage");
+        assertEquals(1, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+
+        allowLoadsToFinish.countDown();
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(2L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertEquals(2L, lastLoadedThread.get());
+    }
+
+    @Test
+    void composeStartsWithoutWaitingForSlowMessageLoad() throws Exception {
+        CountDownLatch firstLoadStarted = new CountDownLatch(1);
+        CountDownLatch allowLoadsToFinish = new CountDownLatch(1);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "2026-05-15T08:00:00Z", "")),
+                        sampleThreads(3),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                firstLoadStarted.countDown();
+                try {
+                    allowLoadsToFinish.await(2, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        assertTrue(firstLoadStarted.await(2, TimeUnit.SECONDS));
+
+        long startedAt = System.nanoTime();
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+        assertTrue(elapsedMs < 500, "compose should not wait for loadMessage");
+        assertEquals("COMPOSE", HeadlessWindowHarness.getField(panel, "_mode", Enum.class).name());
+
+        allowLoadsToFinish.countDown();
     }
 
     private static List<MailThreadSummary> sampleThreads(int count) {

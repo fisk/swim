@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 
 final class EmailPluginSupport {
     private static final Logger LOG = LoggerFactory.getLogger(EmailPluginSupport.class);
-    private static SQLiteMailClient _client;
+    private static H2MailClient _client;
 
     private EmailPluginSupport() {
     }
@@ -18,7 +18,7 @@ final class EmailPluginSupport {
     static synchronized void install(SwimPluginContext context) {
         shutdown();
         try {
-            _client = new SQLiteMailClient(EmailPaths.fromUserHome(),
+            _client = new H2MailClient(EmailPaths.fromUserHome(),
                     new DefaultMailSyncAdapterFactory(),
                     new SmtpMailSupport(EmailPaths.fromUserHome()),
                     false);

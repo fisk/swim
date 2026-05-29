@@ -6,6 +6,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
@@ -16,39 +17,44 @@ import org.fisk.swim.mail.MailThreadPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-final class SQLiteMailClient implements MailClient {
-    private static final Logger LOG = LoggerFactory.getLogger(SQLiteMailClient.class);
+final class H2MailClient implements MailClient {
+    private static final Logger LOG = LoggerFactory.getLogger(H2MailClient.class);
     private static final int SNAPSHOT_THREAD_LIMIT = 100;
 
     private final EmailPaths _paths;
     private final Connection _connection;
+    private final MailSyncAdapterFactory _adapterFactory;
     private final MailSyncEngine _syncEngine;
     private final MailDeliveryService _deliveryService;
     private final Object _dbLock = new Object();
+    private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
+    private volatile boolean _closed;
 
-    SQLiteMailClient(EmailPaths paths) throws SQLException, IOException {
+    H2MailClient(EmailPaths paths) throws SQLException, IOException {
         this(paths, new DefaultMailSyncAdapterFactory(), new SmtpMailSupport(paths), true);
     }
 
-    SQLiteMailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory) throws SQLException, IOException {
+    H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory) throws SQLException, IOException {
         this(paths, adapterFactory, new SmtpMailSupport(paths), true);
     }
 
-    SQLiteMailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService)
+    H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService)
             throws SQLException, IOException {
         this(paths, adapterFactory, deliveryService, true);
     }
 
-    SQLiteMailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService,
+    H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService,
             boolean initialRefresh)
             throws SQLException, IOException {
         _paths = paths;
         EmailConfigStore.ensureDefaultFiles(paths);
-        ensureSqliteDriverLoaded();
-        _connection = DriverManager.getConnection("jdbc:sqlite:" + paths.databasePath());
+        ensureH2DriverLoaded();
+        _connection = DriverManager.getConnection(paths.databaseJdbcUrl());
+        _adapterFactory = adapterFactory;
         _syncEngine = new MailSyncEngine(adapterFactory);
         _deliveryService = deliveryService;
         MailDb.initialize(_connection);
+        bootstrapConfigurationState();
         if (initialRefresh) {
             refresh();
         }
@@ -62,7 +68,7 @@ final class SQLiteMailClient implements MailClient {
             } catch (SQLException e) {
                 LOG.error("Failed to load mail snapshot", e);
                 return new MailSnapshot(java.util.List.of(), java.util.List.of(),
-                        "Failed to load mail from " + _paths.databasePath() + ": " + e.getMessage());
+                        "Failed to load mail from " + _paths.databaseFilePath() + ": " + e.getMessage());
             }
         }
     }
@@ -81,25 +87,67 @@ final class SQLiteMailClient implements MailClient {
 
     @Override
     public MailMessageDetail loadMessage(long threadId) {
+        MailMessageDetail detail;
         synchronized (_dbLock) {
             try {
-                return MailDb.loadMessage(_connection, threadId);
+                detail = MailDb.loadMessage(_connection, threadId);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail message for thread {}", threadId, e);
                 return new MailMessageDetail(0L, threadId, "(error)", "", "", "", e.getMessage(), java.util.List.of());
             }
         }
+        if (_closed || detail.messageId() == 0L || (detail.bodyText() != null && !detail.bodyText().isBlank())) {
+            return detail;
+        }
+        try {
+            MailDb.MessageHydrationTarget target;
+            synchronized (_dbLock) {
+                target = MailDb.loadMessageHydrationTarget(_connection, threadId);
+            }
+            if (target == null || target.internetMessageId() == null || target.internetMessageId().isBlank()) {
+                return detail;
+            }
+            EmailAccountConfig account = resolveAccount(target.accountId());
+            if (account == null) {
+                return detail;
+            }
+            String bodyText = _adapterFactory.create(account).loadBody(account, target.folderName(), target.internetMessageId());
+            if (bodyText == null || bodyText.isBlank()) {
+                return detail;
+            }
+            synchronized (_dbLock) {
+                if (_closed) {
+                    return detail;
+                }
+                MailDb.updateMessageBody(_connection, target.messageId(), target.threadId(), bodyText);
+                return MailDb.loadMessage(_connection, threadId);
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to hydrate mail body for thread {}", threadId, e);
+            return detail;
+        }
     }
 
     @Override
     public void refresh() {
+        if (_closed || !_refreshInFlight.compareAndSet(false, true)) {
+            return;
+        }
         try {
             MailSyncEngine.RefreshPlan plan = _syncEngine.prepare(_paths);
+            if (_closed) {
+                return;
+            }
             synchronized (_dbLock) {
+                if (_closed) {
+                    return;
+                }
                 _syncEngine.apply(_connection, plan);
             }
         } catch (IOException | SQLException e) {
             throw new RuntimeException("Failed to refresh mail state", e);
+        } finally {
+            _refreshInFlight.set(false);
         }
     }
 
@@ -132,6 +180,7 @@ final class SQLiteMailClient implements MailClient {
 
     @Override
     public void close() {
+        _closed = true;
         synchronized (_dbLock) {
             try {
                 _connection.close();
@@ -153,6 +202,16 @@ final class SQLiteMailClient implements MailClient {
         return config.accounts().isEmpty() ? null : config.accounts().getFirst();
     }
 
+    private void bootstrapConfigurationState() throws IOException, SQLException {
+        EmailAccountsConfig accounts = EmailConfigStore.loadAccounts(_paths);
+        EmailTagRulesConfig rules = EmailConfigStore.loadTagRules(_paths);
+        synchronized (_dbLock) {
+            MailDb.syncAccounts(_connection, accounts);
+            MailDb.syncTagRules(_connection, rules);
+            MailDb.reapplyTags(_connection);
+        }
+    }
+
     private static String rootMessage(Throwable throwable) {
         Throwable current = throwable;
         while (current.getCause() != null) {
@@ -163,11 +222,11 @@ final class SQLiteMailClient implements MailClient {
                 : current.getMessage();
     }
 
-    private static void ensureSqliteDriverLoaded() throws SQLException {
+    private static void ensureH2DriverLoaded() throws SQLException {
         try {
-            Class.forName("org.sqlite.JDBC", true, SQLiteMailClient.class.getClassLoader());
+            Class.forName("org.h2.Driver", true, H2MailClient.class.getClassLoader());
         } catch (ClassNotFoundException e) {
-            throw new SQLException("SQLite JDBC driver is unavailable", e);
+            throw new SQLException("H2 JDBC driver is unavailable", e);
         }
     }
 }

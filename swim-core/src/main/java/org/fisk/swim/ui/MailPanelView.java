@@ -3,6 +3,7 @@ package org.fisk.swim.ui;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.mail.MailClient;
@@ -88,6 +89,7 @@ public class MailPanelView extends View {
     private Character _pendingCharacter;
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _sendInFlight = new AtomicBoolean();
+    private final AtomicLong _messageLoadGeneration = new AtomicLong();
     private String _lastActionableUrl;
     private boolean _awaitingOAuthCompletion;
     private long _oauthPollGeneration;
@@ -681,8 +683,34 @@ public class MailPanelView extends View {
             _selectedMessage = null;
             return;
         }
-        long threadId = _threads.get(_selectedIndex).threadId();
-        _selectedMessage = _client.loadMessage(threadId);
+        MailThreadSummary thread = _threads.get(_selectedIndex);
+        long threadId = thread.threadId();
+        long generation = _messageLoadGeneration.incrementAndGet();
+        _selectedMessage = placeholderMessageDetail(thread);
+        setNeedsRedraw();
+
+        Thread worker = new Thread(() -> {
+            MailMessageDetail loaded = _client.loadMessage(threadId);
+            Runnable applyLoadedMessage = () -> {
+                if (_messageLoadGeneration.get() != generation || _threads.isEmpty()) {
+                    return;
+                }
+                int safeIndex = Math.max(0, Math.min(_selectedIndex, _threads.size() - 1));
+                if (_threads.get(safeIndex).threadId() != threadId) {
+                    return;
+                }
+                _selectedMessage = loaded;
+                setNeedsRedraw();
+            };
+            var eventThread = EventThread.getInstance();
+            if (eventThread.isAlive()) {
+                eventThread.enqueue(new RunnableEvent(applyLoadedMessage));
+            } else {
+                applyLoadedMessage.run();
+            }
+        }, "mail-load-message");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private void reloadThreads() {
@@ -729,6 +757,18 @@ public class MailPanelView extends View {
 
     private boolean hasMoreThreads() {
         return _threads.size() < _totalThreadCount;
+    }
+
+    private MailMessageDetail placeholderMessageDetail(MailThreadSummary thread) {
+        return new MailMessageDetail(
+                0L,
+                thread.threadId(),
+                safe(thread.subject(), "(no subject)"),
+                safe(thread.participants(), "(unknown)"),
+                "",
+                safe(thread.receivedAt(), ""),
+                safe(thread.snippet(), "Loading message..."),
+                thread.tags());
     }
 
     private void drawThreadColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
@@ -890,6 +930,9 @@ public class MailPanelView extends View {
 
     private String replyRecipient() {
         if (_selectedMessage == null) {
+            return "";
+        }
+        if (_selectedMessage.messageId() == 0L) {
             return "";
         }
         String from = safe(_selectedMessage.from(), "");

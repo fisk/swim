@@ -9,7 +9,7 @@ module org.fisk.swim.email {
     requires org.fisk.swim.core;
     requires org.fisk.swim.launcher;
     requires org.slf4j;
-    requires org.xerial.sqlitejdbc;
+    requires com.h2database;
 
     opens org.fisk.swim.plugins.email to com.google.gson;
 

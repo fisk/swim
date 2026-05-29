@@ -10,6 +10,22 @@ import org.junit.jupiter.api.Test;
 
 class JakartaMailSupportTest {
     @Test
+    void syncStartIndexUsesMostRecentWindowWhenMailboxExceedsCap() {
+        assertEquals(1, JakartaMailSupport.syncStartIndex(0, 250));
+        assertEquals(1, JakartaMailSupport.syncStartIndex(100, 250));
+        assertEquals(251, JakartaMailSupport.syncStartIndex(500, 250));
+        assertEquals(1, JakartaMailSupport.syncStartIndex(500, 0));
+    }
+
+    @Test
+    void syncStatusMentionsSkippedOlderMessagesWhenWindowIsCapped() {
+        assertEquals("0 messages", JakartaMailSupport.syncStatus(0, 0, 1));
+        assertEquals("25 messages", JakartaMailSupport.syncStatus(25, 25, 1));
+        assertEquals("Fetched latest 250 of 500 messages (250 older messages skipped)",
+                JakartaMailSupport.syncStatus(250, 500, 251));
+    }
+
+    @Test
     void extractTextReadsInputStreamContent() throws Exception {
         var method = JakartaMailSupport.class.getDeclaredMethod("readContentAsString", Object.class);
         method.setAccessible(true);
