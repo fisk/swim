@@ -7,6 +7,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
@@ -28,6 +29,8 @@ final class H2MailClient implements MailClient {
     private final MailDeliveryService _deliveryService;
     private final Object _dbLock = new Object();
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
+    private final AtomicBoolean _backfillInFlight = new AtomicBoolean();
+    private final AtomicLong _refreshGeneration = new AtomicLong();
     private volatile boolean _closed;
 
     H2MailClient(EmailPaths paths) throws SQLException, IOException {
@@ -130,9 +133,10 @@ final class H2MailClient implements MailClient {
 
     @Override
     public void refresh() {
-        if (_closed || !_refreshInFlight.compareAndSet(false, true)) {
+        if (_closed || _backfillInFlight.get() || !_refreshInFlight.compareAndSet(false, true)) {
             return;
         }
+        long generation = _refreshGeneration.incrementAndGet();
         try {
             MailSyncEngine.RefreshPlan plan = _syncEngine.prepare(_paths);
             if (_closed) {
@@ -144,6 +148,7 @@ final class H2MailClient implements MailClient {
                 }
                 _syncEngine.apply(_connection, plan);
             }
+            startBackfill(plan, generation);
         } catch (IOException | SQLException e) {
             throw new RuntimeException("Failed to refresh mail state", e);
         } finally {
@@ -181,6 +186,7 @@ final class H2MailClient implements MailClient {
     @Override
     public void close() {
         _closed = true;
+        _refreshGeneration.incrementAndGet();
         synchronized (_dbLock) {
             try {
                 _connection.close();
@@ -209,6 +215,88 @@ final class H2MailClient implements MailClient {
             MailDb.syncAccounts(_connection, accounts);
             MailDb.syncTagRules(_connection, rules);
             MailDb.reapplyTags(_connection);
+        }
+    }
+
+    private void startBackfill(MailSyncEngine.RefreshPlan plan, long generation) {
+        boolean hasBackfill = plan.results().stream().anyMatch(result -> result.batch().success() && result.adapter().hasMore());
+        if (!hasBackfill || !_backfillInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        Thread thread = new Thread(() -> runBackfill(plan, generation), "mail-backfill");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void runBackfill(MailSyncEngine.RefreshPlan plan, long generation) {
+        try {
+            for (MailSyncEngine.AccountSyncResult result : plan.results()) {
+                while (!_closed && generation == _refreshGeneration.get() && result.adapter().hasMore()) {
+                    MailSyncBatch batch;
+                    try {
+                        batch = result.adapter().fetchNext(result.account());
+                    } catch (Exception e) {
+                        LOG.warn("Failed to backfill mail for {}", result.account().normalizedId(), e);
+                        recordBackfillFailure(result.account().normalizedId(), rootMessage(e), generation);
+                        break;
+                    }
+                    applyBackfillBatch(result.account(), result.adapter(), batch, generation);
+                }
+            }
+        } finally {
+            _backfillInFlight.set(false);
+        }
+    }
+
+    private void applyBackfillBatch(
+            EmailAccountConfig account,
+            MailSyncAdapter adapter,
+            MailSyncBatch batch,
+            long generation) {
+        synchronized (_dbLock) {
+            if (_closed || generation != _refreshGeneration.get()) {
+                return;
+            }
+            try {
+                boolean originalAutoCommit = _connection.getAutoCommit();
+                _connection.setAutoCommit(false);
+                try {
+                    if (batch.success()) {
+                        MailDb.upsertAccountMessages(_connection, account.normalizedId(), batch.messages());
+                        MailDb.rebuildThreads(_connection, account.normalizedId());
+                        MailDb.reapplyTags(_connection);
+                        int cachedMessages = MailDb.countMessages(_connection, account.normalizedId());
+                        String status = adapter.hasMore()
+                                ? JakartaMailSupport.backgroundSyncStatus(cachedMessages, batch.totalMessages())
+                                : cachedMessages + " messages";
+                        MailDb.recordAccountSyncState(_connection, account.normalizedId(), Instant.now().toString(), status,
+                                !adapter.hasMore());
+                    } else {
+                        MailDb.recordAccountSyncState(_connection, account.normalizedId(), null, batch.statusMessage(), false);
+                    }
+                    _connection.commit();
+                } catch (SQLException e) {
+                    _connection.rollback();
+                    throw e;
+                } finally {
+                    _connection.setAutoCommit(originalAutoCommit);
+                }
+            } catch (SQLException e) {
+                throw new RuntimeException("Failed to apply backfill batch for " + account.normalizedId(), e);
+            }
+        }
+    }
+
+    private void recordBackfillFailure(String accountId, String message, long generation) {
+        synchronized (_dbLock) {
+            if (_closed || generation != _refreshGeneration.get()) {
+                return;
+            }
+            try {
+                MailDb.recordAccountSyncState(_connection, accountId, null, "Backfill failed: " + message, false);
+            } catch (SQLException e) {
+                LOG.warn("Failed to record backfill failure for {}", accountId, e);
+            }
         }
     }
 

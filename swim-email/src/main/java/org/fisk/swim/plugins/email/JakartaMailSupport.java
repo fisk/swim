@@ -37,11 +37,23 @@ final class JakartaMailSupport {
     }
 
     static MailSyncBatch fetchImap(EmailAccountConfig account) throws Exception {
-        return fetch(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account));
+        return fetch(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
+                Integer.MAX_VALUE);
     }
 
     static MailSyncBatch fetchPop3(EmailAccountConfig account) throws Exception {
-        return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX");
+        return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX",
+                Integer.MAX_VALUE);
+    }
+
+    static MailSyncBatch fetchImapRange(EmailAccountConfig account, int endIndexInclusive) throws Exception {
+        return fetch(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
+                endIndexInclusive);
+    }
+
+    static MailSyncBatch fetchPop3Range(EmailAccountConfig account, int endIndexInclusive) throws Exception {
+        return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX",
+                endIndexInclusive);
     }
 
     static String loadImapBody(EmailAccountConfig account, String folderName, String internetMessageId) throws Exception {
@@ -58,7 +70,8 @@ final class JakartaMailSupport {
             EmailAccountConfig account,
             String storeProtocol,
             Properties properties,
-            String folderName) throws Exception {
+            String folderName,
+            int endIndexInclusive) throws Exception {
         if (account.host() == null || account.host().isBlank()) {
             return MailSyncBatch.failure("Missing host");
         }
@@ -94,8 +107,9 @@ final class JakartaMailSupport {
                 if (count == 0) {
                     return MailSyncBatch.success(List.of(), "0 messages");
                 }
-                int start = syncStartIndex(count, DEFAULT_MAX_MESSAGES_PER_SYNC);
-                Message[] messages = folder.getMessages(start, count);
+                int safeEnd = Math.min(count, Math.max(1, endIndexInclusive));
+                int start = syncStartIndex(safeEnd, DEFAULT_MAX_MESSAGES_PER_SYNC);
+                Message[] messages = folder.getMessages(start, safeEnd);
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
                 fetchProfile.add(FetchProfile.Item.FLAGS);
@@ -108,7 +122,7 @@ final class JakartaMailSupport {
                     imported.add(toImportedMessage(account, folderName, message));
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
-                return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start));
+                return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start), count, start, safeEnd);
             } finally {
                 if (folder.isOpen()) {
                     folder.close(false);
@@ -320,6 +334,13 @@ final class JakartaMailSupport {
         int skipped = Math.max(0, startIndex - 1);
         return "Fetched latest " + importedMessages + " of " + totalMessages + " messages (" + skipped
                 + " older messages skipped)";
+    }
+
+    static String backgroundSyncStatus(int loadedMessages, int totalMessages) {
+        if (totalMessages <= 0) {
+            return loadedMessages + " messages";
+        }
+        return "Cached " + loadedMessages + " of " + totalMessages + " messages";
     }
 
     private static String extractText(Part part) throws MessagingException, IOException {

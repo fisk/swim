@@ -401,6 +401,59 @@ class MailPanelViewTest {
     }
 
     @Test
+    void movingPastInitialTotalRetriesWhenBackgroundBackfillAddsMoreThreads() throws Exception {
+        var offsets = new ArrayList<Integer>();
+        AtomicReference<Integer> totalCount = new AtomicReference<>(250);
+        AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 250, 5, "2026-05-15T08:00:00Z", "")),
+                        page(0, 100, totalCount.get()).threads(),
+                        "");
+            }
+
+            @Override
+            public MailThreadPage loadThreads(String query, int offset, int limit) {
+                offsets.add(offset);
+                if (offset >= 200) {
+                    totalCount.set(300);
+                }
+                return page(offset, limit, totalCount.get());
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                lastLoadedThread.set(threadId);
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('G'));
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('j'));
+
+        long loadDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(251L).equals(lastLoadedThread.get()) && System.nanoTime() < loadDeadline) {
+            Thread.sleep(10);
+        }
+
+        assertTrue(offsets.contains(200));
+        assertEquals(300, HeadlessWindowHarness.getField(panel, "_totalThreadCount", Integer.class));
+        assertEquals(251L, lastLoadedThread.get());
+    }
+
+    @Test
     void navigationDoesNotBlockWhenMessageLoadingIsSlow() throws Exception {
         CountDownLatch firstLoadStarted = new CountDownLatch(1);
         CountDownLatch allowLoadsToFinish = new CountDownLatch(1);
@@ -511,5 +564,19 @@ class MailPanelViewTest {
                     "Snippet " + threadId, "2026-05-13T08:00:00Z", i == 0, 1, List.of()));
         }
         return threads;
+    }
+
+    private static MailThreadPage page(int offset, int limit, int total) {
+        if (offset >= total) {
+            return new MailThreadPage(List.of(), total);
+        }
+        int count = Math.min(limit, total - offset);
+        var page = new ArrayList<MailThreadSummary>();
+        for (int i = 0; i < count; i++) {
+            long threadId = offset + i + 1L;
+            page.add(new MailThreadSummary(threadId, "work", "Thread " + threadId, "Boss",
+                    "Snippet " + threadId, "2026-05-13T08:00:00Z", false, 1, List.of()));
+        }
+        return new MailThreadPage(page, total);
     }
 }

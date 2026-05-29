@@ -32,14 +32,17 @@ final class MailSyncEngine {
         try {
             for (AccountSyncResult result : plan.results()) {
                 if (result.batch().success()) {
-                    MailDb.replaceAccountMessages(connection, result.account().normalizedId(), result.batch().messages());
+                    MailDb.upsertAccountMessages(connection, result.account().normalizedId(), result.batch().messages());
+                    MailDb.rebuildThreads(connection, result.account().normalizedId());
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), Instant.now().toString(),
                             result.batch().statusMessage().isBlank()
                                     ? result.batch().messages().size() + " messages"
-                                    : result.batch().statusMessage());
+                                    : result.batch().statusMessage(),
+                            !result.adapter().hasMore());
                 } else {
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), null,
-                            result.batch().statusMessage());
+                            result.batch().statusMessage(),
+                            false);
                 }
             }
             MailDb.reapplyTags(connection);
@@ -54,9 +57,11 @@ final class MailSyncEngine {
 
     private AccountSyncResult fetchAccount(EmailAccountConfig account) {
         try {
-            return new AccountSyncResult(account, _adapterFactory.create(account).fetch(account));
+            MailSyncAdapter adapter = _adapterFactory.create(account);
+            return new AccountSyncResult(account, adapter, adapter.fetch(account));
         } catch (Exception e) {
-            return new AccountSyncResult(account, MailSyncBatch.failure("Sync failed: " + rootMessage(e)));
+            return new AccountSyncResult(account, _adapterFactory.create(account),
+                    MailSyncBatch.failure("Sync failed: " + rootMessage(e)));
         }
     }
 
@@ -73,6 +78,6 @@ final class MailSyncEngine {
     record RefreshPlan(EmailAccountsConfig accounts, EmailTagRulesConfig rules, List<AccountSyncResult> results) {
     }
 
-    private record AccountSyncResult(EmailAccountConfig account, MailSyncBatch batch) {
+    record AccountSyncResult(EmailAccountConfig account, MailSyncAdapter adapter, MailSyncBatch batch) {
     }
 }

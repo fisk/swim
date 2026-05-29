@@ -727,7 +727,7 @@ public class MailPanelView extends View {
         if (index < 0) {
             return;
         }
-        while (index >= _threads.size() && hasMoreThreads()) {
+        while (index >= _threads.size()) {
             if (!appendThreadPage()) {
                 break;
             }
@@ -741,9 +741,6 @@ public class MailPanelView extends View {
     }
 
     private boolean appendThreadPage() {
-        if (!_threads.isEmpty() && !hasMoreThreads()) {
-            return false;
-        }
         MailThreadPage page = _client.loadThreads(_searchQuery, _threads.size(), THREAD_PAGE_SIZE);
         _totalThreadCount = page.totalCount();
         if (page.threads().isEmpty()) {
@@ -753,10 +750,6 @@ public class MailPanelView extends View {
         combined.addAll(page.threads());
         _threads = combined;
         return true;
-    }
-
-    private boolean hasMoreThreads() {
-        return _threads.size() < _totalThreadCount;
     }
 
     private MailMessageDetail placeholderMessageDetail(MailThreadSummary thread) {
