@@ -32,7 +32,7 @@ public class ClangdLspProvider {
     private final Path _clangdPath;
 
     public ClangdLspProvider() {
-        this(findExecutableOnPath(System.getenv("PATH"), System.getProperty("os.name")));
+        this(resolveDefaultExecutable(System.getenv("PATH"), System.getProperty("os.name")));
     }
 
     ClangdLspProvider(Path clangdPath) {
@@ -139,12 +139,39 @@ public class ClangdLspProvider {
         return null;
     }
 
+    static Path resolveDefaultExecutable(String pathEnv, String osName) {
+        Path fromPath = findExecutableOnPath(pathEnv, osName);
+        if (fromPath != null) {
+            return fromPath;
+        }
+        for (String candidate : fallbackExecutableCandidates(osName)) {
+            Path path = Paths.get(candidate);
+            if (Files.isRegularFile(path) && Files.isExecutable(path)) {
+                return path.toAbsolutePath().normalize();
+            }
+        }
+        return null;
+    }
+
     private static List<String> executableNames(String osName) {
         String normalized = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
         if (normalized.contains("win")) {
             return List.of("clangd.exe", "clangd.cmd", "clangd.bat");
         }
         return List.of("clangd");
+    }
+
+    private static List<String> fallbackExecutableCandidates(String osName) {
+        String normalized = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
+        if (normalized.contains("win")) {
+            return List.of(
+                    "C:\\Program Files\\LLVM\\bin\\clangd.exe",
+                    "C:\\Program Files (x86)\\LLVM\\bin\\clangd.exe");
+        }
+        return List.of(
+                "/usr/bin/clangd",
+                "/opt/homebrew/bin/clangd",
+                "/usr/local/bin/clangd");
     }
 
     private void logErrorStream(InputStream errorStream) {

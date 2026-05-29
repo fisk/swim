@@ -20,7 +20,7 @@ public final class ClangdLspPluginSupport {
 
     public static void ensureLoaded(Path path) {
         LogFactory.createLog().info("Ensuring clangd LSP plugin loaded for {}", path);
-        SwimRuntime.loadPlugin(PLUGIN_ID);
+        SwimRuntime.loadPlugin(PLUGIN_ID, path);
     }
 
     public static void ensureStartedForProject(Path path) {
@@ -32,6 +32,9 @@ public final class ClangdLspPluginSupport {
     }
 
     public static LanguageMode createLanguageMode(Path path) {
+        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+            return getClient();
+        }
         ensureLoaded(path);
         var client = startClientIfNeeded(path, getClient());
         return client;

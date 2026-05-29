@@ -38,8 +38,8 @@ final class PluginRegistry implements Main.PluginController {
             if (beforeLoad != null) {
                 beforeLoad.run();
             }
-            next.loadAll(path, host);
             _loadedPlugins = next;
+            next.loadAll(path, host);
             return next.app();
         } catch (RuntimeException | Error e) {
             try {
@@ -415,9 +415,15 @@ final class PluginRegistry implements Main.PluginController {
                 return;
             }
             SwimApp app = _provider.get();
-            app.start(context.getInitialPath(), context.getHost());
             _app = app;
-            _loaded = true;
+            try {
+                app.start(context.getInitialPath(), context.getHost());
+                _loaded = true;
+            } catch (RuntimeException | Error e) {
+                _app = null;
+                _loaded = false;
+                throw e;
+            }
         }
 
         @Override

@@ -33,7 +33,11 @@ public final class SwimRuntime {
     }
 
     private static Path resolveCurrentPath() {
-        return Window.getInstance().getBufferContext().getBuffer().getPath();
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null || window.getBufferContext().getBuffer() == null) {
+            return null;
+        }
+        return window.getBufferContext().getBuffer().getPath();
     }
 
     static void setCurrentPathSupplier(Supplier<Path> currentPathSupplier) {
@@ -57,8 +61,12 @@ public final class SwimRuntime {
     }
 
     public static void loadPlugin(String pluginId) {
+        loadPlugin(pluginId, _currentPathSupplier.get());
+    }
+
+    public static void loadPlugin(String pluginId, Path path) {
         if (_host != null) {
-            _host.requestLoadPlugin(pluginId, _currentPathSupplier.get());
+            _host.requestLoadPlugin(pluginId, path);
         }
     }
 

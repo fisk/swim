@@ -41,7 +41,7 @@ public final class JavaLspPluginSupport {
 
     public static void ensureLoaded(Path path) {
         LogFactory.createLog().info("Ensuring Java LSP plugin loaded for {}", path);
-        SwimRuntime.loadPlugin(PLUGIN_ID);
+        SwimRuntime.loadPlugin(PLUGIN_ID, path);
     }
 
     public static void installNormalModeBindings(NormalMode mode, Window window, String leader) {
