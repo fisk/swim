@@ -65,6 +65,7 @@ public class HelpIndex {
                 "m toggles the project file list.",
                 "M toggles whole-project text search.",
                 "t toggles the tree view on the left.",
+                ":git opens the fullscreen Git workspace.",
                 ":help shows this tutorial.",
                 ":e <path> opens a file and creates it if it does not exist.",
                 ":grep <text> searches project contents and shows matching lines.",

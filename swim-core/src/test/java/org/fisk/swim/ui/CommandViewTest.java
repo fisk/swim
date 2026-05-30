@@ -14,6 +14,8 @@ import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailPluginRegistry;
@@ -206,6 +208,27 @@ class CommandViewTest {
     }
 
     @Test
+    void gitCommandOpensPluginWorkspace() throws Exception {
+        Path path = tempDir.resolve("git-command.txt");
+        Files.writeString(path, "abc");
+
+        RecordingHost host = new RecordingHost();
+        host.panel = new FakeGitPanel();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "git");
+
+            assertEquals("swim-git", host.pluginId);
+            assertTrue(window.getActiveView() instanceof PluginPanelView);
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Git"));
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
     void grepCommandOpensProjectSearchPanelWithQuery() throws Exception {
         Path root = tempDir.resolve("search-command-workspace");
         Files.createDirectories(root.resolve(".git"));
@@ -233,6 +256,9 @@ class CommandViewTest {
     }
 
     private static final class RecordingHost implements SwimHost {
+        private String pluginId;
+        private SwimPanel panel;
+
         @Override
         public void requestReload(Path path) {
         }
@@ -243,6 +269,7 @@ class CommandViewTest {
 
         @Override
         public void requestLoadPlugin(String pluginId, Path path) {
+            this.pluginId = pluginId;
         }
 
         @Override
@@ -250,8 +277,35 @@ class CommandViewTest {
         }
 
         @Override
+        public SwimPanel getPanel(String pluginId) {
+            return panel;
+        }
+
+        @Override
         public Path getBuildRoot() {
             return Path.of("/tmp");
+        }
+    }
+
+    private static final class FakeGitPanel implements SwimPanel {
+        @Override
+        public String getId() {
+            return "swim-git";
+        }
+
+        @Override
+        public String getTitle() {
+            return "Git";
+        }
+
+        @Override
+        public List<String> render(int width, int height) {
+            return List.of("Git", "> v Staged (0)", "  v Unstaged (0)");
+        }
+
+        @Override
+        public SwimPanelResult handleInput(String input, int width, int height) {
+            return SwimPanelResult.success();
         }
     }
 

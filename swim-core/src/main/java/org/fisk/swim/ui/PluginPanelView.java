@@ -15,12 +15,18 @@ import com.googlecode.lanterna.input.KeyType;
 public class PluginPanelView extends View {
     private final String _pluginId;
     private final SwimPanel _panel;
+    private final boolean _workspaceClose;
     private String _pendingInput;
 
     public PluginPanelView(Rect bounds, String pluginId, SwimPanel panel) {
+        this(bounds, pluginId, panel, false);
+    }
+
+    public PluginPanelView(Rect bounds, String pluginId, SwimPanel panel, boolean workspaceClose) {
         super(bounds);
         _pluginId = pluginId;
         _panel = panel;
+        _workspaceClose = workspaceClose;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
@@ -37,7 +43,8 @@ public class PluginPanelView extends View {
         if (events.remaining() != 0) {
             return Response.NO;
         }
-        String input = normalize(events.current().getKeyType(), events.current().getCharacter());
+        String input = normalize(events.current().getKeyType(), events.current().getCharacter(),
+                events.current().isCtrlDown(), events.current().isAltDown());
         if (input == null) {
             return Response.NO;
         }
@@ -50,15 +57,18 @@ public class PluginPanelView extends View {
         if (_pendingInput == null) {
             return;
         }
-        if ("esc".equals(_pendingInput) || "q".equals(_pendingInput)) {
-            Window.getInstance().hidePanel();
-            _pendingInput = null;
-            return;
-        }
-
         syncToCurrentPath();
         SwimPanelResult result = _panel.handleInput(_pendingInput, getBounds().getSize().getWidth(),
                 getBounds().getSize().getHeight());
+        if (!result.handled() && ("esc".equals(_pendingInput) || "q".equals(_pendingInput))) {
+            if (_workspaceClose) {
+                Window.getInstance().closeCurrentWorkspaceWindow();
+            } else {
+                Window.getInstance().hidePanel();
+            }
+            _pendingInput = null;
+            return;
+        }
         if (result.openFile() != null) {
             if (Window.getInstance().setBufferPath(result.openFile())) {
                 Window.getInstance().focusActiveBuffer();
@@ -110,18 +120,28 @@ public class PluginPanelView extends View {
         }
     }
 
-    private static String normalize(KeyType keyType, Character character) {
+    private static String normalize(KeyType keyType, Character character, boolean ctrlDown, boolean altDown) {
         return switch (keyType) {
         case ArrowUp -> "up";
         case ArrowDown -> "down";
         case ArrowLeft -> "left";
         case ArrowRight -> "right";
+        case Tab -> "tab";
+        case Backspace -> "backspace";
         case Enter -> "enter";
         case Escape -> "esc";
-        case Character -> character == null ? null : switch (character) {
-        case ' ' -> "space";
-        default -> String.valueOf(character);
-        };
+        case Character -> {
+            if (character == null || altDown) {
+                yield null;
+            }
+            if (ctrlDown) {
+                yield "ctrl-" + Character.toLowerCase(character);
+            }
+            yield switch (character) {
+            case ' ' -> "space";
+            default -> String.valueOf(character);
+            };
+        }
         default -> null;
         };
     }

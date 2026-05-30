@@ -27,6 +27,7 @@ public class CommandView extends View {
     private static final List<CommandSpec> COMMAND_SPECS = List.of(
             new CommandSpec("q", List.of(), "", "quit SWIM"),
             new CommandSpec("e", List.of(), "<path>", "open or create a file"),
+            new CommandSpec("git", List.of(), "[status]", "open the Git workspace"),
             new CommandSpec("split", List.of("sp"), "", "split the active pane below"),
             new CommandSpec("vsplit", List.of("vs"), "", "split the active pane to the right"),
             new CommandSpec("close", List.of(), "", "close the active pane"),
@@ -200,6 +201,9 @@ public class CommandView extends View {
             break;
         case "e":
             open(argument);
+            break;
+        case "git":
+            openGit(argument);
             break;
         case "split":
         case "sp":
@@ -418,6 +422,23 @@ public class CommandView extends View {
             if (!Window.getInstance().setBufferPath(path)) {
                 _message = "Failed to open file";
             }
+        }
+    }
+
+    private void openGit(String argument) {
+        if (!argument.isBlank() && !"status".equals(argument)) {
+            _message = "Unknown git command: " + argument;
+            return;
+        }
+        String pluginId = "swim-git";
+        SwimRuntime.loadPlugin(pluginId);
+        var panel = SwimRuntime.getPanel(pluginId);
+        if (panel == null) {
+            _message = "Git plugin unavailable";
+            return;
+        }
+        if (!Window.getInstance().showPluginWorkspace(pluginId, panel)) {
+            _message = "Unable to open Git workspace";
         }
     }
 

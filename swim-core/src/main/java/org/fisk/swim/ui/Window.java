@@ -9,6 +9,7 @@ import java.util.List;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
@@ -39,7 +40,8 @@ public class Window implements Drawable {
     private enum WorkspaceKind {
         BUFFER,
         DIRECTORY,
-        MAIL
+        MAIL,
+        PLUGIN
     }
 
     private static final class WorkspaceState {
@@ -57,6 +59,7 @@ public class Window implements Drawable {
         private VisualBlockMode _visualBlockMode;
         private Mode _currentMode;
         private View _panelView;
+        private String _pluginId;
     }
 
     public enum Direction {
@@ -204,6 +207,19 @@ public class Window implements Drawable {
             return true;
         }
         return openMailWorkspace(client);
+    }
+
+    public boolean showPluginWorkspace(String pluginId, SwimPanel panel) {
+        if (pluginId == null || panel == null) {
+            return false;
+        }
+        ensureLayoutState();
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.PLUGIN && pluginId.equals(workspace._pluginId)) {
+                return activateWorkspace(workspace);
+            }
+        }
+        return openPluginWorkspace(pluginId, panel);
     }
 
     public BufferView splitActiveBufferHorizontally() {
@@ -1166,6 +1182,13 @@ public class Window implements Drawable {
         return workspace;
     }
 
+    private WorkspaceState createPluginWorkspace(String pluginId, SwimPanel panel) {
+        var workspace = createViewWorkspace(new PluginPanelView(Rect.create(0, 0, 0, 0), pluginId, panel, true),
+                WorkspaceKind.PLUGIN);
+        workspace._pluginId = pluginId;
+        return workspace;
+    }
+
     private boolean openBufferWorkspace(Path path) {
         WorkspaceState workspace = createBufferWorkspace(path);
         _workspaceHistory.add(0, workspace);
@@ -1182,6 +1205,12 @@ public class Window implements Drawable {
     private boolean openMailWorkspace(org.fisk.swim.mail.MailClient client) {
         WorkspaceState workspace = createViewWorkspace(new MailPanelView(Rect.create(0, 0, 0, 0), client),
                 WorkspaceKind.MAIL);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
+    private boolean openPluginWorkspace(String pluginId, SwimPanel panel) {
+        WorkspaceState workspace = createPluginWorkspace(pluginId, panel);
         _workspaceHistory.add(0, workspace);
         return activateWorkspace(workspace);
     }
@@ -1272,6 +1301,9 @@ public class Window implements Drawable {
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
         }
+        if (_workspaceView instanceof PluginPanelView) {
+            return WorkspaceKind.PLUGIN;
+        }
         return WorkspaceKind.BUFFER;
     }
 
@@ -1313,6 +1345,8 @@ public class Window implements Drawable {
         return switch (workspace._kind) {
         case DIRECTORY -> workspace._workspaceView instanceof DirectoryBrowserView browser ? browser.getTitle() : "directory";
         case MAIL -> "mail";
+        case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
+                : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {
             Path path = workspace._bufferContext == null ? null : workspace._bufferContext.getBuffer().getPath();
             if (path == null) {

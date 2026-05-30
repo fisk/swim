@@ -14,6 +14,7 @@
     <module>swim-clangd-lsp</module>
     <module>swim-tree-view</module>
     <module>swim-email</module>
+    <module>swim-git</module>
   </modules>
 
   <properties>
