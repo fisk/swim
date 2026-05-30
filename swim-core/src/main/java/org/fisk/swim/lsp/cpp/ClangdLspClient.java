@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -32,12 +33,16 @@ import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InsertReplaceEdit;
+import org.eclipse.lsp4j.Location;
+import org.eclipse.lsp4j.LocationLink;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.ReferenceContext;
+import org.eclipse.lsp4j.ReferenceParams;
 import org.eclipse.lsp4j.RegistrationParams;
 import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensCapabilities;
@@ -63,10 +68,13 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.java.JavaDefinitionMenuSession;
 import org.fisk.swim.lsp.java.JavaCompletionSession;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.CompletionPopupView;
+import org.fisk.swim.ui.JavaDefinitionPopupView;
 import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
@@ -119,6 +127,9 @@ public class ClangdLspClient implements LanguageMode {
     private final Object _completionLock = new Object();
     private JavaCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
+    private final Object _definitionLock = new Object();
+    private JavaDefinitionMenuSession _definitionMenuSession;
+    private JavaDefinitionPopupView _definitionPopupView;
 
     private static ClangdLspClient _instance;
 
@@ -471,6 +482,70 @@ public class ClangdLspClient implements LanguageMode {
         return true;
     }
 
+    public void goToDefinition(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        if (!_enabled || _server == null) {
+            return;
+        }
+        try {
+            var entries = requestDefinitionEntries(bufferContext);
+            if (entries.isEmpty()) {
+                return;
+            }
+            if (entries.size() == 1) {
+                jumpToLocation(entries.get(0));
+                return;
+            }
+            showLocationMenu(bufferContext, entries, "Definitions");
+        } catch (Exception e) {
+            _log.debug("clangd definition lookup failed", e);
+        }
+    }
+
+    public void findReferences(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        if (!_enabled || _server == null) {
+            return;
+        }
+        try {
+            var entries = requestReferenceEntries(bufferContext);
+            if (entries.isEmpty()) {
+                return;
+            }
+            if (entries.size() == 1) {
+                jumpToLocation(entries.get(0));
+                return;
+            }
+            showLocationMenu(bufferContext, entries, "References");
+        } catch (Exception e) {
+            _log.debug("clangd reference lookup failed", e);
+        }
+    }
+
+    public boolean cancelDefinitionMenu() {
+        JavaDefinitionPopupView popupView;
+        synchronized (_definitionLock) {
+            if (_definitionMenuSession == null && _definitionPopupView == null) {
+                return false;
+            }
+            _definitionMenuSession = null;
+            popupView = _definitionPopupView;
+            _definitionPopupView = null;
+        }
+        if (popupView != null) {
+            popupView.removeFromParent();
+        }
+        var window = Window.getInstance();
+        if (window != null) {
+            window.focusActiveBuffer();
+            if (window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+            window.refreshChromeState();
+        }
+        return true;
+    }
+
     @Override
     public boolean acceptCompletion(BufferContext bufferContext) {
         JavaCompletionSession session;
@@ -484,6 +559,188 @@ public class ClangdLspClient implements LanguageMode {
         cancelCompletion();
         applyCompletionItem(bufferContext, session, item);
         return true;
+    }
+
+    private List<JavaDefinitionMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext) throws Exception {
+        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+        var params = new org.eclipse.lsp4j.DefinitionParams(
+                bufferContext.getBuffer().getTextDocumentID(),
+                getPosition(bufferContext, cursor));
+        var response = _server.getTextDocumentService().definition(params).get(2, TimeUnit.SECONDS);
+        if (response == null) {
+            return List.of();
+        }
+        var entries = response.isLeft()
+                ? locationEntries(response.getLeft(), null)
+                : locationEntries(null, response.getRight());
+        return dedupeEntries(entries);
+    }
+
+    private List<JavaDefinitionMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
+        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+        var params = new ReferenceParams(
+                bufferContext.getBuffer().getTextDocumentID(),
+                getPosition(bufferContext, cursor),
+                new ReferenceContext(true));
+        var response = _server.getTextDocumentService().references(params).get(2, TimeUnit.SECONDS);
+        if (response == null || response.isEmpty()) {
+            return List.of();
+        }
+        return dedupeEntries(locationEntries(response, null));
+    }
+
+    private List<JavaDefinitionMenuSession.Entry> dedupeEntries(List<JavaDefinitionMenuSession.Entry> entries) {
+        if (entries.isEmpty()) {
+            return List.of();
+        }
+        var deduped = new LinkedHashMap<String, JavaDefinitionMenuSession.Entry>();
+        for (var entry : entries) {
+            String key = entry.path().toAbsolutePath().normalize() + ":" + entry.position().getLine() + ":" + entry.position().getCharacter();
+            deduped.putIfAbsent(key, entry);
+        }
+        return List.copyOf(deduped.values());
+    }
+
+    private List<JavaDefinitionMenuSession.Entry> locationEntries(
+            List<? extends Location> locations,
+            List<? extends LocationLink> links) {
+        var entries = new ArrayList<JavaDefinitionMenuSession.Entry>();
+        if (locations != null) {
+            for (var location : locations) {
+                var entry = locationEntry(location);
+                if (entry != null) {
+                    entries.add(entry);
+                }
+            }
+        }
+        if (links != null) {
+            for (var locationLink : links) {
+                var entry = locationEntry(locationLink);
+                if (entry != null) {
+                    entries.add(entry);
+                }
+            }
+        }
+        return entries;
+    }
+
+    private JavaDefinitionMenuSession.Entry locationEntry(Location location) {
+        if (location == null || location.getRange() == null) {
+            return null;
+        }
+        return locationEntry(location.getUri(), location.getRange().getStart());
+    }
+
+    private JavaDefinitionMenuSession.Entry locationEntry(LocationLink locationLink) {
+        if (locationLink == null) {
+            return null;
+        }
+        var targetRange = locationLink.getTargetSelectionRange() != null
+                ? locationLink.getTargetSelectionRange()
+                : locationLink.getTargetRange();
+        if (targetRange == null) {
+            return null;
+        }
+        return locationEntry(locationLink.getTargetUri(), targetRange.getStart());
+    }
+
+    private JavaDefinitionMenuSession.Entry locationEntry(String uri, Position position) {
+        if (uri == null || position == null) {
+            return null;
+        }
+        Path path;
+        try {
+            path = Paths.get(URI.create(uri)).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            return null;
+        }
+        String location = displayPath(path) + ":" + (position.getLine() + 1) + ":" + (position.getCharacter() + 1);
+        String preview = previewText(path, position.getLine());
+        String label = preview.isBlank() ? location : location + "  " + preview;
+        return new JavaDefinitionMenuSession.Entry(label, path.toString(), path, position);
+    }
+
+    private String displayPath(Path path) {
+        Path projectRoot = _projectPath;
+        if (projectRoot != null) {
+            try {
+                if (path.startsWith(projectRoot)) {
+                    return projectRoot.relativize(path).toString();
+                }
+            } catch (IllegalArgumentException e) {
+            }
+        }
+        return path.getFileName() == null ? path.toString() : path.getFileName().toString();
+    }
+
+    private static String previewText(Path path, int lineIndex) {
+        try {
+            var lines = Files.readAllLines(path);
+            if (lineIndex < 0 || lineIndex >= lines.size()) {
+                return "";
+            }
+            return lines.get(lineIndex).trim().replaceAll("\\s+", " ");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void showLocationMenu(BufferContext bufferContext, List<JavaDefinitionMenuSession.Entry> entries, String title) {
+        var window = Window.getInstance();
+        if (window == null || window.getRootView() == null) {
+            return;
+        }
+        var session = new JavaDefinitionMenuSession(bufferContext, entries, title);
+        synchronized (_definitionLock) {
+            _definitionMenuSession = session;
+            if (_definitionPopupView == null || _definitionPopupView.getParent() == null) {
+                _definitionPopupView = new JavaDefinitionPopupView(Rect.create(0, 0, 0, 0));
+                _definitionPopupView.setOnAccept(this::acceptDefinitionSelection);
+                _definitionPopupView.setOnCancel(this::cancelDefinitionMenu);
+                window.getRootView().addSubview(_definitionPopupView);
+            }
+            _definitionPopupView.setSession(session);
+        }
+        window.getRootView().setFirstResponder(_definitionPopupView);
+        window.refreshChromeState();
+        window.getRootView().setNeedsRedraw();
+    }
+
+    private void acceptDefinitionSelection() {
+        JavaDefinitionMenuSession.Entry entry;
+        synchronized (_definitionLock) {
+            entry = _definitionMenuSession == null ? null : _definitionMenuSession.getSelectedEntry();
+        }
+        if (entry == null) {
+            cancelDefinitionMenu();
+            return;
+        }
+        jumpToLocation(entry);
+        cancelDefinitionMenu();
+    }
+
+    private void jumpToLocation(JavaDefinitionMenuSession.Entry entry) {
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        try {
+            Path targetPath = entry.path().toAbsolutePath().normalize();
+            Path currentPath = window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize();
+            if (!currentPath.equals(targetPath) && !window.setBufferPath(targetPath)) {
+                return;
+            }
+            var targetContext = window.getBufferContext();
+            int index = getIndex(targetContext, entry.position());
+            targetContext.getBuffer().getCursor().setPosition(index);
+            targetContext.getBufferView().adaptViewToCursor();
+            targetContext.getBufferView().setNeedsRedraw();
+            if (window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+        } catch (Exception e) {
+            _log.debug("Jump to clangd location failed", e);
+        }
     }
 
     @Override
@@ -517,6 +774,11 @@ public class ClangdLspClient implements LanguageMode {
     @Override
     public boolean isIndentationEnd(BufferContext bufferContext, String character) {
         return "}".equals(character);
+    }
+
+    @Override
+    public String getIndentationString(BufferContext bufferContext) {
+        return Settings.getIndentationString(languageId(bufferContext == null ? null : bufferContext.getBuffer().getPath()));
     }
 
     @Override

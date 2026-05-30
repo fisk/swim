@@ -4,6 +4,7 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
+import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.nemo.NemoClient;
@@ -32,6 +33,7 @@ public class NormalMode extends Mode {
         _fancyJump = new FancyJumpResponder(bufferContext, 'w');
         _rootResponder.addEventResponder(_fancyJump);
         JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
+        ClangdLspPluginSupport.installNormalModeBindings(this, window);
         _rootResponder.addEventResponder("i", () -> { window.switchToMode(window.getInputMode()); });
         _rootResponder.addEventResponder("v", () -> { window.switchToMode(window.getVisualMode()); });
         _rootResponder.addEventResponder("V", () -> { window.switchToMode(window.getVisualLineMode()); });

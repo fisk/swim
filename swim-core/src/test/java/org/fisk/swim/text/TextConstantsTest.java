@@ -14,6 +14,27 @@ class TextConstantsTest {
     }
 
     @Test
+    void javaIndentationUsesFourSpacesByDefault() {
+        assertEquals("    ", Settings.getIndentationString("java"));
+    }
+
+    @Test
+    void cppIndentationUsesTwoSpacesByDefault() {
+        assertEquals("  ", Settings.getIndentationString("cpp"));
+        assertEquals("  ", Settings.getIndentationString("c"));
+    }
+
+    @Test
+    void indentationSizeCanBeOverriddenPerLanguage() {
+        System.setProperty("swim.indent.java.size", "6");
+        try {
+            assertEquals("      ", Settings.getIndentationString("java"));
+        } finally {
+            System.clearProperty("swim.indent.java.size");
+        }
+    }
+
+    @Test
     void powerlineSymbolsRemainStable() throws Exception {
         assertNotNull(new Powerline());
         assertEquals("\uE0A0", fieldValue("SYMBOL_BRANCH"));

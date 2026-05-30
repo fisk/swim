@@ -16,6 +16,7 @@ public class JavaDefinitionPopupView extends View {
     private final ListEventResponder _responders = new ListEventResponder();
 
     private JavaDefinitionMenuSession _session;
+    private String _title = "Definitions";
     private Runnable _onAccept = () -> {
     };
     private Runnable _onCancel = () -> {
@@ -33,11 +34,12 @@ public class JavaDefinitionPopupView extends View {
     }
 
     public String getTitle() {
-        return "Definitions";
+        return _title;
     }
 
     public void setSession(JavaDefinitionMenuSession session) {
         _session = session;
+        _title = session == null ? "Definitions" : session.getTitle();
         syncBounds();
         setNeedsRedraw();
     }
@@ -99,7 +101,7 @@ public class JavaDefinitionPopupView extends View {
         int y = rect.getPoint().getY();
 
         var header = new AttributedString();
-        header.append(" Definitions ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+        header.append(" " + getTitle() + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         header.append(" " + (session.getSelection() + 1) + "/" + session.size() + " ",
                 UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         header.append(" enter jump  esc cancel ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);

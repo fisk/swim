@@ -119,6 +119,25 @@ class BufferTest {
         assertEquals(buffer.getString().indexOf("value();") + "value();".length(), buffer.getCursor().getPosition());
     }
 
+    @Test
+    void newlineInsideCppBlockUsesTwoSpaceIndentation() throws IOException {
+        var context = createCppBufferContext("""
+                int main() {}
+                """, 120);
+        var buffer = context.getBuffer();
+        int insertPosition = buffer.getString().indexOf('{') + 1;
+        buffer.getCursor().setPosition(insertPosition);
+
+        buffer.insert("\n");
+        buffer.insert("return 0;");
+
+        assertEquals("""
+                int main() {
+                  return 0;
+                }
+                """, buffer.getString());
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }
@@ -131,6 +150,12 @@ class BufferTest {
 
     private BufferContext createJavaBufferContext(String text, int width) throws IOException {
         Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".java");
+        Files.writeString(path, text);
+        return new BufferContext(Rect.create(0, 0, width, 20), path);
+    }
+
+    private BufferContext createCppBufferContext(String text, int width) throws IOException {
+        Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".cpp");
         Files.writeString(path, text);
         return new BufferContext(Rect.create(0, 0, width, 20), path);
     }

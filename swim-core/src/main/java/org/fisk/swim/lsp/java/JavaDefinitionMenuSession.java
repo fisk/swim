@@ -14,16 +14,26 @@ public final class JavaDefinitionMenuSession {
 
     private final BufferContext _bufferContext;
     private final List<Entry> _entries;
+    private final String _title;
     private int _selection;
     private int _scrollOffset;
 
     public JavaDefinitionMenuSession(BufferContext bufferContext, List<Entry> entries) {
+        this(bufferContext, entries, "Definitions");
+    }
+
+    public JavaDefinitionMenuSession(BufferContext bufferContext, List<Entry> entries, String title) {
         _bufferContext = bufferContext;
         _entries = List.copyOf(entries);
+        _title = title == null || title.isBlank() ? "Definitions" : title;
     }
 
     public BufferContext getBufferContext() {
         return _bufferContext;
+    }
+
+    public String getTitle() {
+        return _title;
     }
 
     public List<Entry> getEntries() {

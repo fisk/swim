@@ -59,6 +59,8 @@ import org.eclipse.lsp4j.ProgressParams;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ReferencesCapabilities;
 import org.eclipse.lsp4j.RegistrationParams;
+import org.eclipse.lsp4j.ReferenceContext;
+import org.eclipse.lsp4j.ReferenceParams;
 import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensCapabilities;
 import org.eclipse.lsp4j.SemanticTokensClientCapabilitiesRequests;
@@ -94,6 +96,7 @@ import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.CompletionPopupView;
 import org.fisk.swim.ui.JavaDefinitionPopupView;
 import org.fisk.swim.ui.Rect;
@@ -1169,10 +1172,33 @@ public class JavaLSPClient extends Thread implements LanguageMode {
                 jumpToDefinition(entries.get(0));
                 return;
             }
-            showDefinitionMenu(bufferContext, entries);
+            showLocationMenu(bufferContext, entries, "Definitions");
         } catch (Exception e) {
             _log.debug("Definition lookup failed", e);
             setStatusMessage("Definition lookup failed");
+        }
+    }
+
+    public void findReferences(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        if (!_enabled || _server == null) {
+            setStatusMessage("Java LSP unavailable");
+            return;
+        }
+        try {
+            var entries = requestReferenceEntries(bufferContext);
+            if (entries.isEmpty()) {
+                setStatusMessage("No references found");
+                return;
+            }
+            if (entries.size() == 1) {
+                jumpToDefinition(entries.get(0));
+                return;
+            }
+            showLocationMenu(bufferContext, entries, "References");
+        } catch (Exception e) {
+            _log.debug("Reference lookup failed", e);
+            setStatusMessage("Reference lookup failed");
         }
     }
 
@@ -1439,6 +1465,28 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         return List.copyOf(deduped.values());
     }
 
+    private List<JavaDefinitionMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
+        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+        var params = new ReferenceParams(
+                bufferContext.getBuffer().getTextDocumentID(),
+                getPosition(bufferContext, cursor),
+                new ReferenceContext(true));
+        var response = _server.getTextDocumentService().references(params).get(2, TimeUnit.SECONDS);
+        if (response == null || response.isEmpty()) {
+            return List.of();
+        }
+        var deduped = new LinkedHashMap<String, JavaDefinitionMenuSession.Entry>();
+        for (var location : response) {
+            var entry = definitionEntry(location);
+            if (entry == null) {
+                continue;
+            }
+            String key = entry.path().toAbsolutePath().normalize() + ":" + entry.position().getLine() + ":" + entry.position().getCharacter();
+            deduped.putIfAbsent(key, entry);
+        }
+        return List.copyOf(deduped.values());
+    }
+
     private List<JavaDefinitionMenuSession.Entry> definitionEntries(
             List<? extends Location> locations,
             List<? extends LocationLink> links) {
@@ -1525,13 +1573,13 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
-    private void showDefinitionMenu(BufferContext bufferContext, List<JavaDefinitionMenuSession.Entry> entries) {
+    private void showLocationMenu(BufferContext bufferContext, List<JavaDefinitionMenuSession.Entry> entries, String title) {
         var window = Window.getInstance();
         if (window == null || window.getRootView() == null) {
             return;
         }
 
-        var session = new JavaDefinitionMenuSession(bufferContext, entries);
+        var session = new JavaDefinitionMenuSession(bufferContext, entries, title);
         synchronized (_definitionLock) {
             _definitionMenuSession = session;
             if (_definitionPopupView == null || _definitionPopupView.getParent() == null) {
@@ -2119,6 +2167,11 @@ public class JavaLSPClient extends Thread implements LanguageMode {
     @Override
     public boolean isIndentationEnd(BufferContext bufferContext, String character) {
         return character.equals("}");
+    }
+
+    @Override
+    public String getIndentationString(BufferContext bufferContext) {
+        return Settings.getIndentationString("java");
     }
 
     @Override

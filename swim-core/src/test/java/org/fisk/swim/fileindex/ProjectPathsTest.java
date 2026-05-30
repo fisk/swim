@@ -36,6 +36,16 @@ class ProjectPathsTest {
     }
 
     @Test
+    void findsNearestSourceRootUsingSwimConfigFile() throws IOException {
+        Path sourceRoot = tempDir.resolve("workspace-file");
+        Path nested = sourceRoot.resolve("deep/path");
+        Files.createDirectories(nested);
+        Files.writeString(sourceRoot.resolve(".swim"), "# swim project\n");
+
+        withUserDir(nested, () -> assertEquals(sourceRoot, ProjectPaths.getSourceRootPath()));
+    }
+
+    @Test
     void hasRepositoryReflectsGitDirectoryAtProjectRoot() throws IOException {
         Path project = tempDir.resolve("repo");
         Path nested = project.resolve("module");
@@ -58,6 +68,20 @@ class ProjectPathsTest {
         Files.writeString(javaFile, "class App {}");
 
         assertEquals(project, ProjectPaths.getProjectRootPath(javaFile));
+    }
+
+    @Test
+    void swimConfigFileOverridesParentPomProjectBoundary() throws IOException {
+        Path project = tempDir.resolve("repo");
+        Path nestedProject = project.resolve("module");
+        Path sourceFile = nestedProject.resolve("src/App.java");
+        Files.createDirectories(sourceFile.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />");
+        Files.writeString(nestedProject.resolve(".swim"), "# nested swim boundary\n");
+        Files.writeString(sourceFile, "class App {}\n");
+
+        assertEquals(nestedProject, ProjectPaths.getProjectRootPath(sourceFile));
+        assertEquals(nestedProject, ProjectPaths.getSourceRootPath(sourceFile));
     }
 
     private static void withUserDir(Path path, Runnable assertion) {

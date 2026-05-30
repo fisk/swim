@@ -173,7 +173,7 @@ public class Buffer {
             remove(lineStartPosition, position - 1);
             var str = "";
             for (int i = 0; i < getIndentationLevel() - 1; ++i) {
-                str += Settings.getIndentationString();
+                str += getIndentationString();
             }
             insert(str);
         }
@@ -205,16 +205,21 @@ public class Buffer {
         String currentIndent = indentationOfLineAt(position);
         char previous = previousNonWhitespaceOnLine(position);
         char next = nextNonWhitespaceOnLine(position);
+        String indentationString = getIndentationString();
 
         if (next == '}') {
             String closingIndent = currentIndent;
-            String indent = closingIndent + Settings.getIndentationString();
+            String indent = closingIndent + indentationString;
             String text = "\n" + indent + "\n" + closingIndent;
             return new InsertPlan(text, 1 + indent.length());
         }
-        String indent = previous == '{' ? currentIndent + Settings.getIndentationString() : currentIndent;
+        String indent = previous == '{' ? currentIndent + indentationString : currentIndent;
         String text = "\n" + indent;
         return new InsertPlan(text, text.length());
+    }
+
+    private String getIndentationString() {
+        return _languageMode == null ? Settings.getIndentationString() : _languageMode.getIndentationString(_bufferContext);
     }
 
     private char previousNonWhitespaceOnLine(int position) {

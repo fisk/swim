@@ -3,6 +3,7 @@ package org.fisk.swim.lsp;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.text.Settings;
 
 public interface LanguageMode {
     void didInsert(BufferContext bufferContext, int position, String str);
@@ -15,6 +16,10 @@ public interface LanguageMode {
     boolean isIndentationEnd(BufferContext bufferContext, String chracter);
     TextDocumentItem getTextDocument(BufferContext bufferContext);
     void applyColouring(BufferContext bufferContext, AttributedString str);
+
+    default String getIndentationString(BufferContext bufferContext) {
+        return Settings.getIndentationString();
+    }
 
     default void handleInsertedCharacter(BufferContext bufferContext, char insertedCharacter) {
     }

@@ -33,8 +33,26 @@ public class ProjectPaths {
         return null;
     }
 
+    private static Path findRoot(Path start, java.util.function.Predicate<Path> predicate) {
+        var path = normalizeStart(start);
+        if (path == null) {
+            return null;
+        }
+        var root = path.getRoot();
+        while (path != null) {
+            if (predicate.test(path)) {
+                return path;
+            }
+            if (root != null && root.equals(path)) {
+                break;
+            }
+            path = path.getParent();
+        }
+        return null;
+    }
+
     public static Path getSourceRootPath(Path start) {
-        return findRoot(start, ".git", ".swim");
+        return findRoot(start, path -> path.resolve(".git").toFile().exists() || SwimProjectConfig.hasMarker(path));
     }
 
     public static Path getSourceRootPath() {
@@ -42,7 +60,10 @@ public class ProjectPaths {
     }
 
     public static Path getProjectRootPath(Path start) {
-        return findRoot(start, ".git", "pom.xml");
+        return findRoot(start,
+                path -> path.resolve(".git").toFile().exists()
+                        || path.resolve("pom.xml").toFile().exists()
+                        || SwimProjectConfig.hasMarker(path));
     }
 
     public static Path getProjectRootPath() {

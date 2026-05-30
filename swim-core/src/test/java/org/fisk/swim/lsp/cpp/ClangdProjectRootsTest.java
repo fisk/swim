@@ -51,4 +51,32 @@ class ClangdProjectRootsTest {
         assertNull(ClangdProjectRoots.findCompilationDatabaseRoot(file));
         assertEquals(project, ClangdProjectRoots.findWorkspaceRoot(file));
     }
+
+    @Test
+    void swimConfigFileCanPointToRelativeCompilationDatabase() throws IOException {
+        Path project = tempDir.resolve("configured");
+        Path buildDir = project.resolve("out/clang");
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(buildDir);
+        Files.writeString(buildDir.resolve("compile_commands.json"), "[]");
+        Files.writeString(project.resolve(".swim"), "compile_commands = out/clang/compile_commands.json\n");
+        Path file = Files.writeString(project.resolve("src").resolve("main.cpp"), "int main() {}\n");
+
+        assertEquals(buildDir, ClangdProjectRoots.findCompilationDatabaseRoot(file));
+        assertEquals(project, ClangdProjectRoots.findWorkspaceRoot(file));
+    }
+
+    @Test
+    void swimConfigBoundaryStopsSearchAboveParentProject() throws IOException {
+        Path parent = tempDir.resolve("parent");
+        Path child = parent.resolve("child");
+        Files.createDirectories(parent.resolve("build"));
+        Files.createDirectories(child.resolve("src"));
+        Files.writeString(parent.resolve("build").resolve("compile_commands.json"), "[]");
+        Files.writeString(child.resolve(".swim"), "# explicit boundary\n");
+        Path file = Files.writeString(child.resolve("src").resolve("main.cpp"), "int main() {}\n");
+
+        assertNull(ClangdProjectRoots.findCompilationDatabaseRoot(file));
+        assertEquals(child, ClangdProjectRoots.findWorkspaceRoot(file));
+    }
 }

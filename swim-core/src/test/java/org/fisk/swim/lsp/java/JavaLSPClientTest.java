@@ -22,6 +22,7 @@ import org.eclipse.lsp4j.SemanticTokensServerFull;
 import org.eclipse.lsp4j.SemanticTokensWithRegistrationOptions;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.ReferenceParams;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.WorkspaceEdit;
@@ -365,6 +366,66 @@ class JavaLSPClientTest {
     }
 
     @Test
+    void findReferencesShowsPopupWhenThereAreMultipleTargets() throws Exception {
+        Path current = tempDir.resolve("CurrentRefs.txt");
+        Path targetOne = tempDir.resolve("RefOne.txt");
+        Path targetTwo = tempDir.resolve("RefTwo.txt");
+        Files.writeString(current, "alpha\n");
+        Files.writeString(targetOne, "first ref\n");
+        Files.writeString(targetTwo, "second\nref line\n");
+
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+        setField(client, "_projectPath", tempDir);
+        setField(client, "_server", new ReferencesLanguageServer(List.of(
+                new Location(targetOne.toUri().toString(), new Range(new Position(0, 0), new Position(0, 5))),
+                new Location(targetTwo.toUri().toString(), new Range(new Position(1, 0), new Position(1, 3))))));
+
+        try (var harness = HeadlessWindowHarness.create(current, 80, 16)) {
+            var window = harness.getWindow();
+
+            client.findReferences(window.getBufferContext());
+
+            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            assertEquals("References", popup.getTitle());
+            assertEquals(2, popup.getSession().size());
+            assertTrue(popup.getSession().getEntries().get(0).label().contains("RefOne.txt:1:1"));
+        }
+    }
+
+    @Test
+    void referencesPopupEnterJumpsToSelectedTarget() throws Exception {
+        Path current = tempDir.resolve("CurrentRefsPopup.txt");
+        Path targetOne = tempDir.resolve("RefPopupOne.txt");
+        Path targetTwo = tempDir.resolve("RefPopupTwo.txt");
+        Files.writeString(current, "alpha\n");
+        Files.writeString(targetOne, "first\n");
+        Files.writeString(targetTwo, "zero\nchosen\n");
+
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+        setField(client, "_projectPath", tempDir);
+        setField(client, "_server", new ReferencesLanguageServer(List.of(
+                new Location(targetOne.toUri().toString(), new Range(new Position(0, 0), new Position(0, 3))),
+                new Location(targetTwo.toUri().toString(), new Range(new Position(1, 2), new Position(1, 6))))));
+
+        try (var harness = HeadlessWindowHarness.create(current, 80, 16)) {
+            var window = harness.getWindow();
+            client.findReferences(window.getBufferContext());
+
+            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
+            HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
+
+            assertEquals(targetTwo.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertEquals(window.getBufferContext().getTextLayout().getIndexForPhysicalLineCharacter(1, 2),
+                    window.getBufferContext().getBuffer().getCursor().getPosition());
+            assertSame(window.getBufferContext().getBufferView(), window.getRootView().getFirstResponder());
+        }
+    }
+
+    @Test
     void bufferAttributedStringBecomesSemanticAfterDidOpenWithoutManualEdits() throws Exception {
         Path file = tempDir.resolve("SemanticWindow.java");
         Files.writeString(file, "class Demo {}\n");
@@ -694,4 +755,58 @@ class JavaLSPClientTest {
             throw new UnsupportedOperationException();
         }
     }
+
+    private static final class ReferencesLanguageServer implements LanguageServer {
+        private final List<Location> _locations;
+
+        private ReferencesLanguageServer(List<Location> locations) {
+            _locations = locations;
+        }
+
+        @Override
+        public CompletableFuture<InitializeResult> initialize(InitializeParams params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return new TextDocumentService() {
+                @Override
+                public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+                }
+
+                @Override
+                public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+                }
+
+                @Override
+                public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+                }
+
+                @Override
+                public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+                }
+
+                @Override
+                public CompletableFuture<List<? extends Location>> references(ReferenceParams params) {
+                    return CompletableFuture.completedFuture(_locations);
+                }
+            };
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
 }

@@ -4,6 +4,8 @@ import java.nio.file.Path;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.mode.NormalMode;
+import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
 public final class ClangdLspPluginSupport {
@@ -48,6 +50,16 @@ public final class ClangdLspPluginSupport {
         ClangdLspClient.shutdownInstalledInstance();
     }
 
+    public static void installNormalModeBindings(NormalMode mode, Window window) {
+        Path path = window.getBufferContext().getBuffer().getPath();
+        if (!isCppPath(path)) {
+            return;
+        }
+        var layer = mode.addKeybindingLayer();
+        layer.addEventResponder("g d", () -> withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext())));
+        layer.addEventResponder("g r", () -> withLoadedClient(window, client -> client.findReferences(window.getBufferContext())));
+    }
+
     private static ClangdLspClient startClientIfNeeded(Path path, ClangdLspClient client) {
         if (client.isEnabled() && !client.hasStarted()) {
             try {
@@ -59,5 +71,18 @@ public final class ClangdLspPluginSupport {
             }
         }
         return client;
+    }
+
+    private static void withLoadedClient(Window window, java.util.function.Consumer<ClangdLspClient> action) {
+        ensureLoaded(window.getBufferContext().getBuffer().getPath());
+        action.accept(getClient());
+    }
+
+    private static boolean isCppPath(Path path) {
+        if (path == null || path.getFileName() == null) {
+            return false;
+        }
+        String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".c") || name.endsWith(".h") || name.endsWith(".cpp") || name.endsWith(".hpp");
     }
 }
