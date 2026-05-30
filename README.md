@@ -14,8 +14,20 @@ cd ~/.swim
 mvn package
 
 # 4. Launch SWIM.
+"$HOME/.swim/image/bin/swim"
+
+# Or open a file directly.
 "$HOME/.swim/image/bin/swim" README.md
+
+# Or start in directory-browse mode.
+"$HOME/.swim/image/bin/swim" .
 ```
+
+Startup behavior:
+
+- `swim` opens an untitled scratch buffer.
+- `swim <file>` opens that file and creates it if needed.
+- `swim <directory>` opens the built-in directory browser for that directory.
 
 `mvn package` installs runtime artifacts into:
 
@@ -66,20 +78,34 @@ Normal mode uses familiar Vim-style keys:
 SWIM now exposes more of the editor while you work:
 
 - The two-line top menu shows normal-mode key chains and updates live as you type prefixes.
+- The header also shows recent fullscreen windows in MRU order.
 - When the command line is active, the top menu switches to command-specific hints.
 - Typing `:` opens a command popup with matching commands for the current prefix.
 - The command popup uses the full window width and can grow taller when longer descriptions need more room.
 - `Up` and `Down` move through command matches, and `Tab` completes the selected command.
 - Typing `!` or `Esc` opens the Nemo chat pane.
 - Typing `>` opens a shell panel using your configured `$SHELL` (for example `zsh`).
+- `w <number> Enter` switches to one of the recent fullscreen windows shown in the header.
 
 This makes it possible to explore commands and key chains without memorizing everything up front.
 
-## Panes And Panels
+## Windows, Panes, And Panels
 
-SWIM supports multiple panes and persistent side/bottom panels.
+SWIM now has two layout levels:
 
-Command-line pane controls:
+- Fullscreen windows (workspaces) for buffers, directory browsing, and mail.
+- Split panes inside the active buffer window.
+- Side/bottom panels for contextual tools such as project search, shell, Nemo chat, and plugin views.
+
+Window behavior:
+
+- Opening a directory creates a fullscreen directory-browse window.
+- Opening mail with `e` creates a fullscreen mail window.
+- Opening a file from another window creates or activates a buffer window for that file.
+- The top header shows recent windows in most-recently-used order.
+- `w <number> Enter` switches to the numbered recent window.
+
+Buffer-pane controls from the command line:
 
 - `:split` or `:sp` opens a pane below the active pane
 - `:vsplit` or `:vs` opens a pane to the right
@@ -87,7 +113,7 @@ Command-line pane controls:
 - `:close` closes the active pane
 - `:only` closes every other pane
 
-Normal-mode pane controls:
+Buffer-pane controls from normal mode:
 
 - `Ctrl-w s` splits below
 - `Ctrl-w v` splits to the right
@@ -95,6 +121,16 @@ Normal-mode pane controls:
 - `Ctrl-w w` and `Ctrl-w W` cycle panes
 - `Ctrl-w q` closes the active pane
 - `Ctrl-w o` keeps only the active pane
+
+## Directory Browser
+
+Passing a directory to SWIM opens a dired-style directory browser instead of a file tree.
+
+- `j/k` or arrow keys move through entries.
+- `Enter`, `l`, or right arrow opens the selected file or descends into the selected directory.
+- `h`, left arrow, or backspace goes to the parent directory.
+- `r` refreshes the current directory.
+- `q` or `Esc` closes the directory window and returns to the previous fullscreen window.
 
 ## Tree View
 
@@ -121,6 +157,7 @@ Current Java features include:
 - insert-mode completion popup with Java completion items
 - snippet placeholder support for LSP snippet completions
 - code actions wired to normal-mode shortcuts
+- reference/definition menus when multiple locations are returned
 
 Normal-mode Java shortcuts use the `<Space> e` prefix:
 
@@ -138,14 +175,25 @@ C and C++ files (`.c`, `.h`, `.cpp`, `.hpp`) use the separate `swim-clangd-lsp` 
 
 - Install `clangd` so it is available on `PATH`.
 - Keep a `compile_commands.json` in the project root or in a `build/` directory under that root.
+- You can also mark a project boundary with a `.swim` file and point it at a compilation database with `compile_commands=<relative-or-absolute-path>`.
 - SWIM loads the plugin on demand when one of those file types is opened.
+- Insert mode uses the same completion popup style as Java mode.
+- Default indentation is 2 spaces for C and C++.
+
+Example `.swim` file:
+
+```ini
+compile_commands=build/compile_commands.json
+```
+
+Default indentation is 4 spaces for Java.
 
 ## Mail Client
 
 The mail client ships as the separate `swim-email` plugin and stores its runtime state under `~/.swim/email`.
 
-- Press `e` in normal mode to open or close the mail pane.
-- Mail state is stored in `~/.swim/email/mail.db`.
+- Press `e` in normal mode to open or close the fullscreen mail window.
+- Mail state is stored in `~/.swim/email/mail.mv.db`.
 - Account configuration lives in `~/.swim/email/accounts.json`.
 - Tag rules live in `~/.swim/email/tag-rules.json`.
 
@@ -191,14 +239,15 @@ Supported fields for tag rules are:
 
 Current sync behavior:
 
-- IMAP imports recent mail into SQLite and groups messages into threads.
-- POP3 imports recent inbox mail into SQLite.
+- IMAP imports recent mail into the local H2 store and groups messages into threads.
+- POP3 imports recent inbox mail into the local H2 store.
 - IMAP accounts can also use OAuth2 device-code login and cache tokens in `~/.swim/email/oauth-tokens.json`.
 - SMTP send is available for configured accounts, including OAuth2 token reuse for Microsoft 365.
 - Tags are reapplied whenever rules change or mail is refreshed.
 - Exchange accounts can use EWS with `authType` set to `BASIC` or `PASSWORD`.
 - The current EWS adapter supports distinguished folders such as `INBOX`, `SentItems`, `Drafts`, `DeletedItems`, and `JunkEmail`.
 - NTLM and custom EWS folder traversal are not finished yet.
+- The thread list is paged and extended lazily as you scroll.
 
 Example on-prem Exchange account:
 
@@ -225,8 +274,8 @@ Example Microsoft 365 / Exchange Online IMAP account with OAuth2:
 {
   "accounts": [
     {
-      "id": "oracle",
-      "name": "Oracle Mail",
+      "id": "work-oauth",
+      "name": "Work Mail",
       "protocol": "IMAP",
       "host": "outlook.office365.com",
       "port": 993,
@@ -244,13 +293,13 @@ Example Microsoft 365 / Exchange Online IMAP account with OAuth2:
 
 For OAuth2 IMAP:
 
-- Open the mail panel with `e`.
-- If no cached token is present, SWIM shows a Microsoft device-code login message in the panel.
-- Complete the browser login, including any federated Oracle sign-in, then press `r` in the mail panel to refresh.
+- Open the mail window with `e`.
+- If no cached token is present, SWIM shows a Microsoft device-code login message in the window.
+- Complete the browser login, then press `r` in the mail window to refresh.
 
 Compose and send:
 
-- Press `c` in the mail panel to compose a reply/new message from the selected thread context.
+- Press `c` in the mail window to compose a reply/new message from the selected thread context.
 - `Tab` and `Shift-Tab` move between `To`, `Subject`, and `Body`.
 - `Ctrl-s` sends the message using the selected account’s SMTP settings.
 - `Esc` cancels compose mode.
