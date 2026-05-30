@@ -2,6 +2,7 @@ package org.fisk.swim.mode;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.debug.DebuggerManager;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
@@ -141,6 +142,13 @@ public class NormalMode extends Mode {
         });
         _rootResponder.addEventResponder("M", () -> {
             ProjectSearchUiSupport.toggle(window);
+        });
+        _rootResponder.addEventResponder("B", () -> {
+            try {
+                DebuggerManager.toggleBreakpointAtCursor();
+            } catch (Exception e) {
+                window.getCommandView().setMessage(e.getMessage() == null ? "Failed to toggle breakpoint" : e.getMessage());
+            }
         });
         _rootResponder.addEventResponder("e", () -> {
             MailUiSupport.toggle(window);

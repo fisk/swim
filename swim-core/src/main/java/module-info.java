@@ -15,6 +15,7 @@ module org.fisk.swim.core {
     requires org.slf4j;
 
     exports org.fisk.swim.mail;
+    exports org.fisk.swim.debug;
     exports org.fisk.swim.lsp.cpp;
     exports org.fisk.swim.lsp.java;
     opens org.fisk.swim.lsp.java to org.eclipse.lsp4j.jsonrpc;

@@ -7,6 +7,8 @@ build
 /swim-launcher/target/
 /swim-java-lsp/target/
 /swim-clangd-lsp/target/
+/swim-java-debug/target/
+/swim-cpp-debug/target/
 /swim-tree-view/target/
 /swim-email/target/
 /swim-git/target/

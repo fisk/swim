@@ -16,6 +16,16 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.debug.DebugLaunchRequest;
+import org.fisk.swim.debug.DebugSnapshot;
+import org.fisk.swim.debug.DebugSourceLocation;
+import org.fisk.swim.debug.DebugState;
+import org.fisk.swim.debug.DebuggerManager;
+import org.fisk.swim.debug.DebuggerPanelView;
+import org.fisk.swim.debug.DebuggerProvider;
+import org.fisk.swim.debug.DebuggerProviderRegistry;
+import org.fisk.swim.debug.DebuggerSession;
+import org.fisk.swim.debug.DebugSessionListener;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailPluginRegistry;
@@ -245,6 +255,34 @@ class CommandViewTest {
         }
     }
 
+    @Test
+    void debugProvidersCommandShowsRegisteredProviders() throws Exception {
+        DebuggerProviderRegistry.register("fake", "test-debugger", new FakeDebuggerProvider());
+        try (var harness = HeadlessWindowHarness.create(tempDir.resolve("debug-providers.txt"), 50, 12)) {
+            invokeRunCommand(harness.getWindow().getCommandView(), "debug providers");
+            assertTrue(HeadlessWindowHarness.getField(harness.getWindow().getCommandView(), "_message", String.class)
+                    .contains("fake"));
+        } finally {
+            DebuggerProviderRegistry.unregisterPlugin("test-debugger");
+            DebuggerManager.closeCurrentSession();
+        }
+    }
+
+    @Test
+    void debugLaunchCommandOpensDebuggerPanel() throws Exception {
+        Path path = tempDir.resolve("debug-command.txt");
+        Files.writeString(path, "class Main {}\n");
+        DebuggerProviderRegistry.register("fake", "test-debugger", new FakeDebuggerProvider());
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+            invokeRunCommand(window.getCommandView(), "debug fake launch");
+            assertTrue(window.getPanelView() instanceof DebuggerPanelView);
+        } finally {
+            DebuggerProviderRegistry.unregisterPlugin("test-debugger");
+            DebuggerManager.closeCurrentSession();
+        }
+    }
+
     private static void invokeRunCommand(CommandView commandView, String command) throws Exception {
         Method method = CommandView.class.getDeclaredMethod("runCommand", String.class);
         method.setAccessible(true);
@@ -306,6 +344,86 @@ class CommandViewTest {
         @Override
         public SwimPanelResult handleInput(String input, int width, int height) {
             return SwimPanelResult.success();
+        }
+    }
+
+    private static final class FakeDebuggerProvider implements DebuggerProvider {
+        @Override
+        public String id() {
+            return "fake";
+        }
+
+        @Override
+        public String displayName() {
+            return "Fake";
+        }
+
+        @Override
+        public String usage() {
+            return "fake launch";
+        }
+
+        @Override
+        public DebuggerSession launch(DebugLaunchRequest request) {
+            return new DebuggerSession() {
+                @Override
+                public String providerId() {
+                    return "fake";
+                }
+
+                @Override
+                public String displayName() {
+                    return "Fake";
+                }
+
+                @Override
+                public DebugSnapshot snapshot() {
+                    return new DebugSnapshot("Fake", DebugState.STOPPED, "ready",
+                            new DebugSourceLocation(Path.of("/tmp/Main.java"), 3, 1, "main"),
+                            List.of(), List.of(), -1, List.of(), -1, List.of());
+                }
+
+                @Override
+                public void setListener(DebugSessionListener listener) {
+                    listener.onSnapshotChanged(snapshot());
+                }
+
+                @Override
+                public void resume() {
+                }
+
+                @Override
+                public void stepOver() {
+                }
+
+                @Override
+                public void stepInto() {
+                }
+
+                @Override
+                public void stepOut() {
+                }
+
+                @Override
+                public void stop() {
+                }
+
+                @Override
+                public void toggleBreakpoint(DebugSourceLocation location) {
+                }
+
+                @Override
+                public void selectThread(int threadIndex) {
+                }
+
+                @Override
+                public void selectFrame(int frameIndex) {
+                }
+
+                @Override
+                public void close() {
+                }
+            };
         }
     }
 

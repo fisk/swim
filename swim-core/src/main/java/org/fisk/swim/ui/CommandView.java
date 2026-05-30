@@ -11,6 +11,8 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.debug.DebuggerManager;
+import org.fisk.swim.debug.DebuggerUiSupport;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
@@ -27,6 +29,8 @@ public class CommandView extends View {
     private static final List<CommandSpec> COMMAND_SPECS = List.of(
             new CommandSpec("q", List.of(), "", "quit SWIM"),
             new CommandSpec("e", List.of(), "<path>", "open or create a file"),
+            new CommandSpec("debug", List.of("dbg"), "[providers|open|stop|continue|next|step|out|break|<provider> ...]",
+                    "open the debugger or run debugger commands"),
             new CommandSpec("git", List.of(), "[status]", "open the Git workspace"),
             new CommandSpec("split", List.of("sp"), "", "split the active pane below"),
             new CommandSpec("vsplit", List.of("vs"), "", "split the active pane to the right"),
@@ -201,6 +205,10 @@ public class CommandView extends View {
             break;
         case "e":
             open(argument);
+            break;
+        case "debug":
+        case "dbg":
+            handleDebug(argument);
             break;
         case "git":
             openGit(argument);
@@ -422,6 +430,54 @@ public class CommandView extends View {
             if (!Window.getInstance().setBufferPath(path)) {
                 _message = "Failed to open file";
             }
+        }
+    }
+
+    private void handleDebug(String argument) {
+        var window = Window.getInstance();
+        if (window == null) {
+            _message = "Debugger unavailable";
+            return;
+        }
+        if (argument == null || argument.isBlank() || "open".equals(argument)) {
+            DebuggerUiSupport.open(window);
+            return;
+        }
+        int splitIndex = argument.indexOf(' ');
+        String verb = splitIndex < 0 ? argument : argument.substring(0, splitIndex).trim();
+        String rest = splitIndex < 0 ? "" : argument.substring(splitIndex + 1).trim();
+        try {
+            switch (verb) {
+            case "providers":
+                _message = DebuggerManager.providersSummary();
+                break;
+            case "stop":
+                DebuggerManager.stop();
+                break;
+            case "continue":
+                DebuggerManager.resume();
+                break;
+            case "next":
+                DebuggerManager.stepOver();
+                break;
+            case "step":
+                DebuggerManager.stepInto();
+                break;
+            case "out":
+                DebuggerManager.stepOut();
+                break;
+            case "break":
+                DebuggerManager.toggleBreakpointAtCursor();
+                break;
+            default:
+                DebuggerManager.launchFromCommand(verb,
+                        window.getBufferContext() == null ? null : window.getBufferContext().getBuffer().getPath(),
+                        rest);
+                DebuggerUiSupport.open(window);
+                break;
+            }
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Debugger command failed" : e.getMessage();
         }
     }
 
