@@ -1,4 +1,0 @@
---patch-module
-org.fisk.swim.git=_
---add-reads
-org.fisk.swim.git=ALL-UNNAMED
