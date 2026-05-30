@@ -385,7 +385,9 @@ public class MailPanelView extends View {
         _oauthPollGeneration++;
         var window = Window.getInstance();
         if (window != null) {
-            window.hidePanel();
+            if (!window.closeCurrentWorkspaceWindow()) {
+                window.hidePanel();
+            }
         }
     }
 

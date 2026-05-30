@@ -163,6 +163,40 @@ class TmuxEditorModesIT {
 
     @Test
     @Timeout(45)
+    void installedLauncherBinaryCanOpenFromDirectoryWorkspaceAndNavigateInOpenedBuffer() throws Exception {
+        Path directory = tempDir.resolve("dir");
+        Path file = directory.resolve("UndoLog.java");
+        Files.createDirectories(directory);
+        Files.writeString(file, """
+                alpha
+                beta
+                gamma
+                """);
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, directory.getFileName().toString())) {
+            session.waitForText("UndoLog.java", STARTUP_TIMEOUT);
+
+            session.sendLiteral("j");
+            session.sendEnter();
+            session.waitForText("alpha", UI_TIMEOUT);
+
+            session.sendLiteral("j");
+            session.sendLiteral("x");
+
+            session.runCommand("w");
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        assertEquals("""
+                alpha
+                eta
+                gamma
+                """, Files.readString(file));
+    }
+
+    @Test
+    @Timeout(45)
     void installedLauncherBinarySupportsVisualCharacterDeletion() throws Exception {
         Path file = tempDir.resolve("visual.txt");
         Files.writeString(file, "abcdef\n");

@@ -37,6 +37,7 @@ public class KeyMenuView extends View {
     private String _commandPrompt;
     private String _commandText;
     private boolean _chatPending;
+    private List<String> _recentWindows = List.of();
 
     public KeyMenuView(Rect bounds) {
         super(bounds);
@@ -99,6 +100,15 @@ public class KeyMenuView extends View {
         setNeedsRedraw();
     }
 
+    public void setRecentWindows(List<String> recentWindows) {
+        var next = recentWindows == null ? List.<String>of() : List.copyOf(recentWindows);
+        if (Objects.equals(_recentWindows, next)) {
+            return;
+        }
+        _recentWindows = next;
+        setNeedsRedraw();
+    }
+
     public void resetChain() {
         _path.clear();
         _currentNode = ROOT;
@@ -144,6 +154,10 @@ public class KeyMenuView extends View {
             if (_contextLabel != null && !_contextLabel.isBlank()) {
                 appendHeaderSegment(line, colors, _contextLabel, UiTheme.ACCENT_BLUE, UiTheme.MENU_CONTEXT_BACKGROUND);
             }
+        }
+        if (!_recentWindows.isEmpty()) {
+            appendHeaderSegment(line, colors, String.join("  ", _recentWindows), UiTheme.TEXT_PRIMARY,
+                    UiTheme.MENU_CONTEXT_BACKGROUND);
         }
         appendHeaderReset(line, colors);
         return line;
@@ -253,18 +267,18 @@ public class KeyMenuView extends View {
         if (_focusContext != FocusContext.BUFFER) {
             return switch (_focusContext) {
             case COMMAND -> commandBodyText();
-            case LIST_PANEL -> "type to filter  •  arrows move  •  Enter open  •  Esc close";
+            case LIST_PANEL -> "type to filter  •  arrows move  •  Enter open  •  Esc close  •  w <n> Enter switch window";
             case SEARCH_PANEL -> "type to search project  •  arrows move  •  Enter open  •  Esc close";
-            case TEXT_PANEL -> "j/k or arrows scroll  •  q or Esc close";
+            case TEXT_PANEL -> "j/k or arrows scroll  •  q or Esc close  •  w <n> Enter switch window";
             case CHAT_PANEL -> _chatPending
-                    ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close"
-                    : "type to chat  •  Enter send  •  Esc close";
-            case PANEL -> "Esc returns to the buffer";
+                    ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close  •  w <n> Enter switch window"
+                    : "type to chat  •  Enter send  •  Esc close  •  w <n> Enter switch window";
+            case PANEL -> "Esc returns to the buffer  •  w <n> Enter switch window";
             default -> "focus the buffer to browse normal-mode key chains";
             };
         }
         return switch (_modeName) {
-        case "INPUT" -> "Esc normal  •  arrows move  •  Enter newline  •  type to insert";
+        case "INPUT" -> "Esc normal  •  arrows move  •  Enter newline  •  type to insert  •  w <n> Enter switch window";
         case "VISUAL" -> "Esc cancel  •  o swap edge  •  d delete  •  y yank  •  c change";
         default -> "focus the buffer to browse normal-mode key chains";
         };

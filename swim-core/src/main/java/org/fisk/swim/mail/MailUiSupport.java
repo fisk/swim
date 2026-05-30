@@ -15,12 +15,9 @@ public final class MailUiSupport {
         if (window == null) {
             return;
         }
-        if (window.getPanelView() instanceof MailPanelView) {
-            window.hidePanel();
+        if (window.isShowingMailWorkspace()) {
+            window.closeCurrentWorkspaceWindow();
             return;
-        }
-        if (window.isShowingPanel()) {
-            window.hidePanel();
         }
 
         SwimRuntime.loadPlugin(PLUGIN_ID);
@@ -30,8 +27,7 @@ public final class MailUiSupport {
             return;
         }
 
-        var panelView = new MailPanelView(Rect.create(0, 0, 0, 0), client);
-        if (!window.showSidePanel(panelView, false, 0.20)) {
+        if (!window.showMailWorkspace(client)) {
             window.getCommandView().setMessage("Unable to open mail");
         }
     }

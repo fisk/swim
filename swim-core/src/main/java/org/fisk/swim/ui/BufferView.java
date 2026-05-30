@@ -27,6 +27,23 @@ public class BufferView extends View {
     }
 
     @Override
+    public void setBounds(Rect rect) {
+        var previous = getBounds();
+        super.setBounds(rect);
+        if (previous != null
+                && previous.getSize().equals(rect.getSize())
+                && previous.getPoint().equals(rect.getPoint())) {
+            return;
+        }
+        var textLayout = _bufferContext.getTextLayout();
+        if (textLayout != null) {
+            textLayout.calculate();
+            int maxStartLine = Math.max(0, textLayout.getLogicalLineCount() - getBounds().getSize().getHeight());
+            _startLine = Math.max(0, Math.min(_startLine, maxStartLine));
+        }
+    }
+
+    @Override
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();

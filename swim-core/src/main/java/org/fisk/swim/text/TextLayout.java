@@ -235,7 +235,7 @@ public class TextLayout {
     }
 
     private void calculateLogicalLines() {
-        int width = _bufferContext.getBufferView().getBounds().getSize().getWidth();
+        int width = Math.max(1, _bufferContext.getBufferView().getBounds().getSize().getWidth());
         var string = _bufferContext.getBuffer().getString();
         var iter = new LayoutIterator(string, width);
         while (iter.hasNext()) {
@@ -256,7 +256,7 @@ public class TextLayout {
     }
 
     private void calculatePhysicalLines() {
-        int width = _bufferContext.getBufferView().getBounds().getSize().getWidth();
+        int width = Math.max(1, _bufferContext.getBufferView().getBounds().getSize().getWidth());
         var string = _bufferContext.getBuffer().getString();
         var iter = new LayoutIterator(string, width);
         while (iter.hasNext()) {

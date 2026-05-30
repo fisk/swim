@@ -197,7 +197,8 @@ class CommandViewTest {
 
             invokeRunCommand(window.getCommandView(), "mail");
 
-            assertTrue(window.getPanelView() instanceof MailPanelView);
+            assertTrue(window.isShowingMailWorkspace());
+            assertTrue(window.getActiveView() instanceof MailPanelView);
         } finally {
             MailPluginRegistry.clear();
             SwimRuntime.clear();

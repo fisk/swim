@@ -51,15 +51,16 @@ class DirectoryBrowserViewTest {
 
         try (var harness = HeadlessWindowHarness.create(tempDir.resolve("scratch.txt"), 60, 14)) {
             var window = harness.getWindow();
-            var view = new DirectoryBrowserView(Rect.create(0, 0, 40, 10), dir);
-            window.showPanel(view);
+            assertTrue(window.showDirectoryBrowser(dir));
+            var view = assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
 
             HeadlessWindowHarness.dispatch(view, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(view, HeadlessWindowHarness.enter());
 
             assertEquals(file.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
-            assertTrue(window.getPanelView() instanceof DirectoryBrowserView);
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("2:Browse: browse-open"));
         }
     }
 }

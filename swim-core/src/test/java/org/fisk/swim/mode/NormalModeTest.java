@@ -1,5 +1,6 @@
 package org.fisk.swim.mode;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -10,6 +11,8 @@ import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.MailPanelView;
@@ -76,7 +79,8 @@ class NormalModeTest {
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('e'));
 
-            assertTrue(window.getPanelView() instanceof MailPanelView);
+            assertTrue(window.isShowingMailWorkspace());
+            assertTrue(window.getActiveView() instanceof MailPanelView);
             assertTrue("swim-email".equals(host.pluginId));
         } finally {
             MailPluginRegistry.clear();
@@ -97,6 +101,21 @@ class NormalModeTest {
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('M'));
 
             assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+        }
+    }
+
+    @Test
+    void plainWStillStartsFancyJumpPrefixHandling() throws Exception {
+        Path path = tempDir.resolve("fancy-jump.txt");
+        Files.writeString(path, "alpha beta gamma\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            Response response = window.getNormalMode()
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('w'))));
+
+            assertEquals(Response.MAYBE, response);
         }
     }
 

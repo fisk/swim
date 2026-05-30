@@ -2,6 +2,7 @@ package org.fisk.swim.ui;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -34,6 +35,30 @@ import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
+
+    private enum WorkspaceKind {
+        BUFFER,
+        DIRECTORY,
+        MAIL
+    }
+
+    private static final class WorkspaceState {
+        private WorkspaceKind _kind;
+        private View _workspaceView;
+        private View _activeView;
+        private BufferView _activeBufferView;
+        private BufferContext _bufferContext;
+        private IdentityHashMap<BufferView, BufferContext> _bufferContextsByView;
+        private IdentityHashMap<BufferContext, Integer> _bufferViewCounts;
+        private NormalMode _normalMode;
+        private InputMode _inputMode;
+        private VisualMode _visualMode;
+        private VisualLineMode _visualLineMode;
+        private VisualBlockMode _visualBlockMode;
+        private Mode _currentMode;
+        private View _panelView;
+    }
+
     public enum Direction {
         LEFT,
         RIGHT,
@@ -63,6 +88,8 @@ public class Window implements Drawable {
     private VisualBlockMode _visualBlockMode;
     private Mode _currentMode;
     private View _panelView;
+    private List<WorkspaceState> _workspaceHistory = new ArrayList<>();
+    private WorkspaceState _currentWorkspace;
 
     public static Window getInstance() {
         return _instance;
@@ -74,15 +101,19 @@ public class Window implements Drawable {
 
     public Window(Path path) {
         setupSplashScreen();
-        setupViews(path);
+        setupViews(path != null && path.toFile().isDirectory() ? null : path);
         setupBindings();
         setupModes();
+        initializeWorkspaceHistory();
         if (path != null && path.toFile().isDirectory()) {
             showDirectoryBrowser(path);
         }
     }
 
     private void ensureLayoutState() {
+        if (_workspaceHistory == null) {
+            _workspaceHistory = new ArrayList<>();
+        }
         if (_bufferContextsByView == null) {
             _bufferContextsByView = new IdentityHashMap<>();
         }
@@ -103,6 +134,9 @@ public class Window implements Drawable {
         if (_activeView == null) {
             _activeView = _panelView != null ? _panelView : _activeBufferView;
         }
+        if (_currentWorkspace == null && _workspaceView != null) {
+            initializeWorkspaceHistory();
+        }
     }
 
     private void setupModes() {
@@ -112,6 +146,9 @@ public class Window implements Drawable {
     public boolean setBufferPath(Path path) {
         if (path != null && path.toFile().isDirectory()) {
             return showDirectoryBrowser(path);
+        }
+        if (_currentWorkspace != null && _currentWorkspace._kind != WorkspaceKind.BUFFER) {
+            return openBufferWorkspace(path);
         }
         ensureLayoutState();
         var currentBufferView = getEditableBufferView();
@@ -146,16 +183,27 @@ public class Window implements Drawable {
         if (directory == null || !directory.toFile().isDirectory()) {
             return false;
         }
-        if (_panelView instanceof DirectoryBrowserView browser) {
+        if (_currentWorkspace != null
+                && _currentWorkspace._kind == WorkspaceKind.DIRECTORY
+                && _workspaceView instanceof DirectoryBrowserView browser) {
             browser.setDirectory(directory);
+            moveWorkspaceToFront(_currentWorkspace);
             activateView(browser);
             return true;
         }
-        if (_panelView != null) {
-            hidePanel();
+        return openDirectoryWorkspace(directory);
+    }
+
+    public boolean showMailWorkspace(org.fisk.swim.mail.MailClient client) {
+        if (client == null) {
+            return false;
         }
-        var panel = new DirectoryBrowserView(Rect.create(0, 0, 0, 0), directory);
-        return showSidePanel(panel, true, 0.34);
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL) {
+            moveWorkspaceToFront(_currentWorkspace);
+            activateView(_workspaceView);
+            return true;
+        }
+        return openMailWorkspace(client);
     }
 
     public BufferView splitActiveBufferHorizontally() {
@@ -290,6 +338,10 @@ public class Window implements Drawable {
             _rootView.setFirstResponder(view);
             _rootView.setNeedsRedraw();
         }
+        if (_currentWorkspace != null) {
+            captureCurrentWorkspace();
+            moveWorkspaceToFront(_currentWorkspace);
+        }
         refreshChromeState();
     }
 
@@ -337,6 +389,34 @@ public class Window implements Drawable {
 
     public Mode getVisualBlockMode() {
         return _visualBlockMode;
+    }
+
+    public boolean switchToRecentWindow(int oneBasedIndex) {
+        if (oneBasedIndex <= 0 || oneBasedIndex > _workspaceHistory.size()) {
+            return false;
+        }
+        return activateWorkspace(_workspaceHistory.get(oneBasedIndex - 1));
+    }
+
+    public boolean isShowingMailWorkspace() {
+        return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL;
+    }
+
+    public boolean closeCurrentWorkspaceWindow() {
+        if (_currentWorkspace == null || _currentWorkspace._kind == WorkspaceKind.BUFFER) {
+            return false;
+        }
+        var closing = _currentWorkspace;
+        _workspaceHistory.remove(closing);
+        if (_workspaceView != null) {
+            _workspaceView.removeFromParent();
+        }
+        if (_workspaceHistory.isEmpty()) {
+            _currentWorkspace = null;
+            return openBufferWorkspace(null);
+        }
+        _currentWorkspace = null;
+        return activateWorkspace(_workspaceHistory.getFirst());
     }
 
     public void switchToMode(Mode mode) {
@@ -394,6 +474,7 @@ public class Window implements Drawable {
     }
 
     public void refreshChromeState() {
+        ensureLayoutState();
         if (_keyMenuView != null) {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
             _keyMenuView.setModeName(_currentMode == null ? "NORMAL" : _currentMode.getName());
@@ -403,6 +484,7 @@ public class Window implements Drawable {
             _keyMenuView.setCommandState(_commandView == null || !_commandView.isActive() ? null : _commandView.getPrompt(),
                     _commandView == null ? "" : _commandView.getCommandText());
             _keyMenuView.setChatPending(responder instanceof ChatPanelView chatPanelView && chatPanelView.isPending());
+            _keyMenuView.setRecentWindows(recentWindowLabels());
             _keyMenuView.setNeedsRedraw();
         }
         if (_commandMenuView != null) {
@@ -422,6 +504,14 @@ public class Window implements Drawable {
         if (_mailNotificationView != null) {
             _mailNotificationView.setNeedsRedraw();
         }
+    }
+
+    private void initializeWorkspaceHistory() {
+        var initial = captureCurrentWorkspace();
+        initial._kind = WorkspaceKind.BUFFER;
+        _workspaceHistory.clear();
+        _workspaceHistory.add(initial);
+        _currentWorkspace = initial;
     }
 
     private KeyMenuView.FocusContext focusContextFor(EventResponder responder) {
@@ -703,6 +793,55 @@ public class Window implements Drawable {
         });
         responders.addEventResponder(_rootView);
         responders.addEventResponder(new EventResponder() {
+            private Integer _windowIndex;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _windowIndex = null;
+                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                for (var keyStroke : events) {
+                    sequence.add(keyStroke);
+                }
+                if (sequence.isEmpty()) {
+                    return Response.NO;
+                }
+                var first = sequence.getFirst();
+                if (first.getKeyType() != KeyType.Character || first.getCharacter() != 'w') {
+                    return Response.NO;
+                }
+                if (sequence.size() == 1) {
+                    return Response.NO;
+                }
+                var second = sequence.get(1);
+                if (second.getKeyType() != KeyType.Character || !Character.isDigit(second.getCharacter())) {
+                    return Response.NO;
+                }
+                StringBuilder digits = new StringBuilder();
+                for (int i = 1; i < sequence.size(); i++) {
+                    var stroke = sequence.get(i);
+                    if (stroke.getKeyType() == KeyType.Enter) {
+                        if (digits.isEmpty()) {
+                            return Response.NO;
+                        }
+                        _windowIndex = Integer.parseInt(digits.toString());
+                        return Response.YES;
+                    }
+                    if (stroke.getKeyType() != KeyType.Character || !Character.isDigit(stroke.getCharacter())) {
+                        return Response.NO;
+                    }
+                    digits.append(stroke.getCharacter());
+                }
+                return Response.MAYBE;
+            }
+
+            @Override
+            public void respond() {
+                if (_windowIndex != null) {
+                    switchToRecentWindow(_windowIndex);
+                }
+            }
+        });
+        responders.addEventResponder(new EventResponder() {
             @Override
             public Response processEvent(KeyStrokes events) {
                 if (events.remaining() != 0) {
@@ -964,6 +1103,119 @@ public class Window implements Drawable {
         return view;
     }
 
+    private boolean activateWorkspace(WorkspaceState workspace) {
+        if (workspace == null || workspace._workspaceView == null) {
+            return false;
+        }
+        if (_currentWorkspace == workspace) {
+            moveWorkspaceToFront(workspace);
+            if (_rootView != null && workspace._activeView != null) {
+                _rootView.setFirstResponder(workspace._activeView);
+                _rootView.setNeedsRedraw();
+            }
+            refreshChromeState();
+            return true;
+        }
+        if (_currentWorkspace != null) {
+            captureCurrentWorkspace();
+            if (_workspaceView != null) {
+                _workspaceView.removeFromParent();
+            }
+        }
+        restoreWorkspace(workspace);
+        _currentWorkspace = workspace;
+        if (_workspaceView != null && _workspaceView.getParent() == null) {
+            _rootView.addSubview(_workspaceView);
+        }
+        moveWorkspaceToFront(workspace);
+        applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
+        if (_activeBufferView != null && _currentMode != null) {
+            _activeBufferView.setFirstResponder(_currentMode);
+        }
+        if (_rootView != null && _activeView != null) {
+            _rootView.setFirstResponder(_activeView);
+            _rootView.setNeedsRedraw();
+        }
+        refreshChromeState();
+        return true;
+    }
+
+    private WorkspaceState createBufferWorkspace(Path path) {
+        var workspace = new WorkspaceState();
+        workspace._kind = WorkspaceKind.BUFFER;
+        BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), path);
+        workspace._bufferContext = context;
+        workspace._workspaceView = context.getBufferView();
+        workspace._activeView = context.getBufferView();
+        workspace._activeBufferView = context.getBufferView();
+        workspace._bufferContextsByView = new IdentityHashMap<>();
+        workspace._bufferContextsByView.put(context.getBufferView(), context);
+        workspace._bufferViewCounts = new IdentityHashMap<>();
+        workspace._bufferViewCounts.put(context, 1);
+        initializeBufferWorkspaceModes(workspace);
+        return workspace;
+    }
+
+    private WorkspaceState createViewWorkspace(View view, WorkspaceKind kind) {
+        var workspace = new WorkspaceState();
+        workspace._kind = kind;
+        workspace._workspaceView = view;
+        workspace._activeView = view;
+        workspace._bufferContextsByView = new IdentityHashMap<>();
+        workspace._bufferViewCounts = new IdentityHashMap<>();
+        return workspace;
+    }
+
+    private boolean openBufferWorkspace(Path path) {
+        WorkspaceState workspace = createBufferWorkspace(path);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
+    private boolean openDirectoryWorkspace(Path directory) {
+        WorkspaceState workspace = createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), directory),
+                WorkspaceKind.DIRECTORY);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
+    private boolean openMailWorkspace(org.fisk.swim.mail.MailClient client) {
+        WorkspaceState workspace = createViewWorkspace(new MailPanelView(Rect.create(0, 0, 0, 0), client),
+                WorkspaceKind.MAIL);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
+    private void initializeBufferWorkspaceModes(WorkspaceState workspace) {
+        var previousBufferContext = _bufferContext;
+        var previousActiveBufferView = _activeBufferView;
+        var previousNormalMode = _normalMode;
+        var previousInputMode = _inputMode;
+        var previousVisualMode = _visualMode;
+        var previousVisualLineMode = _visualLineMode;
+        var previousVisualBlockMode = _visualBlockMode;
+        var previousCurrentMode = _currentMode;
+        try {
+            _bufferContext = workspace._bufferContext;
+            _activeBufferView = workspace._activeBufferView;
+            workspace._normalMode = new NormalMode(this);
+            workspace._inputMode = new InputMode(this);
+            workspace._visualMode = new VisualMode(this);
+            workspace._visualLineMode = new VisualLineMode(this);
+            workspace._visualBlockMode = new VisualBlockMode(this);
+            workspace._currentMode = workspace._normalMode;
+        } finally {
+            _bufferContext = previousBufferContext;
+            _activeBufferView = previousActiveBufferView;
+            _normalMode = previousNormalMode;
+            _inputMode = previousInputMode;
+            _visualMode = previousVisualMode;
+            _visualLineMode = previousVisualLineMode;
+            _visualBlockMode = previousVisualBlockMode;
+            _currentMode = previousCurrentMode;
+        }
+    }
+
     private void rebuildModesForActiveBuffer(Mode previousMode) {
         ensureLayoutState();
         _normalMode = new NormalMode(this);
@@ -988,6 +1240,91 @@ public class Window implements Drawable {
             _activeBufferView.setFirstResponder(_currentMode);
         }
         refreshChromeState();
+    }
+
+    private WorkspaceState captureCurrentWorkspace() {
+        WorkspaceState workspace = _currentWorkspace == null ? new WorkspaceState() : _currentWorkspace;
+        workspace._workspaceView = _workspaceView;
+        workspace._activeView = _activeView;
+        if (workspace._kind == null) {
+            workspace._kind = determineWorkspaceKind();
+        }
+        if (workspace._kind == WorkspaceKind.BUFFER) {
+            workspace._activeBufferView = _activeBufferView;
+            workspace._bufferContext = _bufferContext;
+            workspace._bufferContextsByView = _bufferContextsByView;
+            workspace._bufferViewCounts = _bufferViewCounts;
+            workspace._normalMode = _normalMode;
+            workspace._inputMode = _inputMode;
+            workspace._visualMode = _visualMode;
+            workspace._visualLineMode = _visualLineMode;
+            workspace._visualBlockMode = _visualBlockMode;
+            workspace._currentMode = _currentMode;
+        }
+        workspace._panelView = _panelView;
+        return workspace;
+    }
+
+    private WorkspaceKind determineWorkspaceKind() {
+        if (_workspaceView instanceof DirectoryBrowserView) {
+            return WorkspaceKind.DIRECTORY;
+        }
+        if (_workspaceView instanceof MailPanelView) {
+            return WorkspaceKind.MAIL;
+        }
+        return WorkspaceKind.BUFFER;
+    }
+
+    private void restoreWorkspace(WorkspaceState workspace) {
+        _workspaceView = workspace._workspaceView;
+        _activeView = workspace._activeView;
+        if (workspace._kind == WorkspaceKind.BUFFER) {
+            _activeBufferView = workspace._activeBufferView;
+            _bufferContext = workspace._bufferContext;
+            _bufferContextsByView = workspace._bufferContextsByView;
+            _bufferViewCounts = workspace._bufferViewCounts;
+            _normalMode = workspace._normalMode;
+            _inputMode = workspace._inputMode;
+            _visualMode = workspace._visualMode;
+            _visualLineMode = workspace._visualLineMode;
+            _visualBlockMode = workspace._visualBlockMode;
+            _currentMode = workspace._currentMode;
+        }
+        _panelView = workspace._panelView;
+    }
+
+    private void moveWorkspaceToFront(WorkspaceState workspace) {
+        _workspaceHistory.remove(workspace);
+        _workspaceHistory.add(0, workspace);
+    }
+
+    private List<String> recentWindowLabels() {
+        var labels = new ArrayList<String>();
+        for (int i = 0; i < _workspaceHistory.size(); i++) {
+            labels.add((i + 1) + ":" + workspaceLabel(_workspaceHistory.get(i)));
+        }
+        return labels;
+    }
+
+    private String workspaceLabel(WorkspaceState workspace) {
+        if (workspace == null || workspace._workspaceView == null) {
+            return "(none)";
+        }
+        return switch (workspace._kind) {
+        case DIRECTORY -> workspace._workspaceView instanceof DirectoryBrowserView browser ? browser.getTitle() : "directory";
+        case MAIL -> "mail";
+        case BUFFER -> {
+            Path path = workspace._bufferContext == null ? null : workspace._bufferContext.getBuffer().getPath();
+            if (path == null) {
+                yield "*scratch*";
+            }
+            Path root = org.fisk.swim.fileindex.ProjectPaths.getProjectRootPath(path);
+            if (root != null) {
+                yield root.relativize(path).toString();
+            }
+            yield path.getFileName() == null ? path.toString() : path.getFileName().toString();
+        }
+        };
     }
 
     private int getBufferLeafCount() {
