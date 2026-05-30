@@ -75,8 +75,15 @@ public class Main implements SwimHost {
     }
 
     private void run(String[] args) {
-        Path path = checkArguments(args);
-        if (path == null) {
+        Path path = null;
+        if (args.length == 1) {
+            path = checkArguments(args);
+            if (path == null) {
+                return;
+            }
+        } else if (args.length > 1) {
+            System.out.println("swim: Wrong number of arguments: " + args.length + ".");
+            System.out.println("Try: swim <file_path>");
             return;
         }
 

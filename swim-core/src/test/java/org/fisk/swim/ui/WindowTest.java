@@ -2,6 +2,7 @@ package org.fisk.swim.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -185,6 +186,21 @@ class WindowTest {
             window.hideList();
 
             assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("explore key chains"));
+        }
+    }
+
+    @Test
+    void openingDirectoryShowsDirectoryBrowserPanel() throws IOException {
+        Path directory = tempDir.resolve("browse");
+        Files.createDirectories(directory);
+
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
+            var window = harness.getWindow();
+
+            assertTrue(window.setBufferPath(directory));
+
+            var browser = assertInstanceOf(DirectoryBrowserView.class, window.getPanelView());
+            assertEquals(directory.toAbsolutePath().normalize(), browser.getDirectory());
         }
     }
 

@@ -55,6 +55,21 @@ class SwimAppImplTest {
     }
 
     @Test
+    void startAcceptsUntitledBufferWithNullPath() {
+        FakeBindings bindings = new FakeBindings();
+        SwimAppImpl app = new SwimAppImpl(bindings);
+        RecordingHost host = new RecordingHost();
+
+        app.start(null, host);
+
+        assertSame(host, bindings.host);
+        assertNull(bindings.createdWindowPath);
+        assertEquals(List.of(true), bindings.window.updateCalls);
+        assertTrue(bindings.eventThread.started);
+        assertTrue(bindings.ioThread.started);
+    }
+
+    @Test
     void refreshAndGetCurrentPathDelegateToWindow() {
         FakeBindings bindings = new FakeBindings();
         bindings.window.currentPath = Path.of("/tmp/current.txt");

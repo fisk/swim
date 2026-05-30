@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 import org.eclipse.lsp4j.TextDocumentIdentifier;
@@ -24,6 +25,8 @@ import org.slf4j.Logger;
 import com.googlecode.lanterna.TextColor;
 
 public class Buffer {
+    private static final AtomicLong UNTITLED_COUNTER = new AtomicLong();
+
     private static final class InsertPlan {
         private final String _text;
         private final int _cursorAdvance;
@@ -36,6 +39,7 @@ public class Buffer {
 
     private StringBuilder _string = new StringBuilder();
     private Path _path;
+    private final URI _uri;
     private List<Cursor> _cursors = new ArrayList<>();
     private BufferContext _bufferContext;
     private UndoLog _undoLog;
@@ -72,20 +76,24 @@ public class Buffer {
     private LanguageMode _languageMode;
 
     public Buffer(Path path, BufferContext bufferContext) {
-        path = path.toAbsolutePath();
-        _path = path;
+        _path = path == null ? null : path.toAbsolutePath();
+        _uri = _path == null
+                ? URI.create("untitled:swim-buffer-" + UNTITLED_COUNTER.incrementAndGet())
+                : _path.toFile().toURI();
         _bufferContext = bufferContext;
         _cursors.add(new Cursor(bufferContext));
         _undoLog = new UndoLog(bufferContext);
-        try {
-            _string.append(Files.readString(path));
-            var decoration = new Decoration();
-            decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-            decoration._version = _version;
-            _decorations.add(decoration);
-        } catch (IOException e) {
+        if (_path != null) {
+            try {
+                _string.append(Files.readString(_path));
+                var decoration = new Decoration();
+                decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+                decoration._version = _version;
+                _decorations.add(decoration);
+            } catch (IOException e) {
+            }
         }
-        _languageMode = LanguageModeProvider.getInstance().getLanguageMode(path);
+        _languageMode = LanguageModeProvider.getInstance().getLanguageMode(_path);
     }
 
     public String getCharacter(int position) {
@@ -416,10 +424,17 @@ public class Buffer {
         try {
             writeOrThrow();
         } catch (IOException e) {
+            var window = Window.getInstance();
+            if (window != null && window.getCommandView() != null) {
+                window.getCommandView().setMessage(e.getMessage());
+            }
         }
     }
 
     public void writeOrThrow() throws IOException {
+        if (_path == null) {
+            throw new IOException("Buffer has no file path");
+        }
         _languageMode.willSave(_bufferContext);
         Files.writeString(_path, _string.toString());
         var window = Window.getInstance();
@@ -450,7 +465,7 @@ public class Buffer {
     }
 
     public URI getURI() {
-        return _path.toFile().toURI();
+        return _uri;
     }
 
     public int getIndentationLevel() {
@@ -574,11 +589,11 @@ public class Buffer {
     }
 
     public TextDocumentIdentifier getTextDocumentID() {
-        return new TextDocumentIdentifier(_path.toFile().toURI().toString());
+        return new TextDocumentIdentifier(_uri.toString());
     }
 
     public VersionedTextDocumentIdentifier getVersionedTextDocumentID() {
-        return new VersionedTextDocumentIdentifier(_path.toFile().toURI().toString(), _version);
+        return new VersionedTextDocumentIdentifier(_uri.toString(), _version);
     }
 
     public Path getPath() {

@@ -726,8 +726,9 @@ public class ClangdLspClient implements LanguageMode {
         }
         try {
             Path targetPath = entry.path().toAbsolutePath().normalize();
-            Path currentPath = window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize();
-            if (!currentPath.equals(targetPath) && !window.setBufferPath(targetPath)) {
+            Path currentBufferPath = window.getBufferContext().getBuffer().getPath();
+            Path currentPath = currentBufferPath == null ? null : currentBufferPath.toAbsolutePath().normalize();
+            if ((currentPath == null || !currentPath.equals(targetPath)) && !window.setBufferPath(targetPath)) {
                 return;
             }
             var targetContext = window.getBufferContext();

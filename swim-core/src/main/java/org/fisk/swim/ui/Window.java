@@ -77,6 +77,9 @@ public class Window implements Drawable {
         setupViews(path);
         setupBindings();
         setupModes();
+        if (path != null && path.toFile().isDirectory()) {
+            showDirectoryBrowser(path);
+        }
     }
 
     private void ensureLayoutState() {
@@ -107,6 +110,9 @@ public class Window implements Drawable {
     }
 
     public boolean setBufferPath(Path path) {
+        if (path != null && path.toFile().isDirectory()) {
+            return showDirectoryBrowser(path);
+        }
         ensureLayoutState();
         var currentBufferView = getEditableBufferView();
         var currentBufferContext = getBufferContextFor(currentBufferView);
@@ -134,6 +140,22 @@ public class Window implements Drawable {
         setupModes();
         activateView(nextBufferView);
         return true;
+    }
+
+    public boolean showDirectoryBrowser(Path directory) {
+        if (directory == null || !directory.toFile().isDirectory()) {
+            return false;
+        }
+        if (_panelView instanceof DirectoryBrowserView browser) {
+            browser.setDirectory(directory);
+            activateView(browser);
+            return true;
+        }
+        if (_panelView != null) {
+            hidePanel();
+        }
+        var panel = new DirectoryBrowserView(Rect.create(0, 0, 0, 0), directory);
+        return showSidePanel(panel, true, 0.34);
     }
 
     public BufferView splitActiveBufferHorizontally() {
@@ -454,6 +476,9 @@ public class Window implements Drawable {
         }
         if (responder instanceof ProjectSearchPanelView searchPanelView) {
             return searchPanelView.getTitle();
+        }
+        if (responder instanceof DirectoryBrowserView directoryBrowserView) {
+            return directoryBrowserView.getTitle();
         }
         if (responder instanceof TextPanelView textPanelView) {
             return textPanelView.getTitle();

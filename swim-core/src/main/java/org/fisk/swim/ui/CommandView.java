@@ -397,6 +397,12 @@ public class CommandView extends View {
             return;
         }
         var path = Paths.get(pathString).toAbsolutePath();
+        if (path.toFile().isDirectory()) {
+            if (!Window.getInstance().showDirectoryBrowser(path)) {
+                _message = "Failed to open directory";
+            }
+            return;
+        }
         if (!path.toFile().exists()) {
             try {
                 if (path.toFile().createNewFile()) {

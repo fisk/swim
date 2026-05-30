@@ -230,6 +230,18 @@ class MainTest {
     }
 
     @Test
+    void checkArgumentsAcceptsExistingDirectory() throws Exception {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
+            throw new AssertionError("tasks not expected");
+        }, () -> tempDir);
+        Path directory = Files.createDirectories(tempDir.resolve("project-dir"));
+
+        Path result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class }, (Object) new String[] { directory.toString() });
+
+        assertEquals(directory.toAbsolutePath(), result);
+    }
+
+    @Test
     void determineBuildRootFallsBackToUserDirWhenLauncherLocationMisses() throws Exception {
         Path root = tempDir.resolve("swim");
         Files.createDirectories(root.resolve("swim-core"));

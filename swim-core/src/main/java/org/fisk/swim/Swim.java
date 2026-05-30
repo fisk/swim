@@ -93,11 +93,16 @@ public class Swim {
     static void run(String[] args, RuntimeBindings bindings, PrintStream out) {
         try {
             setupLogging();
-            var path = checkArguments(args, out);
-            if (path == null) {
-                if (args.length == 1) {
+            Path path = null;
+            if (args.length == 1) {
+                path = checkArguments(args, out);
+                if (path == null) {
                     out.println("Did not find file at path: " + args[0]);
+                    return;
                 }
+            } else if (args.length > 1) {
+                out.println("swim: Wrong number of arguments: " + args.length + ".");
+                out.println("Try: swim <file_path>");
                 return;
             }
             _log.info("swim started");

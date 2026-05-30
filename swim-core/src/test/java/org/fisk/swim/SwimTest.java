@@ -71,18 +71,16 @@ class SwimTest {
     }
 
     @Test
-    void runWithNoArgumentsPrintsUsageAndDoesNotTouchStartup() {
+    void runWithNoArgumentsStartsUntitledBuffer() {
         FakeBindings bindings = new FakeBindings();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         Swim.run(new String[0], bindings, new PrintStream(output, true));
 
         assertNull(bindings.createdWindowPath);
-        assertTrue(bindings.window.updateCalls.isEmpty());
-        assertTrue(bindings.eventThread.onEvent.isEmpty());
-        assertTrue(output.toString().contains("swim: Wrong number of arguments: 0."));
-        assertTrue(output.toString().contains("Try: swim <file_path>"));
-        assertTrue(!output.toString().contains("Did not find file at path:"));
+        assertEquals(List.of(true), bindings.window.updateCalls);
+        assertTrue(bindings.eventThread.started);
+        assertTrue(output.toString().isEmpty());
     }
 
     @Test
