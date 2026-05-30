@@ -14,6 +14,7 @@ final class GitStatusController {
         STATUS,
         ACTIONS,
         HISTORY,
+        REBASE,
         DIFF,
         COMMIT,
         HUNK_EDIT,
@@ -55,6 +56,10 @@ final class GitStatusController {
     private List<String> _diffLines = List.of();
     private List<GitHistoryGraphEntry> _historyEntries = List.of();
     private int _historySelection;
+    private List<GitRebaseEntry> _rebaseEntries = List.of();
+    private int _rebaseSelection;
+    private String _rebaseUpstreamId;
+    private String _rebaseUpstreamLabel;
     private String _message;
     private final StringBuilder _commitMessage = new StringBuilder();
     private List<String> _editLines = List.of();
@@ -72,6 +77,7 @@ final class GitStatusController {
         return switch (_mode) {
         case ACTIONS -> "Git Actions";
         case HISTORY -> "Git History";
+        case REBASE -> "Git Interactive Rebase";
         case DIFF -> _diffChange != null ? "Git Diff: " + _diffChange.relativePath()
                 : _diffTitle == null ? "Git Diff" : _diffTitle;
         case COMMIT -> "Git Commit";
@@ -87,6 +93,7 @@ final class GitStatusController {
         case STATUS -> renderStatus(height);
         case ACTIONS -> renderActions(height);
         case HISTORY -> renderHistory(height);
+        case REBASE -> renderRebase(height);
         case DIFF -> renderDiff(height);
         case COMMIT -> renderCommit(height);
         case HUNK_EDIT -> renderHunkEdit(height);
@@ -99,6 +106,7 @@ final class GitStatusController {
         case STATUS -> handleStatusInput(input);
         case ACTIONS -> handleActionsInput(input);
         case HISTORY -> handleHistoryInput(input);
+        case REBASE -> handleRebaseInput(input);
         case DIFF -> handleDiffInput(input);
         case COMMIT -> handleCommitInput(input);
         case HUNK_EDIT -> handleHunkEditInput(input);
@@ -146,7 +154,7 @@ final class GitStatusController {
     private List<String> renderHistory(int height) {
         var lines = new ArrayList<String>();
         lines.add(title());
-        lines.add(" j/k move  Enter inspect  d inspect  r refresh  left status ");
+        lines.add(" j/k move  Enter inspect  d inspect  y cherry-pick  R rebase  r refresh  left status ");
         if (_historyEntries.isEmpty()) {
             lines.add(" No commits ");
             appendBlankLines(lines, height);
@@ -159,6 +167,33 @@ final class GitStatusController {
             int index = _scroll + i;
             lines.add(index < _historyEntries.size()
                     ? (index == _historySelection ? "> " : "  ") + _historyEntries.get(index).displayLabel()
+                    : "");
+        }
+        return lines;
+    }
+
+    private List<String> renderRebase(int height) {
+        var lines = new ArrayList<String>();
+        lines.add(title());
+        lines.add(" upstream " + (_rebaseUpstreamLabel == null ? "(none)" : _rebaseUpstreamLabel));
+        lines.add(" j/k move  J/K reorder  p/s/f/d action  Enter apply  q cancel ");
+        int bodyHeight = Math.max(0, height - 3);
+        if (_rebaseEntries.isEmpty()) {
+            lines.add(" No commits to rebase ");
+            appendBlankLines(lines, height);
+            return lines;
+        }
+        _rebaseSelection = Math.max(0, Math.min(_rebaseSelection, _rebaseEntries.size() - 1));
+        if (_rebaseSelection < _scroll) {
+            _scroll = _rebaseSelection;
+        } else if (_rebaseSelection >= _scroll + bodyHeight) {
+            _scroll = _rebaseSelection - bodyHeight + 1;
+        }
+        _scroll = Math.max(0, Math.min(_scroll, Math.max(0, _rebaseEntries.size() - Math.max(1, bodyHeight))));
+        for (int i = 0; i < bodyHeight; i++) {
+            int index = _scroll + i;
+            lines.add(index < _rebaseEntries.size()
+                    ? (index == _rebaseSelection ? "> " : "  ") + _rebaseEntries.get(index).displayLabel()
                     : "");
         }
         return lines;
@@ -244,6 +279,8 @@ final class GitStatusController {
             case "?", "space" -> openActionsMenu();
             case "l" -> openHistoryBrowser();
             case "r" -> refreshResult();
+            case "C" -> continueCurrentOperation();
+            case "A" -> abortCurrentOperation();
             default -> SwimPanelResult.ignored();
             };
         }
@@ -262,6 +299,8 @@ final class GitStatusController {
         case "?" -> openActionsMenu();
         case "l" -> openHistoryBrowser();
         case "c" -> beginCommit();
+        case "C" -> continueCurrentOperation();
+        case "A" -> abortCurrentOperation();
         case "o" -> resolveConflict(row, "ours");
         case "t" -> resolveConflict(row, "theirs");
         case "b" -> resolveConflict(row, "both");
@@ -305,6 +344,8 @@ final class GitStatusController {
             _historySelection = Math.max(0, _historySelection - 1);
             yield SwimPanelResult.success();
         }
+        case "y" -> cherryPickSelectedHistory();
+        case "R" -> openInteractiveRebase();
         case "enter", "d" -> {
             try {
                 yield showText("Git Commit: " + _historyEntries.get(_historySelection).shortId(),
@@ -316,6 +357,52 @@ final class GitStatusController {
                 yield actionFailed();
             }
         }
+        default -> SwimPanelResult.ignored();
+        };
+    }
+
+    private SwimPanelResult handleRebaseInput(String input) {
+        if (isCloseInput(input)) {
+            _mode = Mode.HISTORY;
+            return SwimPanelResult.success();
+        }
+        if (_rebaseEntries.isEmpty()) {
+            return SwimPanelResult.ignored();
+        }
+        return switch (input) {
+        case "j", "down" -> {
+            _rebaseSelection = Math.min(_rebaseEntries.size() - 1, _rebaseSelection + 1);
+            yield SwimPanelResult.success();
+        }
+        case "k", "up" -> {
+            _rebaseSelection = Math.max(0, _rebaseSelection - 1);
+            yield SwimPanelResult.success();
+        }
+        case "J" -> {
+            moveRebaseEntry(1);
+            yield SwimPanelResult.success();
+        }
+        case "K" -> {
+            moveRebaseEntry(-1);
+            yield SwimPanelResult.success();
+        }
+        case "p" -> {
+            currentRebaseEntry().setAction(GitRebaseEntry.Action.PICK);
+            yield SwimPanelResult.success();
+        }
+        case "s" -> {
+            currentRebaseEntry().setAction(GitRebaseEntry.Action.SQUASH);
+            yield SwimPanelResult.success();
+        }
+        case "f" -> {
+            currentRebaseEntry().setAction(GitRebaseEntry.Action.FIXUP);
+            yield SwimPanelResult.success();
+        }
+        case "d" -> {
+            currentRebaseEntry().setAction(GitRebaseEntry.Action.DROP);
+            yield SwimPanelResult.success();
+        }
+        case "enter" -> applyInteractiveRebase();
         default -> SwimPanelResult.ignored();
         };
     }
@@ -724,6 +811,96 @@ final class GitStatusController {
         }
     }
 
+    private SwimPanelResult cherryPickSelectedHistory() {
+        if (_historyEntries.isEmpty()) {
+            return SwimPanelResult.ignored();
+        }
+        try {
+            var entry = _historyEntries.get(_historySelection);
+            GitStatusService.cherryPick(_snapshot.repositoryRoot(),
+                    new GitCommitEntry(entry.objectId(), entry.summary(), entry.author()));
+            refresh();
+            _mode = Mode.STATUS;
+            return SwimPanelResult.successMessage("Cherry-picked " + entry.shortId());
+        } catch (IOException e) {
+            refresh();
+            _mode = Mode.STATUS;
+            return SwimPanelResult.successMessage(e.getMessage());
+        }
+    }
+
+    private SwimPanelResult openInteractiveRebase() {
+        if (_historyEntries.isEmpty()) {
+            return SwimPanelResult.ignored();
+        }
+        try {
+            var upstream = _historyEntries.get(_historySelection);
+            _rebaseEntries = GitStatusService.interactiveRebaseEntries(_snapshot.repositoryRoot(), upstream.objectId());
+            _rebaseSelection = 0;
+            _rebaseUpstreamId = upstream.objectId();
+            _rebaseUpstreamLabel = upstream.shortId() + " " + upstream.summary();
+            _scroll = 0;
+            _mode = Mode.REBASE;
+            return SwimPanelResult.success();
+        } catch (IOException e) {
+            return actionFailed();
+        }
+    }
+
+    private SwimPanelResult applyInteractiveRebase() {
+        if (_rebaseUpstreamId == null) {
+            return SwimPanelResult.ignored();
+        }
+        try {
+            GitStatusService.runInteractiveRebase(_snapshot.repositoryRoot(), _rebaseUpstreamId, _rebaseEntries);
+            refresh();
+            _mode = Mode.STATUS;
+            return SwimPanelResult.successMessage("Completed interactive rebase");
+        } catch (IOException e) {
+            refresh();
+            _mode = Mode.STATUS;
+            return SwimPanelResult.successMessage(e.getMessage());
+        }
+    }
+
+    private SwimPanelResult continueCurrentOperation() {
+        try {
+            if (_snapshot.operationState().rebaseInProgress()) {
+                GitStatusService.continueRebase(_snapshot.repositoryRoot());
+                refresh();
+                return SwimPanelResult.successMessage("Continued rebase");
+            }
+            if (_snapshot.operationState().cherryPickInProgress()) {
+                GitStatusService.continueCherryPick(_snapshot.repositoryRoot());
+                refresh();
+                return SwimPanelResult.successMessage("Continued cherry-pick");
+            }
+            return SwimPanelResult.ignored();
+        } catch (IOException e) {
+            refresh();
+            return SwimPanelResult.successMessage(e.getMessage());
+        }
+    }
+
+    private SwimPanelResult abortCurrentOperation() {
+        try {
+            if (_snapshot.operationState().rebaseInProgress()) {
+                GitStatusService.abortRebase(_snapshot.repositoryRoot());
+                refresh();
+                return SwimPanelResult.successMessage("Aborted rebase");
+            }
+            if (_snapshot.operationState().cherryPickInProgress()) {
+                GitStatusService.abortCherryPick(_snapshot.repositoryRoot());
+                refresh();
+                return SwimPanelResult.successMessage("Aborted cherry-pick");
+            }
+            return SwimPanelResult.ignored();
+        } catch (IOException e) {
+            refresh();
+            return SwimPanelResult.successMessage(e.getMessage());
+        }
+    }
+
     private SwimPanelResult resolveConflict(StatusRow row, String resolution) {
         var change = row.fileChange();
         if (change == null) {
@@ -1011,6 +1188,9 @@ final class GitStatusController {
 
     private String statusHelp(StatusRow row) {
         if (row == null || row.isHeader()) {
+            if (_snapshot.operationState().active()) {
+                return "j/k move  Tab fold  ? actions  l history  C continue  A abort";
+            }
             return "j/k move  Tab fold  ? actions  l history  S stage-all  U unstage-all  z stash";
         }
         if (row.fileChange() != null) {
@@ -1056,6 +1236,22 @@ final class GitStatusController {
 
     private static boolean isCloseInput(String input) {
         return "q".equals(input) || "esc".equals(input) || "left".equals(input) || "backspace".equals(input);
+    }
+
+    private GitRebaseEntry currentRebaseEntry() {
+        return _rebaseEntries.get(_rebaseSelection);
+    }
+
+    private void moveRebaseEntry(int delta) {
+        int other = _rebaseSelection + delta;
+        if (other < 0 || other >= _rebaseEntries.size()) {
+            return;
+        }
+        var entries = new ArrayList<>(_rebaseEntries);
+        var current = entries.remove(_rebaseSelection);
+        entries.add(other, current);
+        _rebaseEntries = List.copyOf(entries);
+        _rebaseSelection = other;
     }
 
     private static void appendBlankLines(List<String> lines, int height) {

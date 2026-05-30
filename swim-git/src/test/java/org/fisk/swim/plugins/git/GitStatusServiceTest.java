@@ -277,6 +277,73 @@ class GitStatusServiceTest {
         assertTrue(GitStatusService.snapshot(tracked).stashes().isEmpty());
     }
 
+    @Test
+    void canCherryPickCommitFromAnotherBranch() throws Exception {
+        Path repo = initRepository();
+        Path file = Files.writeString(repo.resolve("note.txt"), "base\n");
+        commitAll(repo, "initial");
+
+        try (var git = Git.open(repo.toFile())) {
+            String main = git.getRepository().getBranch();
+            git.branchCreate().setName("side").call();
+            git.checkout().setName("side").call();
+            Files.writeString(file, "picked\n");
+            git.add().addFilepattern("note.txt").call();
+            git.commit().setMessage("picked change")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+            var commit = git.log().setMaxCount(1).call().iterator().next();
+            git.checkout().setName(main).call();
+
+            GitStatusService.cherryPick(repo,
+                    new GitCommitEntry(commit.getId().name(), commit.getShortMessage(), "Test"));
+        }
+
+        assertEquals("picked\n", Files.readString(file));
+    }
+
+    @Test
+    void canRunInteractiveRebaseDroppingCommit() throws Exception {
+        Path repo = initRepository();
+        Path file = Files.writeString(repo.resolve("second.txt"), "base\n");
+        commitAll(repo, "initial");
+
+        try (var git = Git.open(repo.toFile())) {
+            Files.writeString(repo.resolve("first.txt"), "first\n");
+            git.add().addFilepattern("first.txt").call();
+            git.commit().setMessage("first")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+            Files.writeString(file, "second\n");
+            git.add().addFilepattern("second.txt").call();
+            git.commit().setMessage("second")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        GitHistoryGraphEntry upstream;
+        try (var git = Git.open(repo.toFile())) {
+            var commits = GitStatusService.historyGraphEntries(repo, 10);
+            upstream = commits.get(2);
+        }
+
+        List<GitRebaseEntry> entries = GitStatusService.interactiveRebaseEntries(repo, upstream.objectId());
+        assertEquals(2, entries.size());
+        entries.get(0).setAction(GitRebaseEntry.Action.DROP);
+        GitStatusService.runInteractiveRebase(repo, upstream.objectId(), entries);
+
+        assertEquals("second\n", Files.readString(file));
+        assertFalse(Files.exists(repo.resolve("first.txt")));
+        try (var git = Git.open(repo.toFile())) {
+            var log = git.log().setMaxCount(3).call().iterator();
+            assertEquals("second", log.next().getShortMessage());
+            assertEquals("initial", log.next().getShortMessage());
+        }
+    }
+
     private Path initRepository() throws Exception {
         Path repo = tempDir.resolve("repo-" + System.nanoTime());
         Files.createDirectories(repo);

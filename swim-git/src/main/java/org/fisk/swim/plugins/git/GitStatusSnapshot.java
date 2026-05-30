@@ -13,10 +13,11 @@ record GitStatusSnapshot(
         List<GitStashEntry> stashes,
         List<GitCommitEntry> commits,
         List<GitReflogEntryView> reflogEntries,
+        GitOperationState operationState,
         String statusMessage) {
     static GitStatusSnapshot noRepository() {
         return new GitStatusSnapshot(null, "", List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                "No Git repository");
+                GitOperationState.idle(), "No Git repository");
     }
 
     boolean hasRepository() {

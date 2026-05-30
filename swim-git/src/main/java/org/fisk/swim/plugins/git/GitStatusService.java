@@ -49,6 +49,7 @@ final class GitStatusService {
                     stashEntries(git),
                     recentCommits(git),
                     reflogEntries(git),
+                    operationState(git),
                     status.isClean() ? "Working tree clean" : "Repository has changes");
         }
     }
@@ -251,7 +252,7 @@ final class GitStatusService {
     }
 
     static List<GitHistoryGraphEntry> historyGraphEntries(Path repositoryRoot, int maxCount) throws IOException {
-        String output = gitOutput(repositoryRoot, "log", "--graph", "--decorate",
+        String output = gitOutput(repositoryRoot, "log", "--graph", "--decorate", "--all",
                 "--pretty=format:%H\t%h\t%s\t%an", "-n", Integer.toString(maxCount));
         var result = new ArrayList<GitHistoryGraphEntry>();
         for (String line : output.split("\\R")) {
@@ -276,6 +277,61 @@ final class GitStatusService {
                     graphPrefix + parts[1] + " " + parts[2] + " [" + parts[3] + "]"));
         }
         return List.copyOf(result);
+    }
+
+    static void cherryPick(Path repositoryRoot, GitCommitEntry commit) throws IOException {
+        gitOutput(repositoryRoot, "cherry-pick", commit.objectId());
+    }
+
+    static List<GitRebaseEntry> interactiveRebaseEntries(Path repositoryRoot, String upstreamCommitId) throws IOException {
+        String output = gitOutput(repositoryRoot, "log", "--reverse", "--pretty=format:%H\t%h\t%s\t%an",
+                upstreamCommitId + "..HEAD");
+        var result = new ArrayList<GitRebaseEntry>();
+        for (String line : output.split("\\R")) {
+            if (line.isBlank()) {
+                continue;
+            }
+            String[] parts = line.split("\t", 4);
+            if (parts.length < 4) {
+                continue;
+            }
+            result.add(new GitRebaseEntry(parts[0], parts[1], parts[2], parts[3]));
+        }
+        return result;
+    }
+
+    static void runInteractiveRebase(Path repositoryRoot, String upstreamCommitId, List<GitRebaseEntry> entries) throws IOException {
+        Path todoFile = Files.createTempFile("swim-git-rebase-", ".todo");
+        Path editorScript = Files.createTempFile("swim-git-rebase-", ".sh");
+        try {
+            Files.writeString(todoFile, String.join("\n", entries.stream()
+                    .map(GitRebaseEntry::todoLine)
+                    .toList()) + "\n");
+            Files.writeString(editorScript, "#!/bin/sh\ncat " + shellQuote(todoFile.toString()) + " > \"$1\"\n");
+            editorScript.toFile().setExecutable(true);
+            gitOutput(repositoryRoot,
+                    env("GIT_SEQUENCE_EDITOR", editorScript.toString()),
+                    "rebase", "-i", upstreamCommitId);
+        } finally {
+            Files.deleteIfExists(todoFile);
+            Files.deleteIfExists(editorScript);
+        }
+    }
+
+    static void continueRebase(Path repositoryRoot) throws IOException {
+        gitOutput(repositoryRoot, "rebase", "--continue");
+    }
+
+    static void abortRebase(Path repositoryRoot) throws IOException {
+        gitOutput(repositoryRoot, "rebase", "--abort");
+    }
+
+    static void continueCherryPick(Path repositoryRoot) throws IOException {
+        gitOutput(repositoryRoot, "cherry-pick", "--continue");
+    }
+
+    static void abortCherryPick(Path repositoryRoot) throws IOException {
+        gitOutput(repositoryRoot, "cherry-pick", "--abort");
     }
 
     static void resolveConflictWithOurs(Path repositoryRoot, GitFileChange change) throws IOException, GitAPIException {
@@ -344,6 +400,16 @@ final class GitStatusService {
             result.add(new GitReflogEntryView(i, entry.getNewId().name(), entry.getComment()));
         }
         return List.copyOf(result);
+    }
+
+    private static GitOperationState operationState(Git git) {
+        var state = git.getRepository().getRepositoryState();
+        if (state == null) {
+            return GitOperationState.idle();
+        }
+        return new GitOperationState(state.getDescription(), state.isRebasing(),
+                state == org.eclipse.jgit.lib.RepositoryState.CHERRY_PICKING
+                        || state == org.eclipse.jgit.lib.RepositoryState.CHERRY_PICKING_RESOLVED);
     }
 
     @SafeVarargs
@@ -456,15 +522,26 @@ final class GitStatusService {
     }
 
     private static String gitOutput(Path repositoryRoot, String... args) throws IOException {
+        return gitOutput(repositoryRoot, null, args);
+    }
+
+    private static String gitOutput(Path repositoryRoot, EnvVar env, String... args) throws IOException {
         var command = new ArrayList<String>();
         command.add("git");
         for (String arg : args) {
             command.add(arg);
         }
-        var process = new ProcessBuilder(command)
+        var builder = new ProcessBuilder(command)
                 .directory(repositoryRoot.toFile())
-                .redirectErrorStream(true)
-                .start();
+                .redirectErrorStream(true);
+        builder.environment().putIfAbsent("GIT_AUTHOR_NAME", "SWIM");
+        builder.environment().putIfAbsent("GIT_AUTHOR_EMAIL", "swim@local");
+        builder.environment().putIfAbsent("GIT_COMMITTER_NAME", "SWIM");
+        builder.environment().putIfAbsent("GIT_COMMITTER_EMAIL", "swim@local");
+        if (env != null) {
+            builder.environment().put(env.name(), env.value());
+        }
+        var process = builder.start();
         String output;
         try (InputStream stream = process.getInputStream()) {
             output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
@@ -474,5 +551,16 @@ final class GitStatusService {
             throw new IOException(output.isBlank() ? "git command failed" : output.strip());
         }
         return output;
+    }
+
+    private static EnvVar env(String name, String value) {
+        return new EnvVar(name, value);
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    private record EnvVar(String name, String value) {
     }
 }

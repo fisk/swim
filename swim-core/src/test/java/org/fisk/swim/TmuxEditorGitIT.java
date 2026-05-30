@@ -325,6 +325,100 @@ class TmuxEditorGitIT {
         }
     }
 
+    @Test
+    @Timeout(60)
+    void installedLauncherBinaryCanCherryPickFromHistoryBrowser() throws Exception {
+        InstalledSwimDriver.assumePluginAvailable("swim-git-0.0.1-SNAPSHOT.jar");
+
+        Path repo = initRepository("history-pick-project");
+        Path file = Files.writeString(repo.resolve("note.txt"), "base\n");
+        commitAll(repo, "initial");
+
+        try (var git = Git.open(repo.toFile())) {
+            String main = git.getRepository().getBranch();
+            git.branchCreate().setName("side").call();
+            git.checkout().setName("side").call();
+            Files.writeString(file, "picked\n");
+            git.add().addFilepattern("note.txt").call();
+            git.commit().setMessage("picked change")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+            git.checkout().setName(main).call();
+        }
+
+        try (var session = InstalledSwimDriver.start(tempDir, repo, "note.txt")) {
+            session.waitForText("base", STARTUP_TIMEOUT);
+
+            session.runCommand("git");
+            session.waitForText("Git:", UI_TIMEOUT);
+            session.sendLiteral("l");
+            session.waitForText("Git History", UI_TIMEOUT);
+            session.waitForText("picked change", UI_TIMEOUT);
+            session.sendLiteral("y");
+            session.waitForText("Cherry-picked", UI_TIMEOUT);
+            session.sendLiteral("q");
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        assertEquals("picked\n", Files.readString(file));
+    }
+
+    @Test
+    @Timeout(60)
+    void installedLauncherBinaryCanRunInteractiveRebaseFromHistoryBrowser() throws Exception {
+        InstalledSwimDriver.assumePluginAvailable("swim-git-0.0.1-SNAPSHOT.jar");
+
+        Path repo = initRepository("history-rebase-project");
+        Path file = Files.writeString(repo.resolve("second.txt"), "base\n");
+        commitAll(repo, "initial");
+        try (var git = Git.open(repo.toFile())) {
+            Files.writeString(repo.resolve("first.txt"), "first\n");
+            git.add().addFilepattern("first.txt").call();
+            git.commit().setMessage("first")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+            Files.writeString(file, "second\n");
+            git.add().addFilepattern("second.txt").call();
+            git.commit().setMessage("second")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        try (var session = InstalledSwimDriver.start(tempDir, repo, "second.txt")) {
+            session.waitForText("second", STARTUP_TIMEOUT);
+
+            session.runCommand("git");
+            session.waitForText("Git:", UI_TIMEOUT);
+            session.sendLiteral("l");
+            session.waitForText("Git History", UI_TIMEOUT);
+            session.waitForText("initial", UI_TIMEOUT);
+            session.sendLiteral("j");
+            session.sendLiteral("j");
+            session.sendLiteral("R");
+            session.waitForText("Git Interactive Rebase", UI_TIMEOUT);
+            session.waitForText("pick", UI_TIMEOUT);
+            session.sendLiteral("d");
+            session.sendEnter();
+            session.waitForText("Completed interactive rebase", UI_TIMEOUT);
+            session.sendLiteral("q");
+            session.waitForText("second", UI_TIMEOUT);
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        assertEquals("second\n", Files.readString(file));
+        assertFalse(Files.exists(repo.resolve("first.txt")));
+        try (var git = Git.open(repo.toFile())) {
+            var log = git.log().setMaxCount(3).call().iterator();
+            assertEquals("second", log.next().getShortMessage());
+            assertEquals("initial", log.next().getShortMessage());
+        }
+    }
+
     private Path initRepository(String name) throws Exception {
         Path repo = tempDir.resolve(name);
         Files.createDirectories(repo);
