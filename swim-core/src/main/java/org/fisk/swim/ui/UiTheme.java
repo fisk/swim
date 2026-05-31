@@ -128,6 +128,7 @@ final class UiTheme {
     static String displayKey(String token) {
         return switch (token) {
         case "<SPACE>" -> "SPC";
+        case "<CTRL>-g" -> "C-g";
         case "<CTRL>-v" -> "C-v";
         case "<CTRL>-r" -> "C-r";
         case "<CTRL>-y" -> "C-y";

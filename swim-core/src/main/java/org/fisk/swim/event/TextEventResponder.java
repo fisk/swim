@@ -41,7 +41,7 @@ public class TextEventResponder implements EventResponder {
                   if (keyStroke.getCharacter() != ' ') {
                     return Response.NO;
                   }
-                } else if (str.length() != 1 || keyStroke.getCharacter() != str.charAt(0)) {
+                } else if (!matchesCharacter(str, keyStroke.getCharacter(), isCtrlModified)) {
                     return Response.NO;
                 }
                 break;
@@ -101,4 +101,21 @@ public class TextEventResponder implements EventResponder {
 	public void respond() {
       _action.run();
 	}
+
+    private static boolean matchesCharacter(String token, Character character, boolean ctrlModified) {
+        if (token.length() != 1 || character == null) {
+            return false;
+        }
+        if (character == token.charAt(0)) {
+            return true;
+        }
+        if (!ctrlModified) {
+            return false;
+        }
+        char expected = Character.toLowerCase(token.charAt(0));
+        if (expected < 'a' || expected > 'z') {
+            return false;
+        }
+        return character == (char) (expected - 'a' + 1);
+    }
 }

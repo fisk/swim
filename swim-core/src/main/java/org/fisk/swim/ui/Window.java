@@ -41,7 +41,8 @@ public class Window implements Drawable {
         BUFFER,
         DIRECTORY,
         MAIL,
-        PLUGIN
+        PLUGIN,
+        SHELL
     }
 
     private static final class WorkspaceState {
@@ -222,6 +223,10 @@ public class Window implements Drawable {
         return openPluginWorkspace(pluginId, panel);
     }
 
+    public boolean showShellWorkspace() {
+        return openShellWorkspace();
+    }
+
     public BufferView splitActiveBufferHorizontally() {
         return splitActiveBuffer(SplitView.Orientation.HORIZONTAL);
     }
@@ -332,6 +337,10 @@ public class Window implements Drawable {
         if (view == null) {
             return;
         }
+        View previousActiveView = _activeView;
+        if (previousActiveView instanceof ShellPanelView previousShell && previousActiveView != view) {
+            previousShell.sendFocusChanged(false);
+        }
         _activeView = view;
         Mode previousMode = _currentMode;
         BufferContext previousBufferContext = _bufferContext;
@@ -353,6 +362,9 @@ public class Window implements Drawable {
         if (_rootView != null) {
             _rootView.setFirstResponder(view);
             _rootView.setNeedsRedraw();
+        }
+        if (view instanceof ShellPanelView shellPanelView) {
+            shellPanelView.sendFocusChanged(true);
         }
         if (_currentWorkspace != null) {
             captureCurrentWorkspace();
@@ -435,6 +447,46 @@ public class Window implements Drawable {
         return activateWorkspace(_workspaceHistory.getFirst());
     }
 
+    public boolean closeShellView(ShellPanelView shellView) {
+        if (shellView == null) {
+            return false;
+        }
+        if (_panelView == shellView) {
+            hidePanel();
+            return true;
+        }
+        WorkspaceState target = null;
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.SHELL && workspace._workspaceView == shellView) {
+                target = workspace;
+                break;
+            }
+        }
+        if (target == null) {
+            return false;
+        }
+        if (target == _currentWorkspace) {
+            return closeCurrentWorkspaceWindow();
+        }
+        _workspaceHistory.remove(target);
+        return true;
+    }
+
+    public void returnToEditor() {
+        ensureLayoutState();
+        if (_panelView != null && _activeBufferView != null) {
+            activateView(_activeBufferView);
+            return;
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.BUFFER) {
+                activateWorkspace(workspace);
+                return;
+            }
+        }
+        openBufferWorkspace(null);
+    }
+
     public void switchToMode(Mode mode) {
         if (_currentMode != null) {
             _currentMode.deactivate();
@@ -507,6 +559,8 @@ public class Window implements Drawable {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
             if (responder instanceof ChatPanelView chatPanelView && chatPanelView.isCommandInputActive()) {
                 _commandMenuView.setState(chatPanelView.getCommandMenuState());
+            } else if (responder instanceof ShellPanelView shellPanelView && shellPanelView.isCommandInputActive()) {
+                _commandMenuView.setState(shellPanelView.getCommandMenuState());
             } else {
                 _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
             }
@@ -551,6 +605,9 @@ public class Window implements Drawable {
         }
         if (responder instanceof ChatPanelView) {
             return KeyMenuView.FocusContext.CHAT_PANEL;
+        }
+        if (responder instanceof ShellPanelView) {
+            return KeyMenuView.FocusContext.SHELL;
         }
         if (responder instanceof BufferView) {
             return KeyMenuView.FocusContext.BUFFER;
@@ -1215,6 +1272,21 @@ public class Window implements Drawable {
         return activateWorkspace(workspace);
     }
 
+    private boolean openShellWorkspace() {
+        try {
+            var shellView = ShellPanelView.createDefault(this, Rect.create(0, 0, 0, 0));
+            shellView.setOnExit(() -> closeShellView(shellView));
+            WorkspaceState workspace = createViewWorkspace(shellView, WorkspaceKind.SHELL);
+            _workspaceHistory.add(0, workspace);
+            return activateWorkspace(workspace);
+        } catch (IOException e) {
+            if (_commandView != null) {
+                _commandView.setMessage("Failed to start shell: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
     private void initializeBufferWorkspaceModes(WorkspaceState workspace) {
         var previousBufferContext = _bufferContext;
         var previousActiveBufferView = _activeBufferView;
@@ -1301,6 +1373,9 @@ public class Window implements Drawable {
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
         }
+        if (_workspaceView instanceof ShellPanelView) {
+            return WorkspaceKind.SHELL;
+        }
         if (_workspaceView instanceof PluginPanelView) {
             return WorkspaceKind.PLUGIN;
         }
@@ -1345,6 +1420,7 @@ public class Window implements Drawable {
         return switch (workspace._kind) {
         case DIRECTORY -> workspace._workspaceView instanceof DirectoryBrowserView browser ? browser.getTitle() : "directory";
         case MAIL -> "mail";
+        case SHELL -> workspace._workspaceView instanceof ShellPanelView shellPanelView ? shellPanelView.getTitle() : "shell";
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {

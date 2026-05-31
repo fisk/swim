@@ -43,6 +43,7 @@ public class CommandView extends View {
             new CommandSpec("nemo", List.of(), "<question>", "ask Nemo about the current file"),
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
+            new CommandSpec("shell", List.of("sh"), "", "open a shell workspace"),
             new CommandSpec("upgrade", List.of(), "", "alias for :rebuild"),
             new CommandSpec("w", List.of(), "", "write the current buffer"));
 
@@ -250,6 +251,12 @@ public class CommandView extends View {
         case "rebuild":
         case "upgrade":
             SwimRuntime.rebuildAndReload();
+            break;
+        case "shell":
+        case "sh":
+            if (!Window.getInstance().showShellWorkspace()) {
+                _message = "Failed to open shell workspace";
+            }
             break;
         case "w":
             Window.getInstance().getBufferContext().getBuffer().write();

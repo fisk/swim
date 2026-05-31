@@ -121,22 +121,22 @@ class WindowTest {
             var holder = new ShellPanelView[1];
             holder[0] = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell",
                     command -> {
-                    }, "/bin/sh");
+            }, "/bin/sh");
 
             window.showPanel(holder[0]);
-            HeadlessWindowHarness.dispatch(holder[0], HeadlessWindowHarness.key(':'));
-            HeadlessWindowHarness.dispatch(holder[0], HeadlessWindowHarness.key('q'));
+            HeadlessWindowHarness.dispatch(holder[0], HeadlessWindowHarness.ctrl('g'));
 
             var state = window.getCommandMenuView().getState();
             assertTrue(state.visible());
-            assertEquals("q", state.prefix());
+            assertEquals("", state.prefix());
             assertEquals("q", state.matches().get(0).primaryName());
+            assertEquals("c", state.matches().get(1).primaryName());
             assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("shell input active"));
         }
     }
 
     @Test
-    void shellPanelEscapeClosesPanel() throws Exception {
+    void shellPanelEscapeReturnsFocusToEditor() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
             var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
@@ -145,7 +145,8 @@ class WindowTest {
             window.showPanel(shell);
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
 
-            assertFalse(window.isShowingPanel());
+            assertSame(window.getBufferContext().getBufferView(), window.getRootView().getFirstResponder());
+            assertTrue(window.isShowingPanel());
         }
     }
 
@@ -157,13 +158,41 @@ class WindowTest {
             }, "/bin/sh");
             window.showPanel(shell);
 
-            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('q'));
 
             var processField = ShellPanelView.class.getDeclaredField("_process");
             processField.setAccessible(true);
             Process process = (Process) processField.get(shell);
             process.waitFor();
             assertFalse(process.isAlive());
+        }
+    }
+
+    @Test
+    void shellPanelCtrlGQClosesImmediately() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
+            }, "/bin/sh");
+            window.showPanel(shell);
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('q'));
+
+            assertFalse(window.isShowingPanel());
+        }
+    }
+
+    @Test
+    void normalModeCtrlGCOpensShellWorkspace() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'), HeadlessWindowHarness.key('c'));
+
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Shell"));
         }
     }
 

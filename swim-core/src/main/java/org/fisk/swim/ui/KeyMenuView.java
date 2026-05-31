@@ -21,6 +21,7 @@ public class KeyMenuView extends View {
         SEARCH_PANEL,
         TEXT_PANEL,
         CHAT_PANEL,
+        SHELL,
         PANEL,
         OTHER
     }
@@ -252,6 +253,7 @@ public class KeyMenuView extends View {
             case SEARCH_PANEL -> "project search";
             case TEXT_PANEL -> "panel scroll";
             case CHAT_PANEL -> "chat input active";
+            case SHELL -> "shell input active";
             case PANEL -> "panel focus";
             default -> "buffer focus required for key discovery";
             };
@@ -273,6 +275,7 @@ public class KeyMenuView extends View {
             case CHAT_PANEL -> _chatPending
                     ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close  •  w <n> Enter switch window"
                     : "type to chat  •  Enter send  •  Esc close  •  w <n> Enter switch window";
+            case SHELL -> "Ctrl-g commands  •  Ctrl-g e editor  •  Ctrl-g q close";
             case PANEL -> "Esc returns to the buffer  •  w <n> Enter switch window";
             default -> "focus the buffer to browse normal-mode key chains";
             };
@@ -317,7 +320,13 @@ public class KeyMenuView extends View {
             };
         }
         return switch (keyStroke.getKeyType()) {
-        case Character -> keyStroke.getCharacter() == ' ' ? "<SPACE>" : Character.toString(keyStroke.getCharacter());
+        case Character -> {
+            Character character = keyStroke.getCharacter();
+            if (character != null && character >= 1 && character <= 26) {
+                yield "<CTRL>-" + Character.toLowerCase((char) ('a' + character - 1));
+            }
+            yield character == ' ' ? "<SPACE>" : Character.toString(character);
+        }
         case Escape -> "<ESC>";
         case Enter -> "<ENTER>";
         case Backspace -> "<BACKSPACE>";
@@ -383,6 +392,8 @@ public class KeyMenuView extends View {
                 .child("W", leaf("previous pane"))
                 .child("q", leaf("close pane"))
                 .child("o", leaf("only this pane")));
+        root.child("<CTRL>-g", branch("shell")
+                .child("c", leaf("new shell workspace")));
         root.child("<SPACE>", branch("code")
                 .child("e", branch("actions")
                         .child("i", leaf("organize imports"))

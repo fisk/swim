@@ -4,33 +4,98 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
-public class ShellPanelView extends ChatPanelView {
+import org.fisk.swim.EventThread;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
+import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.terminal.TerminalCell;
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalEmulator;
+import org.fisk.swim.terminal.TerminalUtf8Decoder;
+import org.fisk.swim.text.AttributedString;
+
+import com.googlecode.lanterna.input.KeyType;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
+
+public class ShellPanelView extends View {
+    private static final class TerminalCursor extends Cursor {
+        private final ShellPanelView _owner;
+
+        private TerminalCursor(ShellPanelView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.absoluteOrigin().getX() + _owner._emulator.screen().column();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.absoluteOrigin().getY() + _owner._emulator.screen().row();
+        }
+    }
+
     private final Process _process;
     private final AtomicBoolean _closed = new AtomicBoolean();
     private final OutputStream _stdin;
+    private final String _title;
+    private final TerminalEmulator _emulator;
+    private final TerminalUtf8Decoder _outputDecoder = new TerminalUtf8Decoder();
+    private final TerminalCursor _cursor;
+    private Runnable _onExit = () -> {
+    };
+    private boolean _commandMode;
+    private final StringBuilder _command = new StringBuilder();
+    private byte[] _pendingBytes;
+    private Runnable _pendingAction;
 
-    public ShellPanelView(Rect bounds, String title, Consumer<String> onSubmit, String shellCommand)
+    public ShellPanelView(Rect bounds, String title, java.util.function.Consumer<String> ignored, String shellCommand)
             throws IOException {
-        super(bounds, title, onSubmit, ShellPanelView::handleShellCommandStatic, ignored -> {},
-                ShellPanelView::shellCommandMenuState, PromptStyle.shell());
-        _process = new ProcessBuilder(shellCommand, "-i")
-                .redirectErrorStream(true)
-                .start();
+        super(bounds);
+        _title = title;
+        setBackgroundColour(UiTheme.SURFACE_MUTED);
+        _emulator = new TerminalEmulator(Math.max(1, bounds.getSize().getWidth()), Math.max(1, bounds.getSize().getHeight()));
+        _emulator.setDeviceResponseHandler(this::writeTerminalResponse);
+        _cursor = new TerminalCursor(this);
+        _process = createProcessBuilder(shellCommand, bounds.getSize()).start();
         _stdin = _process.getOutputStream();
         startOutputPump();
+        startExitWatcher();
     }
 
     public static ShellPanelView createDefault(Window window, Rect bounds) throws IOException {
-        AtomicReference<ShellPanelView> ref = new AtomicReference<>();
-        ShellPanelView view = new ShellPanelView(bounds, "Shell", command -> ref.get().submitShellCommand(command),
-                detectShellCommand());
-        ref.set(view);
-        return view;
+        var shellView = new ShellPanelView(initialBounds(window, bounds), "Shell", command -> {
+        }, detectShellCommand());
+        shellView.setOnExit(() -> {
+            var currentWindow = Window.getInstance();
+            if (currentWindow != null) {
+                currentWindow.closeShellView(shellView);
+            }
+        });
+        return shellView;
+    }
+
+    private static Rect initialBounds(Window window, Rect requestedBounds) {
+        if (requestedBounds != null && requestedBounds.getSize().getWidth() > 0 && requestedBounds.getSize().getHeight() > 0) {
+            return requestedBounds;
+        }
+        if (window == null || window.getActiveView() == null) {
+            return Rect.create(0, 0, 80, 12);
+        }
+        var activeBounds = window.getActiveView().getBounds();
+        int width = Math.max(1, activeBounds.getSize().getWidth());
+        int height = Math.max(1, activeBounds.getSize().getHeight());
+        int existingHeight = Math.max(1, Math.min(height - 1, (int) Math.floor(height * (2.0 / 3.0))));
+        int panelHeight = Math.max(1, height - existingHeight);
+        return Rect.create(0, existingHeight, width, panelHeight);
     }
 
     private static String detectShellCommand() {
@@ -41,84 +106,130 @@ public class ShellPanelView extends ChatPanelView {
         return shell;
     }
 
-    private void startOutputPump() {
-        var thread = new Thread(() -> pumpOutput(_process.getInputStream()), "swim-shell-output");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    private void pumpOutput(InputStream stream) {
-        try (stream) {
-            var buffer = new byte[4096];
-            var text = new StringBuilder();
-            int read;
-            while ((read = stream.read(buffer)) != -1) {
-                text.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
-                flushCompleteOutput(text, false);
-            }
-            flushCompleteOutput(text, true);
-        } catch (IOException e) {
-            if (!_closed.get()) {
-                appendMessage("shell", "[shell error: " + e.getMessage() + "]");
-            }
+    private static ProcessBuilder createProcessBuilder(String shellCommand, Size size) {
+        var command = new java.util.ArrayList<String>();
+        if (Files.isExecutable(Path.of("/usr/bin/script"))) {
+            command.add("/usr/bin/script");
+            command.add("-q");
+            command.add("/dev/null");
         }
+        command.add(shellCommand);
+        command.add("-i");
+        var builder = new ProcessBuilder(command)
+                .redirectErrorStream(true);
+        builder.environment().putIfAbsent("TERM", "xterm-256color");
+        builder.environment().put("COLUMNS", Integer.toString(Math.max(1, size.getWidth())));
+        builder.environment().put("LINES", Integer.toString(Math.max(1, size.getHeight())));
+        return builder;
     }
 
-    private void flushCompleteOutput(StringBuilder text, boolean flushRemainder) {
-        int start = 0;
-        for (int i = 0; i < text.length(); i++) {
-            char ch = text.charAt(i);
-            if (ch == '\n' || ch == '\r') {
-                emitShellOutput(text.substring(start, i));
-                if (ch == '\r' && i + 1 < text.length() && text.charAt(i + 1) == '\n') {
-                    i++;
-                }
-                start = i + 1;
-            }
+    String getTitle() {
+        return _title;
+    }
+
+    boolean isCommandInputActive() {
+        return _commandMode;
+    }
+
+    void setOnExit(Runnable onExit) {
+        _onExit = onExit == null ? () -> {
+        } : onExit;
+    }
+
+    CommandView.CommandMenuState getCommandMenuState() {
+        if (!_commandMode) {
+            return CommandView.CommandMenuState.hidden();
         }
-        if (flushRemainder && start < text.length()) {
-            emitShellOutput(text.substring(start));
-            text.setLength(0);
-        } else if (start > 0) {
-            text.delete(0, start);
+        return CommandView.CommandMenuState.forCommandText(_command.toString(), 0,
+                List.of(new CommandView.CommandSpec("q", List.of("quit"), "", "close shell terminal"),
+                        new CommandView.CommandSpec("c", List.of("create", "new"), "", "create a new shell workspace"),
+                        new CommandView.CommandSpec("e", List.of("editor", "buffer"), "", "return to the editor"),
+                        new CommandView.CommandSpec("help", List.of("h"), "", "show shell terminal help")));
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _commandMode || !_emulator.cursorVisible() ? null : _cursor;
+    }
+
+    @Override
+    public void setBounds(Rect rect) {
+        super.setBounds(rect);
+        _emulator.resize(Math.max(1, rect.getSize().getWidth()), Math.max(1, rect.getSize().getHeight()));
+    }
+
+    @Override
+    public Response processEvent(KeyStrokes events) {
+        if (events.remaining() != 0) {
+            return Response.NO;
         }
+        var event = events.current();
+        if (_commandMode) {
+            _pendingAction = commandModeAction(event);
+            return _pendingAction == null ? Response.NO : Response.YES;
+        }
+        if (event.getKeyType() == KeyType.Escape && isPanelShell()) {
+            _pendingAction = () -> Window.getInstance().returnToEditor();
+            return Response.YES;
+        }
+        if (isCtrlG(event)) {
+            _pendingAction = () -> {
+                _commandMode = true;
+                _command.setLength(0);
+                Window.getInstance().refreshChromeState();
+                setNeedsRedraw();
+            };
+            return Response.YES;
+        }
+        if (event instanceof MouseAction mouseAction) {
+            _pendingBytes = encodeMouseAction(mouseAction, _emulator, absoluteOrigin(), getBounds().getSize());
+            return _pendingBytes == null ? Response.NO : Response.YES;
+        }
+        _pendingBytes = encodeKeyStroke(event, _emulator.applicationCursorKeys());
+        return _pendingBytes == null ? Response.NO : Response.YES;
     }
 
-    private void emitShellOutput(String line) {
-        appendMessage("shell", line);
-    }
-
-    private void submitShellCommand(String command) {
-        appendMessage("me", command);
+    @Override
+    public void respond() {
+        if (_pendingAction != null) {
+            _pendingAction.run();
+            _pendingAction = null;
+            return;
+        }
+        if (_pendingBytes == null) {
+            return;
+        }
         try {
-            _stdin.write(command.getBytes(StandardCharsets.UTF_8));
-            _stdin.write('\n');
+            _stdin.write(_pendingBytes);
             _stdin.flush();
         } catch (IOException e) {
-            appendMessage("shell", "[write failed: " + e.getMessage() + "]");
-        }
-    }
-
-    private static void handleShellCommandStatic(String command) {
-        String trimmed = command == null ? "" : command.trim();
-        if (":q".equals(trimmed) || ":quit".equals(trimmed)) {
-            var window = Window.getInstance();
-            if (window != null) {
-                window.hidePanel();
-            }
+            _emulator.feed("[write failed: " + e.getMessage() + "]\r\n");
+            setNeedsRedraw();
+        } finally {
+            _pendingBytes = null;
         }
     }
 
     @Override
-    public void appendMessage(String speaker, String text) {
-        super.appendMessage(normalizeSpeaker(speaker), text);
-    }
-
-    private static String normalizeSpeaker(String speaker) {
-        if ("shell".equals(speaker)) {
-            return "nemo";
+    public void draw(Rect rect) {
+        super.draw(rect);
+        var graphics = TerminalContext.getInstance().getGraphics();
+        for (int row = 0; row < rect.getSize().getHeight(); row++) {
+            for (int column = 0; column < rect.getSize().getWidth(); column++) {
+                TerminalCell cell = _emulator.screen().cellAt(row, column);
+                var text = AttributedString.create(Character.toString(cell.character()),
+                        resolveShellForeground(cell.style().resolvedForeground()),
+                        resolveShellBackground(cell.style().resolvedBackground()));
+                text.drawAt(Point.create(rect.getPoint().getX() + column, rect.getPoint().getY() + row), graphics);
+            }
         }
-        return speaker;
+        if (_commandMode) {
+            String overlay = ":" + _command;
+            AttributedString.create(overlay, com.googlecode.lanterna.TextColor.ANSI.BLACK,
+                    com.googlecode.lanterna.TextColor.ANSI.YELLOW)
+                    .drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + rect.getSize().getHeight() - 1),
+                            graphics);
+        }
     }
 
     @Override
@@ -127,13 +238,264 @@ public class ShellPanelView extends ChatPanelView {
         super.removeFromParent();
     }
 
-    @Override
-    public void respond() {
-        super.respond();
-        var window = Window.getInstance();
-        if (window != null && window.getPanelView() != this) {
-            closeProcess();
+    private void startOutputPump() {
+        var thread = new Thread(() -> pumpOutput(_process.getInputStream()), "swim-shell-output");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void startExitWatcher() {
+        var thread = new Thread(() -> {
+            try {
+                _process.waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (_closed.get()) {
+                return;
+            }
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                if (!_closed.get()) {
+                    _onExit.run();
+                }
+            }));
+        }, "swim-shell-exit");
+        thread.setDaemon(true);
+        thread.start();
+    }
+
+    private void pumpOutput(InputStream stream) {
+        try (stream) {
+            var buffer = new byte[4096];
+            int read;
+            while ((read = stream.read(buffer)) != -1) {
+                String text = _outputDecoder.decode(buffer, read);
+                if (!text.isEmpty()) {
+                    EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                        _emulator.feed(text);
+                        setNeedsRedraw();
+                    }));
+                }
+            }
+            String remaining = _outputDecoder.flush();
+            if (!remaining.isEmpty()) {
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                    _emulator.feed(remaining);
+                    setNeedsRedraw();
+                }));
+            }
+        } catch (IOException e) {
+            if (!_closed.get()) {
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                    _emulator.feed("[shell error: " + e.getMessage() + "]\r\n");
+                    setNeedsRedraw();
+                }));
+            }
         }
+    }
+
+    private Runnable commandModeAction(com.googlecode.lanterna.input.KeyStroke event) {
+        return switch (event.getKeyType()) {
+        case Escape -> () -> {
+            _commandMode = false;
+            _command.setLength(0);
+            Window.getInstance().refreshChromeState();
+            setNeedsRedraw();
+        };
+        case Backspace -> () -> {
+            if (_command.length() > 0) {
+                _command.deleteCharAt(_command.length() - 1);
+            }
+            Window.getInstance().refreshChromeState();
+            setNeedsRedraw();
+        };
+        case Enter -> () -> {
+            String command = _command.toString().trim();
+            _commandMode = false;
+            _command.setLength(0);
+            if ("q".equals(command) || "quit".equals(command)) {
+                closeShell();
+            } else if ("e".equals(command) || "editor".equals(command) || "buffer".equals(command)) {
+                Window.getInstance().returnToEditor();
+            } else if ("h".equals(command) || "help".equals(command)) {
+                Window.getInstance().getCommandView()
+                        .setMessage("Ctrl-g command mode  •  :e return to editor  •  :q close shell  •  Esc leave command mode");
+            }
+            Window.getInstance().refreshChromeState();
+            setNeedsRedraw();
+        };
+        case Character -> event.isCtrlDown() || event.isAltDown() ? null : () -> {
+            char character = Character.toLowerCase(event.getCharacter());
+            switch (character) {
+            case 'q':
+                _commandMode = false;
+                _command.setLength(0);
+                closeShell();
+                break;
+            case 'c':
+                _commandMode = false;
+                _command.setLength(0);
+                createShell();
+                break;
+            case 'e':
+                _commandMode = false;
+                _command.setLength(0);
+                Window.getInstance().returnToEditor();
+                break;
+            case 'h':
+                _commandMode = false;
+                _command.setLength(0);
+                Window.getInstance().getCommandView()
+                        .setMessage("Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close shell  •  Esc leave prefix");
+                break;
+            default:
+                _command.append(event.getCharacter());
+                Window.getInstance().refreshChromeState();
+                setNeedsRedraw();
+                return;
+            }
+            Window.getInstance().refreshChromeState();
+            setNeedsRedraw();
+        };
+        default -> null;
+        };
+    }
+
+    static byte[] encodeKeyStroke(com.googlecode.lanterna.input.KeyStroke event, boolean applicationCursorKeys) {
+        if (event.getKeyType() == KeyType.Character) {
+            byte[] payload = null;
+            if (event.isCtrlDown()) {
+                char c = Character.toLowerCase(event.getCharacter());
+                if (c >= 'a' && c <= 'z') {
+                    payload = new byte[] { (byte) (c - 'a' + 1) };
+                }
+            } else {
+                payload = Character.toString(event.getCharacter()).getBytes(StandardCharsets.UTF_8);
+            }
+            if (payload == null) {
+                return null;
+            }
+            if (event.isAltDown()) {
+                return prefixEscape(payload);
+            }
+            return payload;
+        }
+        return switch (event.getKeyType()) {
+        case Enter -> new byte[] { '\r' };
+        case Tab -> new byte[] { '\t' };
+        case Backspace -> new byte[] { 0x7f };
+        case Escape -> new byte[] { 0x1b };
+        case ArrowUp -> cursorSequence('A', applicationCursorKeys);
+        case ArrowDown -> cursorSequence('B', applicationCursorKeys);
+        case ArrowRight -> cursorSequence('C', applicationCursorKeys);
+        case ArrowLeft -> cursorSequence('D', applicationCursorKeys);
+        case Home -> "\u001b[H".getBytes(StandardCharsets.UTF_8);
+        case End -> "\u001b[F".getBytes(StandardCharsets.UTF_8);
+        case Delete -> "\u001b[3~".getBytes(StandardCharsets.UTF_8);
+        case PageUp -> "\u001b[5~".getBytes(StandardCharsets.UTF_8);
+        case PageDown -> "\u001b[6~".getBytes(StandardCharsets.UTF_8);
+        default -> null;
+        };
+    }
+
+    static byte[] encodePaste(String text, boolean bracketedPasteMode) {
+        if (text == null || text.isEmpty()) {
+            return new byte[0];
+        }
+        String payload = bracketedPasteMode ? "\u001b[200~" + text + "\u001b[201~" : text;
+        return payload.getBytes(StandardCharsets.UTF_8);
+    }
+
+    static byte[] encodeMouseAction(MouseAction action, TerminalEmulator emulator, Point absoluteOrigin, Size bounds) {
+        if (action == null || emulator == null || absoluteOrigin == null || bounds == null) {
+            return null;
+        }
+        if (emulator.mouseTrackingMode() == TerminalEmulator.MouseTrackingMode.OFF) {
+            return null;
+        }
+        int localX = action.getPosition().getColumn() - absoluteOrigin.getX();
+        int localY = action.getPosition().getRow() - absoluteOrigin.getY();
+        if (localX < 0 || localY < 0 || localX >= bounds.getWidth() || localY >= bounds.getHeight()) {
+            return null;
+        }
+        int code = switch (action.getActionType()) {
+        case CLICK_DOWN -> mapButton(action.getButton());
+        case CLICK_RELEASE -> 3;
+        case DRAG -> {
+            if (emulator.mouseTrackingMode() == TerminalEmulator.MouseTrackingMode.CLICK) {
+                yield -1;
+            }
+            yield mapButton(action.getButton()) + 32;
+        }
+        case MOVE -> {
+            if (emulator.mouseTrackingMode() != TerminalEmulator.MouseTrackingMode.MOVE) {
+                yield -1;
+            }
+            yield 35;
+        }
+        case SCROLL_UP -> 64;
+        case SCROLL_DOWN -> 65;
+        };
+        if (code < 0) {
+            return null;
+        }
+        int x = localX + 1;
+        int y = localY + 1;
+        if (emulator.sgrMouseMode()) {
+            char suffix = action.getActionType() == MouseActionType.CLICK_RELEASE ? 'm' : 'M';
+            return ("\u001b[<" + code + ";" + x + ";" + y + suffix).getBytes(StandardCharsets.UTF_8);
+        }
+        return new byte[] { 0x1b, '[', 'M', (byte) (code + 32), (byte) (x + 32), (byte) (y + 32) };
+    }
+
+    private static byte[] prefixEscape(byte[] payload) {
+        byte[] prefixed = new byte[payload.length + 1];
+        prefixed[0] = 0x1b;
+        System.arraycopy(payload, 0, prefixed, 1, payload.length);
+        return prefixed;
+    }
+
+    private static byte[] cursorSequence(char finalChar, boolean applicationCursorKeys) {
+        String prefix = applicationCursorKeys ? "\u001bO" : "\u001b[";
+        return (prefix + finalChar).getBytes(StandardCharsets.UTF_8);
+    }
+
+    void sendFocusChanged(boolean focused) {
+        if (!_emulator.focusReportingMode()) {
+            return;
+        }
+        writeTerminalResponse(focused ? "\u001b[I" : "\u001b[O");
+    }
+
+    void sendPastedText(String text) {
+        byte[] payload = encodePaste(text, _emulator.bracketedPasteMode());
+        if (payload.length == 0 || _closed.get()) {
+            return;
+        }
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            try {
+                _stdin.write(payload);
+                _stdin.flush();
+            } catch (IOException e) {
+                _emulator.feed("[write failed: " + e.getMessage() + "]\r\n");
+                setNeedsRedraw();
+            }
+        }));
+    }
+
+    private void writeTerminalResponse(String response) {
+        if (response == null || response.isEmpty() || _closed.get()) {
+            return;
+        }
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            try {
+                _stdin.write(response.getBytes(StandardCharsets.UTF_8));
+                _stdin.flush();
+            } catch (IOException e) {
+                _emulator.feed("[write failed: " + e.getMessage() + "]\r\n");
+                setNeedsRedraw();
+            }
+        }));
     }
 
     private void closeProcess() {
@@ -146,8 +508,67 @@ public class ShellPanelView extends ChatPanelView {
         }
     }
 
-    private static CommandView.CommandMenuState shellCommandMenuState(String text) {
-        return CommandView.CommandMenuState.forCommandText(text, 0,
-                List.of(new CommandView.CommandSpec("q", List.of("quit"), "", "close shell panel")));
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
+    }
+
+    private static int mapButton(int button) {
+        return switch (button) {
+        case 1 -> 0;
+        case 2 -> 1;
+        case 3 -> 2;
+        default -> 0;
+        };
+    }
+
+    private static boolean isCtrlG(com.googlecode.lanterna.input.KeyStroke event) {
+        if (event.getKeyType() != KeyType.Character || event.getCharacter() == null) {
+            return false;
+        }
+        return (event.isCtrlDown() && Character.toLowerCase(event.getCharacter()) == 'g') || event.getCharacter() == 0x07;
+    }
+
+    private static com.googlecode.lanterna.TextColor resolveShellForeground(com.googlecode.lanterna.TextColor colour) {
+        return colour == com.googlecode.lanterna.TextColor.ANSI.DEFAULT ? UiTheme.TEXT_PRIMARY : colour;
+    }
+
+    private static com.googlecode.lanterna.TextColor resolveShellBackground(com.googlecode.lanterna.TextColor colour) {
+        return colour == com.googlecode.lanterna.TextColor.ANSI.DEFAULT ? UiTheme.SURFACE_MUTED : colour;
+    }
+
+    private boolean isPanelShell() {
+        var window = Window.getInstance();
+        return window != null && window.getPanelView() == this;
+    }
+
+    private void closeShell() {
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        if (window.getPanelView() == this) {
+            window.hidePanel();
+        } else {
+            window.closeShellView(this);
+        }
+    }
+
+    private void createShell() {
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        if (window.getPanelView() == this) {
+            window.hidePanel();
+        }
+        if (!window.showShellWorkspace()) {
+            window.getCommandView().setMessage("Failed to start shell workspace");
+        }
     }
 }

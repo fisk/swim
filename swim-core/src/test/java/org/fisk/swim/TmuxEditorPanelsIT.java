@@ -93,6 +93,25 @@ class TmuxEditorPanelsIT {
 
     @Test
     @Timeout(45)
+    void installedLauncherBinaryShellPanelHandlesAnsiColourAndCarriageReturnOutput() throws Exception {
+        Path file = tempDir.resolve("shell-ansi.txt");
+        Files.writeString(file, "shell ansi\n");
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, java.util.Map.of("SHELL", "/bin/sh"),
+                file.getFileName().toString())) {
+            session.waitForText("shell ansi", STARTUP_TIMEOUT);
+
+            session.sendLiteral(">");
+            session.waitForText("shell input active", UI_TIMEOUT);
+            session.sendLiteral("printf 'red\\nabc\\rXY\\n'");
+            session.sendEnter();
+            session.waitForText("red", UI_TIMEOUT);
+            session.waitForText("XYc", UI_TIMEOUT);
+        }
+    }
+
+    @Test
+    @Timeout(45)
     void installedLauncherBinaryCanOpenMailPanelWithDefaultLocalConfig() throws Exception {
         InstalledSwimDriver.assumePluginAvailable("swim-email-0.0.1-SNAPSHOT.jar");
 
