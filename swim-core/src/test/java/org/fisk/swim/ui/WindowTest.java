@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.fisk.swim.EventThread;
@@ -19,6 +20,7 @@ import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -131,12 +133,15 @@ class WindowTest {
             assertEquals("", state.prefix());
             assertEquals("q", state.matches().get(0).primaryName());
             assertEquals("c", state.matches().get(1).primaryName());
+            assertEquals("e", state.matches().get(2).primaryName());
+            assertEquals("v", state.matches().get(3).primaryName());
+            assertEquals("w", state.matches().get(4).primaryName());
             assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("shell input active"));
         }
     }
 
     @Test
-    void shellPanelEscapeReturnsFocusToEditor() throws Exception {
+    void shellPanelEscapeClosesPanel() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
             var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
@@ -145,8 +150,7 @@ class WindowTest {
             window.showPanel(shell);
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
 
-            assertSame(window.getBufferContext().getBufferView(), window.getRootView().getFirstResponder());
-            assertTrue(window.isShowingPanel());
+            assertFalse(window.isShowingPanel());
         }
     }
 
@@ -191,8 +195,147 @@ class WindowTest {
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'), HeadlessWindowHarness.key('c'));
 
-            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
             assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Shell"));
+            assertEquals(32, shell.getBounds().getSize().getWidth());
+            assertEquals(7, shell.getBounds().getSize().getHeight());
+        }
+    }
+
+    @Test
+    void shellWorkspaceCtrlGWSelectsRecentWorkspace() throws Exception {
+        Path directory = tempDir.resolve("shell-workspace-switch");
+        Files.createDirectories(directory);
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showDirectoryBrowser(directory));
+            assertTrue(window.switchToRecentWindow(2));
+            assertTrue(window.showShellWorkspace());
+
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('w'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('2'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.enter());
+
+            assertEquals(file.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void shellWorkspaceCtrlGVEntersBrowseModeAndIReturnsToPrompt() throws Exception {
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            var process = processOf(shell);
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('v'));
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals("NORMAL", window.modeNameForDisplay());
+            assertTrue(window.getBufferContext().getBuffer().isReadOnly());
+            assertTrue(process.isAlive());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('i'));
+
+            assertSame(shell, window.getActiveView());
+            assertEquals("INPUT", window.modeNameForDisplay());
+            assertTrue(process.isAlive());
+        }
+    }
+
+    @Test
+    void shellWorkspaceCtrlGEscapeEntersBrowseModeWithoutClosingShell() throws Exception {
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            var process = processOf(shell);
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals("NORMAL", window.modeNameForDisplay());
+            assertTrue(window.getBufferContext().getBuffer().isReadOnly());
+            assertTrue(process.isAlive());
+        }
+    }
+
+    @Test
+    void shellBrowseModeSupportsNormalModeNavigation() throws Exception {
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            emulatorOf(shell).feed("alpha\nbeta\ngamma\n");
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('v'));
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals(window.getBufferContext().getBuffer().getLength(),
+                    window.getBufferContext().getBuffer().getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getActiveView(), HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('g'));
+
+            HeadlessWindowHarness.dispatch(window.getActiveView(), HeadlessWindowHarness.key('j'));
+
+            assertEquals(6, window.getBufferContext().getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void switchingAwayFromShellWorkspaceKeepsShellProcessAlive() throws Exception {
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            var process = processOf(shell);
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('w'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('2'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.enter());
+
+            assertEquals(file.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertTrue(process.isAlive());
+
+            assertTrue(window.switchToRecentWindow(2));
+            assertSame(shell, window.getActiveView());
+            assertEquals("INPUT", window.modeNameForDisplay());
+            assertTrue(process.isAlive());
+        }
+    }
+
+    @Test
+    void shellPanelIsReusedAfterHide() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+
+            assertTrue(window.showShellPanel());
+            var first = assertInstanceOf(ShellPanelView.class, window.getPanelView());
+
+            window.hidePanel();
+            assertFalse(window.isShowingPanel());
+
+            assertTrue(window.showShellPanel());
+            assertSame(first, window.getPanelView());
         }
     }
 
@@ -297,6 +440,7 @@ class WindowTest {
             Window.createInstance(file);
             var window = Window.getInstance();
             assertTrue(window.showDirectoryBrowser(directory));
+            assertTrue(window.switchToRecentWindow(2));
             var responder = EventThread.getInstance().getResponder();
 
             Response response = responder.processEvent(new KeyStrokes(List.of(
@@ -306,8 +450,36 @@ class WindowTest {
 
             assertEquals(Response.YES, response);
             responder.respond();
-            assertEquals(file.toAbsolutePath().normalize(),
-                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
+    void incrementalWindowSelectionSequenceWinsOverNormalModeWBinding() throws Exception {
+        Path directory = tempDir.resolve("browse-sequence-incremental");
+        Files.createDirectories(directory);
+        Path file = writeFile("window.txt", "abc");
+
+        TerminalContextTestSupport.install(40, 12);
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            assertTrue(window.showDirectoryBrowser(directory));
+            assertTrue(window.switchToRecentWindow(2));
+            var responder = EventThread.getInstance().getResponder();
+            var pending = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+
+            assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key('w')));
+            assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key('2')));
+            assertEquals(Response.YES, processSequenceStep(responder, pending, HeadlessWindowHarness.enter()));
+
+            assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
         } finally {
             if (Window.getInstance() != null) {
                 Window.getInstance().dispose();
@@ -392,8 +564,34 @@ class WindowTest {
         return method.invoke(target, args);
     }
 
+    private static Process processOf(ShellPanelView shell) throws Exception {
+        var field = ShellPanelView.class.getDeclaredField("_process");
+        field.setAccessible(true);
+        return (Process) field.get(shell);
+    }
+
+    private static TerminalEmulator emulatorOf(ShellPanelView shell) throws Exception {
+        var field = ShellPanelView.class.getDeclaredField("_emulator");
+        field.setAccessible(true);
+        return (TerminalEmulator) field.get(shell);
+    }
+
     @SuppressWarnings("unchecked")
     private static List<View> leafViews(Window window) throws Exception {
         return (List<View>) invoke(window, "getLeafViews", new Class<?>[0]);
+    }
+
+    private static Response processSequenceStep(org.fisk.swim.event.EventResponder responder,
+            ArrayList<com.googlecode.lanterna.input.KeyStroke> pending,
+            com.googlecode.lanterna.input.KeyStroke next) {
+        pending.add(next);
+        var response = responder.processEvent(new KeyStrokes(List.copyOf(pending)));
+        if (response == Response.YES) {
+            responder.respond();
+            pending.clear();
+        } else if (response == Response.NO) {
+            pending.clear();
+        }
+        return response;
     }
 }

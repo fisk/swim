@@ -74,6 +74,7 @@ class ModeResponderTest {
             var cursor = window.getBufferContext().getBuffer().getCursor();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key('g'),
                     HeadlessWindowHarness.key('w'),
                     HeadlessWindowHarness.key('b'),
                     HeadlessWindowHarness.key('b'));

@@ -37,11 +37,14 @@ public class ModeLineView extends View {
     }
 
     private String getMode() {
-        return Window.getInstance().getCurrentMode().getName();
+        return Window.getInstance().modeNameForDisplay();
     }
     
     private String getName() {
         var window = Window.getInstance();
+        if (window.getActiveView() instanceof ShellPanelView) {
+            return "Shell";
+        }
         var buffer = window.getBufferContext().getBuffer();
         var path = buffer.getPath();
         if (path == null) {
@@ -144,6 +147,13 @@ public class ModeLineView extends View {
     }
 
     private String getLine() {
+        if (Window.getInstance().getActiveView() instanceof ShellPanelView shellPanelView) {
+            var cursor = shellPanelView.getCursor();
+            if (cursor == null) {
+                return "prompt";
+            }
+            return "prompt " + (cursor.getYOnScreen() + 1) + ", " + (cursor.getXOnScreen() + 1);
+        }
         var window = Window.getInstance();
         var buffer = window.getBufferContext().getBuffer();
         var cursor = buffer.getCursor();

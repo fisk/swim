@@ -1,11 +1,14 @@
 package org.fisk.swim.terminal;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class TerminalScreenBuffer {
     private TerminalCell[][] _normal;
     private TerminalCell[][] _alternate;
     private boolean[] _tabStops;
+    private final ArrayList<String> _scrollback = new ArrayList<>();
     private boolean _usingAlternate;
     private int _width;
     private int _height;
@@ -86,6 +89,7 @@ public final class TerminalScreenBuffer {
         _normal = resizeCells(null, _width, _height);
         _alternate = resizeCells(null, _width, _height);
         _tabStops = resizeTabStops(null, _width);
+        _scrollback.clear();
         _usingAlternate = false;
         _row = 0;
         _column = 0;
@@ -118,6 +122,15 @@ public final class TerminalScreenBuffer {
         if (enabled) {
             _alternate = resizeCells(null, _width, _height);
         }
+    }
+
+    public List<String> snapshotLines() {
+        var lines = new ArrayList<String>(_scrollback.size() + _height);
+        lines.addAll(_scrollback);
+        for (int row = 0; row < _height; row++) {
+            lines.add(renderRow(cells()[row]));
+        }
+        return List.copyOf(lines);
     }
 
     public void setOriginMode(boolean enabled) {
@@ -363,6 +376,9 @@ public final class TerminalScreenBuffer {
         count = Math.max(1, count);
         var cells = cells();
         for (int i = 0; i < count; i++) {
+            if (!_usingAlternate && top == 0 && bottom == _height - 1) {
+                _scrollback.add(renderRow(cells[top]));
+            }
             for (int row = top; row < bottom; row++) {
                 cells[row] = cells[row + 1];
             }
@@ -397,5 +413,20 @@ public final class TerminalScreenBuffer {
 
     private static TerminalCell blank(TerminalStyle blankStyle) {
         return new TerminalCell(' ', blankStyle);
+    }
+
+    private static String renderRow(TerminalCell[] row) {
+        int end = row.length;
+        while (end > 0 && row[end - 1].character() == ' ') {
+            end--;
+        }
+        if (end == 0) {
+            return "";
+        }
+        var builder = new StringBuilder(end);
+        for (int index = 0; index < end; index++) {
+            builder.append(row[index].character());
+        }
+        return builder.toString();
     }
 }

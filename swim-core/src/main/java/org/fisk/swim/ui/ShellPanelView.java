@@ -72,7 +72,7 @@ public class ShellPanelView extends View {
     }
 
     public static ShellPanelView createDefault(Window window, Rect bounds) throws IOException {
-        var shellView = new ShellPanelView(initialBounds(window, bounds), "Shell", command -> {
+        var shellView = new ShellPanelView(initialPanelBounds(window, bounds), "Shell", command -> {
         }, detectShellCommand());
         shellView.setOnExit(() -> {
             var currentWindow = Window.getInstance();
@@ -83,7 +83,19 @@ public class ShellPanelView extends View {
         return shellView;
     }
 
-    private static Rect initialBounds(Window window, Rect requestedBounds) {
+    public static ShellPanelView createWorkspace(Window window) throws IOException {
+        var shellView = new ShellPanelView(initialWorkspaceBounds(window), "Shell", command -> {
+        }, detectShellCommand());
+        shellView.setOnExit(() -> {
+            var currentWindow = Window.getInstance();
+            if (currentWindow != null) {
+                currentWindow.closeShellView(shellView);
+            }
+        });
+        return shellView;
+    }
+
+    private static Rect initialPanelBounds(Window window, Rect requestedBounds) {
         if (requestedBounds != null && requestedBounds.getSize().getWidth() > 0 && requestedBounds.getSize().getHeight() > 0) {
             return requestedBounds;
         }
@@ -96,6 +108,16 @@ public class ShellPanelView extends View {
         int existingHeight = Math.max(1, Math.min(height - 1, (int) Math.floor(height * (2.0 / 3.0))));
         int panelHeight = Math.max(1, height - existingHeight);
         return Rect.create(0, existingHeight, width, panelHeight);
+    }
+
+    private static Rect initialWorkspaceBounds(Window window) {
+        if (window == null || window.getActiveView() == null) {
+            return Rect.create(0, 0, 80, 24);
+        }
+        var activeBounds = window.getActiveView().getBounds();
+        return Rect.create(0, 0,
+                Math.max(1, activeBounds.getSize().getWidth()),
+                Math.max(1, activeBounds.getSize().getHeight()));
     }
 
     private static String detectShellCommand() {
@@ -131,6 +153,10 @@ public class ShellPanelView extends View {
         return _commandMode;
     }
 
+    String modeName() {
+        return "INPUT";
+    }
+
     void setOnExit(Runnable onExit) {
         _onExit = onExit == null ? () -> {
         } : onExit;
@@ -144,6 +170,9 @@ public class ShellPanelView extends View {
                 List.of(new CommandView.CommandSpec("q", List.of("quit"), "", "close shell terminal"),
                         new CommandView.CommandSpec("c", List.of("create", "new"), "", "create a new shell workspace"),
                         new CommandView.CommandSpec("e", List.of("editor", "buffer"), "", "return to the editor"),
+                        new CommandView.CommandSpec("v", List.of("view", "browse"), "",
+                                "browse terminal output as a read-only buffer"),
+                        new CommandView.CommandSpec("w", List.of("window", "workspace"), "<number>", "switch workspace"),
                         new CommandView.CommandSpec("help", List.of("h"), "", "show shell terminal help")));
     }
 
@@ -169,7 +198,7 @@ public class ShellPanelView extends View {
             return _pendingAction == null ? Response.NO : Response.YES;
         }
         if (event.getKeyType() == KeyType.Escape && isPanelShell()) {
-            _pendingAction = () -> Window.getInstance().returnToEditor();
+            _pendingAction = () -> Window.getInstance().hidePanel();
             return Response.YES;
         }
         if (isCtrlG(event)) {
@@ -238,6 +267,10 @@ public class ShellPanelView extends View {
         super.removeFromParent();
     }
 
+    void detachFromParentPreservingSession() {
+        super.removeFromParent();
+    }
+
     private void startOutputPump() {
         var thread = new Thread(() -> pumpOutput(_process.getInputStream()), "swim-shell-output");
         thread.setDaemon(true);
@@ -297,8 +330,12 @@ public class ShellPanelView extends View {
     private Runnable commandModeAction(com.googlecode.lanterna.input.KeyStroke event) {
         return switch (event.getKeyType()) {
         case Escape -> () -> {
+            boolean browse = _command.length() == 0;
             _commandMode = false;
             _command.setLength(0);
+            if (browse) {
+                Window.getInstance().enterShellBrowse(this);
+            }
             Window.getInstance().refreshChromeState();
             setNeedsRedraw();
         };
@@ -310,45 +347,61 @@ public class ShellPanelView extends View {
             setNeedsRedraw();
         };
         case Enter -> () -> {
-            String command = _command.toString().trim();
+            String command = _command.toString().trim().toLowerCase();
             _commandMode = false;
             _command.setLength(0);
             if ("q".equals(command) || "quit".equals(command)) {
                 closeShell();
             } else if ("e".equals(command) || "editor".equals(command) || "buffer".equals(command)) {
                 Window.getInstance().returnToEditor();
+            } else if ("v".equals(command) || "view".equals(command) || "browse".equals(command)) {
+                Window.getInstance().enterShellBrowse(this);
+            } else if (command.startsWith("w")) {
+                switchWorkspace(command);
             } else if ("h".equals(command) || "help".equals(command)) {
                 Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g command mode  •  :e return to editor  •  :q close shell  •  Esc leave command mode");
+                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close");
             }
             Window.getInstance().refreshChromeState();
             setNeedsRedraw();
         };
         case Character -> event.isCtrlDown() || event.isAltDown() ? null : () -> {
             char character = Character.toLowerCase(event.getCharacter());
-            switch (character) {
-            case 'q':
+            if (_command.length() == 1 && _command.charAt(0) == 'w') {
+                if (Character.isDigit(character) || Character.isWhitespace(character)) {
+                    _command.append(event.getCharacter());
+                    Window.getInstance().refreshChromeState();
+                    setNeedsRedraw();
+                    return;
+                }
+            }
+            if (_command.length() == 0 && character == 'q') {
                 _commandMode = false;
                 _command.setLength(0);
                 closeShell();
-                break;
-            case 'c':
+            } else if (_command.length() == 0 && character == 'c') {
                 _commandMode = false;
                 _command.setLength(0);
                 createShell();
-                break;
-            case 'e':
+            } else if (_command.length() == 0 && character == 'e') {
                 _commandMode = false;
                 _command.setLength(0);
                 Window.getInstance().returnToEditor();
-                break;
-            case 'h':
+            } else if (_command.length() == 0 && character == 'v') {
+                _commandMode = false;
+                _command.setLength(0);
+                Window.getInstance().enterShellBrowse(this);
+            } else if (_command.length() == 0 && character == 'h') {
                 _commandMode = false;
                 _command.setLength(0);
                 Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close shell  •  Esc leave prefix");
-                break;
-            default:
+                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close");
+            } else if (_command.length() == 0 && character == 'w') {
+                _command.append(event.getCharacter());
+                Window.getInstance().refreshChromeState();
+                setNeedsRedraw();
+                return;
+            } else {
                 _command.append(event.getCharacter());
                 Window.getInstance().refreshChromeState();
                 setNeedsRedraw();
@@ -542,6 +595,10 @@ public class ShellPanelView extends View {
         return colour == com.googlecode.lanterna.TextColor.ANSI.DEFAULT ? UiTheme.SURFACE_MUTED : colour;
     }
 
+    String buildBrowseText() {
+        return String.join("\n", _emulator.screen().snapshotLines());
+    }
+
     private boolean isPanelShell() {
         var window = Window.getInstance();
         return window != null && window.getPanelView() == this;
@@ -553,7 +610,7 @@ public class ShellPanelView extends View {
             return;
         }
         if (window.getPanelView() == this) {
-            window.hidePanel();
+            window.closePanelShellSession();
         } else {
             window.closeShellView(this);
         }
@@ -569,6 +626,26 @@ public class ShellPanelView extends View {
         }
         if (!window.showShellWorkspace()) {
             window.getCommandView().setMessage("Failed to start shell workspace");
+        }
+    }
+
+    private void switchWorkspace(String command) {
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        String digits = command.substring(1).trim();
+        if (digits.isEmpty()) {
+            window.getCommandView().setMessage("Usage: Ctrl-g w <number> Enter");
+            return;
+        }
+        try {
+            int index = Integer.parseInt(digits);
+            if (!window.switchToRecentWindow(index)) {
+                window.getCommandView().setMessage("No such workspace: " + index);
+            }
+        } catch (NumberFormatException e) {
+            window.getCommandView().setMessage("Usage: Ctrl-g w <number> Enter");
         }
     }
 }

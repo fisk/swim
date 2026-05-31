@@ -85,9 +85,28 @@ class TmuxEditorPanelsIT {
 
             session.sendLiteral(">");
             session.waitForText("shell input active", UI_TIMEOUT);
-            session.sendLiteral("printf 'shell works\\n'");
+            session.sendLiteral("printf 'alpha\\n'");
             session.sendEnter();
-            session.waitForText("shell works", UI_TIMEOUT);
+            session.waitForText("alpha", UI_TIMEOUT);
+        }
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryEscapeClosesShellPanel() throws Exception {
+        Path file = tempDir.resolve("shell-escape.txt");
+        Files.writeString(file, "shell escape\n");
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, file.getFileName().toString())) {
+            session.waitForText("shell escape", STARTUP_TIMEOUT);
+
+            session.sendLiteral(">");
+            session.waitForText("shell input active", UI_TIMEOUT);
+            session.sendEscape();
+            session.waitForText("shell escape", UI_TIMEOUT);
+
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
         }
     }
 

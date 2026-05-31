@@ -169,7 +169,7 @@ public class KeyMenuView extends View {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  windows w <n> Enter  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
     }
@@ -269,19 +269,19 @@ public class KeyMenuView extends View {
         if (_focusContext != FocusContext.BUFFER) {
             return switch (_focusContext) {
             case COMMAND -> commandBodyText();
-            case LIST_PANEL -> "type to filter  •  arrows move  •  Enter open  •  Esc close  •  w <n> Enter switch window";
+            case LIST_PANEL -> "type to filter  •  arrows move  •  Enter open  •  Esc close";
             case SEARCH_PANEL -> "type to search project  •  arrows move  •  Enter open  •  Esc close";
-            case TEXT_PANEL -> "j/k or arrows scroll  •  q or Esc close  •  w <n> Enter switch window";
+            case TEXT_PANEL -> "j/k or arrows scroll  •  q or Esc close";
             case CHAT_PANEL -> _chatPending
-                    ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close  •  w <n> Enter switch window"
-                    : "type to chat  •  Enter send  •  Esc close  •  w <n> Enter switch window";
-            case SHELL -> "Ctrl-g commands  •  Ctrl-g e editor  •  Ctrl-g q close";
-            case PANEL -> "Esc returns to the buffer  •  w <n> Enter switch window";
+                    ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close"
+                    : "type to chat  •  Enter send  •  Esc close";
+            case SHELL -> "Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g c new shell  •  Ctrl-g q close";
+            case PANEL -> "Esc returns to the buffer";
             default -> "focus the buffer to browse normal-mode key chains";
             };
         }
         return switch (_modeName) {
-        case "INPUT" -> "Esc normal  •  arrows move  •  Enter newline  •  type to insert  •  w <n> Enter switch window";
+        case "INPUT" -> "Esc normal  •  arrows move  •  Enter newline  •  type to insert";
         case "VISUAL" -> "Esc cancel  •  o swap edge  •  d delete  •  y yank  •  c change";
         default -> "focus the buffer to browse normal-mode key chains";
         };
@@ -346,7 +346,8 @@ public class KeyMenuView extends View {
         root.child("l", leaf("right"));
         root.child("g", branch("goto")
                 .child("g", leaf("top of buffer"))
-                .child("d", leaf("definition")));
+                .child("d", leaf("definition"))
+                .child("w", leaf("jump hints")));
         root.child("d", branch("delete")
                 .child("i", branch("inner").child("w", leaf("inner word")))
                 .child("w", leaf("word"))
@@ -378,7 +379,6 @@ public class KeyMenuView extends View {
         root.child("*", leaf("word forward"));
         root.child("#", leaf("word backward"));
         root.child(":", leaf("command line"));
-        root.child("w", leaf("jump hints"));
         root.child("f", branch("find next").child(ANY_CHARACTER, leaf("type a character")));
         root.child("F", branch("find previous").child(ANY_CHARACTER, leaf("type a character")));
         root.child("<CTRL>-w", branch("panes")
@@ -393,7 +393,8 @@ public class KeyMenuView extends View {
                 .child("q", leaf("close pane"))
                 .child("o", leaf("only this pane")));
         root.child("<CTRL>-g", branch("shell")
-                .child("c", leaf("new shell workspace")));
+                .child("c", leaf("new shell workspace"))
+                .child("w", leaf("workspace switch")));
         root.child("<SPACE>", branch("code")
                 .child("e", branch("actions")
                         .child("i", leaf("organize imports"))

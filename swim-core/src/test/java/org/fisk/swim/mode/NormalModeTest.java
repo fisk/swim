@@ -105,7 +105,7 @@ class NormalModeTest {
     }
 
     @Test
-    void plainWStillStartsFancyJumpPrefixHandling() throws Exception {
+    void gwStartsFancyJumpPrefixHandling() throws Exception {
         Path path = tempDir.resolve("fancy-jump.txt");
         Files.writeString(path, "alpha beta gamma\n");
 
@@ -113,7 +113,7 @@ class NormalModeTest {
             var window = harness.getWindow();
 
             Response response = window.getNormalMode()
-                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('w'))));
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('w'))));
 
             assertEquals(Response.MAYBE, response);
         }

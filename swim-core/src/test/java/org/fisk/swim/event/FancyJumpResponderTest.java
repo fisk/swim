@@ -25,9 +25,10 @@ class FancyJumpResponderTest {
     @Test
     void jumpsDirectlyWhenVisibleSearchHasSingleMatch() throws IOException {
         var context = EventTestSupport.createContext(tempDir, "alpha beta");
-        var responder = new FancyJumpResponder(context.bufferContext(), 'w');
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
 
         assertEquals(Response.YES, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false))));
 
@@ -39,9 +40,10 @@ class FancyJumpResponderTest {
     @Test
     void ignoresRegexMetacharactersInSearchPrefix() throws IOException {
         var context = EventTestSupport.createContext(tempDir, "alpha beta");
-        var responder = new FancyJumpResponder(context.bufferContext(), 'w');
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
 
         assertDoesNotThrow(() -> responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('[', false, false))));
     }
@@ -52,9 +54,10 @@ class FancyJumpResponderTest {
                 .mapToObj(i -> "b" + i)
                 .collect(Collectors.joining(" "));
         var context = EventTestSupport.createContext(tempDir, text);
-        var responder = new FancyJumpResponder(context.bufferContext(), 'w');
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
 
         assertEquals(Response.YES, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false),
                 new KeyStroke('a', false, false))));
@@ -67,14 +70,16 @@ class FancyJumpResponderTest {
     @Test
     void clearsVisibleHintsAfterInvalidContinuation() throws IOException {
         var context = EventTestSupport.createContext(tempDir, "beta bravo");
-        var responder = new FancyJumpResponder(context.bufferContext(), 'w');
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
 
         assertEquals(Response.MAYBE, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false))));
         assertEquals("a", decorateAt(context, responder, 0));
 
         assertEquals(Response.NO, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false),
                 new KeyStroke('z', false, false))));
@@ -85,9 +90,10 @@ class FancyJumpResponderTest {
     void ignoresWrappedViewportStartsThatAreMidWord() throws IOException {
         var context = EventTestSupport.createContext(tempDir, "alphabeta gamma", 5, 2);
         context.bufferContext().getBufferView().scrollDown();
-        var responder = new FancyJumpResponder(context.bufferContext(), 'w');
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
 
         assertEquals(Response.NO, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false))));
     }

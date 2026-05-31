@@ -31,11 +31,16 @@ public class NormalMode extends Mode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         String leader = "<SPACE>";
-        _fancyJump = new FancyJumpResponder(bufferContext, 'w');
+        _fancyJump = new FancyJumpResponder(bufferContext, "g w");
         _rootResponder.addEventResponder(_fancyJump);
         JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
         ClangdLspPluginSupport.installNormalModeBindings(this, window);
-        _rootResponder.addEventResponder("i", () -> { window.switchToMode(window.getInputMode()); });
+        _rootResponder.addEventResponder("i", () -> {
+            if (window.exitShellBrowseToPrompt()) {
+                return;
+            }
+            window.switchToMode(window.getInputMode());
+        });
         _rootResponder.addEventResponder("v", () -> { window.switchToMode(window.getVisualMode()); });
         _rootResponder.addEventResponder("V", () -> { window.switchToMode(window.getVisualLineMode()); });
         _rootResponder.addEventResponder("<CTRL>-v", () -> { window.switchToMode(window.getVisualBlockMode()); });
@@ -168,11 +173,8 @@ public class NormalMode extends Mode {
             NemoClient.getInstance().run(window.getBufferContext(), "");
         });
         _rootResponder.addEventResponder(">", () -> {
-            try {
-                var shellView = ShellPanelView.createDefault(window, org.fisk.swim.ui.Rect.create(0, 0, 0, 0));
-                window.showPanel(shellView);
-            } catch (java.io.IOException e) {
-                window.getCommandView().setMessage("Failed to start shell: " + e.getMessage());
+            if (!window.showShellPanel()) {
+                window.getCommandView().setMessage("Failed to start shell");
             }
         });
         _rootResponder.addEventResponder("*", () -> {

@@ -66,6 +66,20 @@ class ModeLineViewTest {
     }
 
     @Test
+    void shellWorkspacePromptDisplaysInputMode() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("mode-line-shell.txt", "abc"), 40, 8)) {
+            var window = harness.getWindow();
+
+            window.showShellWorkspace();
+
+            var rendered = invoke(window.getModeLineView(), "getString", AttributedString.class).toString();
+
+            assertTrue(rendered.contains("INPUT"));
+            assertTrue(rendered.contains("Shell"));
+        }
+    }
+
+    @Test
     void heapBarUsesCommittedCapacityAndThresholdColors() {
         long mib = 1024L * 1024L;
         var green = new MemoryUsage(0, 50 * mib, 100 * mib, 200 * mib);

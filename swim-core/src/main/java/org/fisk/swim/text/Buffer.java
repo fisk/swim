@@ -44,6 +44,7 @@ public class Buffer {
     private BufferContext _bufferContext;
     private UndoLog _undoLog;
     private int _version = 1;
+    private boolean _readOnly;
     private static Logger _log = LogFactory.createLog();
 
     public Cursor getCursor() {
@@ -107,6 +108,14 @@ public class Buffer {
         return _languageMode;
     }
 
+    public void setReadOnly(boolean readOnly) {
+        _readOnly = readOnly;
+    }
+
+    public boolean isReadOnly() {
+        return _readOnly;
+    }
+
     public void undo() {
         int position = _undoLog.undo();
         if (position == -1) {
@@ -132,6 +141,9 @@ public class Buffer {
     }
 
     public void rawInsert(int position, String str) {
+        if (_readOnly) {
+            return;
+        }
         _string.insert(position, str);
         _version++;
         var decoration = new Decoration();
@@ -145,6 +157,9 @@ public class Buffer {
     }
 
     public void rawRemove(int startPosition, int endPosition) {
+        if (_readOnly) {
+            return;
+        }
         _string.delete(startPosition, endPosition);
         _version++;
         var decoration = new Decoration();
@@ -158,6 +173,9 @@ public class Buffer {
     }
 
     public void remove(int startPosition, int endPosition) {
+        if (_readOnly) {
+            return;
+        }
         if (endPosition - startPosition <= 0) {
             return;
         }
@@ -189,6 +207,9 @@ public class Buffer {
 
 
     public void insert(String str) {
+        if (_readOnly) {
+            return;
+        }
         int inserted = 0;
         for (var cursor: getCursorsOrdered()) {
             int position = cursor.getPosition() + inserted;
@@ -274,6 +295,9 @@ public class Buffer {
     }
 
     public void insert(int position, String str) {
+        if (_readOnly) {
+            return;
+        }
         _undoLog.recordInsert(position, str);
         rawInsert(position, str);
         _bufferContext.getTextLayout().calculate();
@@ -282,6 +306,9 @@ public class Buffer {
     }
 
     public void removeBefore() {
+        if (_readOnly) {
+            return;
+        }
         int removed = 0;
         for (var cursor: getCursorsOrdered()) {
             int position = cursor.getPosition() - removed - 1;
@@ -298,6 +325,9 @@ public class Buffer {
     }
 
     public void removeAt() {
+        if (_readOnly) {
+            return;
+        }
         if (_string.length() == 0) {
             return;
         }
@@ -313,6 +343,9 @@ public class Buffer {
     }
 
     public void deleteInnerWord() {
+        if (_readOnly) {
+            return;
+        }
         int start = findStartOfWord();
         int end = findEndOfWord();
         if (start == -1 || end == -1) {
@@ -336,6 +369,9 @@ public class Buffer {
     }
 
     public void deleteWord() {
+        if (_readOnly) {
+            return;
+        }
         int start = getCursor().getPosition();
         if (!_wordPattern.matcher(getCharacter(start)).matches()) {
             return;
@@ -352,6 +388,9 @@ public class Buffer {
     }
 
     public void deleteLine() {
+        if (_readOnly) {
+            return;
+        }
         var textLayout = _bufferContext.getTextLayout();
         var line = textLayout.getPhysicalLineAt(getCursor().getPosition());
         int start = line.getStartPosition();
@@ -421,6 +460,9 @@ public class Buffer {
     }
 
     public void write() {
+        if (_readOnly) {
+            return;
+        }
         try {
             writeOrThrow();
         } catch (IOException e) {

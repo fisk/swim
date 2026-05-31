@@ -20,9 +20,9 @@ public class FancyJumpResponder implements EventResponder {
     private String _typedHint = "";
     private HintTarget _selectedTarget;
 
-    public FancyJumpResponder(BufferContext bufferContext, char prefix) {
+    public FancyJumpResponder(BufferContext bufferContext, String prefix) {
         _bufferContext = bufferContext;
-        _prefixResponder = new TextEventResponder(Character.toString(prefix), () -> {
+        _prefixResponder = new TextEventResponder(prefix, () -> {
         });
     }
 
