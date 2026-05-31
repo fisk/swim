@@ -5,6 +5,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.fisk.swim.api.SwimPanelResult;
@@ -70,6 +71,10 @@ final class GitStatusController {
 
     void syncToPath(Path path) {
         _currentPath = path;
+        Path repositoryRoot = GitRepositoryLocator.findRepositoryRoot(path);
+        if (Objects.equals(repositoryRoot, _snapshot.repositoryRoot())) {
+            return;
+        }
         refresh();
     }
 

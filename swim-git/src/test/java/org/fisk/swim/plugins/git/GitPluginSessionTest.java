@@ -65,6 +65,67 @@ class GitPluginSessionTest {
         }
     }
 
+    @Test
+    void syncWithinSameRepositoryKeepsSnapshotUntilManualRefresh() throws Exception {
+        Path repo = tempDir.resolve("cached-repo");
+        Files.createDirectories(repo);
+        Path first = Files.writeString(repo.resolve("first.txt"), "first\n");
+        Path second = Files.writeString(repo.resolve("second.txt"), "second\n");
+        try (var git = Git.init().setDirectory(repo.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit()
+                    .setMessage("initial")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        GitPluginSession session = new GitPluginSession(new TestPluginContext(repo, first));
+        assertTrue(session.render(80, 12).stream().noneMatch(line -> line.contains("second.txt")));
+
+        Files.writeString(second, "updated\n");
+        session.syncToPath(second);
+        assertTrue(session.render(80, 12).stream().noneMatch(line -> line.contains("second.txt")));
+
+        session.handleInput("r", 80, 12);
+        assertTrue(session.render(80, 12).stream().anyMatch(line -> line.contains("second.txt")));
+    }
+
+    @Test
+    void syncToDifferentRepositoryRefreshesImmediately() throws Exception {
+        Path firstRepo = tempDir.resolve("first-repo");
+        Files.createDirectories(firstRepo);
+        Path firstFile = Files.writeString(firstRepo.resolve("first.txt"), "first\n");
+        try (var git = Git.init().setDirectory(firstRepo.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit()
+                    .setMessage("initial")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        Path secondRepo = tempDir.resolve("second-repo");
+        Files.createDirectories(secondRepo);
+        Path secondFile = Files.writeString(secondRepo.resolve("second.txt"), "second\n");
+        try (var git = Git.init().setDirectory(secondRepo.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit()
+                    .setMessage("initial")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        GitPluginSession session = new GitPluginSession(new TestPluginContext(firstRepo, firstFile));
+
+        Files.writeString(secondFile, "updated\n");
+        session.syncToPath(secondFile);
+        List<String> lines = session.render(80, 12);
+        assertTrue(lines.getFirst().contains("second-repo"));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("second.txt")));
+    }
+
     private record TestPluginContext(Path initialPath, Path currentPath) implements SwimPluginContext {
         @Override
         public Path getInitialPath() {
