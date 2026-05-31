@@ -17,12 +17,15 @@ public final class TerminalEmulator {
     private enum State {
         GROUND,
         ESCAPE,
-        CSI
+        CSI,
+        OSC,
+        OSC_ESCAPE
     }
 
     private final TerminalScreenBuffer _screen;
     private State _state = State.GROUND;
     private final StringBuilder _csi = new StringBuilder();
+    private final StringBuilder _osc = new StringBuilder();
     private TerminalStyle _style = TerminalStyle.DEFAULT;
     private boolean _cursorVisible = true;
     private boolean _applicationCursorKeys;
@@ -92,6 +95,8 @@ public final class TerminalEmulator {
         case GROUND -> handleGround(character);
         case ESCAPE -> handleEscape(character);
         case CSI -> handleCsi(character);
+        case OSC -> handleOsc(character);
+        case OSC_ESCAPE -> handleOscEscape(character);
         }
     }
 
@@ -121,6 +126,10 @@ public final class TerminalEmulator {
             _state = State.CSI;
             _csi.setLength(0);
         }
+        case ']' -> {
+            _state = State.OSC;
+            _osc.setLength(0);
+        }
         case '7' -> _screen.saveCursor();
         case '8' -> _screen.restoreCursor();
         case 'H' -> _screen.setTabStopAtCursor();
@@ -147,6 +156,32 @@ public final class TerminalEmulator {
             return;
         }
         _csi.append(character);
+    }
+
+    private void handleOsc(char character) {
+        if (character == 0x07) {
+            applyOsc(_osc.toString());
+            _osc.setLength(0);
+            _state = State.GROUND;
+            return;
+        }
+        if (character == 0x1b) {
+            _state = State.OSC_ESCAPE;
+            return;
+        }
+        _osc.append(character);
+    }
+
+    private void handleOscEscape(char character) {
+        if (character == '\\') {
+            applyOsc(_osc.toString());
+            _osc.setLength(0);
+            _state = State.GROUND;
+            return;
+        }
+        _osc.append('\u001b');
+        _osc.append(character);
+        _state = State.OSC;
     }
 
     private void applyCsi(char command, String params) {
@@ -208,6 +243,27 @@ public final class TerminalEmulator {
         }
     }
 
+    private void applyOsc(String params) {
+        if (params == null || params.isEmpty()) {
+            return;
+        }
+        int separator = params.indexOf(';');
+        String command = separator >= 0 ? params.substring(0, separator) : params;
+        String value = separator >= 0 ? params.substring(separator + 1) : "";
+        switch (command) {
+        case "0", "1", "2" -> {
+            // Window/icon title updates are ignored by the terminal UI.
+        }
+        case "10", "11" -> {
+            if ("?".equals(value)) {
+                emitOscColorQueryResponse(command);
+            }
+        }
+        default -> {
+        }
+        }
+    }
+
     private void applySgr(List<Integer> values) {
         if (values.isEmpty()) {
             _style = TerminalStyle.DEFAULT;
@@ -259,7 +315,7 @@ public final class TerminalEmulator {
     }
 
     private static TextColor ansiColour(int value, boolean background) {
-        if (value >= 90 && value <= 97) {
+        if (!background && value >= 90 && value <= 97) {
             return switch (value - 90) {
             case 0 -> TextColor.ANSI.BLACK_BRIGHT;
             case 1 -> TextColor.ANSI.RED_BRIGHT;
@@ -272,7 +328,7 @@ public final class TerminalEmulator {
             default -> null;
             };
         }
-        if (value >= 100 && value <= 107) {
+        if (background && value >= 100 && value <= 107) {
             return switch (value - 100) {
             case 0 -> TextColor.ANSI.BLACK_BRIGHT;
             case 1 -> TextColor.ANSI.RED_BRIGHT;
@@ -404,11 +460,12 @@ public final class TerminalEmulator {
         _lastPrintedCharacter = ' ';
         _lastPrintedStyle = TerminalStyle.DEFAULT;
         _csi.setLength(0);
+        _osc.setLength(0);
         _state = State.GROUND;
     }
 
     private void emitPrimaryDeviceAttributes() {
-        _deviceResponseHandler.accept("\u001b[?62;1;6c");
+        _deviceResponseHandler.accept("\u001b[?1;2;4c");
     }
 
     private void emitDeviceStatusReport(int report) {
@@ -417,6 +474,167 @@ public final class TerminalEmulator {
         } else if (report == 6) {
             _deviceResponseHandler.accept("\u001b[" + (_screen.row() + 1) + ";" + (_screen.column() + 1) + "R");
         }
+    }
+
+    private void emitOscColorQueryResponse(String command) {
+        String response = formatOscColorQueryResponse(command,
+                System.getenv("COLORFGBG"),
+                System.getenv("TERM_PROGRAM"),
+                System.getenv("TMUX"),
+                System.getenv("SWIM_TERMINAL_FOREGROUND"),
+                System.getenv("SWIM_TERMINAL_BACKGROUND"));
+        if (response != null) {
+            _deviceResponseHandler.accept(response);
+        }
+    }
+
+    static String formatOscColorQueryResponse(String command, String colorFgbg, String termProgram, String tmux,
+            String foregroundOverride, String backgroundOverride) {
+        TextColor colour = switch (command) {
+        case "10" -> terminalForegroundFrom(colorFgbg, termProgram, tmux, foregroundOverride);
+        case "11" -> terminalBackgroundFrom(colorFgbg, termProgram, tmux, backgroundOverride);
+        default -> null;
+        };
+        if (colour == null) {
+            return null;
+        }
+        int[] rgb = rgbComponents(colour);
+        return "\u001b]" + command + ";rgb:%04x/%04x/%04x\u0007".formatted(rgb[0] * 257, rgb[1] * 257, rgb[2] * 257);
+    }
+
+    static TextColor terminalForegroundFrom(String colorFgbg, String termProgram, String tmux, String override) {
+        TextColor configured = parseConfiguredColour(override);
+        if (configured != null) {
+            return configured;
+        }
+        return useColorFgbgHint(termProgram, tmux) ? parseColorFgbgColour(colorFgbg, true) : null;
+    }
+
+    static TextColor terminalBackgroundFrom(String colorFgbg, String termProgram, String tmux, String override) {
+        TextColor configured = parseConfiguredColour(override);
+        if (configured != null) {
+            return configured;
+        }
+        return useColorFgbgHint(termProgram, tmux) ? parseColorFgbgColour(colorFgbg, false) : null;
+    }
+
+    static TextColor parseColorFgbgColour(String colorFgbg, boolean foreground) {
+        if (colorFgbg == null || colorFgbg.isBlank()) {
+            return null;
+        }
+        String[] parts = colorFgbg.trim().split(";");
+        int index = foreground ? 0 : parts.length - 1;
+        if (index < 0 || index >= parts.length) {
+            return null;
+        }
+        try {
+            return ansiPaletteColour(Integer.parseInt(parts[index].trim()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static boolean useColorFgbgHint(String termProgram, String tmux) {
+        if (tmux != null && !tmux.isBlank()) {
+            return false;
+        }
+        return termProgram == null || !"tmux".equalsIgnoreCase(termProgram);
+    }
+
+    static TextColor parseConfiguredColour(String configured) {
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        String trimmed = configured.trim();
+        if (trimmed.startsWith("#")) {
+            try {
+                return TextColor.Factory.fromString(trimmed);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+        try {
+            return ansiPaletteColour(Integer.parseInt(trimmed));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static TextColor ansiPaletteColour(int value) {
+        return switch (value) {
+        case 0 -> TextColor.ANSI.BLACK;
+        case 1 -> TextColor.ANSI.RED;
+        case 2 -> TextColor.ANSI.GREEN;
+        case 3 -> TextColor.ANSI.YELLOW;
+        case 4 -> TextColor.ANSI.BLUE;
+        case 5 -> TextColor.ANSI.MAGENTA;
+        case 6 -> TextColor.ANSI.CYAN;
+        case 7 -> TextColor.ANSI.WHITE;
+        case 8 -> TextColor.ANSI.BLACK_BRIGHT;
+        case 9 -> TextColor.ANSI.RED_BRIGHT;
+        case 10 -> TextColor.ANSI.GREEN_BRIGHT;
+        case 11 -> TextColor.ANSI.YELLOW_BRIGHT;
+        case 12 -> TextColor.ANSI.BLUE_BRIGHT;
+        case 13 -> TextColor.ANSI.MAGENTA_BRIGHT;
+        case 14 -> TextColor.ANSI.CYAN_BRIGHT;
+        case 15 -> TextColor.ANSI.WHITE_BRIGHT;
+        default -> null;
+        };
+    }
+
+    private static int[] rgbComponents(TextColor colour) {
+        if (colour instanceof TextColor.RGB rgb) {
+            return new int[] { rgb.getRed(), rgb.getGreen(), rgb.getBlue() };
+        }
+        if (colour == TextColor.ANSI.BLACK) {
+            return new int[] { 0x00, 0x00, 0x00 };
+        }
+        if (colour == TextColor.ANSI.RED) {
+            return new int[] { 0xcd, 0x00, 0x00 };
+        }
+        if (colour == TextColor.ANSI.GREEN) {
+            return new int[] { 0x00, 0xcd, 0x00 };
+        }
+        if (colour == TextColor.ANSI.YELLOW) {
+            return new int[] { 0xcd, 0xcd, 0x00 };
+        }
+        if (colour == TextColor.ANSI.BLUE) {
+            return new int[] { 0x00, 0x00, 0xee };
+        }
+        if (colour == TextColor.ANSI.MAGENTA) {
+            return new int[] { 0xcd, 0x00, 0xcd };
+        }
+        if (colour == TextColor.ANSI.CYAN) {
+            return new int[] { 0x00, 0xcd, 0xcd };
+        }
+        if (colour == TextColor.ANSI.WHITE) {
+            return new int[] { 0xe5, 0xe5, 0xe5 };
+        }
+        if (colour == TextColor.ANSI.BLACK_BRIGHT) {
+            return new int[] { 0x7f, 0x7f, 0x7f };
+        }
+        if (colour == TextColor.ANSI.RED_BRIGHT) {
+            return new int[] { 0xff, 0x00, 0x00 };
+        }
+        if (colour == TextColor.ANSI.GREEN_BRIGHT) {
+            return new int[] { 0x00, 0xff, 0x00 };
+        }
+        if (colour == TextColor.ANSI.YELLOW_BRIGHT) {
+            return new int[] { 0xff, 0xff, 0x00 };
+        }
+        if (colour == TextColor.ANSI.BLUE_BRIGHT) {
+            return new int[] { 0x5c, 0x5c, 0xff };
+        }
+        if (colour == TextColor.ANSI.MAGENTA_BRIGHT) {
+            return new int[] { 0xff, 0x00, 0xff };
+        }
+        if (colour == TextColor.ANSI.CYAN_BRIGHT) {
+            return new int[] { 0x00, 0xff, 0xff };
+        }
+        if (colour == TextColor.ANSI.WHITE_BRIGHT) {
+            return new int[] { 0xff, 0xff, 0xff };
+        }
+        return new int[] { 0x00, 0x00, 0x00 };
     }
 
     private record ExtendedColour(TextColor colour, int consumed) {

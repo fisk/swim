@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 
 import org.fisk.swim.testutil.InstalledSwimDriver;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -126,6 +128,33 @@ class TmuxEditorPanelsIT {
             session.sendEnter();
             session.waitForText("red", UI_TIMEOUT);
             session.waitForText("XYc", UI_TIMEOUT);
+        }
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryCanCaptureVimShellPaneForColourRepro() throws Exception {
+        Assumptions.assumeTrue(Files.isExecutable(Path.of("/usr/bin/vim")), "vim is required for shell colour repro");
+
+        Path file = tempDir.resolve("vim-repro.txt");
+        Files.writeString(file, "alpha\n");
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, java.util.Map.of("SHELL", "/bin/sh"),
+                file.getFileName().toString())) {
+            session.waitForText("alpha", STARTUP_TIMEOUT);
+
+            session.sendLiteral(">");
+            session.waitForText("shell input active", UI_TIMEOUT);
+            session.sendLiteral("vim -Nu NONE -n " + file.getFileName());
+            session.sendEnter();
+            Thread.sleep(1200);
+
+            String pane = session.capturePaneWithEscapes();
+            String[] lines = pane.split("\\R", -1);
+            assertTrue(lines.length >= 2, "Expected vim pane capture with at least two lines.\nPane:\n" + pane);
+            assertTrue(lines[1].contains("\u001b") || !lines[1].isBlank(),
+                    "Expected second line capture to preserve styling or content.\nLine2:\n" + lines[1]
+                            + "\nPane:\n" + String.join("\n", Arrays.asList(lines)));
         }
     }
 

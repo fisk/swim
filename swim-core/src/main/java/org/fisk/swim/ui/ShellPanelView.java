@@ -19,6 +19,8 @@ import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalUtf8Decoder;
 import org.fisk.swim.text.AttributedString;
 
+import com.googlecode.lanterna.SGR;
+import com.googlecode.lanterna.TextCharacter;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
@@ -61,7 +63,7 @@ public class ShellPanelView extends View {
             throws IOException {
         super(bounds);
         _title = title;
-        setBackgroundColour(UiTheme.SURFACE_MUTED);
+        setBackgroundColour(com.googlecode.lanterna.TextColor.ANSI.DEFAULT);
         _emulator = new TerminalEmulator(Math.max(1, bounds.getSize().getWidth()), Math.max(1, bounds.getSize().getHeight()));
         _emulator.setDeviceResponseHandler(this::writeTerminalResponse);
         _cursor = new TerminalCursor(this);
@@ -142,6 +144,7 @@ public class ShellPanelView extends View {
         builder.environment().putIfAbsent("TERM", "xterm-256color");
         builder.environment().put("COLUMNS", Integer.toString(Math.max(1, size.getWidth())));
         builder.environment().put("LINES", Integer.toString(Math.max(1, size.getHeight())));
+        builder.environment().remove("TMUX");
         return builder;
     }
 
@@ -246,10 +249,7 @@ public class ShellPanelView extends View {
         for (int row = 0; row < rect.getSize().getHeight(); row++) {
             for (int column = 0; column < rect.getSize().getWidth(); column++) {
                 TerminalCell cell = _emulator.screen().cellAt(row, column);
-                var text = AttributedString.create(Character.toString(cell.character()),
-                        resolveShellForeground(cell.style().resolvedForeground()),
-                        resolveShellBackground(cell.style().resolvedBackground()));
-                text.drawAt(Point.create(rect.getPoint().getX() + column, rect.getPoint().getY() + row), graphics);
+                graphics.setCharacter(rect.getPoint().getX() + column, rect.getPoint().getY() + row, toTextCharacter(cell));
             }
         }
         if (_commandMode) {
@@ -603,11 +603,24 @@ public class ShellPanelView extends View {
     }
 
     private static com.googlecode.lanterna.TextColor resolveShellForeground(com.googlecode.lanterna.TextColor colour) {
-        return colour == com.googlecode.lanterna.TextColor.ANSI.DEFAULT ? UiTheme.TEXT_PRIMARY : colour;
+        return colour;
     }
 
     private static com.googlecode.lanterna.TextColor resolveShellBackground(com.googlecode.lanterna.TextColor colour) {
-        return colour == com.googlecode.lanterna.TextColor.ANSI.DEFAULT ? UiTheme.SURFACE_MUTED : colour;
+        return colour;
+    }
+
+    static TextCharacter toTextCharacter(TerminalCell cell) {
+        var style = cell.style();
+        java.util.EnumSet<SGR> modifiers = java.util.EnumSet.noneOf(SGR.class);
+        if (style.bold()) {
+            modifiers.add(SGR.BOLD);
+        }
+        if (style.inverse()) {
+            modifiers.add(SGR.REVERSE);
+        }
+        return new TextCharacter(cell.character(), resolveShellForeground(style.foreground()),
+                resolveShellBackground(style.background()), modifiers);
     }
 
     String buildBrowseText() {

@@ -94,6 +94,17 @@ public final class TmuxSession implements AutoCloseable {
         return output;
     }
 
+    public String capturePaneWithEscapes() throws Exception {
+        var process = new ProcessBuilder("tmux", "capture-pane", "-ept", _session)
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.waitFor() != 0) {
+            return "";
+        }
+        return output;
+    }
+
     private boolean waitForPaneText(String text, Duration timeout) throws Exception {
         long deadline = System.nanoTime() + timeout.toNanos();
         while (System.nanoTime() < deadline) {

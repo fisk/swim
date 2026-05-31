@@ -136,6 +136,17 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    void brightForegroundAndBackgroundCodesDoNotBleedIntoEachOther() {
+        var emulator = new TerminalEmulator(10, 4);
+
+        emulator.feed("\u001b[94mF\u001b[104mB");
+
+        assertEquals(TextColor.ANSI.BLUE_BRIGHT, emulator.screen().cellAt(0, 0).style().foreground());
+        assertEquals(TextColor.ANSI.DEFAULT, emulator.screen().cellAt(0, 0).style().background());
+        assertEquals(TextColor.ANSI.BLUE_BRIGHT, emulator.screen().cellAt(0, 1).style().background());
+    }
+
+    @Test
     void decPrivateModesTrackMouseAndBracketedPasteState() {
         var emulator = new TerminalEmulator(10, 4);
 
@@ -173,7 +184,40 @@ class TerminalEmulatorTest {
 
         emulator.feed("\u001b[c");
 
-        assertEquals("\u001b[?62;1;6c", response.toString());
+        assertEquals("\u001b[?1;2;4c", response.toString());
+    }
+
+    @Test
+    void oscTitleSequenceIsIgnoredInsteadOfRendered() {
+        var emulator = new TerminalEmulator(10, 4);
+
+        emulator.feed("\u001b]2;swim title\u0007X");
+
+        assertEquals('X', emulator.screen().cellAt(0, 0).character());
+    }
+
+    @Test
+    void oscBackgroundColorQueryUsesColorFgbgHint() {
+        assertEquals("\u001b]11;rgb:7f7f/7f7f/7f7f\u0007",
+                TerminalEmulator.formatOscColorQueryResponse("11", "12;8", null, null, null, null));
+    }
+
+    @Test
+    void oscBackgroundColorQueryIgnoresTmuxColorFgbgHint() {
+        assertEquals(null,
+                TerminalEmulator.formatOscColorQueryResponse("11", "12;8", "tmux", "/tmp/tmux", null, null));
+    }
+
+    @Test
+    void oscBackgroundColorQueryPrefersExplicitOverride() {
+        assertEquals("\u001b]11;rgb:1111/2222/3333\u0007",
+                TerminalEmulator.formatOscColorQueryResponse("11", "12;8", "tmux", "/tmp/tmux", null, "#112233"));
+    }
+
+    @Test
+    void oscBackgroundColorQueryWithoutHintReturnsNoResponse() {
+        assertEquals(null,
+                TerminalEmulator.formatOscColorQueryResponse("11", null, null, null, null, null));
     }
 
     @Test
