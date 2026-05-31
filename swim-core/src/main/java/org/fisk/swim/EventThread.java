@@ -64,59 +64,76 @@ public class EventThread extends Thread {
     public void run() {
         ArrayList<KeyStroke> events = new ArrayList<>();
         while (_running) {
-            Event event = null;
-            while (_running) {
-                try {
-                    event = _events.poll(1, TimeUnit.SECONDS);
-                    _log.debug("Poked event");
-                    if (event != null) {
-                        break;
-                    }
-                } catch (InterruptedException e) {}
-            }
-            if (!_running) {
+            Event event = waitForNextEvent();
+            if (!_running || event == null) {
                 break;
             }
-            if (event instanceof KeyStrokeEvent) {
-                try {
-                    _log.debug("Received key stroke event");
-                    var keyEvent = (KeyStrokeEvent) event;
-                    events.add(keyEvent.getKeyStroke());
-                    var keys = new KeyStrokes(events);
-                    switch (_responder.processEvent(keys)) {
-                    case MAYBE:
-                        _log.debug("Maybe");
-                        break;
-                    case YES:
-                        _log.debug("Yes");
-                        _responder.respond();
-                    case NO:
-                        _log.debug("No/Clear");
-                        events.clear();
-                        break;
-                    }
-                } catch (Exception e) {
-                    _log.error("Error processing event: ", e);
-                }
-            } else if (event instanceof RunnableEvent) {
-                _log.debug("Received runnable event");
-                var runnableEvent = (RunnableEvent) event;
-                try {
-                    runnableEvent.execute();
-                } catch (Exception e) {
-                    _log.error("Error processing event: ", e);
-                }
+            processEvent(event, events);
+            while (_running && (event = _events.poll()) != null) {
+                processEvent(event, events);
             }
-            _log.debug("Run post-event hooks");
-            for (Runnable runnable: _onEventRunnables) {
-                try {
-                    runnable.run();
-                } catch (Exception e) {
-                    _log.error("Error processing event: ", e);
-                }
-            }
-            _log.debug("Ran post-event hooks");
+            runPostEventHooks();
         }
+    }
+
+    private Event waitForNextEvent() {
+        while (_running) {
+            try {
+                Event event = _events.poll(1, TimeUnit.SECONDS);
+                _log.debug("Poked event");
+                if (event != null) {
+                    return event;
+                }
+            } catch (InterruptedException e) {
+            }
+        }
+        return null;
+    }
+
+    private void processEvent(Event event, ArrayList<KeyStroke> events) {
+        if (event instanceof KeyStrokeEvent) {
+            try {
+                _log.debug("Received key stroke event");
+                var keyEvent = (KeyStrokeEvent) event;
+                events.add(keyEvent.getKeyStroke());
+                var keys = new KeyStrokes(events);
+                switch (_responder.processEvent(keys)) {
+                case MAYBE:
+                    _log.debug("Maybe");
+                    break;
+                case YES:
+                    _log.debug("Yes");
+                    _responder.respond();
+                case NO:
+                    _log.debug("No/Clear");
+                    events.clear();
+                    break;
+                }
+            } catch (Exception e) {
+                _log.error("Error processing event: ", e);
+            }
+            return;
+        }
+        if (event instanceof RunnableEvent runnableEvent) {
+            _log.debug("Received runnable event");
+            try {
+                runnableEvent.execute();
+            } catch (Exception e) {
+                _log.error("Error processing event: ", e);
+            }
+        }
+    }
+
+    private void runPostEventHooks() {
+        _log.debug("Run post-event hooks");
+        for (Runnable runnable : _onEventRunnables) {
+            try {
+                runnable.run();
+            } catch (Exception e) {
+                _log.error("Error processing event: ", e);
+            }
+        }
+        _log.debug("Ran post-event hooks");
     }
 
     public void enqueue(Event event) {

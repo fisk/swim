@@ -73,4 +73,37 @@ class EventThreadTest {
 
         assertEquals(null, uncaught.get());
     }
+
+    @Test
+    void queuedBurstRunsPostEventHookOnce() throws Exception {
+        var thread = new EventThread();
+        var executed = new AtomicInteger();
+        var hookCount = new AtomicInteger();
+        var executedLatch = new CountDownLatch(2);
+        var hookLatch = new CountDownLatch(1);
+        thread.addOnEvent(() -> {
+            hookCount.incrementAndGet();
+            hookLatch.countDown();
+        });
+
+        thread.enqueue(new RunnableEvent(() -> {
+            executed.incrementAndGet();
+            executedLatch.countDown();
+        }));
+        thread.enqueue(new RunnableEvent(() -> {
+            executed.incrementAndGet();
+            executedLatch.countDown();
+        }));
+
+        thread.start();
+
+        assertTrue(executedLatch.await(2, TimeUnit.SECONDS));
+        assertTrue(hookLatch.await(2, TimeUnit.SECONDS));
+        Thread.sleep(100);
+        assertEquals(2, executed.get());
+        assertEquals(1, hookCount.get());
+
+        thread.shutdown();
+        thread.join(2000);
+    }
 }

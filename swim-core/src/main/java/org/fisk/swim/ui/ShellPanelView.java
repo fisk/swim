@@ -302,21 +302,19 @@ public class ShellPanelView extends View {
             var buffer = new byte[4096];
             int read;
             while ((read = stream.read(buffer)) != -1) {
-                String text = _outputDecoder.decode(buffer, read);
-                if (!text.isEmpty()) {
-                    EventThread.getInstance().enqueue(new RunnableEvent(() -> {
-                        _emulator.feed(text);
-                        setNeedsRedraw();
-                    }));
+                var text = new StringBuilder();
+                appendDecodedOutput(text, buffer, read);
+                while (stream.available() > 0) {
+                    int available = Math.min(buffer.length, Math.max(1, stream.available()));
+                    int extraRead = stream.read(buffer, 0, available);
+                    if (extraRead <= 0) {
+                        break;
+                    }
+                    appendDecodedOutput(text, buffer, extraRead);
                 }
+                enqueueOutput(text.toString());
             }
-            String remaining = _outputDecoder.flush();
-            if (!remaining.isEmpty()) {
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
-                    _emulator.feed(remaining);
-                    setNeedsRedraw();
-                }));
-            }
+            enqueueOutput(_outputDecoder.flush());
         } catch (IOException e) {
             if (!_closed.get()) {
                 EventThread.getInstance().enqueue(new RunnableEvent(() -> {
@@ -325,6 +323,23 @@ public class ShellPanelView extends View {
                 }));
             }
         }
+    }
+
+    private void appendDecodedOutput(StringBuilder output, byte[] buffer, int read) {
+        String decoded = _outputDecoder.decode(buffer, read);
+        if (!decoded.isEmpty()) {
+            output.append(decoded);
+        }
+    }
+
+    private void enqueueOutput(String text) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            _emulator.feed(text);
+            setNeedsRedraw();
+        }));
     }
 
     private Runnable commandModeAction(com.googlecode.lanterna.input.KeyStroke event) {
