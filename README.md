@@ -84,7 +84,7 @@ SWIM now exposes more of the editor while you work:
 - The command popup uses the full window width and can grow taller when longer descriptions need more room.
 - `Up` and `Down` move through command matches, and `Tab` completes the selected command.
 - Typing `!` or `Esc` opens the Nemo chat pane.
-- Typing `>` opens a shell panel using your configured `$SHELL` (for example `zsh`).
+- Typing `>` opens or reuses a shell panel using your configured `$SHELL` (for example `zsh`).
 - `w <number> Enter` switches to one of the recent fullscreen windows shown in the header.
 
 This makes it possible to explore commands and key chains without memorizing everything up front.
@@ -94,6 +94,7 @@ This makes it possible to explore commands and key chains without memorizing eve
 SWIM now has two layout levels:
 
 - Fullscreen windows (workspaces) for buffers, directory browsing, and mail.
+- Fullscreen shell workspaces opened with `:shell` or `Ctrl-g c`.
 - Split panes inside the active buffer window.
 - Side/bottom panels for contextual tools such as project search, shell, Nemo chat, and plugin views.
 
@@ -101,6 +102,8 @@ Window behavior:
 
 - Opening a directory creates a fullscreen directory-browse window.
 - Opening mail with `e` creates a fullscreen mail window.
+- `:shell` creates a fullscreen shell workspace.
+- Typing `>` opens a bottom shell panel for quick commands without leaving the current window.
 - Opening a file from another window creates or activates a buffer window for that file.
 - The top header shows recent windows in most-recently-used order.
 - `w <number> Enter` switches to the numbered recent window.
@@ -424,17 +427,27 @@ Session state is persisted under `~/.swim/nemo/sessions.json`, so chat history s
 
 ## Shell
 
-Open the shell panel from normal mode with `>`.
+SWIM includes a PTY-backed terminal view for both quick panel shells and fullscreen shell workspaces.
 
-Inside the shell pane:
+- `>` opens or reuses the bottom shell panel.
+- `:shell` or `:sh` opens a fullscreen shell workspace.
+- `Ctrl-g c` creates a new fullscreen shell workspace from normal mode or from an active shell.
+- The terminal launches your login shell from `$SHELL`, falling back to `zsh` when unset.
+- Fullscreen terminal apps such as `vim` run inside the shell terminal.
 
-- the live prompt is `>`
-- line editing supports the same in-panel cursor movement used by Nemo (`Left`, `Right`, `Home`, `End`, `Ctrl-a`, `Ctrl-e`, insert at cursor, backspace at cursor)
-- press `Enter` to send the current line to your login shell
-- type `:` at the start of the input for shell-panel commands such as `:q`
-- `Esc` closes the shell pane
-- the panel launches the shell from `$SHELL`, falling back to `zsh` when unset
-- shell output is streamed back into the pane as commands run
+Shell interaction:
+
+- When the prompt is active, the mode line shows `INPUT`.
+- Typed keys go directly to the terminal application.
+- `Esc` closes the bottom shell panel.
+- `Ctrl-g` opens the shell command prefix:
+  - `Ctrl-g Esc` browses terminal output as a read-only buffer
+  - `Ctrl-g c` creates a new shell workspace
+  - `Ctrl-g e` returns to the editor window
+  - `Ctrl-g w <number> Enter` switches to a recent fullscreen window
+  - `Ctrl-g q` closes the current shell
+- In shell browse mode, normal-mode navigation works on a read-only snapshot of terminal output.
+- Press `i` from shell browse mode to return to the live prompt.
 
 
 ## Reloading
