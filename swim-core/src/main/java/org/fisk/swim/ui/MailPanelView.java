@@ -32,6 +32,20 @@ public class MailPanelView extends View {
     private record ThreadRow(MailThreadSummary thread, MailMessageSummary message, String treePrefix) {
     }
 
+    private enum BrowsePane {
+        SIDEBAR,
+        THREADS
+    }
+
+    private enum SidebarKind {
+        ALL,
+        ACCOUNT,
+        TAG
+    }
+
+    private record SidebarRow(SidebarKind kind, String value, String label) {
+    }
+
     private enum Mode {
         BROWSE,
         SEARCH,
@@ -77,14 +91,19 @@ public class MailPanelView extends View {
 
     private final MailClient _client;
     private MailSnapshot _snapshot;
+    private List<SidebarRow> _sidebarRows = List.of();
+    private List<String> _availableTags = List.of();
     private List<MailThreadSummary> _threads = List.of();
     private List<ThreadRow> _threadRows = List.of();
     private final Map<Long, List<MailMessageSummary>> _threadMessagesByThreadId = new LinkedHashMap<>();
     private int _totalThreadCount;
     private MailMessageDetail _selectedMessage;
     private int _selectedIndex;
+    private int _sidebarSelection;
+    private int _sidebarScrollOffset;
     private int _threadScrollOffset;
     private int _detailScrollOffset;
+    private BrowsePane _browsePane = BrowsePane.THREADS;
     private Mode _mode = Mode.BROWSE;
     private ComposeField _composeField = ComposeField.TO;
     private String _composeAccountId = "";
@@ -187,6 +206,8 @@ public class MailPanelView extends View {
         _pendingAction = switch (event.getKeyType()) {
         case ArrowDown -> Action.MOVE_DOWN;
         case ArrowUp -> Action.MOVE_UP;
+        case ArrowLeft -> Action.MOVE_LEFT;
+        case ArrowRight -> Action.MOVE_RIGHT;
         case Escape -> Action.CLOSE;
         case Character -> switch (event.getCharacter()) {
         case 'j' -> Action.MOVE_DOWN;
@@ -216,6 +237,8 @@ public class MailPanelView extends View {
         case MOVE_DOWN -> {
             if (_mode == Mode.COMPOSE) {
                 moveComposeVertical(1);
+            } else if (_browsePane == BrowsePane.SIDEBAR) {
+                moveSidebarSelection(1);
             } else {
                 moveSelection(1);
             }
@@ -223,12 +246,26 @@ public class MailPanelView extends View {
         case MOVE_UP -> {
             if (_mode == Mode.COMPOSE) {
                 moveComposeVertical(-1);
+            } else if (_browsePane == BrowsePane.SIDEBAR) {
+                moveSidebarSelection(-1);
             } else {
                 moveSelection(-1);
             }
         }
-        case TOP -> moveTo(0);
-        case BOTTOM -> moveToBottom();
+        case TOP -> {
+            if (_browsePane == BrowsePane.SIDEBAR) {
+                moveSidebarTo(0);
+            } else {
+                moveTo(0);
+            }
+        }
+        case BOTTOM -> {
+            if (_browsePane == BrowsePane.SIDEBAR) {
+                moveSidebarTo(Math.max(0, _sidebarRows.size() - 1));
+            } else {
+                moveToBottom();
+            }
+        }
         case REFRESH -> refreshClient();
         case REPLY -> startReply(false);
         case REPLY_ALL -> startReply(true);
@@ -250,6 +287,9 @@ public class MailPanelView extends View {
                 moveComposeHorizontal(-1);
             } else if (_mode == Mode.SEARCH) {
                 moveSearchHorizontal(-1);
+            } else {
+                _browsePane = BrowsePane.SIDEBAR;
+                setNeedsRedraw();
             }
         }
         case MOVE_RIGHT -> {
@@ -257,6 +297,9 @@ public class MailPanelView extends View {
                 moveComposeHorizontal(1);
             } else if (_mode == Mode.SEARCH) {
                 moveSearchHorizontal(1);
+            } else {
+                _browsePane = BrowsePane.THREADS;
+                setNeedsRedraw();
             }
         }
         case INSERT_NEWLINE -> insertComposeNewline();
@@ -322,17 +365,13 @@ public class MailPanelView extends View {
             bodyTop++;
             bodyHeight = Math.max(0, bodyHeight - 1);
         }
-        if (_messageBufferContext != null) {
-            drawThreadColumn(graphics, rect.getPoint().getX(), bodyTop, width, bodyHeight);
-            return;
+        int sidebarWidth = Math.max(18, Math.min(26, Math.max(18, width / 4)));
+        if (width - sidebarWidth <= 8) {
+            sidebarWidth = Math.max(1, width / 3);
         }
-        int leftWidth = Math.max(26, Math.min(width / 2, (int) Math.round(width * 0.38)));
-        if (width - leftWidth <= 2) {
-            leftWidth = Math.max(1, width / 2);
-        }
-        int separatorX = rect.getPoint().getX() + leftWidth;
-        int rightX = separatorX + 1;
-        int rightWidth = Math.max(0, width - leftWidth - 1);
+        int separatorX = rect.getPoint().getX() + sidebarWidth;
+        int threadsX = separatorX + 1;
+        int threadsWidth = Math.max(0, width - sidebarWidth - 1);
 
         for (int row = 0; row < bodyHeight; row++) {
             UiTheme.drawLine(graphics, Point.create(separatorX, bodyTop + row), 1,
@@ -340,8 +379,8 @@ public class MailPanelView extends View {
                     UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
         }
 
-        drawThreadColumn(graphics, rect.getPoint().getX(), bodyTop, leftWidth, bodyHeight);
-        drawMessageColumn(graphics, rightX, bodyTop, rightWidth, bodyHeight);
+        drawSidebarColumn(graphics, rect.getPoint().getX(), bodyTop, sidebarWidth, bodyHeight);
+        drawThreadTable(graphics, threadsX, bodyTop, threadsWidth, bodyHeight);
     }
 
     private void drawCompose(
@@ -749,6 +788,31 @@ public class MailPanelView extends View {
         moveTo(_selectedIndex + delta);
     }
 
+    private void moveSidebarSelection(int delta) {
+        if (_sidebarRows.isEmpty()) {
+            return;
+        }
+        moveSidebarTo(Math.floorMod(_sidebarSelection + delta, _sidebarRows.size()));
+    }
+
+    private void moveSidebarTo(int index) {
+        if (_sidebarRows.isEmpty()) {
+            _sidebarSelection = 0;
+            return;
+        }
+        _sidebarSelection = Math.max(0, Math.min(index, _sidebarRows.size() - 1));
+        _selectedIndex = 0;
+        _threadScrollOffset = 0;
+        ensureRowsLoadedThrough(0);
+        if (visibleThreadRows().isEmpty()) {
+            _selectedMessage = null;
+            updateMessageBuffer();
+        } else {
+            loadSelectedMessage();
+        }
+        setNeedsRedraw();
+    }
+
     private void moveToBottom() {
         int targetThreadCount = Math.max(_totalThreadCount, _threads.size());
         while (_threads.size() < targetThreadCount) {
@@ -762,12 +826,14 @@ public class MailPanelView extends View {
 
     private void moveTo(int index) {
         ensureRowsLoadedThrough(index);
-        if (_threadRows.isEmpty()) {
+        var rows = visibleThreadRows();
+        if (rows.isEmpty()) {
             _selectedIndex = 0;
             _selectedMessage = null;
+            updateMessageBuffer();
             return;
         }
-        _selectedIndex = Math.max(0, Math.min(index, _threadRows.size() - 1));
+        _selectedIndex = Math.max(0, Math.min(index, rows.size() - 1));
         _detailScrollOffset = 0;
         loadSelectedMessage();
         prefetchThreadsIfNeeded();
@@ -782,6 +848,8 @@ public class MailPanelView extends View {
 
     private void reload() {
         _snapshot = _client.snapshot();
+        _availableTags = _client.loadTagNames();
+        rebuildSidebarRows();
         _lastActionableUrl = firstUrl(_snapshot.statusMessage());
         if (_awaitingOAuthCompletion && _snapshot != null && _snapshot.statusMessage().contains("Mail sign-in complete")) {
             _awaitingOAuthCompletion = false;
@@ -806,11 +874,12 @@ public class MailPanelView extends View {
     }
 
     private void loadSelectedMessage() {
-        if (_threadRows.isEmpty()) {
+        var rows = visibleThreadRows();
+        if (rows.isEmpty()) {
             _selectedMessage = null;
             return;
         }
-        ThreadRow row = _threadRows.get(_selectedIndex);
+        ThreadRow row = rows.get(Math.max(0, Math.min(_selectedIndex, rows.size() - 1)));
         long threadId = row.thread().threadId();
         long messageId = row.message().messageId();
         long generation = _messageLoadGeneration.incrementAndGet();
@@ -823,11 +892,12 @@ public class MailPanelView extends View {
                     ? _client.loadMessageById(messageId)
                     : _client.loadMessage(threadId);
             Runnable applyLoadedMessage = () -> {
-                if (_messageLoadGeneration.get() != generation || _threadRows.isEmpty()) {
+                var visibleRows = visibleThreadRows();
+                if (_messageLoadGeneration.get() != generation || visibleRows.isEmpty()) {
                     return;
                 }
-                int safeIndex = Math.max(0, Math.min(_selectedIndex, _threadRows.size() - 1));
-                ThreadRow safeRow = _threadRows.get(safeIndex);
+                int safeIndex = Math.max(0, Math.min(_selectedIndex, visibleRows.size() - 1));
+                ThreadRow safeRow = visibleRows.get(safeIndex);
                 if (safeRow.thread().threadId() != threadId || safeRow.message().messageId() != messageId) {
                     return;
                 }
@@ -852,8 +922,9 @@ public class MailPanelView extends View {
         _threadMessagesByThreadId.clear();
         _totalThreadCount = 0;
         appendThreadPage();
-        if (_selectedIndex >= _threadRows.size()) {
-            _selectedIndex = Math.max(0, _threadRows.size() - 1);
+        var rows = visibleThreadRows();
+        if (_selectedIndex >= rows.size()) {
+            _selectedIndex = Math.max(0, rows.size() - 1);
         }
         loadSelectedMessage();
     }
@@ -862,7 +933,7 @@ public class MailPanelView extends View {
         if (index < 0) {
             return;
         }
-        while (index >= _threadRows.size()) {
+        while (index >= visibleThreadRows().size()) {
             if (!appendThreadPage()) {
                 break;
             }
@@ -870,30 +941,31 @@ public class MailPanelView extends View {
     }
 
     private void prefetchThreadsIfNeeded() {
-        if (_selectedIndex >= _threadRows.size() - THREAD_PREFETCH_THRESHOLD) {
+        if (_selectedIndex >= visibleThreadRows().size() - THREAD_PREFETCH_THRESHOLD) {
             appendThreadPage();
         }
     }
 
     private int rowIndexForThreadPosition(int threadPosition) {
-        if (_threadRows.isEmpty()) {
+        var rows = visibleThreadRows();
+        if (rows.isEmpty()) {
             return 0;
         }
         if (_threads.isEmpty()) {
-            return Math.max(0, _threadRows.size() - 1);
+            return Math.max(0, rows.size() - 1);
         }
         int safeThreadPosition = Math.max(0, Math.min(threadPosition, _threads.size() - 1));
         long threadId = _threads.get(safeThreadPosition).threadId();
         int rowIndex = -1;
-        for (int i = 0; i < _threadRows.size(); i++) {
-            long rowThreadId = _threadRows.get(i).thread().threadId();
+        for (int i = 0; i < rows.size(); i++) {
+            long rowThreadId = rows.get(i).thread().threadId();
             if (rowThreadId == threadId) {
                 rowIndex = i;
             } else if (rowIndex >= 0) {
                 break;
             }
         }
-        return rowIndex >= 0 ? rowIndex : Math.max(0, Math.min(safeThreadPosition, _threadRows.size() - 1));
+        return rowIndex >= 0 ? rowIndex : Math.max(0, Math.min(safeThreadPosition, rows.size() - 1));
     }
 
     private boolean appendThreadPage() {
@@ -918,6 +990,43 @@ public class MailPanelView extends View {
             rows.addAll(buildThreadRows(thread, _threadMessagesByThreadId.get(thread.threadId())));
         }
         _threadRows = List.copyOf(rows);
+    }
+
+    private void rebuildSidebarRows() {
+        var rows = new ArrayList<SidebarRow>();
+        rows.add(new SidebarRow(SidebarKind.ALL, "", "All Mail"));
+        for (var account : _snapshot.accounts()) {
+            rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.name()));
+        }
+        for (String tag : _availableTags) {
+            rows.add(new SidebarRow(SidebarKind.TAG, tag, "#" + tag));
+        }
+        _sidebarRows = List.copyOf(rows);
+        if (_sidebarSelection >= _sidebarRows.size()) {
+            _sidebarSelection = Math.max(0, _sidebarRows.size() - 1);
+        }
+    }
+
+    private List<ThreadRow> visibleThreadRows() {
+        SidebarRow filter = _sidebarRows.isEmpty() ? null : _sidebarRows.get(Math.max(0, Math.min(_sidebarSelection, _sidebarRows.size() - 1)));
+        if (filter == null || filter.kind() == SidebarKind.ALL) {
+            return _threadRows;
+        }
+        var rows = new ArrayList<ThreadRow>();
+        for (ThreadRow row : _threadRows) {
+            if (matchesFilter(row.thread(), filter)) {
+                rows.add(row);
+            }
+        }
+        return rows;
+    }
+
+    private boolean matchesFilter(MailThreadSummary thread, SidebarRow filter) {
+        return switch (filter.kind()) {
+        case ALL -> true;
+        case ACCOUNT -> filter.value().equals(thread.accountId());
+        case TAG -> thread.tags().contains(filter.value());
+        };
     }
 
     private List<ThreadRow> buildThreadRows(MailThreadSummary thread, List<MailMessageSummary> messages) {
@@ -998,102 +1107,51 @@ public class MailPanelView extends View {
                 row.thread().tags());
     }
 
-    private void drawThreadColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
+    private void drawSidebarColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
         if (width <= 0 || height <= 0) {
             return;
         }
-        var accountLines = buildAccountLines();
         int row = 0;
         UiTheme.drawLine(graphics, Point.create(x, y + row), width,
-                AttributedString.create(" Accounts", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
+                AttributedString.create(" Accounts & Tags", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
         row++;
-        for (String line : accountLines) {
-            if (row >= height) {
-                return;
-            }
-            TextColor background = row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
-            UiTheme.drawLine(graphics, Point.create(x, y + row), width,
-                    AttributedString.create(" " + line, UiTheme.TEXT_PRIMARY, background),
-                    UiTheme.TEXT_MUTED, background);
-            row++;
-        }
-        if (row >= height) {
-            return;
-        }
-        UiTheme.drawLine(graphics, Point.create(x, y + row), width,
-                AttributedString.create(" Threads", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
-        row++;
-
-        int availableThreadRows = Math.max(0, height - row);
-        adjustThreadScroll(availableThreadRows);
-        for (int visible = 0; visible < availableThreadRows && _threadScrollOffset + visible < _threadRows.size(); visible++) {
-            int threadIndex = _threadScrollOffset + visible;
-            ThreadRow threadRow = _threadRows.get(threadIndex);
-            boolean selected = threadIndex == _selectedIndex;
+        int availableRows = Math.max(0, height - row);
+        adjustSidebarScroll(availableRows);
+        for (int visible = 0; visible < availableRows && _sidebarScrollOffset + visible < _sidebarRows.size(); visible++) {
+            int index = _sidebarScrollOffset + visible;
+            SidebarRow sidebarRow = _sidebarRows.get(index);
+            boolean selected = _browsePane == BrowsePane.SIDEBAR && index == _sidebarSelection;
             TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
                     : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
             TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
-            String line = formatThreadRow(threadRow, width);
             UiTheme.drawLine(graphics, Point.create(x, y + row + visible), width,
-                    AttributedString.create(line, foreground, background), foreground, background);
+                    AttributedString.create(" " + formatSidebarRow(sidebarRow), foreground, background),
+                    foreground, background);
         }
     }
 
-    private void drawMessageColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
+    private void drawThreadTable(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
         if (width <= 0 || height <= 0) {
             return;
         }
-        var lines = detailLines(width);
-        int row = 0;
-        while (row < height) {
-            int lineIndex = _detailScrollOffset + row;
-            String line = lineIndex < lines.size() ? lines.get(lineIndex) : "";
-            TextColor background = row == 0 ? UiTheme.SURFACE_MUTED
-                    : row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
-            TextColor foreground = row == 0 ? UiTheme.TEXT_ON_ACCENT : UiTheme.TEXT_PRIMARY;
-            UiTheme.drawLine(graphics, Point.create(x, y + row), width,
-                    AttributedString.create((row == 0 ? "" : " ") + line, foreground, background),
+        UiTheme.drawLine(graphics, Point.create(x, y), width,
+                AttributedString.create(" Threads", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
+                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+        int availableRows = Math.max(0, height - 1);
+        adjustThreadScroll(availableRows);
+        var rows = visibleThreadRows();
+        for (int visible = 0; visible < availableRows; visible++) {
+            int index = _threadScrollOffset + visible;
+            boolean selected = _browsePane == BrowsePane.THREADS && index == _selectedIndex;
+            TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
+                    : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
+            String line = index < rows.size() ? formatThreadTableRow(rows.get(index), width) : "";
+            UiTheme.drawLine(graphics, Point.create(x, y + 1 + visible), width,
+                    AttributedString.create(" " + line, foreground, background),
                     foreground, background);
-            row++;
         }
-    }
-
-    private List<String> buildAccountLines() {
-        if (_snapshot.accounts().isEmpty()) {
-            return List.of("No accounts configured");
-        }
-        var lines = new ArrayList<String>();
-        for (var account : _snapshot.accounts()) {
-            StringBuilder line = new StringBuilder()
-                    .append(account.name())
-                    .append(" [")
-                    .append(account.protocol())
-                    .append("]  ")
-                    .append(account.unreadCount())
-                    .append("/")
-                    .append(account.threadCount());
-            if (account.syncStatus() != null && !account.syncStatus().isBlank()) {
-                line.append("  ").append(account.syncStatus());
-            }
-            lines.add(line.toString());
-        }
-        return lines;
-    }
-
-    private String formatThreadRow(ThreadRow row, int width) {
-        boolean root = row.treePrefix().isEmpty();
-        String unreadMarker = row.message().unread() ? "● " : "  ";
-        String countSuffix = root && row.thread().messageCount() > 1 ? " (" + row.thread().messageCount() + ")" : "";
-        String tagSuffix = root && !row.thread().tags().isEmpty() ? " [" + String.join(",", row.thread().tags()) + "]" : "";
-        String received = row.message().receivedAt().isBlank() ? "" : " • " + row.message().receivedAt();
-        String base = unreadMarker + row.treePrefix() + safe(row.message().subject(), "(no subject)") + countSuffix + received
-                + tagSuffix;
-        if (base.length() > width - 1) {
-            return base.substring(0, Math.max(0, width - 2));
-        }
-        return base;
     }
 
     private List<String> detailLines(int width) {
@@ -1127,6 +1185,7 @@ public class MailPanelView extends View {
     }
 
     private void adjustThreadScroll(int availableThreadRows) {
+        var rows = visibleThreadRows();
         if (availableThreadRows <= 0) {
             _threadScrollOffset = 0;
             return;
@@ -1136,8 +1195,82 @@ public class MailPanelView extends View {
         } else if (_selectedIndex >= _threadScrollOffset + availableThreadRows) {
             _threadScrollOffset = _selectedIndex - availableThreadRows + 1;
         }
-        int maxOffset = Math.max(0, _threadRows.size() - availableThreadRows);
+        int maxOffset = Math.max(0, rows.size() - availableThreadRows);
         _threadScrollOffset = Math.max(0, Math.min(_threadScrollOffset, maxOffset));
+    }
+
+    private void adjustSidebarScroll(int availableRows) {
+        if (availableRows <= 0) {
+            _sidebarScrollOffset = 0;
+            return;
+        }
+        if (_sidebarSelection < _sidebarScrollOffset) {
+            _sidebarScrollOffset = _sidebarSelection;
+        } else if (_sidebarSelection >= _sidebarScrollOffset + availableRows) {
+            _sidebarScrollOffset = _sidebarSelection - availableRows + 1;
+        }
+        int maxOffset = Math.max(0, _sidebarRows.size() - availableRows);
+        _sidebarScrollOffset = Math.max(0, Math.min(_sidebarScrollOffset, maxOffset));
+    }
+
+    private String formatSidebarRow(SidebarRow row) {
+        return switch (row.kind()) {
+        case ALL -> "All Mail";
+        case ACCOUNT -> row.label();
+        case TAG -> row.label();
+        };
+    }
+
+    private String formatThreadTableRow(ThreadRow row, int width) {
+        String timestamp = safe(row.message().receivedAt(), "");
+        String unreadMarker = row.message().unread() ? "● " : "  ";
+        String rootPrefix = row.treePrefix().isEmpty() ? "" : row.treePrefix();
+        String countSuffix = row.treePrefix().isEmpty() && row.thread().messageCount() > 1
+                ? " (" + row.thread().messageCount() + ")"
+                : "";
+        String tagSuffix = row.treePrefix().isEmpty() && !row.thread().tags().isEmpty()
+                ? " [" + String.join(",", row.thread().tags()) + "]"
+                : "";
+        String sender = safe(extractDisplayName(row.message().from()), "(unknown)");
+        String left = unreadMarker + rootPrefix + safe(row.message().subject(), "(no subject)") + countSuffix
+                + "  " + sender + tagSuffix;
+        if (timestamp.isBlank()) {
+            return truncateToWidth(left, width - 1);
+        }
+        int timestampWidth = Math.min(timestamp.length(), Math.max(0, width / 3));
+        int leftWidth = Math.max(0, width - timestampWidth - 2);
+        String truncatedLeft = truncateToWidth(left, leftWidth);
+        String padded = padRight(truncatedLeft, leftWidth);
+        return padded + "  " + timestamp;
+    }
+
+    private static String extractDisplayName(String from) {
+        String text = safe(from, "").trim();
+        int start = text.indexOf('<');
+        if (start > 0) {
+            return text.substring(0, start).trim();
+        }
+        return text;
+    }
+
+    private static String truncateToWidth(String text, int width) {
+        if (width <= 0) {
+            return "";
+        }
+        if (text.length() <= width) {
+            return text;
+        }
+        if (width <= 1) {
+            return text.substring(0, width);
+        }
+        return text.substring(0, width - 1) + "…";
+    }
+
+    private static String padRight(String text, int width) {
+        if (text.length() >= width) {
+            return text;
+        }
+        return text + " ".repeat(width - text.length());
     }
 
     private int cachedMessageCount() {
@@ -1148,8 +1281,15 @@ public class MailPanelView extends View {
     }
 
     private String selectedAccountId() {
-        if (_selectedIndex >= 0 && _selectedIndex < _threadRows.size()) {
-            return safe(_threadRows.get(_selectedIndex).thread().accountId(), "");
+        var rows = visibleThreadRows();
+        if (_selectedIndex >= 0 && _selectedIndex < rows.size()) {
+            return safe(rows.get(_selectedIndex).thread().accountId(), "");
+        }
+        if (_sidebarSelection >= 0 && _sidebarSelection < _sidebarRows.size()) {
+            SidebarRow row = _sidebarRows.get(_sidebarSelection);
+            if (row.kind() == SidebarKind.ACCOUNT) {
+                return safe(row.value(), "");
+            }
         }
         if (!_snapshot.accounts().isEmpty()) {
             return safe(_snapshot.accounts().getFirst().id(), "");

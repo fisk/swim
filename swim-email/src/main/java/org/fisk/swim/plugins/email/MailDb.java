@@ -572,6 +572,21 @@ final class MailDb {
         }
     }
 
+    static List<String> loadTagNames(Connection connection) throws SQLException {
+        var tags = new ArrayList<String>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select distinct tag_name
+                from message_tags
+                order by tag_name
+                """);
+                ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                tags.add(resultSet.getString(1));
+            }
+        }
+        return List.copyOf(tags);
+    }
+
     private static List<String> loadTagsForThread(Connection connection, long threadId) throws SQLException {
         return loadTagsForThreads(connection, List.of(threadId)).getOrDefault(threadId, List.of());
     }

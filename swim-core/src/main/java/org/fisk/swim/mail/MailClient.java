@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeSet;
 
 public interface MailClient extends AutoCloseable {
     MailSnapshot snapshot();
@@ -45,6 +46,14 @@ public interface MailClient extends AutoCloseable {
             result.put(threadId, loadThreadMessages(threadId));
         }
         return result;
+    }
+
+    default List<String> loadTagNames() {
+        var tags = new TreeSet<String>();
+        for (MailThreadSummary thread : snapshot().threads()) {
+            tags.addAll(thread.tags());
+        }
+        return List.copyOf(tags);
     }
 
     default MailThreadPage loadThreads(String query, int offset, int limit) {

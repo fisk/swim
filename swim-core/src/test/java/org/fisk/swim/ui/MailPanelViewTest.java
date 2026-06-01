@@ -511,6 +511,100 @@ class MailPanelViewTest {
     }
 
     @Test
+    void leftAndRightArrowSwitchBetweenSidebarAndThreadsPane() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(
+                                new MailAccountSummary("work", "Work", "IMAP", 1, 1, "", ""),
+                                new MailAccountSummary("personal", "Personal", "IMAP", 1, 0, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "work", "Work thread", "Boss", "snippet",
+                                        "2026-05-13T08:00:00Z", true, 1, List.of("vip")),
+                                new MailThreadSummary(2L, "personal", "Personal thread", "Friend", "snippet",
+                                        "2026-05-12T08:00:00Z", false, 1, List.of("friends"))),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "sender@example.com",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        assertEquals("THREADS", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.left());
+        assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.right());
+        assertEquals("THREADS", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+    }
+
+    @Test
+    void selectingAccountInSidebarFiltersVisibleThreads() throws Exception {
+        AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(
+                                new MailAccountSummary("work", "Work", "IMAP", 1, 1, "", ""),
+                                new MailAccountSummary("personal", "Personal", "IMAP", 1, 0, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "work", "Work thread", "Boss", "snippet",
+                                        "2026-05-13T08:00:00Z", true, 1, List.of("vip")),
+                                new MailThreadSummary(2L, "personal", "Personal thread", "Friend", "snippet",
+                                        "2026-05-12T08:00:00Z", false, 1, List.of("friends"))),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                lastLoadedThread.set(threadId);
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "sender@example.com",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(1L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.left());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.down());
+
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(1L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+        assertEquals(1L, lastLoadedThread.get());
+    }
+
+    @Test
     void searchReloadsThreadsUsingEnteredQuery() throws Exception {
         AtomicReference<String> lastQuery = new AtomicReference<>("");
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);

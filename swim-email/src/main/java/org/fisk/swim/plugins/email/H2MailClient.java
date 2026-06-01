@@ -141,6 +141,18 @@ final class H2MailClient implements MailClient {
     }
 
     @Override
+    public List<String> loadTagNames() {
+        synchronized (_readLock) {
+            try {
+                return MailDb.loadTagNames(_readConnection);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail tag names", e);
+                return List.of();
+            }
+        }
+    }
+
+    @Override
     public void refresh() {
         if (_closed || _backfillInFlight.get() || !_refreshInFlight.compareAndSet(false, true)) {
             return;
