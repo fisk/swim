@@ -20,6 +20,7 @@ import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
+import org.fisk.swim.text.BufferContext;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
@@ -110,6 +111,7 @@ public class MailPanelView extends View {
     private String _lastActionableUrl;
     private boolean _awaitingOAuthCompletion;
     private long _oauthPollGeneration;
+    private BufferContext _messageBufferContext;
 
     public MailPanelView(Rect bounds, MailClient client) {
         super(bounds);
@@ -119,6 +121,19 @@ public class MailPanelView extends View {
         if (shouldAutoRefreshOnOpen()) {
             refreshClientAsync("Refreshing mail...");
         }
+    }
+
+    void attachMessageBuffer(BufferContext messageBufferContext) {
+        _messageBufferContext = messageBufferContext;
+        updateMessageBuffer();
+    }
+
+    boolean isComposeActive() {
+        return _mode == Mode.COMPOSE;
+    }
+
+    void triggerSend() {
+        sendCompose();
     }
 
     @Override
@@ -307,6 +322,10 @@ public class MailPanelView extends View {
             bodyTop++;
             bodyHeight = Math.max(0, bodyHeight - 1);
         }
+        if (_messageBufferContext != null) {
+            drawThreadColumn(graphics, rect.getPoint().getX(), bodyTop, width, bodyHeight);
+            return;
+        }
         int leftWidth = Math.max(26, Math.min(width / 2, (int) Math.round(width * 0.38)));
         if (width - leftWidth <= 2) {
             leftWidth = Math.max(1, width / 2);
@@ -362,6 +381,10 @@ public class MailPanelView extends View {
         lines.add(prefixField("Bcc: ", _composeBcc.toString(), _composeField == ComposeField.BCC, _composeBccCursor));
         lines.add(prefixField("Subject: ", _composeSubject.toString(), _composeField == ComposeField.SUBJECT,
                 _composeSubjectCursor));
+        if (_messageBufferContext != null) {
+            lines.add("Body: edit in the right pane");
+            return wrapComposeLines(lines, Math.max(1, width - 2));
+        }
         lines.add("Body:");
         for (int i = 0; i < _composeBody.size(); i++) {
             String value = _composeBody.get(i).toString();
@@ -430,6 +453,9 @@ public class MailPanelView extends View {
         _composeBodyColumn = 0;
         _composeAccountId = selectedAccountId();
         _statusMessage = "";
+        if (_messageBufferContext != null) {
+            setMessageBufferContent("", false, true);
+        }
         setNeedsRedraw();
     }
 
@@ -440,7 +466,7 @@ public class MailPanelView extends View {
         _composeCc = new StringBuilder();
         _composeBcc = new StringBuilder();
         _composeSubject = new StringBuilder(replySubject());
-        _composeBody = new ArrayList<>(List.of(new StringBuilder()));
+        _composeBody = new ArrayList<>(List.of(new StringBuilder(initialReplyBody())));
         _composeToCursor = _composeTo.length();
         _composeCcCursor = _composeCc.length();
         _composeBccCursor = _composeBcc.length();
@@ -449,6 +475,12 @@ public class MailPanelView extends View {
         _composeBodyColumn = 0;
         _composeAccountId = selectedAccountId();
         _statusMessage = "";
+        if (_messageBufferContext != null) {
+            setMessageBufferContent(initialReplyBody(), false, true);
+        }
+        if (_messageBufferContext != null && Window.getInstance() != null) {
+            Window.getInstance().activateView(_messageBufferContext.getBufferView());
+        }
         setNeedsRedraw();
     }
 
@@ -466,6 +498,7 @@ public class MailPanelView extends View {
         _threadScrollOffset = 0;
         _detailScrollOffset = 0;
         reloadThreads();
+        updateMessageBuffer();
         setNeedsRedraw();
     }
 
@@ -515,6 +548,7 @@ public class MailPanelView extends View {
     private void cancelCompose() {
         _mode = Mode.BROWSE;
         _statusMessage = "Compose cancelled";
+        updateMessageBuffer();
         setNeedsRedraw();
     }
 
@@ -562,6 +596,11 @@ public class MailPanelView extends View {
         case 3 -> ComposeField.SUBJECT;
         default -> ComposeField.BODY;
         };
+        if (_composeField == ComposeField.BODY && _messageBufferContext != null && Window.getInstance() != null) {
+            Window.getInstance().activateView(_messageBufferContext.getBufferView());
+            Window.getInstance().switchToMode(Window.getInstance().getInputMode());
+            return;
+        }
         setNeedsRedraw();
     }
 
@@ -751,6 +790,7 @@ public class MailPanelView extends View {
             return;
         }
         reloadThreads();
+        updateMessageBuffer();
         setNeedsRedraw();
     }
 
@@ -775,6 +815,7 @@ public class MailPanelView extends View {
         long messageId = row.message().messageId();
         long generation = _messageLoadGeneration.incrementAndGet();
         _selectedMessage = placeholderMessageDetail(row);
+        updateMessageBuffer();
         setNeedsRedraw();
 
         Thread worker = new Thread(() -> {
@@ -791,6 +832,7 @@ public class MailPanelView extends View {
                     return;
                 }
                 _selectedMessage = loaded;
+                updateMessageBuffer();
                 setNeedsRedraw();
             };
             var eventThread = EventThread.getInstance();
@@ -1172,7 +1214,72 @@ public class MailPanelView extends View {
     }
 
     private String composeBodyText() {
+        if (_messageBufferContext != null) {
+            return _messageBufferContext.getBuffer().getString();
+        }
         return _composeBody.stream().map(StringBuilder::toString).reduce((a, b) -> a + "\n" + b).orElse("");
+    }
+
+    private void updateMessageBuffer() {
+        if (_messageBufferContext == null) {
+            return;
+        }
+        if (_mode == Mode.COMPOSE) {
+            return;
+        }
+        setMessageBufferContent(renderSelectedMessageText(), true, false);
+    }
+
+    private String initialReplyBody() {
+        if (_selectedMessage == null) {
+            return "";
+        }
+        String header = safe(_selectedMessage.from(), "(unknown)")
+                + " wrote this "
+                + safe(_selectedMessage.sentAt(), "(unknown)")
+                + ":";
+        String body = safe(_selectedMessage.bodyText(), "");
+        if (body.isBlank()) {
+            return header + "\n>";
+        }
+        var quoted = new ArrayList<String>();
+        for (String line : body.split("\\R", -1)) {
+            quoted.add("> " + line);
+        }
+        return header + "\n" + String.join("\n", quoted);
+    }
+
+    private String renderSelectedMessageText() {
+        if (_selectedMessage == null) {
+            return emptyStateText();
+        }
+        var lines = new ArrayList<String>();
+        lines.add("Subject: " + safe(_selectedMessage.subject(), "(no subject)"));
+        lines.add("From: " + safe(_selectedMessage.from(), "(unknown)"));
+        lines.add("To: " + safe(_selectedMessage.to(), "(unknown)"));
+        lines.add("Date: " + safe(_selectedMessage.sentAt(), "(unknown)"));
+        if (!_selectedMessage.tags().isEmpty()) {
+            lines.add("Tags: " + String.join(", ", _selectedMessage.tags()));
+        }
+        lines.add("");
+        lines.add(safe(_selectedMessage.bodyText(), ""));
+        return String.join("\n", lines);
+    }
+
+    private void setMessageBufferContent(String text, boolean readOnly, boolean placeCursorAtEnd) {
+        var buffer = _messageBufferContext.getBuffer();
+        buffer.setReadOnly(false);
+        if (buffer.getLength() > 0) {
+            buffer.rawRemove(0, buffer.getLength());
+        }
+        if (text != null && !text.isEmpty()) {
+            buffer.rawInsert(0, text);
+        }
+        buffer.setReadOnly(readOnly);
+        _messageBufferContext.getTextLayout().calculate();
+        buffer.getCursor().setPosition(placeCursorAtEnd ? buffer.getLength() : 0);
+        _messageBufferContext.getBufferView().adaptViewToCursor();
+        _messageBufferContext.getBufferView().setNeedsRedraw();
     }
 
     private static int clamp(int value, int min, int max) {

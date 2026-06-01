@@ -54,6 +54,11 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<CTRL>-w W", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); });
         _rootResponder.addEventResponder("<CTRL>-w q", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); });
         _rootResponder.addEventResponder("<CTRL>-w o", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); });
+        _rootResponder.addEventResponder("<CTRL>-s", () -> {
+            if (window.sendActiveMailCompose()) {
+                return;
+            }
+        });
         _rootResponder.addEventResponder("<CTRL>-g c", () -> {
             if (!window.showShellWorkspace()) {
                 window.getCommandView().setMessage("Failed to start shell workspace");

@@ -19,9 +19,14 @@ import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.text.BufferContext;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class MailPanelViewTest {
+    @TempDir
+    Path tempDir;
+
     @Test
     void constructorRefreshesWhenAccountHasNeverSynced() throws Exception {
         CountDownLatch refreshed = new CountDownLatch(1);
@@ -377,6 +382,7 @@ class MailPanelViewTest {
                 return Path.of("/tmp/mail");
             }
         });
+        panel.attachMessageBuffer(new BufferContext(Rect.create(0, 0, 40, 20), tempDir.resolve("mail-compose-body.txt")));
 
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
 
@@ -385,6 +391,43 @@ class MailPanelViewTest {
         assertEquals("", HeadlessWindowHarness.getField(panel, "_composeCc", StringBuilder.class).toString());
         assertEquals("", HeadlessWindowHarness.getField(panel, "_composeBcc", StringBuilder.class).toString());
         assertEquals("", HeadlessWindowHarness.getField(panel, "_composeSubject", StringBuilder.class).toString());
+        assertEquals("", HeadlessWindowHarness.getField(panel, "_messageBufferContext", BufferContext.class).getBuffer().getString());
+    }
+
+    @Test
+    void replySeedsQuotedBodyInMessageBuffer() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 10, 1, "", "")),
+                        sampleThreads(10),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review\nSecond line", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+        panel.attachMessageBuffer(new BufferContext(Rect.create(0, 0, 40, 20), tempDir.resolve("mail-reply-body.txt")));
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('r'));
+
+        String body = HeadlessWindowHarness.getField(panel, "_messageBufferContext", BufferContext.class).getBuffer().getString();
+        assertTrue(body.contains("Boss <boss@example.com> wrote this 2026-05-13T08:00:00Z:"));
+        assertTrue(body.contains("> Please review"));
+        assertTrue(body.contains("> Second line"));
     }
 
     @Test
@@ -640,6 +683,8 @@ class MailPanelViewTest {
                 return Path.of("/tmp/mail");
             }
         });
+        BufferContext messageBuffer = new BufferContext(Rect.create(0, 0, 40, 20), tempDir.resolve("mail-message-buffer.txt"));
+        panel.attachMessageBuffer(messageBuffer);
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!Long.valueOf(11L).equals(lastLoadedMessage.get()) && System.nanoTime() < deadline) {
@@ -656,6 +701,8 @@ class MailPanelViewTest {
         assertEquals(1, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
         assertEquals(12L, lastLoadedMessage.get());
         assertEquals("Message 12", HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class).subject());
+        assertEquals(0, messageBuffer.getBuffer().getCursor().getPosition());
+        assertEquals(0, messageBuffer.getBufferView().getStartLine());
     }
 
     @Test

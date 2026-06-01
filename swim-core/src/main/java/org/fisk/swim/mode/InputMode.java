@@ -65,6 +65,11 @@ public class InputMode extends Mode {
             languageMode.cancelSnippet();
             buffer.insert("\n");
         });
+        _rootResponder.addEventResponder("<CTRL>-s", () -> {
+            if (_window.sendActiveMailCompose()) {
+                return;
+            }
+        });
         _rootResponder.addEventResponder("<LEFT>", () -> {
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();

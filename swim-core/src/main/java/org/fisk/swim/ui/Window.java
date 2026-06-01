@@ -213,6 +213,15 @@ public class Window implements Drawable {
         return openMailWorkspace(client);
     }
 
+    public boolean sendActiveMailCompose() {
+        MailPanelView panel = findMailPanelView(_workspaceView);
+        if (panel == null || !panel.isComposeActive()) {
+            return false;
+        }
+        panel.triggerSend();
+        return true;
+    }
+
     public boolean showPluginWorkspace(String pluginId, SwimPanel panel) {
         if (pluginId == null || panel == null) {
             return false;
@@ -1425,10 +1434,29 @@ public class Window implements Drawable {
     }
 
     private boolean openMailWorkspace(org.fisk.swim.mail.MailClient client) {
-        WorkspaceState workspace = createViewWorkspace(new MailPanelView(Rect.create(0, 0, 0, 0), client),
-                WorkspaceKind.MAIL);
+        WorkspaceState workspace = createMailWorkspace(client);
         _workspaceHistory.add(0, workspace);
         return activateWorkspace(workspace);
+    }
+
+    private WorkspaceState createMailWorkspace(org.fisk.swim.mail.MailClient client) {
+        var workspace = new WorkspaceState();
+        workspace._kind = WorkspaceKind.MAIL;
+        BufferContext messageContext = createMailMessageContext(Rect.create(0, 0, 0, 0));
+        MailPanelView mailView = new MailPanelView(Rect.create(0, 0, 0, 0), client);
+        mailView.attachMessageBuffer(messageContext);
+        var split = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.HORIZONTAL,
+                mailView, messageContext.getBufferView(), 0.38);
+        workspace._workspaceView = split;
+        workspace._activeView = mailView;
+        workspace._activeBufferView = messageContext.getBufferView();
+        workspace._bufferContext = messageContext;
+        workspace._bufferContextsByView = new IdentityHashMap<>();
+        workspace._bufferContextsByView.put(messageContext.getBufferView(), messageContext);
+        workspace._bufferViewCounts = new IdentityHashMap<>();
+        workspace._bufferViewCounts.put(messageContext, 1);
+        initializeBufferWorkspaceModes(workspace);
+        return workspace;
     }
 
     private boolean openPluginWorkspace(String pluginId, SwimPanel panel) {
@@ -1515,7 +1543,7 @@ public class Window implements Drawable {
         if (workspace._kind == null) {
             workspace._kind = determineWorkspaceKind();
         }
-        if (workspace._workspaceView instanceof BufferView) {
+        if (_bufferContext != null && _activeBufferView != null) {
             workspace._activeBufferView = _activeBufferView;
             workspace._bufferContext = _bufferContext;
             workspace._bufferContextsByView = _bufferContextsByView;
@@ -1535,6 +1563,9 @@ public class Window implements Drawable {
         if (_workspaceView instanceof DirectoryBrowserView) {
             return WorkspaceKind.DIRECTORY;
         }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL) {
+            return WorkspaceKind.MAIL;
+        }
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
         }
@@ -1550,7 +1581,7 @@ public class Window implements Drawable {
     private void restoreWorkspace(WorkspaceState workspace) {
         _workspaceView = workspace._workspaceView;
         _activeView = workspace._activeView;
-        if (workspace._workspaceView instanceof BufferView) {
+        if (workspace._bufferContext != null && workspace._activeBufferView != null) {
             _activeBufferView = workspace._activeBufferView;
             _bufferContext = workspace._bufferContext;
             _bufferContextsByView = workspace._bufferContextsByView;
@@ -1662,6 +1693,27 @@ public class Window implements Drawable {
         context.getBuffer().getCursor().setPosition(context.getBuffer().getLength());
         context.getBufferView().adaptViewToCursor();
         return context;
+    }
+
+    private static BufferContext createMailMessageContext(Rect bounds) {
+        var context = new BufferContext(bounds, null);
+        context.getBuffer().setReadOnly(true);
+        context.getTextLayout().calculate();
+        return context;
+    }
+
+    private static MailPanelView findMailPanelView(View view) {
+        if (view instanceof MailPanelView mailPanelView) {
+            return mailPanelView;
+        }
+        if (view instanceof SplitView splitView) {
+            MailPanelView first = findMailPanelView(splitView.getFirstView());
+            if (first != null) {
+                return first;
+            }
+            return findMailPanelView(splitView.getSecondView());
+        }
+        return null;
     }
 
     private int getBufferLeafCount() {
