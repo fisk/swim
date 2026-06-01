@@ -2,13 +2,50 @@ package org.fisk.swim.mail;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public interface MailClient extends AutoCloseable {
     MailSnapshot snapshot();
 
     MailMessageDetail loadMessage(long threadId);
+
+    default MailMessageDetail loadMessageById(long messageId) {
+        return loadMessage(messageId);
+    }
+
+    default List<MailMessageSummary> loadThreadMessages(long threadId) {
+        MailMessageDetail detail = loadMessage(threadId);
+        if (detail == null) {
+            return List.of();
+        }
+        return List.of(new MailMessageSummary(
+                detail.messageId(),
+                threadId,
+                0L,
+                detail.subject(),
+                detail.from(),
+                detail.to(),
+                detail.sentAt(),
+                detail.bodyText(),
+                false));
+    }
+
+    default Map<Long, List<MailMessageSummary>> loadThreadMessages(List<Long> threadIds) {
+        var result = new LinkedHashMap<Long, List<MailMessageSummary>>();
+        if (threadIds == null) {
+            return result;
+        }
+        for (Long threadId : threadIds) {
+            if (threadId == null) {
+                continue;
+            }
+            result.put(threadId, loadThreadMessages(threadId));
+        }
+        return result;
+    }
 
     default MailThreadPage loadThreads(String query, int offset, int limit) {
         MailSnapshot snapshot = snapshot();

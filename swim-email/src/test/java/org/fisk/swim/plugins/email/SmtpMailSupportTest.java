@@ -48,7 +48,7 @@ class SmtpMailSupportTest {
                 "organizations",
                 "client-id",
                 null),
-                new MailDraft("oracle", "boss@example.com", "Status", "Looks good"));
+                new MailDraft("oracle", "boss@example.com", "team@example.com", "audit@example.com", "Status", "Looks good"));
 
         assertTrue(result.success());
         assertEquals("smtp.office365.com", hostRef.get());
@@ -57,7 +57,11 @@ class SmtpMailSupportTest {
         assertEquals("access-token", secretRef.get());
         assertEquals("Status", messageRef.get().getSubject());
         assertEquals("Looks good", messageRef.get().getContent().toString().trim());
-        var recipients = messageRef.get().getRecipients(jakarta.mail.Message.RecipientType.TO);
-        assertEquals("boss@example.com", ((InternetAddress) recipients[0]).getAddress());
+        var toRecipients = messageRef.get().getRecipients(jakarta.mail.Message.RecipientType.TO);
+        var ccRecipients = messageRef.get().getRecipients(jakarta.mail.Message.RecipientType.CC);
+        var bccRecipients = messageRef.get().getRecipients(jakarta.mail.Message.RecipientType.BCC);
+        assertEquals("boss@example.com", ((InternetAddress) toRecipients[0]).getAddress());
+        assertEquals("team@example.com", ((InternetAddress) ccRecipients[0]).getAddress());
+        assertEquals("audit@example.com", ((InternetAddress) bccRecipients[0]).getAddress());
     }
 }

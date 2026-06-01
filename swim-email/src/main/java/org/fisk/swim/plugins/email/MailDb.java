@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import java.util.Map;
 import org.fisk.swim.mail.MailAccountSummary;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
@@ -24,6 +26,8 @@ final class MailDb {
     record StoredMessage(
             long id,
             String accountId,
+            long threadId,
+            String internetMessageId,
             String threadKey,
             String folderName,
             String subject,
@@ -142,6 +146,12 @@ final class MailDb {
                 "alter table account_sync_state add column if not exists backfill_complete integer not null default 0");
         execute(connection,
                 "create unique index if not exists idx_messages_account_message_id on messages (account_id, internet_message_id)");
+        execute(connection, "create index if not exists idx_threads_account_id on threads (account_id)");
+        execute(connection, "create index if not exists idx_threads_last_message_at on threads (last_message_at, id)");
+        execute(connection, "create index if not exists idx_messages_thread_id on messages (thread_id)");
+        execute(connection, "create index if not exists idx_messages_account_id on messages (account_id)");
+        execute(connection, "create index if not exists idx_messages_thread_received_at on messages (thread_id, received_at, id)");
+        execute(connection, "create index if not exists idx_message_tags_message_id on message_tags (message_id)");
     }
 
     static void syncAccounts(Connection connection, EmailAccountsConfig config) throws SQLException {
@@ -292,11 +302,11 @@ final class MailDb {
                 "Sent",
                 "<swim-local-" + System.nanoTime() + "@swim>",
                 "sent:" + normalizeSubject(draft.subject()) + "|" + normalizeWhitespace(fromEmail) + "|"
-                        + normalizeWhitespace(draft.to()),
+                        + normalizeWhitespace(recipientSummary(draft)),
                 draft.subject(),
                 accountName,
                 fromEmail,
-                draft.to(),
+                recipientSummary(draft),
                 sentAt,
                 sentAt,
                 snippet(draft.body()),
@@ -366,8 +376,10 @@ final class MailDb {
             statement.setInt(index++, safeLimit);
             statement.setInt(index, safeOffset);
             try (ResultSet resultSet = statement.executeQuery()) {
+                var threadIds = new ArrayList<Long>();
                 while (resultSet.next()) {
                     long threadId = resultSet.getLong(1);
+                    threadIds.add(threadId);
                     threads.add(new MailThreadSummary(
                             threadId,
                             resultSet.getString(2),
@@ -377,7 +389,23 @@ final class MailDb {
                             resultSet.getString(6),
                             resultSet.getInt(7) > 0,
                             resultSet.getInt(8),
-                            loadTagsForThread(connection, threadId)));
+                            List.of()));
+                }
+                if (!threads.isEmpty()) {
+                    Map<Long, List<String>> tagsByThreadId = loadTagsForThreads(connection, threadIds);
+                    for (int i = 0; i < threads.size(); i++) {
+                        MailThreadSummary thread = threads.get(i);
+                        threads.set(i, new MailThreadSummary(
+                                thread.threadId(),
+                                thread.accountId(),
+                                thread.subject(),
+                                thread.participants(),
+                                thread.snippet(),
+                                thread.receivedAt(),
+                                thread.unread(),
+                                thread.messageCount(),
+                                tagsByThreadId.getOrDefault(thread.threadId(), List.of())));
+                    }
                 }
             }
         }
@@ -434,6 +462,35 @@ final class MailDb {
         return new MailMessageDetail(0L, threadId, "(no message)", "", "", "", "", List.of());
     }
 
+    static MailMessageDetail loadMessageById(Connection connection, long messageId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select id, thread_id, subject,
+                    trim(coalesce(from_name, '') || case when from_email is null or from_email = '' then '' else ' <' || from_email || '>' end),
+                    to_summary,
+                    coalesce(sent_at, received_at),
+                    body_text
+                from messages
+                where id = ?
+                """)) {
+            statement.setLong(1, messageId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    long threadId = resultSet.getLong(2);
+                    return new MailMessageDetail(
+                            resultSet.getLong(1),
+                            threadId,
+                            resultSet.getString(3),
+                            resultSet.getString(4),
+                            resultSet.getString(5),
+                            resultSet.getString(6),
+                            resultSet.getString(7),
+                            loadTagsForThread(connection, threadId));
+                }
+            }
+        }
+        return new MailMessageDetail(0L, 0L, "(no message)", "", "", "", "", List.of());
+    }
+
     static MessageHydrationTarget loadMessageHydrationTarget(Connection connection, long threadId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 select id, thread_id, account_id, folder_name, internet_message_id
@@ -443,6 +500,28 @@ final class MailDb {
                 limit 1
                 """)) {
             statement.setLong(1, threadId);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (resultSet.next()) {
+                    return new MessageHydrationTarget(
+                            resultSet.getLong(1),
+                            resultSet.getLong(2),
+                            resultSet.getString(3),
+                            resultSet.getString(4),
+                            resultSet.getString(5));
+                }
+            }
+        }
+        return null;
+    }
+
+    static MessageHydrationTarget loadMessageHydrationTargetByMessageId(Connection connection, long messageId)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select id, thread_id, account_id, folder_name, internet_message_id
+                from messages
+                where id = ?
+                """)) {
+            statement.setLong(1, messageId);
             try (ResultSet resultSet = statement.executeQuery()) {
                 if (resultSet.next()) {
                     return new MessageHydrationTarget(
@@ -494,28 +573,142 @@ final class MailDb {
     }
 
     private static List<String> loadTagsForThread(Connection connection, long threadId) throws SQLException {
-        List<String> tags = new ArrayList<>();
+        return loadTagsForThreads(connection, List.of(threadId)).getOrDefault(threadId, List.of());
+    }
+
+    private static Map<Long, List<String>> loadTagsForThreads(Connection connection, List<Long> threadIds) throws SQLException {
+        var result = new LinkedHashMap<Long, List<String>>();
+        if (threadIds == null || threadIds.isEmpty()) {
+            return result;
+        }
+        var orderedThreadIds = threadIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (orderedThreadIds.isEmpty()) {
+            return result;
+        }
+        for (Long threadId : orderedThreadIds) {
+            result.put(threadId, new ArrayList<>());
+        }
+        String placeholders = String.join(", ", java.util.Collections.nCopies(orderedThreadIds.size(), "?"));
         try (PreparedStatement statement = connection.prepareStatement("""
-                select distinct mt.tag_name
+                select m.thread_id, mt.tag_name
                 from message_tags mt
                 join messages m on m.id = mt.message_id
-                where m.thread_id = ?
-                order by mt.tag_name
-                """)) {
-            statement.setLong(1, threadId);
+                where m.thread_id in (%s)
+                order by m.thread_id, mt.tag_name
+                """.formatted(placeholders))) {
+            for (int i = 0; i < orderedThreadIds.size(); i++) {
+                statement.setLong(i + 1, orderedThreadIds.get(i));
+            }
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
-                    tags.add(resultSet.getString(1));
+                    long threadId = resultSet.getLong(1);
+                    String tag = resultSet.getString(2);
+                    List<String> values = result.get(threadId);
+                    if (values != null && !values.contains(tag)) {
+                        values.add(tag);
+                    }
                 }
             }
         }
-        return tags;
+        var normalized = new LinkedHashMap<Long, List<String>>();
+        for (Map.Entry<Long, List<String>> entry : result.entrySet()) {
+            normalized.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return normalized;
+    }
+
+    static List<MailMessageSummary> loadThreadMessages(Connection connection, long threadId) throws SQLException {
+        return loadThreadMessages(connection, List.of(threadId)).getOrDefault(threadId, List.of());
+    }
+
+    static Map<Long, List<MailMessageSummary>> loadThreadMessages(Connection connection, List<Long> threadIds) throws SQLException {
+        var result = new LinkedHashMap<Long, List<MailMessageSummary>>();
+        if (threadIds == null || threadIds.isEmpty()) {
+            return result;
+        }
+        var orderedThreadIds = threadIds.stream()
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        if (orderedThreadIds.isEmpty()) {
+            return result;
+        }
+        List<StoredMessage> messages = new ArrayList<>();
+        String placeholders = String.join(", ", java.util.Collections.nCopies(orderedThreadIds.size(), "?"));
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select id, account_id, thread_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email, to_summary,
+                    sent_at, received_at, snippet, is_read
+                from messages
+                where thread_id in (%s)
+                order by coalesce(received_at, sent_at, '') asc, id asc
+                """.formatted(placeholders))) {
+            for (int i = 0; i < orderedThreadIds.size(); i++) {
+                statement.setLong(i + 1, orderedThreadIds.get(i));
+            }
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    messages.add(new StoredMessage(
+                            resultSet.getLong(1),
+                            resultSet.getString(2),
+                            resultSet.getLong(3),
+                            resultSet.getString(4),
+                            resultSet.getString(5),
+                            resultSet.getString(6),
+                            resultSet.getString(7),
+                            resultSet.getString(8),
+                            resultSet.getString(9),
+                            resultSet.getString(10),
+                            resultSet.getString(11),
+                            resultSet.getString(12),
+                            resultSet.getString(13),
+                            resultSet.getInt(14) == 0));
+                }
+            }
+        }
+        var messagesByThreadId = new LinkedHashMap<Long, List<StoredMessage>>();
+        for (Long threadId : orderedThreadIds) {
+            messagesByThreadId.put(threadId, new ArrayList<>());
+        }
+        for (StoredMessage message : messages) {
+            messagesByThreadId.computeIfAbsent(message.threadId(), ignored -> new ArrayList<>()).add(message);
+        }
+        for (Map.Entry<Long, List<StoredMessage>> entry : messagesByThreadId.entrySet()) {
+            Map<String, Long> idsByInternetMessageId = new HashMap<>();
+            for (StoredMessage message : entry.getValue()) {
+                String internetMessageId = normalizeWhitespace(message.internetMessageId());
+                if (!internetMessageId.isBlank()) {
+                    idsByInternetMessageId.put(internetMessageId, message.id());
+                }
+            }
+            var summaries = new ArrayList<MailMessageSummary>();
+            for (StoredMessage message : entry.getValue()) {
+                long parentMessageId = 0L;
+                if (referenceKind(message.threadKey()) != ReferenceKind.NONE) {
+                    parentMessageId = idsByInternetMessageId.getOrDefault(referencedMessageId(message.threadKey()), 0L);
+                }
+                summaries.add(new MailMessageSummary(
+                        message.id(),
+                        entry.getKey(),
+                        parentMessageId,
+                        message.subject(),
+                        formattedFrom(message),
+                        message.toSummary(),
+                        message.effectiveTimestamp(),
+                        message.snippet(),
+                        message.unread()));
+            }
+            result.put(entry.getKey(), List.copyOf(summaries));
+        }
+        return result;
     }
 
     static void rebuildThreads(Connection connection, String accountId) throws SQLException {
         List<StoredMessage> rows = new ArrayList<>();
         try (PreparedStatement select = connection.prepareStatement("""
-                select id, account_id, thread_key, folder_name, subject, from_name, from_email, to_summary,
+                select id, account_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email, to_summary,
                     sent_at, received_at, snippet, is_read
                 from messages
                 where account_id = ?
@@ -527,6 +720,7 @@ final class MailDb {
                     rows.add(new StoredMessage(
                             resultSet.getLong(1),
                             resultSet.getString(2),
+                            0L,
                             resultSet.getString(3),
                             resultSet.getString(4),
                             resultSet.getString(5),
@@ -536,7 +730,8 @@ final class MailDb {
                             resultSet.getString(9),
                             resultSet.getString(10),
                             resultSet.getString(11),
-                            resultSet.getInt(12) == 0));
+                            resultSet.getString(12),
+                            resultSet.getInt(13) == 0));
                 }
             }
         }
@@ -546,11 +741,18 @@ final class MailDb {
             deleteThreads.executeUpdate();
         }
 
+        Map<String, StoredMessage> messagesByInternetId = new HashMap<>();
+        for (StoredMessage row : rows) {
+            String internetMessageId = normalizeWhitespace(row.internetMessageId());
+            if (!internetMessageId.isBlank()) {
+                messagesByInternetId.put(internetMessageId, row);
+            }
+        }
+
+        Map<Long, String> resolvedThreadKeys = new HashMap<>();
         Map<String, List<StoredMessage>> grouped = new LinkedHashMap<>();
         for (StoredMessage row : rows) {
-            String key = row.threadKey() == null || row.threadKey().isBlank()
-                    ? "message:" + row.id()
-                    : row.threadKey();
+            String key = resolveThreadKey(row, messagesByInternetId, resolvedThreadKeys, new java.util.HashSet<>());
             grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
         }
 
@@ -560,6 +762,9 @@ final class MailDb {
                 where id = ?
                 """)) {
             for (List<StoredMessage> group : grouped.values()) {
+                group.sort(Comparator
+                        .comparing(StoredMessage::effectiveTimestamp, Comparator.nullsFirst(Comparator.reverseOrder()))
+                        .thenComparing(StoredMessage::id, Comparator.reverseOrder()));
                 StoredMessage latest = group.getFirst();
                 long threadId = insertStoredThread(connection, accountId, group, latest);
                 for (StoredMessage message : group) {
@@ -570,6 +775,72 @@ final class MailDb {
             }
             updateMessageThread.executeBatch();
         }
+    }
+
+    private static String resolveThreadKey(
+            StoredMessage message,
+            Map<String, StoredMessage> messagesByInternetId,
+            Map<Long, String> resolvedThreadKeys,
+            java.util.Set<Long> visiting) {
+        String cached = resolvedThreadKeys.get(message.id());
+        if (cached != null) {
+            return cached;
+        }
+        if (!visiting.add(message.id())) {
+            String cycleFallback = defaultThreadKey(message);
+            resolvedThreadKeys.put(message.id(), cycleFallback);
+            return cycleFallback;
+        }
+        String resolved = switch (referenceKind(message.threadKey())) {
+        case NONE -> defaultThreadKey(message);
+        case REPLY, REFERENCE -> {
+            String referenceId = referencedMessageId(message.threadKey());
+            if (referenceId.isBlank()) {
+                yield defaultThreadKey(message);
+            }
+            StoredMessage parent = messagesByInternetId.get(referenceId);
+            if (parent != null) {
+                yield resolveThreadKey(parent, messagesByInternetId, resolvedThreadKeys, visiting);
+            }
+            yield "message-id:" + referenceId;
+        }
+        };
+        visiting.remove(message.id());
+        resolvedThreadKeys.put(message.id(), resolved);
+        return resolved;
+    }
+
+    private static String defaultThreadKey(StoredMessage message) {
+        String threadKey = message.threadKey();
+        if (threadKey != null && !threadKey.isBlank()) {
+            return threadKey;
+        }
+        String internetMessageId = normalizeWhitespace(message.internetMessageId());
+        if (!internetMessageId.isBlank()) {
+            return "message-id:" + internetMessageId;
+        }
+        return "message:" + message.id();
+    }
+
+    private static ReferenceKind referenceKind(String threadKey) {
+        if (threadKey == null || threadKey.isBlank()) {
+            return ReferenceKind.NONE;
+        }
+        if (threadKey.startsWith("reply:")) {
+            return ReferenceKind.REPLY;
+        }
+        if (threadKey.startsWith("ref:")) {
+            return ReferenceKind.REFERENCE;
+        }
+        return ReferenceKind.NONE;
+    }
+
+    private static String referencedMessageId(String threadKey) {
+        int separator = threadKey == null ? -1 : threadKey.indexOf(':');
+        if (separator < 0 || separator == threadKey.length() - 1) {
+            return "";
+        }
+        return normalizeWhitespace(threadKey.substring(separator + 1));
     }
 
     private static long insertThread(
@@ -710,6 +981,20 @@ final class MailDb {
         return normalized.length() > 180 ? normalized.substring(0, 180) : normalized;
     }
 
+    private static String recipientSummary(MailDraft draft) {
+        var recipients = new ArrayList<String>();
+        if (draft.to() != null && !draft.to().isBlank()) {
+            recipients.add(normalizeWhitespace(draft.to()));
+        }
+        if (draft.cc() != null && !draft.cc().isBlank()) {
+            recipients.add(normalizeWhitespace(draft.cc()));
+        }
+        if (draft.bcc() != null && !draft.bcc().isBlank()) {
+            recipients.add(normalizeWhitespace(draft.bcc()));
+        }
+        return String.join(", ", recipients);
+    }
+
     private static String normalizeSubject(String subject) {
         if (subject == null) {
             return "";
@@ -723,6 +1008,18 @@ final class MailDb {
 
     private static String normalizeSearchQuery(String query) {
         return query == null ? "" : query.toLowerCase(java.util.Locale.ROOT).trim();
+    }
+
+    private static String formattedFrom(StoredMessage message) {
+        String display = message.fromName();
+        String email = message.fromEmail();
+        if (display != null && !display.isBlank() && email != null && !email.isBlank()) {
+            return display + " <" + email + ">";
+        }
+        if (display != null && !display.isBlank()) {
+            return display;
+        }
+        return email == null ? "" : email;
     }
 
     private static int countThreads(Connection connection, String query) throws SQLException {
@@ -768,6 +1065,12 @@ final class MailDb {
                     )
                 )
                 """.formatted(threadAlias);
+    }
+
+    private enum ReferenceKind {
+        NONE,
+        REPLY,
+        REFERENCE
     }
 
     private static int bindSearchParameters(PreparedStatement statement, int index, String query) throws SQLException {

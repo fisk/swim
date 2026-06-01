@@ -1,8 +1,10 @@
 package org.fisk.swim.plugins.email;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
@@ -75,6 +77,31 @@ class H2MailClientTest {
                 var snapshot = client.snapshot();
                 assertEquals(1, snapshot.accounts().size());
                 assertEquals("oracle", snapshot.accounts().get(0).id());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void constructorClosesDatabaseWhenBootstrapFails() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), "{ not valid json");
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            assertThrows(RuntimeException.class, () -> new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false));
+
+            try (var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                assertTrue(connection.isValid(2));
             }
         } finally {
             System.setProperty("user.home", originalUserHome);
@@ -256,6 +283,69 @@ class H2MailClientTest {
                 assertEquals(2, snapshot.threads().get(0).messageCount());
                 assertTrue(snapshot.threads().get(0).tags().contains("vip"));
                 assertTrue(client.loadMessage(snapshot.threads().get(0).threadId()).bodyText().contains("Looks good"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void refreshCollapsesReplyChainsIntoSingleConversationSortedByNewestReply() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            MailSyncAdapterFactory factory = account -> ignored -> MailSyncBatch.success(List.of(
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<root@example.com>", "subject:project sync|boss@example.com|me@example.com",
+                            "Project sync", "Boss", "boss@example.com", "me@example.com",
+                            "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                            "Initial plan", "Initial plan", true),
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<reply-1@example.com>", "reply:<root@example.com>",
+                            "Re: Project sync", "Me", "me@example.com", "boss@example.com",
+                            "2026-05-13T09:00:00Z", "2026-05-13T09:00:05Z",
+                            "Looks good", "Looks good", false),
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<reply-2@example.com>", "reply:<reply-1@example.com>",
+                            "Re: Project sync", "Boss", "boss@example.com", "me@example.com",
+                            "2026-05-13T10:00:00Z", "2026-05-13T10:00:05Z",
+                            "Approved", "Approved", false),
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<other@example.com>", "subject:other topic|teammate@example.com|me@example.com",
+                            "Other topic", "Teammate", "teammate@example.com", "me@example.com",
+                            "2026-05-13T09:30:00Z", "2026-05-13T09:30:05Z",
+                            "Other thread", "Other thread", false)), "4 messages");
+
+            try (var client = new H2MailClient(paths, factory)) {
+                var snapshot = client.snapshot();
+
+                assertEquals(2, snapshot.threads().size());
+                assertEquals(3, snapshot.threads().get(0).messageCount());
+                assertEquals("Re: Project sync", snapshot.threads().get(0).subject());
+                assertEquals("2026-05-13T10:00:05Z", snapshot.threads().get(0).receivedAt());
+                assertEquals("Other topic", snapshot.threads().get(1).subject());
+                assertTrue(client.loadMessage(snapshot.threads().get(0).threadId()).bodyText().contains("Approved"));
             }
         } finally {
             System.setProperty("user.home", originalUserHome);
@@ -489,12 +579,19 @@ class H2MailClientTest {
             try (var client = new H2MailClient(paths,
                     account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
                     (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"))) {
-                var result = client.sendDraft(new MailDraft("work", "boss@example.com", "Status", "Looks good"));
+                var result = client.sendDraft(new MailDraft(
+                        "work",
+                        "boss@example.com",
+                        "team@example.com",
+                        "audit@example.com",
+                        "Status",
+                        "Looks good"));
 
                 assertTrue(result.success());
                 var snapshot = client.snapshot();
                 assertEquals(1, snapshot.threads().size());
                 assertEquals("Status", snapshot.threads().get(0).subject());
+                assertTrue(snapshot.threads().get(0).participants().contains("team@example.com"));
                 assertTrue(client.loadMessage(snapshot.threads().get(0).threadId()).bodyText().contains("Looks good"));
             }
         } finally {

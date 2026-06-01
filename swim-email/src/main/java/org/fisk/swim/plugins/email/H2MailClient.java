@@ -6,12 +6,16 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailThreadPage;
@@ -23,11 +27,13 @@ final class H2MailClient implements MailClient {
     private static final int SNAPSHOT_THREAD_LIMIT = 100;
 
     private final EmailPaths _paths;
-    private final Connection _connection;
+    private final Connection _readConnection;
+    private final Connection _writeConnection;
     private final MailSyncAdapterFactory _adapterFactory;
     private final MailSyncEngine _syncEngine;
     private final MailDeliveryService _deliveryService;
-    private final Object _dbLock = new Object();
+    private final Object _readLock = new Object();
+    private final Object _writeLock = new Object();
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _backfillInFlight = new AtomicBoolean();
     private final AtomicLong _refreshGeneration = new AtomicLong();
@@ -52,22 +58,34 @@ final class H2MailClient implements MailClient {
         _paths = paths;
         EmailConfigStore.ensureDefaultFiles(paths);
         ensureH2DriverLoaded();
-        _connection = DriverManager.getConnection(paths.databaseJdbcUrl());
         _adapterFactory = adapterFactory;
         _syncEngine = new MailSyncEngine(adapterFactory);
         _deliveryService = deliveryService;
-        MailDb.initialize(_connection);
-        bootstrapConfigurationState();
-        if (initialRefresh) {
-            refresh();
+        Connection writeConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
+        Connection readConnection = null;
+        _writeConnection = writeConnection;
+        try {
+            MailDb.initialize(_writeConnection);
+            bootstrapConfigurationState();
+            readConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
+            _readConnection = readConnection;
+            if (initialRefresh) {
+                refresh();
+            }
+        } catch (IOException | SQLException | RuntimeException | Error e) {
+            if (readConnection != null) {
+                closeConnectionQuietly(readConnection, e);
+            }
+            closeConnectionQuietly(writeConnection, e);
+            throw e;
         }
     }
 
     @Override
     public MailSnapshot snapshot() {
-        synchronized (_dbLock) {
+        synchronized (_readLock) {
             try {
-                return MailDb.loadSnapshot(_connection, _paths, SNAPSHOT_THREAD_LIMIT);
+                return MailDb.loadSnapshot(_readConnection, _paths, SNAPSHOT_THREAD_LIMIT);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail snapshot", e);
                 return new MailSnapshot(java.util.List.of(), java.util.List.of(),
@@ -78,9 +96,9 @@ final class H2MailClient implements MailClient {
 
     @Override
     public MailThreadPage loadThreads(String query, int offset, int limit) {
-        synchronized (_dbLock) {
+        synchronized (_readLock) {
             try {
-                return MailDb.loadThreadPage(_connection, query, offset, limit);
+                return MailDb.loadThreadPage(_readConnection, query, offset, limit);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail threads", e);
                 return new MailThreadPage(java.util.List.of(), 0);
@@ -90,44 +108,35 @@ final class H2MailClient implements MailClient {
 
     @Override
     public MailMessageDetail loadMessage(long threadId) {
-        MailMessageDetail detail;
-        synchronized (_dbLock) {
+        return loadThreadMessage(threadId);
+    }
+
+    @Override
+    public MailMessageDetail loadMessageById(long messageId) {
+        return loadSpecificMessage(messageId);
+    }
+
+    @Override
+    public java.util.List<MailMessageSummary> loadThreadMessages(long threadId) {
+        synchronized (_readLock) {
             try {
-                detail = MailDb.loadMessage(_connection, threadId);
+                return MailDb.loadThreadMessages(_readConnection, threadId);
             } catch (SQLException e) {
-                LOG.error("Failed to load mail message for thread {}", threadId, e);
-                return new MailMessageDetail(0L, threadId, "(error)", "", "", "", e.getMessage(), java.util.List.of());
+                LOG.error("Failed to load mail thread messages for thread {}", threadId, e);
+                return java.util.List.of();
             }
         }
-        if (_closed || detail.messageId() == 0L || (detail.bodyText() != null && !detail.bodyText().isBlank())) {
-            return detail;
-        }
-        try {
-            MailDb.MessageHydrationTarget target;
-            synchronized (_dbLock) {
-                target = MailDb.loadMessageHydrationTarget(_connection, threadId);
+    }
+
+    @Override
+    public Map<Long, List<MailMessageSummary>> loadThreadMessages(List<Long> threadIds) {
+        synchronized (_readLock) {
+            try {
+                return MailDb.loadThreadMessages(_readConnection, threadIds);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail thread messages for {} threads", threadIds == null ? 0 : threadIds.size(), e);
+                return new LinkedHashMap<>();
             }
-            if (target == null || target.internetMessageId() == null || target.internetMessageId().isBlank()) {
-                return detail;
-            }
-            EmailAccountConfig account = resolveAccount(target.accountId());
-            if (account == null) {
-                return detail;
-            }
-            String bodyText = _adapterFactory.create(account).loadBody(account, target.folderName(), target.internetMessageId());
-            if (bodyText == null || bodyText.isBlank()) {
-                return detail;
-            }
-            synchronized (_dbLock) {
-                if (_closed) {
-                    return detail;
-                }
-                MailDb.updateMessageBody(_connection, target.messageId(), target.threadId(), bodyText);
-                return MailDb.loadMessage(_connection, threadId);
-            }
-        } catch (Exception e) {
-            LOG.warn("Failed to hydrate mail body for thread {}", threadId, e);
-            return detail;
         }
     }
 
@@ -142,11 +151,11 @@ final class H2MailClient implements MailClient {
             if (_closed) {
                 return;
             }
-            synchronized (_dbLock) {
+            synchronized (_writeLock) {
                 if (_closed) {
                     return;
                 }
-                _syncEngine.apply(_connection, plan);
+                _syncEngine.apply(_writeConnection, plan);
             }
             startBackfill(plan, generation);
         } catch (IOException | SQLException e) {
@@ -165,10 +174,10 @@ final class H2MailClient implements MailClient {
             }
             MailSendResult result = _deliveryService.send(account, draft);
             if (result.success()) {
-                synchronized (_dbLock) {
-                    MailDb.appendSentDraft(_connection, account.normalizedId(), account.displayName(), account.username(),
+                synchronized (_writeLock) {
+                    MailDb.appendSentDraft(_writeConnection, account.normalizedId(), account.displayName(), account.username(),
                             draft, Instant.now().toString());
-                    MailDb.reapplyTags(_connection);
+                    MailDb.reapplyTags(_writeConnection);
                 }
             }
             return result;
@@ -187,11 +196,18 @@ final class H2MailClient implements MailClient {
     public void close() {
         _closed = true;
         _refreshGeneration.incrementAndGet();
-        synchronized (_dbLock) {
+        synchronized (_writeLock) {
             try {
-                _connection.close();
+                _writeConnection.close();
             } catch (SQLException e) {
                 LOG.warn("Failed to close mail database", e);
+            }
+        }
+        synchronized (_readLock) {
+            try {
+                _readConnection.close();
+            } catch (SQLException e) {
+                LOG.warn("Failed to close mail database reader", e);
             }
         }
     }
@@ -211,10 +227,10 @@ final class H2MailClient implements MailClient {
     private void bootstrapConfigurationState() throws IOException, SQLException {
         EmailAccountsConfig accounts = EmailConfigStore.loadAccounts(_paths);
         EmailTagRulesConfig rules = EmailConfigStore.loadTagRules(_paths);
-        synchronized (_dbLock) {
-            MailDb.syncAccounts(_connection, accounts);
-            MailDb.syncTagRules(_connection, rules);
-            MailDb.reapplyTags(_connection);
+        synchronized (_writeLock) {
+            MailDb.syncAccounts(_writeConnection, accounts);
+            MailDb.syncTagRules(_writeConnection, rules);
+            MailDb.reapplyTags(_writeConnection);
         }
     }
 
@@ -253,33 +269,33 @@ final class H2MailClient implements MailClient {
             MailSyncAdapter adapter,
             MailSyncBatch batch,
             long generation) {
-        synchronized (_dbLock) {
+        synchronized (_writeLock) {
             if (_closed || generation != _refreshGeneration.get()) {
                 return;
             }
             try {
-                boolean originalAutoCommit = _connection.getAutoCommit();
-                _connection.setAutoCommit(false);
+                boolean originalAutoCommit = _writeConnection.getAutoCommit();
+                _writeConnection.setAutoCommit(false);
                 try {
                     if (batch.success()) {
-                        MailDb.upsertAccountMessages(_connection, account.normalizedId(), batch.messages());
-                        MailDb.rebuildThreads(_connection, account.normalizedId());
-                        MailDb.reapplyTags(_connection);
-                        int cachedMessages = MailDb.countMessages(_connection, account.normalizedId());
+                        MailDb.upsertAccountMessages(_writeConnection, account.normalizedId(), batch.messages());
+                        MailDb.rebuildThreads(_writeConnection, account.normalizedId());
+                        MailDb.reapplyTags(_writeConnection);
+                        int cachedMessages = MailDb.countMessages(_writeConnection, account.normalizedId());
                         String status = adapter.hasMore()
                                 ? JakartaMailSupport.backgroundSyncStatus(cachedMessages, batch.totalMessages())
                                 : cachedMessages + " messages";
-                        MailDb.recordAccountSyncState(_connection, account.normalizedId(), Instant.now().toString(), status,
+                        MailDb.recordAccountSyncState(_writeConnection, account.normalizedId(), Instant.now().toString(), status,
                                 !adapter.hasMore());
                     } else {
-                        MailDb.recordAccountSyncState(_connection, account.normalizedId(), null, batch.statusMessage(), false);
+                        MailDb.recordAccountSyncState(_writeConnection, account.normalizedId(), null, batch.statusMessage(), false);
                     }
-                    _connection.commit();
+                    _writeConnection.commit();
                 } catch (SQLException e) {
-                    _connection.rollback();
+                    _writeConnection.rollback();
                     throw e;
                 } finally {
-                    _connection.setAutoCommit(originalAutoCommit);
+                    _writeConnection.setAutoCommit(originalAutoCommit);
                 }
             } catch (SQLException e) {
                 throw new RuntimeException("Failed to apply backfill batch for " + account.normalizedId(), e);
@@ -288,12 +304,12 @@ final class H2MailClient implements MailClient {
     }
 
     private void recordBackfillFailure(String accountId, String message, long generation) {
-        synchronized (_dbLock) {
+        synchronized (_writeLock) {
             if (_closed || generation != _refreshGeneration.get()) {
                 return;
             }
             try {
-                MailDb.recordAccountSyncState(_connection, accountId, null, "Backfill failed: " + message, false);
+                MailDb.recordAccountSyncState(_writeConnection, accountId, null, "Backfill failed: " + message, false);
             } catch (SQLException e) {
                 LOG.warn("Failed to record backfill failure for {}", accountId, e);
             }
@@ -316,5 +332,96 @@ final class H2MailClient implements MailClient {
         } catch (ClassNotFoundException e) {
             throw new SQLException("H2 JDBC driver is unavailable", e);
         }
+    }
+
+    private MailMessageDetail loadThreadMessage(long threadId) {
+        MailMessageDetail detail;
+        synchronized (_readLock) {
+            try {
+                detail = MailDb.loadMessage(_readConnection, threadId);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail message for thread {}", threadId, e);
+                return new MailMessageDetail(0L, threadId, "(error)", "", "", "", e.getMessage(), java.util.List.of());
+            }
+        }
+        return hydrateMessageBodyIfNeeded(detail, () -> {
+            synchronized (_readLock) {
+                return MailDb.loadMessageHydrationTarget(_readConnection, threadId);
+            }
+        }, () -> {
+            synchronized (_readLock) {
+                return MailDb.loadMessage(_readConnection, threadId);
+            }
+        }, "thread " + threadId);
+    }
+
+    private MailMessageDetail loadSpecificMessage(long messageId) {
+        MailMessageDetail detail;
+        synchronized (_readLock) {
+            try {
+                detail = MailDb.loadMessageById(_readConnection, messageId);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail message {}", messageId, e);
+                return new MailMessageDetail(0L, 0L, "(error)", "", "", "", e.getMessage(), java.util.List.of());
+            }
+        }
+        return hydrateMessageBodyIfNeeded(detail, () -> {
+            synchronized (_readLock) {
+                return MailDb.loadMessageHydrationTargetByMessageId(_readConnection, messageId);
+            }
+        }, () -> {
+            synchronized (_readLock) {
+                return MailDb.loadMessageById(_readConnection, messageId);
+            }
+        }, "message " + messageId);
+    }
+
+    private MailMessageDetail hydrateMessageBodyIfNeeded(
+            MailMessageDetail detail,
+            ThrowingSupplier<MailDb.MessageHydrationTarget> targetSupplier,
+            ThrowingSupplier<MailMessageDetail> detailSupplier,
+            String label) {
+        if (_closed || detail.messageId() == 0L || (detail.bodyText() != null && !detail.bodyText().isBlank())) {
+            return detail;
+        }
+        try {
+            MailDb.MessageHydrationTarget target = targetSupplier.get();
+            if (target == null || target.internetMessageId() == null || target.internetMessageId().isBlank()) {
+                return detail;
+            }
+            EmailAccountConfig account = resolveAccount(target.accountId());
+            if (account == null) {
+                return detail;
+            }
+            String bodyText = _adapterFactory.create(account).loadBody(account, target.folderName(), target.internetMessageId());
+            if (bodyText == null || bodyText.isBlank()) {
+                return detail;
+            }
+            synchronized (_writeLock) {
+                if (_closed) {
+                    return detail;
+                }
+                MailDb.updateMessageBody(_writeConnection, target.messageId(), target.threadId(), bodyText);
+            }
+            synchronized (_readLock) {
+                return detailSupplier.get();
+            }
+        } catch (Exception e) {
+            LOG.warn("Failed to hydrate mail body for {}", label, e);
+            return detail;
+        }
+    }
+
+    private static void closeConnectionQuietly(Connection connection, Throwable originalFailure) {
+        try {
+            connection.close();
+        } catch (SQLException closeFailure) {
+            originalFailure.addSuppressed(closeFailure);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> {
+        T get() throws Exception;
     }
 }

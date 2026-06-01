@@ -1,7 +1,10 @@
 package org.fisk.swim.ui;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -9,6 +12,7 @@ import org.fisk.swim.EventThread;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadPage;
@@ -24,6 +28,9 @@ public class MailPanelView extends View {
     private static final int THREAD_PAGE_SIZE = 100;
     private static final int THREAD_PREFETCH_THRESHOLD = 10;
 
+    private record ThreadRow(MailThreadSummary thread, MailMessageSummary message, String treePrefix) {
+    }
+
     private enum Mode {
         BROWSE,
         SEARCH,
@@ -32,6 +39,8 @@ public class MailPanelView extends View {
 
     private enum ComposeField {
         TO,
+        CC,
+        BCC,
         SUBJECT,
         BODY
     }
@@ -43,6 +52,8 @@ public class MailPanelView extends View {
         TOP,
         BOTTOM,
         REFRESH,
+        REPLY,
+        REPLY_ALL,
         SCROLL_BODY_DOWN,
         SCROLL_BODY_UP,
         CLOSE,
@@ -66,6 +77,8 @@ public class MailPanelView extends View {
     private final MailClient _client;
     private MailSnapshot _snapshot;
     private List<MailThreadSummary> _threads = List.of();
+    private List<ThreadRow> _threadRows = List.of();
+    private final Map<Long, List<MailMessageSummary>> _threadMessagesByThreadId = new LinkedHashMap<>();
     private int _totalThreadCount;
     private MailMessageDetail _selectedMessage;
     private int _selectedIndex;
@@ -75,9 +88,13 @@ public class MailPanelView extends View {
     private ComposeField _composeField = ComposeField.TO;
     private String _composeAccountId = "";
     private StringBuilder _composeTo = new StringBuilder();
+    private StringBuilder _composeCc = new StringBuilder();
+    private StringBuilder _composeBcc = new StringBuilder();
     private StringBuilder _composeSubject = new StringBuilder();
     private List<StringBuilder> _composeBody = new ArrayList<>(List.of(new StringBuilder()));
     private int _composeToCursor;
+    private int _composeCcCursor;
+    private int _composeBccCursor;
     private int _composeSubjectCursor;
     private int _composeBodyRow;
     private int _composeBodyColumn;
@@ -162,7 +179,9 @@ public class MailPanelView extends View {
         case 'g' -> Action.TOP;
         case 'G' -> Action.BOTTOM;
         case '/', '?' -> Action.START_SEARCH;
-        case 'r' -> Action.REFRESH;
+        case 'e' -> Action.REFRESH;
+        case 'r' -> Action.REPLY;
+        case 'R' -> Action.REPLY_ALL;
         case 'd' -> Action.SCROLL_BODY_DOWN;
         case 'u' -> Action.SCROLL_BODY_UP;
         case 'q' -> Action.CLOSE;
@@ -194,8 +213,10 @@ public class MailPanelView extends View {
             }
         }
         case TOP -> moveTo(0);
-        case BOTTOM -> moveTo(Math.max(0, Math.max(_totalThreadCount, _threads.size()) - 1));
+        case BOTTOM -> moveToBottom();
         case REFRESH -> refreshClient();
+        case REPLY -> startReply(false);
+        case REPLY_ALL -> startReply(true);
         case SCROLL_BODY_DOWN -> scrollBody(5);
         case SCROLL_BODY_UP -> scrollBody(-5);
         case CLOSE -> close();
@@ -270,7 +291,7 @@ public class MailPanelView extends View {
             int height) {
         var header = new AttributedString();
         header.append(" Mail ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(" j/k select  / search  c compose/reply  r refresh  d/u scroll body  o open-link  y copy-link  q close ",
+        header.append(" j/k select  / search  c compose  r reply  R reply-all  e refresh  d/u scroll body  o open-link  y copy-link  q close ",
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
@@ -337,6 +358,8 @@ public class MailPanelView extends View {
         var lines = new ArrayList<String>();
         lines.add("Account: " + safe(_composeAccountId, "(none)"));
         lines.add(prefixField("To: ", _composeTo.toString(), _composeField == ComposeField.TO, _composeToCursor));
+        lines.add(prefixField("Cc: ", _composeCc.toString(), _composeField == ComposeField.CC, _composeCcCursor));
+        lines.add(prefixField("Bcc: ", _composeBcc.toString(), _composeField == ComposeField.BCC, _composeBccCursor));
         lines.add(prefixField("Subject: ", _composeSubject.toString(), _composeField == ComposeField.SUBJECT,
                 _composeSubjectCursor));
         lines.add("Body:");
@@ -394,10 +417,33 @@ public class MailPanelView extends View {
     private void startComposeFromSelection() {
         _mode = Mode.COMPOSE;
         _composeField = ComposeField.TO;
-        _composeTo = new StringBuilder(replyRecipient());
+        _composeTo = new StringBuilder();
+        _composeCc = new StringBuilder();
+        _composeBcc = new StringBuilder();
+        _composeSubject = new StringBuilder();
+        _composeBody = new ArrayList<>(List.of(new StringBuilder()));
+        _composeToCursor = _composeTo.length();
+        _composeCcCursor = _composeCc.length();
+        _composeBccCursor = _composeBcc.length();
+        _composeSubjectCursor = _composeSubject.length();
+        _composeBodyRow = 0;
+        _composeBodyColumn = 0;
+        _composeAccountId = selectedAccountId();
+        _statusMessage = "";
+        setNeedsRedraw();
+    }
+
+    private void startReply(boolean replyAll) {
+        _mode = Mode.COMPOSE;
+        _composeField = ComposeField.TO;
+        _composeTo = new StringBuilder(replyAll ? replyAllRecipients() : replyRecipient());
+        _composeCc = new StringBuilder();
+        _composeBcc = new StringBuilder();
         _composeSubject = new StringBuilder(replySubject());
         _composeBody = new ArrayList<>(List.of(new StringBuilder()));
         _composeToCursor = _composeTo.length();
+        _composeCcCursor = _composeCc.length();
+        _composeBccCursor = _composeBcc.length();
         _composeSubjectCursor = _composeSubject.length();
         _composeBodyRow = 0;
         _composeBodyColumn = 0;
@@ -440,6 +486,8 @@ public class MailPanelView extends View {
         MailDraft draft = new MailDraft(
                 _composeAccountId,
                 _composeTo.toString(),
+                _composeCc.toString(),
+                _composeBcc.toString(),
                 _composeSubject.toString(),
                 composeBodyText());
         Thread thread = new Thread(() -> {
@@ -501,13 +549,17 @@ public class MailPanelView extends View {
     private void advanceComposeField(int delta) {
         int index = switch (_composeField) {
         case TO -> 0;
-        case SUBJECT -> 1;
-        case BODY -> 2;
+        case CC -> 1;
+        case BCC -> 2;
+        case SUBJECT -> 3;
+        case BODY -> 4;
         };
-        index = Math.floorMod(index + delta, 3);
+        index = Math.floorMod(index + delta, 5);
         _composeField = switch (index) {
         case 0 -> ComposeField.TO;
-        case 1 -> ComposeField.SUBJECT;
+        case 1 -> ComposeField.CC;
+        case 2 -> ComposeField.BCC;
+        case 3 -> ComposeField.SUBJECT;
         default -> ComposeField.BODY;
         };
         setNeedsRedraw();
@@ -516,6 +568,8 @@ public class MailPanelView extends View {
     private void moveComposeHorizontal(int delta) {
         switch (_composeField) {
         case TO -> _composeToCursor = clamp(_composeToCursor + delta, 0, _composeTo.length());
+        case CC -> _composeCcCursor = clamp(_composeCcCursor + delta, 0, _composeCc.length());
+        case BCC -> _composeBccCursor = clamp(_composeBccCursor + delta, 0, _composeBcc.length());
         case SUBJECT -> _composeSubjectCursor = clamp(_composeSubjectCursor + delta, 0, _composeSubject.length());
         case BODY -> {
             var line = _composeBody.get(_composeBodyRow);
@@ -566,6 +620,18 @@ public class MailPanelView extends View {
                 _composeToCursor--;
             }
         }
+        case CC -> {
+            if (_composeCcCursor > 0) {
+                _composeCc.deleteCharAt(_composeCcCursor - 1);
+                _composeCcCursor--;
+            }
+        }
+        case BCC -> {
+            if (_composeBccCursor > 0) {
+                _composeBcc.deleteCharAt(_composeBccCursor - 1);
+                _composeBccCursor--;
+            }
+        }
         case SUBJECT -> {
             if (_composeSubjectCursor > 0) {
                 _composeSubject.deleteCharAt(_composeSubjectCursor - 1);
@@ -596,6 +662,14 @@ public class MailPanelView extends View {
         case TO -> {
             _composeTo.insert(_composeToCursor, character);
             _composeToCursor++;
+        }
+        case CC -> {
+            _composeCc.insert(_composeCcCursor, character);
+            _composeCcCursor++;
+        }
+        case BCC -> {
+            _composeBcc.insert(_composeBccCursor, character);
+            _composeBccCursor++;
         }
         case SUBJECT -> {
             _composeSubject.insert(_composeSubjectCursor, character);
@@ -636,14 +710,25 @@ public class MailPanelView extends View {
         moveTo(_selectedIndex + delta);
     }
 
+    private void moveToBottom() {
+        int targetThreadCount = Math.max(_totalThreadCount, _threads.size());
+        while (_threads.size() < targetThreadCount) {
+            if (!appendThreadPage()) {
+                break;
+            }
+        }
+        int targetThreadIndex = Math.max(0, Math.min(targetThreadCount, _threads.size()) - 1);
+        moveTo(rowIndexForThreadPosition(targetThreadIndex));
+    }
+
     private void moveTo(int index) {
-        ensureThreadsLoadedThrough(index);
-        if (_threads.isEmpty()) {
+        ensureRowsLoadedThrough(index);
+        if (_threadRows.isEmpty()) {
             _selectedIndex = 0;
             _selectedMessage = null;
             return;
         }
-        _selectedIndex = Math.max(0, Math.min(index, _threads.size() - 1));
+        _selectedIndex = Math.max(0, Math.min(index, _threadRows.size() - 1));
         _detailScrollOffset = 0;
         loadSelectedMessage();
         prefetchThreadsIfNeeded();
@@ -681,24 +766,28 @@ public class MailPanelView extends View {
     }
 
     private void loadSelectedMessage() {
-        if (_threads.isEmpty()) {
+        if (_threadRows.isEmpty()) {
             _selectedMessage = null;
             return;
         }
-        MailThreadSummary thread = _threads.get(_selectedIndex);
-        long threadId = thread.threadId();
+        ThreadRow row = _threadRows.get(_selectedIndex);
+        long threadId = row.thread().threadId();
+        long messageId = row.message().messageId();
         long generation = _messageLoadGeneration.incrementAndGet();
-        _selectedMessage = placeholderMessageDetail(thread);
+        _selectedMessage = placeholderMessageDetail(row);
         setNeedsRedraw();
 
         Thread worker = new Thread(() -> {
-            MailMessageDetail loaded = _client.loadMessage(threadId);
+            MailMessageDetail loaded = messageId > 0L
+                    ? _client.loadMessageById(messageId)
+                    : _client.loadMessage(threadId);
             Runnable applyLoadedMessage = () -> {
-                if (_messageLoadGeneration.get() != generation || _threads.isEmpty()) {
+                if (_messageLoadGeneration.get() != generation || _threadRows.isEmpty()) {
                     return;
                 }
-                int safeIndex = Math.max(0, Math.min(_selectedIndex, _threads.size() - 1));
-                if (_threads.get(safeIndex).threadId() != threadId) {
+                int safeIndex = Math.max(0, Math.min(_selectedIndex, _threadRows.size() - 1));
+                ThreadRow safeRow = _threadRows.get(safeIndex);
+                if (safeRow.thread().threadId() != threadId || safeRow.message().messageId() != messageId) {
                     return;
                 }
                 _selectedMessage = loaded;
@@ -717,19 +806,21 @@ public class MailPanelView extends View {
 
     private void reloadThreads() {
         _threads = new ArrayList<>();
+        _threadRows = new ArrayList<>();
+        _threadMessagesByThreadId.clear();
         _totalThreadCount = 0;
         appendThreadPage();
-        if (_selectedIndex >= _threads.size()) {
-            _selectedIndex = Math.max(0, _threads.size() - 1);
+        if (_selectedIndex >= _threadRows.size()) {
+            _selectedIndex = Math.max(0, _threadRows.size() - 1);
         }
         loadSelectedMessage();
     }
 
-    private void ensureThreadsLoadedThrough(int index) {
+    private void ensureRowsLoadedThrough(int index) {
         if (index < 0) {
             return;
         }
-        while (index >= _threads.size()) {
+        while (index >= _threadRows.size()) {
             if (!appendThreadPage()) {
                 break;
             }
@@ -737,9 +828,30 @@ public class MailPanelView extends View {
     }
 
     private void prefetchThreadsIfNeeded() {
-        if (_selectedIndex >= _threads.size() - THREAD_PREFETCH_THRESHOLD) {
+        if (_selectedIndex >= _threadRows.size() - THREAD_PREFETCH_THRESHOLD) {
             appendThreadPage();
         }
+    }
+
+    private int rowIndexForThreadPosition(int threadPosition) {
+        if (_threadRows.isEmpty()) {
+            return 0;
+        }
+        if (_threads.isEmpty()) {
+            return Math.max(0, _threadRows.size() - 1);
+        }
+        int safeThreadPosition = Math.max(0, Math.min(threadPosition, _threads.size() - 1));
+        long threadId = _threads.get(safeThreadPosition).threadId();
+        int rowIndex = -1;
+        for (int i = 0; i < _threadRows.size(); i++) {
+            long rowThreadId = _threadRows.get(i).thread().threadId();
+            if (rowThreadId == threadId) {
+                rowIndex = i;
+            } else if (rowIndex >= 0) {
+                break;
+            }
+        }
+        return rowIndex >= 0 ? rowIndex : Math.max(0, Math.min(safeThreadPosition, _threadRows.size() - 1));
     }
 
     private boolean appendThreadPage() {
@@ -751,19 +863,97 @@ public class MailPanelView extends View {
         var combined = new ArrayList<>(_threads);
         combined.addAll(page.threads());
         _threads = combined;
+        for (MailThreadSummary thread : page.threads()) {
+            _threadMessagesByThreadId.put(thread.threadId(), _client.loadThreadMessages(thread.threadId()));
+        }
+        rebuildThreadRows();
         return true;
     }
 
-    private MailMessageDetail placeholderMessageDetail(MailThreadSummary thread) {
-        return new MailMessageDetail(
+    private void rebuildThreadRows() {
+        var rows = new ArrayList<ThreadRow>();
+        for (MailThreadSummary thread : _threads) {
+            rows.addAll(buildThreadRows(thread, _threadMessagesByThreadId.get(thread.threadId())));
+        }
+        _threadRows = List.copyOf(rows);
+    }
+
+    private List<ThreadRow> buildThreadRows(MailThreadSummary thread, List<MailMessageSummary> messages) {
+        List<MailMessageSummary> effectiveMessages = messages == null || messages.isEmpty()
+                ? List.of(syntheticMessageSummary(thread))
+                : messages;
+        var byId = new HashMap<Long, MailMessageSummary>();
+        for (MailMessageSummary message : effectiveMessages) {
+            byId.put(message.messageId(), message);
+        }
+        var childrenByParent = new LinkedHashMap<Long, List<MailMessageSummary>>();
+        for (MailMessageSummary message : effectiveMessages) {
+            long parentId = message.parentMessageId();
+            if (parentId > 0L && !byId.containsKey(parentId)) {
+                parentId = 0L;
+            }
+            childrenByParent.computeIfAbsent(parentId, ignored -> new ArrayList<>()).add(message);
+        }
+        var rows = new ArrayList<ThreadRow>();
+        appendTreeRows(thread, childrenByParent, 0L, "", rows, effectiveMessages.size());
+        return rows;
+    }
+
+    private void appendTreeRows(
+            MailThreadSummary thread,
+            Map<Long, List<MailMessageSummary>> childrenByParent,
+            long parentId,
+            String ancestorPrefix,
+            List<ThreadRow> rows,
+            int messageCount) {
+        List<MailMessageSummary> children = childrenByParent.get(parentId);
+        if (children == null || children.isEmpty()) {
+            return;
+        }
+        children.sort((left, right) -> {
+            int byTime = safe(left.receivedAt(), "").compareTo(safe(right.receivedAt(), ""));
+            if (byTime != 0) {
+                return byTime;
+            }
+            return Long.compare(left.messageId(), right.messageId());
+        });
+        for (int i = 0; i < children.size(); i++) {
+            MailMessageSummary child = children.get(i);
+            boolean last = i == children.size() - 1;
+            String treePrefix = parentId == 0L
+                    ? ""
+                    : ancestorPrefix + (last ? "`- " : "|- ");
+            rows.add(new ThreadRow(thread, child, treePrefix));
+            String nextPrefix = parentId == 0L
+                    ? ""
+                    : ancestorPrefix + (last ? "   " : "|  ");
+            appendTreeRows(thread, childrenByParent, child.messageId(), nextPrefix, rows, messageCount);
+        }
+    }
+
+    private MailMessageSummary syntheticMessageSummary(MailThreadSummary thread) {
+        return new MailMessageSummary(
                 0L,
                 thread.threadId(),
-                safe(thread.subject(), "(no subject)"),
-                safe(thread.participants(), "(unknown)"),
+                0L,
+                thread.subject(),
+                thread.participants(),
                 "",
-                safe(thread.receivedAt(), ""),
-                safe(thread.snippet(), "Loading message..."),
-                thread.tags());
+                thread.receivedAt(),
+                thread.snippet(),
+                thread.unread());
+    }
+
+    private MailMessageDetail placeholderMessageDetail(ThreadRow row) {
+        return new MailMessageDetail(
+                row.message().messageId(),
+                row.thread().threadId(),
+                safe(row.message().subject(), "(no subject)"),
+                safe(row.message().from(), "(unknown)"),
+                safe(row.message().to(), "(unknown)"),
+                safe(row.message().receivedAt(), ""),
+                safe(row.message().snippet(), "Loading message..."),
+                row.thread().tags());
     }
 
     private void drawThreadColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
@@ -796,14 +986,14 @@ public class MailPanelView extends View {
 
         int availableThreadRows = Math.max(0, height - row);
         adjustThreadScroll(availableThreadRows);
-        for (int visible = 0; visible < availableThreadRows && _threadScrollOffset + visible < _threads.size(); visible++) {
+        for (int visible = 0; visible < availableThreadRows && _threadScrollOffset + visible < _threadRows.size(); visible++) {
             int threadIndex = _threadScrollOffset + visible;
-            MailThreadSummary thread = _threads.get(threadIndex);
+            ThreadRow threadRow = _threadRows.get(threadIndex);
             boolean selected = threadIndex == _selectedIndex;
             TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
                     : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
             TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
-            String line = formatThread(thread, width);
+            String line = formatThreadRow(threadRow, width);
             UiTheme.drawLine(graphics, Point.create(x, y + row + visible), width,
                     AttributedString.create(line, foreground, background), foreground, background);
         }
@@ -850,12 +1040,14 @@ public class MailPanelView extends View {
         return lines;
     }
 
-    private String formatThread(MailThreadSummary thread, int width) {
-        String unreadMarker = thread.unread() ? "● " : "  ";
-        String countSuffix = thread.messageCount() > 1 ? " (" + thread.messageCount() + ")" : "";
-        String tagSuffix = thread.tags().isEmpty() ? "" : " [" + String.join(",", thread.tags()) + "]";
-        String received = thread.receivedAt() == null || thread.receivedAt().isBlank() ? "" : " • " + thread.receivedAt();
-        String base = unreadMarker + safe(thread.subject(), "(no subject)") + countSuffix + received + tagSuffix;
+    private String formatThreadRow(ThreadRow row, int width) {
+        boolean root = row.treePrefix().isEmpty();
+        String unreadMarker = row.message().unread() ? "● " : "  ";
+        String countSuffix = root && row.thread().messageCount() > 1 ? " (" + row.thread().messageCount() + ")" : "";
+        String tagSuffix = root && !row.thread().tags().isEmpty() ? " [" + String.join(",", row.thread().tags()) + "]" : "";
+        String received = row.message().receivedAt().isBlank() ? "" : " • " + row.message().receivedAt();
+        String base = unreadMarker + row.treePrefix() + safe(row.message().subject(), "(no subject)") + countSuffix + received
+                + tagSuffix;
         if (base.length() > width - 1) {
             return base.substring(0, Math.max(0, width - 2));
         }
@@ -902,7 +1094,7 @@ public class MailPanelView extends View {
         } else if (_selectedIndex >= _threadScrollOffset + availableThreadRows) {
             _threadScrollOffset = _selectedIndex - availableThreadRows + 1;
         }
-        int maxOffset = Math.max(0, _threads.size() - availableThreadRows);
+        int maxOffset = Math.max(0, _threadRows.size() - availableThreadRows);
         _threadScrollOffset = Math.max(0, Math.min(_threadScrollOffset, maxOffset));
     }
 
@@ -914,8 +1106,8 @@ public class MailPanelView extends View {
     }
 
     private String selectedAccountId() {
-        if (_selectedIndex >= 0 && _selectedIndex < _threads.size()) {
-            return safe(_threads.get(_selectedIndex).accountId(), "");
+        if (_selectedIndex >= 0 && _selectedIndex < _threadRows.size()) {
+            return safe(_threadRows.get(_selectedIndex).thread().accountId(), "");
         }
         if (!_snapshot.accounts().isEmpty()) {
             return safe(_snapshot.accounts().getFirst().id(), "");
@@ -948,6 +1140,35 @@ public class MailPanelView extends View {
             return subject;
         }
         return subject.isBlank() ? "" : "Re: " + subject;
+    }
+
+    private String replyAllRecipients() {
+        if (_selectedMessage == null || _selectedMessage.messageId() == 0L) {
+            return "";
+        }
+        var recipients = new java.util.LinkedHashSet<String>();
+        addRecipient(recipients, replyRecipient());
+        for (String part : safe(_selectedMessage.to(), "").split(",")) {
+            addRecipient(recipients, extractEmail(part));
+        }
+        return String.join(", ", recipients);
+    }
+
+    private static void addRecipient(java.util.Set<String> recipients, String value) {
+        String email = extractEmail(value);
+        if (!email.isBlank()) {
+            recipients.add(email);
+        }
+    }
+
+    private static String extractEmail(String value) {
+        String text = safe(value, "").trim();
+        int start = text.indexOf('<');
+        int end = text.indexOf('>');
+        if (start >= 0 && end > start) {
+            text = text.substring(start + 1, end).trim();
+        }
+        return text;
     }
 
     private String composeBodyText() {

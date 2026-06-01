@@ -14,6 +14,7 @@ import org.fisk.swim.mail.MailAccountSummary;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadPage;
@@ -144,7 +145,7 @@ class MailPanelViewTest {
     }
 
     @Test
-    void composeReplySendsDraftUsingSelectedMessageDefaults() {
+    void replySendsDraftUsingSelectedMessageDefaults() {
         AtomicReference<MailDraft> sentDraft = new AtomicReference<>();
         CountDownLatch refreshed = new CountDownLatch(1);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -193,7 +194,7 @@ class MailPanelViewTest {
             Thread.currentThread().interrupt();
         }
 
-        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('r'));
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.ctrl('s'));
 
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
@@ -209,6 +210,72 @@ class MailPanelViewTest {
         assertTrue(sentDraft.get() != null);
         assertEquals("work", sentDraft.get().accountId());
         assertEquals("boss@example.com", sentDraft.get().to());
+        assertEquals("Re: Quarterly review", sentDraft.get().subject());
+    }
+
+    @Test
+    void replyAllUsesSenderAndExistingRecipients() {
+        AtomicReference<MailDraft> sentDraft = new AtomicReference<>();
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 100, 1, "", "")),
+                        sampleThreads(100),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com, teammate@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+            }
+
+            @Override
+            public MailSendResult sendDraft(MailDraft draft) {
+                sentDraft.set(draft);
+                return MailSendResult.success("sent");
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() < deadline) {
+            var detail = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
+            if (detail != null && detail.messageId() != 0L) {
+                break;
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('R'));
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.ctrl('s'));
+
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (sentDraft.get() == null && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        assertTrue(sentDraft.get() != null);
+        assertEquals("boss@example.com, me@example.com, teammate@example.com", sentDraft.get().to());
         assertEquals("Re: Quarterly review", sentDraft.get().subject());
     }
 
@@ -285,6 +352,122 @@ class MailPanelViewTest {
     }
 
     @Test
+    void composeStartsBlankFromC() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 100, 1, "", "")),
+                        sampleThreads(100),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+
+        assertEquals("COMPOSE", HeadlessWindowHarness.getField(panel, "_mode", Enum.class).name());
+        assertEquals("", HeadlessWindowHarness.getField(panel, "_composeTo", StringBuilder.class).toString());
+        assertEquals("", HeadlessWindowHarness.getField(panel, "_composeCc", StringBuilder.class).toString());
+        assertEquals("", HeadlessWindowHarness.getField(panel, "_composeBcc", StringBuilder.class).toString());
+        assertEquals("", HeadlessWindowHarness.getField(panel, "_composeSubject", StringBuilder.class).toString());
+    }
+
+    @Test
+    void refreshUsesEKey() {
+        AtomicReference<Integer> refreshCalls = new AtomicReference<>(0);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 100, 1, "2026-05-15T08:00:00Z", "")),
+                        sampleThreads(10),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+            }
+
+            @Override
+            public void refresh() {
+                refreshCalls.set(refreshCalls.get() + 1);
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('e'));
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (refreshCalls.get() == 0 && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        assertEquals(1, refreshCalls.get());
+    }
+
+    @Test
+    void composeTabOrderIncludesCcAndBcc() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 10, 1, "", "")),
+                        sampleThreads(10),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+        assertEquals("TO", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.tab());
+        assertEquals("CC", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.tab());
+        assertEquals("BCC", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.tab());
+        assertEquals("SUBJECT", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
+    }
+
+    @Test
     void searchReloadsThreadsUsingEnteredQuery() throws Exception {
         AtomicReference<String> lastQuery = new AtomicReference<>("");
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
@@ -340,6 +523,139 @@ class MailPanelViewTest {
         assertEquals("boss", lastQuery.get());
         assertEquals(7L, lastLoadedThread.get());
         assertEquals("boss", HeadlessWindowHarness.getField(panel, "_searchQuery", String.class));
+    }
+
+    @Test
+    void threadColumnGroupsRepliesIntoConversationTreeOrderedByNewestConversation() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 2, 1, "", "")),
+                        List.of(
+                                new MailThreadSummary(7L, "work", "Re: Quarterly review", "Boss", "Approved",
+                                        "2026-05-13T10:00:05Z", true, 3, List.of("vip")),
+                                new MailThreadSummary(9L, "work", "Team notes", "Teammate", "FYI",
+                                        "2026-05-13T09:30:05Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public List<MailMessageSummary> loadThreadMessages(long threadId) {
+                if (threadId == 7L) {
+                    return List.of(
+                            new MailMessageSummary(11L, 7L, 0L, "Quarterly review", "Boss <boss@example.com>",
+                                    "me@example.com",
+                                    "2026-05-13T08:31:00Z", "Initial note", true),
+                            new MailMessageSummary(12L, 7L, 11L, "Re: Quarterly review", "Me <me@example.com>",
+                                    "boss@example.com",
+                                    "2026-05-13T09:00:05Z", "Looks good", false),
+                            new MailMessageSummary(13L, 7L, 12L, "Re: Quarterly review", "Boss <boss@example.com>",
+                                    "me@example.com",
+                                    "2026-05-13T10:00:05Z", "Approved", false));
+                }
+                return List.of(new MailMessageSummary(21L, 9L, 0L, "Team notes", "Teammate <mate@example.com>",
+                        "me@example.com",
+                        "2026-05-13T09:30:05Z", "FYI", false));
+            }
+
+            @Override
+            public MailMessageDetail loadMessageById(long messageId) {
+                return new MailMessageDetail(messageId, messageId == 21L ? 9L : 7L, "Message " + messageId,
+                        "sender@example.com", "me@example.com", "2026-05-13T08:00:00Z", "Body " + messageId, List.of());
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId,
+                        "sender@example.com", "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        @SuppressWarnings("unchecked")
+        List<Object> rows = (List<Object>) HeadlessWindowHarness.getField(panel, "_threadRows");
+
+        assertEquals(4, rows.size());
+        assertTrue(rows.get(0).toString().contains("Quarterly review"));
+        assertTrue(rows.get(1).toString().contains("Re: Quarterly review"));
+        assertTrue(rows.get(2).toString().contains("Re: Quarterly review"));
+        assertTrue(rows.get(3).toString().contains("Team notes"));
+    }
+
+    @Test
+    void selectingDifferentRowsWithinThreadLoadsSelectedMessage() throws Exception {
+        AtomicReference<Long> lastLoadedMessage = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 1, 1, "", "")),
+                        List.of(new MailThreadSummary(7L, "work", "Re: Quarterly review", "Boss", "Approved",
+                                "2026-05-13T10:00:05Z", true, 3, List.of())),
+                        "");
+            }
+
+            @Override
+            public List<MailMessageSummary> loadThreadMessages(long threadId) {
+                return List.of(
+                        new MailMessageSummary(11L, 7L, 0L, "Quarterly review", "Boss <boss@example.com>",
+                                "me@example.com",
+                                "2026-05-13T08:31:00Z", "Initial note", true),
+                        new MailMessageSummary(12L, 7L, 11L, "Re: Quarterly review", "Me <me@example.com>",
+                                "boss@example.com",
+                                "2026-05-13T09:00:05Z", "Looks good", false),
+                        new MailMessageSummary(13L, 7L, 12L, "Re: Quarterly review", "Boss <boss@example.com>",
+                                "me@example.com",
+                                "2026-05-13T10:00:05Z", "Approved", false));
+            }
+
+            @Override
+            public MailMessageDetail loadMessageById(long messageId) {
+                lastLoadedMessage.set(messageId);
+                return new MailMessageDetail(messageId, 7L, "Message " + messageId,
+                        "sender@example.com", "me@example.com", "2026-05-13T08:00:00Z", "Body " + messageId, List.of());
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId,
+                        "sender@example.com", "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(11L).equals(lastLoadedMessage.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('j'));
+
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(12L).equals(lastLoadedMessage.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertEquals(1, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+        assertEquals(12L, lastLoadedMessage.get());
+        assertEquals("Message 12", HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class).subject());
     }
 
     @Test

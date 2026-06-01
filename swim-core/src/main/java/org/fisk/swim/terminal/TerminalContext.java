@@ -21,6 +21,9 @@ public class TerminalContext {
     private record CreatedTerminal(Screen screen, Terminal terminal) {
     }
 
+    private record TerminalModeState(String ttyPath, String previousSettings) {
+    }
+
     private static volatile TerminalContext _instance;
     private boolean _closed;
 
@@ -53,24 +56,39 @@ public class TerminalContext {
     private final Terminal _terminal;
     private final TextGraphics _graphics;
     private final Supplier<TerminalSize> _terminalSizeSupplier;
+    private final TerminalModeState _terminalModeState;
 
     public TerminalContext() {
-        this(createTerminal(), null, TerminalContext::queryTerminalSizeFromTty);
+        this(createTerminal(), null, TerminalContext::queryTerminalSizeFromTty, configureTerminalShortcuts());
     }
 
     TerminalContext(Screen screen, Terminal terminal, TextGraphics graphics) {
-        this(screen, terminal, graphics, TerminalContext::queryTerminalSizeFromTty);
+        this(screen, terminal, graphics, TerminalContext::queryTerminalSizeFromTty, null);
     }
 
     TerminalContext(Screen screen, Terminal terminal, TextGraphics graphics, Supplier<TerminalSize> terminalSizeSupplier) {
+        this(screen, terminal, graphics, terminalSizeSupplier, null);
+    }
+
+    TerminalContext(
+            Screen screen,
+            Terminal terminal,
+            TextGraphics graphics,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalModeState terminalModeState) {
         _screen = screen;
         _terminal = terminal;
         _graphics = graphics != null ? graphics : screen.newTextGraphics();
         _terminalSizeSupplier = terminalSizeSupplier != null ? terminalSizeSupplier : TerminalContext::queryTerminalSizeFromTty;
+        _terminalModeState = terminalModeState;
     }
 
-    private TerminalContext(CreatedTerminal createdTerminal, TextGraphics graphics, Supplier<TerminalSize> terminalSizeSupplier) {
-        this(createdTerminal.screen(), createdTerminal.terminal(), graphics, terminalSizeSupplier);
+    private TerminalContext(
+            CreatedTerminal createdTerminal,
+            TextGraphics graphics,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalModeState terminalModeState) {
+        this(createdTerminal.screen(), createdTerminal.terminal(), graphics, terminalSizeSupplier, terminalModeState);
     }
 
     private static CreatedTerminal createTerminal() {
@@ -93,6 +111,10 @@ public class TerminalContext {
         try {
             _screen.stopScreen();
         } catch (IOException | IllegalStateException e) {
+        }
+        try {
+            restoreTerminalShortcuts(_terminalModeState);
+        } catch (RuntimeException e) {
         }
         try {
             if (_terminal != null) {
@@ -233,7 +255,18 @@ public class TerminalContext {
     }
 
     private static String runSttyOnPath(String ttyPath, String option) throws IOException, InterruptedException {
-        var process = new ProcessBuilder("stty", option, ttyPath, "size")
+        return runSttyOnPath(ttyPath, option, "size");
+    }
+
+    private static String runSttyOnPath(String ttyPath, String option, String... args) throws IOException, InterruptedException {
+        var command = new java.util.ArrayList<String>();
+        command.add("stty");
+        command.add(option);
+        command.add(ttyPath);
+        for (String arg : args) {
+            command.add(arg);
+        }
+        var process = new ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start();
         String output = new String(process.getInputStream().readAllBytes());
@@ -241,6 +274,58 @@ public class TerminalContext {
             return null;
         }
         return output;
+    }
+
+    private static TerminalModeState configureTerminalShortcuts() {
+        try {
+            String ttyPath = configuredTtyPath();
+            if (ttyPath == null) {
+                return null;
+            }
+            String previous = runSttyOnAnyOption(ttyPath, "-g");
+            if (previous == null || previous.isBlank()) {
+                return null;
+            }
+            if (runSttyOnAnyOption(ttyPath, "-ixon") == null) {
+                return null;
+            }
+            return new TerminalModeState(ttyPath, previous.trim());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        }
+    }
+
+    private static void restoreTerminalShortcuts(TerminalModeState state) {
+        if (state == null || state.ttyPath() == null || state.previousSettings() == null || state.previousSettings().isBlank()) {
+            return;
+        }
+        try {
+            runSttyOnAnyOption(state.ttyPath(), state.previousSettings());
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static String configuredTtyPath() {
+        String ttyPath = System.getenv("SWIM_TTY_PATH");
+        if (ttyPath != null && !ttyPath.isBlank()) {
+            return ttyPath;
+        }
+        java.nio.file.Path defaultTty = java.nio.file.Path.of("/dev/tty");
+        return java.nio.file.Files.exists(defaultTty) ? defaultTty.toString() : null;
+    }
+
+    private static String runSttyOnAnyOption(String ttyPath, String... args) throws IOException, InterruptedException {
+        String output = runSttyOnPath(ttyPath, "-f", args);
+        if (output != null) {
+            return output;
+        }
+        return runSttyOnPath(ttyPath, "-F", args);
     }
 
     static Integer parsePositiveInt(String output) {

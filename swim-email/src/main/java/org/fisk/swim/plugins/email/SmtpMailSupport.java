@@ -28,8 +28,8 @@ final class SmtpMailSupport implements MailDeliveryService {
 
     @Override
     public MailSendResult send(EmailAccountConfig account, MailDraft draft) throws Exception {
-        if (draft.to() == null || draft.to().isBlank()) {
-            return MailSendResult.failure("Recipient is required");
+        if (allRecipientsBlank(draft)) {
+            return MailSendResult.failure("At least one recipient is required");
         }
         String smtpHost = account.effectiveSmtpHost();
         if (smtpHost == null || smtpHost.isBlank()) {
@@ -59,13 +59,15 @@ final class SmtpMailSupport implements MailDeliveryService {
         Session session = Session.getInstance(properties);
         MimeMessage message = new MimeMessage(session);
         message.setFrom(new InternetAddress(account.username()));
-        message.setRecipients(jakarta.mail.Message.RecipientType.TO, InternetAddress.parse(draft.to()));
+        setRecipients(message, jakarta.mail.Message.RecipientType.TO, draft.to());
+        setRecipients(message, jakarta.mail.Message.RecipientType.CC, draft.cc());
+        setRecipients(message, jakarta.mail.Message.RecipientType.BCC, draft.bcc());
         message.setSubject(draft.subject() == null ? "" : draft.subject(), StandardCharsets.UTF_8.name());
         message.setText(draft.body() == null ? "" : draft.body(), StandardCharsets.UTF_8.name());
         message.setSentDate(Date.from(Instant.now()));
 
         _transport.send(smtpHost, account.effectiveSmtpPort(), smtpUsername, secret, message);
-        return MailSendResult.success("Sent mail to " + draft.to());
+        return MailSendResult.success("Sent mail");
     }
 
     static Properties baseSmtpProperties(int port) {
@@ -87,6 +89,22 @@ final class SmtpMailSupport implements MailDeliveryService {
         properties.setProperty(prefix + ".sasl.mechanisms", "XOAUTH2");
         properties.setProperty(prefix + ".auth.login.disable", "true");
         properties.setProperty(prefix + ".auth.plain.disable", "true");
+    }
+
+    private static boolean allRecipientsBlank(MailDraft draft) {
+        return isBlank(draft.to()) && isBlank(draft.cc()) && isBlank(draft.bcc());
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static void setRecipients(MimeMessage message, jakarta.mail.Message.RecipientType type, String value)
+            throws Exception {
+        if (isBlank(value)) {
+            return;
+        }
+        message.setRecipients(type, InternetAddress.parse(value));
     }
 
     interface SmtpTransport {

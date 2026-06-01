@@ -97,7 +97,9 @@ class TmuxEditorMailIT {
             session.waitForText("Boss update", UI_TIMEOUT);
             session.sendLiteral("c");
             session.waitForText("Compose", UI_TIMEOUT);
-            session.waitForText("boss@example.com", UI_TIMEOUT);
+            session.waitForText("To:", UI_TIMEOUT);
+            session.waitForText("Cc:", UI_TIMEOUT);
+            session.waitForText("Bcc:", UI_TIMEOUT);
             session.sendEscape();
             session.waitForText("Boss update", UI_TIMEOUT);
             session.sendLiteral("q");
