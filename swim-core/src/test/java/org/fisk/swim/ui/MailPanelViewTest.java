@@ -53,7 +53,7 @@ class MailPanelViewTest {
             @Override
             public MailMessageDetail loadMessage(long threadId) {
                 return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
-                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of(), "<root@example.com>");
             }
 
             @Override
@@ -86,7 +86,7 @@ class MailPanelViewTest {
             @Override
             public MailMessageDetail loadMessage(long threadId) {
                 return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
-                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of(), "<root@example.com>");
             }
 
             @Override
@@ -302,7 +302,7 @@ class MailPanelViewTest {
             @Override
             public MailMessageDetail loadMessage(long threadId) {
                 return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
-                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+                        "me@example.com", "2026-05-13T08:00:00Z", "Please review", List.of(), "<root@example.com>");
             }
 
             @Override
@@ -327,7 +327,7 @@ class MailPanelViewTest {
             long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
             while (System.nanoTime() < deadline) {
                 var detail = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
-                if (detail != null && detail.messageId() != 0L) {
+                if (detail != null && detail.messageId() != 0L && "<root@example.com>".equals(detail.internetMessageId())) {
                     break;
                 }
                 Thread.sleep(10);
@@ -353,6 +353,7 @@ class MailPanelViewTest {
         assertEquals("work", sentDraft.get().accountId());
         assertEquals("boss@example.com", sentDraft.get().to());
         assertEquals("Re: Quarterly review", sentDraft.get().subject());
+        assertEquals("<root@example.com>", sentDraft.get().inReplyToMessageId());
     }
 
     @Test

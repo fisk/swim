@@ -63,5 +63,39 @@ class SmtpMailSupportTest {
         assertEquals("boss@example.com", ((InternetAddress) toRecipients[0]).getAddress());
         assertEquals("team@example.com", ((InternetAddress) ccRecipients[0]).getAddress());
         assertEquals("audit@example.com", ((InternetAddress) bccRecipients[0]).getAddress());
+        assertEquals(null, messageRef.get().getHeader("In-Reply-To", null));
+    }
+
+    @Test
+    void replySendAddsReplyHeaders() throws Exception {
+        AtomicReference<MimeMessage> messageRef = new AtomicReference<>();
+
+        var support = new SmtpMailSupport(
+                (account, protocol) -> MicrosoftOAuth2Client.AcquireResult.success("access-token"),
+                (host, port, username, secret, message) -> messageRef.set(message));
+
+        var result = support.send(new EmailAccountConfig(
+                "oracle",
+                "Oracle Mail",
+                "IMAP",
+                "outlook.office365.com",
+                993,
+                null,
+                null,
+                null,
+                "you@example.com",
+                "IGNORED",
+                "INBOX",
+                null,
+                null,
+                "OAUTH2",
+                "organizations",
+                "client-id",
+                null),
+                new MailDraft("oracle", "boss@example.com", "", "", "Re: Status", "Looks good", "<message-1@example.com>"));
+
+        assertTrue(result.success());
+        assertEquals("<message-1@example.com>", messageRef.get().getHeader("In-Reply-To", null));
+        assertEquals("<message-1@example.com>", messageRef.get().getHeader("References", null));
     }
 }

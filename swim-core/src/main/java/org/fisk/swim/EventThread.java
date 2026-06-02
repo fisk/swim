@@ -1,10 +1,17 @@
 package org.fisk.swim;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.fisk.swim.event.Event;
 import org.fisk.swim.event.KeyStrokeEvent;
@@ -18,12 +25,15 @@ import com.googlecode.lanterna.input.KeyStroke;
 
 public class EventThread extends Thread {
     private static Logger _log = LogFactory.createLog();
+    private static final long FUTURE_POLL_MILLIS = 50L;
 
     private final ListEventResponder _responder;
     private final ArrayBlockingQueue<Event> _events = new ArrayBlockingQueue<>(1024, true);
+    private final ExecutorService _eventExecutor;
     private static volatile EventThread _instance;
     private final List<Runnable> _onEventRunnables = new CopyOnWriteArrayList<>();
     private volatile boolean _running = true;
+    private volatile Future<EventExecutionResult> _currentFuture;
 
     public static EventThread getInstance() {
         var instance = _instance;
@@ -42,6 +52,11 @@ public class EventThread extends Thread {
     public EventThread() {
         setDaemon(true);
         _responder = new ListEventResponder();
+        _eventExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            var thread = new Thread(runnable, "event-thread-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     public static void shutdownInstance() {
@@ -63,20 +78,25 @@ public class EventThread extends Thread {
     @Override
     public void run() {
         ArrayList<KeyStroke> events = new ArrayList<>();
+        ArrayDeque<Event> deferred = new ArrayDeque<>();
         while (_running) {
-            Event event = waitForNextEvent();
+            Event event = waitForNextEvent(deferred);
             if (!_running || event == null) {
                 break;
             }
-            processEvent(event, events);
-            while (_running && (event = _events.poll()) != null) {
-                processEvent(event, events);
+            processEvent(event, events, deferred);
+            while (_running && (event = pollNextEvent(deferred)) != null) {
+                processEvent(event, events, deferred);
             }
             runPostEventHooks();
         }
     }
 
-    private Event waitForNextEvent() {
+    private Event waitForNextEvent(ArrayDeque<Event> deferred) {
+        Event deferredEvent = deferred.pollFirst();
+        if (deferredEvent != null) {
+            return deferredEvent;
+        }
         while (_running) {
             try {
                 Event event = _events.poll(1, TimeUnit.SECONDS);
@@ -90,38 +110,125 @@ public class EventThread extends Thread {
         return null;
     }
 
-    private void processEvent(Event event, ArrayList<KeyStroke> events) {
-        if (event instanceof KeyStrokeEvent) {
-            try {
-                _log.debug("Received key stroke event");
-                var keyEvent = (KeyStrokeEvent) event;
-                events.add(keyEvent.getKeyStroke());
-                var keys = new KeyStrokes(events);
-                switch (_responder.processEvent(keys)) {
-                case MAYBE:
-                    _log.debug("Maybe");
+    private Event pollNextEvent(ArrayDeque<Event> deferred) {
+        Event deferredEvent = deferred.pollFirst();
+        if (deferredEvent != null) {
+            return deferredEvent;
+        }
+        return _events.poll();
+    }
+
+    private void processEvent(Event event, ArrayList<KeyStroke> events, ArrayDeque<Event> deferred) {
+        Future<EventExecutionResult> future = _eventExecutor.submit(() -> executeEvent(event, events));
+        _currentFuture = future;
+        boolean cancelled = false;
+        try {
+            while (_running) {
+                try {
+                    EventExecutionResult result = future.get(FUTURE_POLL_MILLIS, TimeUnit.MILLISECONDS);
+                    result.apply(events);
+                    return;
+                } catch (TimeoutException e) {
+                    Event queued = _events.poll();
+                    if (queued == null) {
+                        continue;
+                    }
+                    if (isCancelEvent(queued)) {
+                        _log.debug("Cancelling in-flight event future");
+                        future.cancel(true);
+                        events.clear();
+                        cancelled = true;
+                        break;
+                    }
+                    deferred.addLast(queued);
+                } catch (CancellationException e) {
+                    cancelled = true;
+                    events.clear();
                     break;
-                case YES:
-                    _log.debug("Yes");
-                    _responder.respond();
-                case NO:
-                    _log.debug("No/Clear");
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() == null ? e : e.getCause();
+                    if (future.isCancelled() || isCancellationThrowable(cause)) {
+                        cancelled = true;
+                        events.clear();
+                        break;
+                    }
+                    _log.error("Error processing event: ", cause);
+                    return;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    if (_running) {
+                        future.cancel(true);
+                    }
+                    cancelled = true;
                     events.clear();
                     break;
                 }
-            } catch (Exception e) {
-                _log.error("Error processing event: ", e);
             }
-            return;
+        } finally {
+            _currentFuture = null;
+            if (!_running) {
+                future.cancel(true);
+            } else if (cancelled) {
+                drainCancelEvents(deferred);
+            }
+        }
+    }
+
+    private EventExecutionResult executeEvent(Event event, ArrayList<KeyStroke> events) {
+        if (event instanceof KeyStrokeEvent keyEvent) {
+            _log.debug("Received key stroke event");
+            var updated = new ArrayList<KeyStroke>(events);
+            updated.add(keyEvent.getKeyStroke());
+            var keys = new KeyStrokes(updated);
+            switch (_responder.processEvent(keys)) {
+            case MAYBE:
+                _log.debug("Maybe");
+                return ignored -> {
+                    ignored.clear();
+                    ignored.addAll(updated);
+                };
+            case YES:
+                _log.debug("Yes");
+                _responder.respond();
+                return ignored -> ignored.clear();
+            case NO:
+            default:
+                _log.debug("No/Clear");
+                return ignored -> ignored.clear();
+            }
         }
         if (event instanceof RunnableEvent runnableEvent) {
             _log.debug("Received runnable event");
-            try {
-                runnableEvent.execute();
-            } catch (Exception e) {
-                _log.error("Error processing event: ", e);
-            }
+            runnableEvent.execute();
         }
+        return ignored -> {
+        };
+    }
+
+    private static boolean isCancelEvent(Event event) {
+        if (!(event instanceof KeyStrokeEvent keyStrokeEvent)) {
+            return false;
+        }
+        KeyStroke stroke = keyStrokeEvent.getKeyStroke();
+        return stroke != null
+                && stroke.getKeyType() == com.googlecode.lanterna.input.KeyType.Character
+                && stroke.isCtrlDown()
+                && (stroke.getCharacter() == 'q' || stroke.getCharacter() == 'Q');
+    }
+
+    private void drainCancelEvents(ArrayDeque<Event> deferred) {
+        deferred.removeIf(EventThread::isCancelEvent);
+    }
+
+    private static boolean isCancellationThrowable(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof InterruptedException || current instanceof CancellationException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private void runPostEventHooks() {
@@ -158,7 +265,17 @@ public class EventThread extends Thread {
     public void shutdown() {
         _running = false;
         _onEventRunnables.clear();
+        Future<EventExecutionResult> currentFuture = _currentFuture;
+        if (currentFuture != null) {
+            currentFuture.cancel(true);
+        }
+        _eventExecutor.shutdownNow();
         _events.offer(new RunnableEvent(() -> {
         }));
+    }
+
+    @FunctionalInterface
+    private interface EventExecutionResult {
+        void apply(ArrayList<KeyStroke> events);
     }
 }

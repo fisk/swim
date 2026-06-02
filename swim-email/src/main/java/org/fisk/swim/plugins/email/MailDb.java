@@ -332,12 +332,15 @@ final class MailDb {
             String fromEmail,
             MailDraft draft,
             String sentAt) throws SQLException {
+        String threadKey = draft.inReplyToMessageId() != null && !draft.inReplyToMessageId().isBlank()
+                ? "reply:" + normalizeWhitespace(draft.inReplyToMessageId())
+                : "sent:" + normalizeSubject(draft.subject()) + "|" + normalizeWhitespace(fromEmail) + "|"
+                        + normalizeWhitespace(recipientSummary(draft));
         ImportedMailMessage message = new ImportedMailMessage(
                 accountId,
                 "Sent",
                 "<swim-local-" + System.nanoTime() + "@swim>",
-                "sent:" + normalizeSubject(draft.subject()) + "|" + normalizeWhitespace(fromEmail) + "|"
-                        + normalizeWhitespace(recipientSummary(draft)),
+                threadKey,
                 draft.subject(),
                 accountName,
                 fromEmail,
@@ -468,7 +471,8 @@ final class MailDb {
                     trim(coalesce(from_name, '') || case when from_email is null or from_email = '' then '' else ' <' || from_email || '>' end),
                     to_summary,
                     coalesce(sent_at, received_at),
-                    body_text
+                    body_text,
+                    internet_message_id
                 from messages
                 where thread_id = ?
                 order by coalesce(received_at, sent_at, '') desc, id desc
@@ -487,7 +491,8 @@ final class MailDb {
                             recipientSummary(connection, messageId, "CC"),
                             resultSet.getString(6),
                             resultSet.getString(7),
-                            loadTagsForThread(connection, threadId));
+                            loadTagsForThread(connection, threadId),
+                            resultSet.getString(8));
                 }
             }
         }
@@ -521,7 +526,8 @@ final class MailDb {
                     trim(coalesce(from_name, '') || case when from_email is null or from_email = '' then '' else ' <' || from_email || '>' end),
                     to_summary,
                     coalesce(sent_at, received_at),
-                    body_text
+                    body_text,
+                    internet_message_id
                 from messages
                 where id = ?
                 """)) {
@@ -538,7 +544,8 @@ final class MailDb {
                             recipientSummary(connection, messageId, "CC"),
                             resultSet.getString(6),
                             resultSet.getString(7),
-                            loadTagsForThread(connection, threadId));
+                            loadTagsForThread(connection, threadId),
+                            resultSet.getString(8));
                 }
             }
         }

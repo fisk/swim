@@ -106,4 +106,68 @@ class EventThreadTest {
         thread.shutdown();
         thread.join(2000);
     }
+
+    @Test
+    void ctrlQCancelsRunningRunnableEventAndIgnoresCancelEvent() throws Exception {
+        var thread = new EventThread();
+        var started = new CountDownLatch(1);
+        var cancelled = new CountDownLatch(1);
+        var afterCancelRan = new CountDownLatch(1);
+        var ctrlQCalls = new AtomicInteger();
+        thread.getResponder().addEventResponder(new TextEventResponder("<CTRL>-q", ctrlQCalls::incrementAndGet));
+        thread.start();
+
+        thread.enqueue(new RunnableEvent(() -> {
+            started.countDown();
+            try {
+                while (true) {
+                    Thread.sleep(1000);
+                }
+            } catch (InterruptedException e) {
+                cancelled.countDown();
+                Thread.currentThread().interrupt();
+            }
+        }));
+
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+
+        thread.enqueue(new KeyStrokeEvent(new KeyStroke('q', true, false)));
+        thread.enqueue(new RunnableEvent(afterCancelRan::countDown));
+
+        assertTrue(cancelled.await(2, TimeUnit.SECONDS));
+        assertTrue(afterCancelRan.await(2, TimeUnit.SECONDS));
+        assertEquals(0, ctrlQCalls.get());
+
+        thread.shutdown();
+        thread.join(2000);
+    }
+
+    @Test
+    void ctrlQCancelsWrappedInterruptedFailureWithoutStoppingEventThread() throws Exception {
+        var thread = new EventThread();
+        var started = new CountDownLatch(1);
+        var afterCancelRan = new CountDownLatch(1);
+        thread.start();
+
+        thread.enqueue(new RunnableEvent(() -> {
+            started.countDown();
+            try {
+                while (true) {
+                    Thread.sleep(1000);
+                }
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }));
+
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+
+        thread.enqueue(new KeyStrokeEvent(new KeyStroke('q', true, false)));
+        thread.enqueue(new RunnableEvent(afterCancelRan::countDown));
+
+        assertTrue(afterCancelRan.await(2, TimeUnit.SECONDS));
+
+        thread.shutdown();
+        thread.join(2000);
+    }
 }

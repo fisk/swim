@@ -120,6 +120,7 @@ public class MailPanelView extends View {
     private StringBuilder _composeBcc = new StringBuilder();
     private StringBuilder _composeSubject = new StringBuilder();
     private List<StringBuilder> _composeBody = new ArrayList<>(List.of(new StringBuilder()));
+    private String _composeInReplyToMessageId = "";
     private int _composeToCursor;
     private int _composeCcCursor;
     private int _composeBccCursor;
@@ -552,6 +553,7 @@ public class MailPanelView extends View {
         _composeSubjectCursor = _composeSubject.length();
         _composeBodyRow = 0;
         _composeBodyColumn = 0;
+        _composeInReplyToMessageId = "";
         _composeAccountId = selectedAccountId();
         _statusMessage = "";
         if (_messageBufferContext != null) {
@@ -586,6 +588,7 @@ public class MailPanelView extends View {
         _composeSubjectCursor = _composeSubject.length();
         _composeBodyRow = 0;
         _composeBodyColumn = 0;
+        _composeInReplyToMessageId = _selectedMessage == null ? "" : safe(_selectedMessage.internetMessageId(), "");
         _composeAccountId = selectedAccountId();
         _statusMessage = "";
         if (_messageBufferContext != null) {
@@ -635,7 +638,8 @@ public class MailPanelView extends View {
                 _composeCc.toString(),
                 _composeBcc.toString(),
                 _composeSubject.toString(),
-                composeBodyText());
+                composeBodyText(),
+                _composeInReplyToMessageId);
         Thread thread = new Thread(() -> {
             MailSendResult result = _client.sendDraft(draft);
             EventThread.getInstance().enqueue(new RunnableEvent(() -> {

@@ -1306,6 +1306,62 @@ class H2MailClientTest {
     }
 
     @Test
+    void sendDraftReplyAppendsIntoExistingThread() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "outlook.office365.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "MAIL_PASSWORD",
+                          "smtpHost": "smtp.office365.com",
+                          "smtpPort": 587
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(
+                            new ImportedMailMessage(
+                                    "work", "INBOX", "<root@example.com>", "message-id:<root@example.com>",
+                                    "Status", "Boss", "boss@example.com", "me@example.com",
+                                    List.of(new ImportedMailRecipient("TO", "Me", "me@example.com")),
+                                    "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                                    "Please review", "Please review", true)), "1 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"))) {
+                var result = client.sendDraft(new MailDraft(
+                        "work",
+                        "boss@example.com",
+                        "",
+                        "",
+                        "Re: Status",
+                        "Looks good",
+                        "<root@example.com>"));
+
+                assertTrue(result.success());
+                var snapshot = client.snapshot();
+                assertEquals(1, snapshot.threads().size());
+                assertEquals(2, snapshot.threads().get(0).messageCount());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void loadThreadsPaginatesAndSearchesDatabaseContent() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());

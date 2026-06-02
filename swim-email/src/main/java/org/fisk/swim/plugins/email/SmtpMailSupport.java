@@ -65,6 +65,10 @@ final class SmtpMailSupport implements MailDeliveryService {
         message.setSubject(draft.subject() == null ? "" : draft.subject(), StandardCharsets.UTF_8.name());
         message.setText(draft.body() == null ? "" : draft.body(), StandardCharsets.UTF_8.name());
         message.setSentDate(Date.from(Instant.now()));
+        if (draft.inReplyToMessageId() != null && !draft.inReplyToMessageId().isBlank()) {
+            message.setHeader("In-Reply-To", draft.inReplyToMessageId());
+            message.setHeader("References", draft.inReplyToMessageId());
+        }
 
         _transport.send(smtpHost, account.effectiveSmtpPort(), smtpUsername, secret, message);
         return MailSendResult.success("Sent mail");
