@@ -87,6 +87,8 @@ public class MailPanelView extends View {
         MOVE_LEFT,
         MOVE_RIGHT,
         OPEN_MESSAGE_BUFFER,
+        ACCUMULATE_SIDEBAR_JUMP,
+        APPLY_SIDEBAR_JUMP,
         INSERT_NEWLINE,
         BACKSPACE,
         INSERT_CHAR
@@ -130,6 +132,7 @@ public class MailPanelView extends View {
     private int _searchCursor;
     private Action _pendingAction = Action.NONE;
     private Character _pendingCharacter;
+    private final StringBuilder _sidebarJumpDigits = new StringBuilder();
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _sendInFlight = new AtomicBoolean();
     private final AtomicLong _messageLoadGeneration = new AtomicLong();
@@ -207,6 +210,24 @@ public class MailPanelView extends View {
             default -> Action.NONE;
             };
             return _pendingAction == Action.NONE ? org.fisk.swim.event.Response.NO : org.fisk.swim.event.Response.YES;
+        }
+
+        if (event.getKeyType() == KeyType.Character) {
+            char character = event.getCharacter();
+            if (Character.isDigit(character)) {
+                _pendingCharacter = character;
+                _pendingAction = Action.ACCUMULATE_SIDEBAR_JUMP;
+                return org.fisk.swim.event.Response.YES;
+            }
+            if (character == 'g' && !_sidebarJumpDigits.isEmpty()) {
+                _pendingAction = Action.APPLY_SIDEBAR_JUMP;
+                return org.fisk.swim.event.Response.YES;
+            }
+            if (_sidebarJumpDigits.length() > 0) {
+                _sidebarJumpDigits.setLength(0);
+            }
+        } else if (_sidebarJumpDigits.length() > 0) {
+            _sidebarJumpDigits.setLength(0);
         }
 
         _pendingAction = switch (event.getKeyType()) {
@@ -310,6 +331,8 @@ public class MailPanelView extends View {
             }
         }
         case OPEN_MESSAGE_BUFFER -> focusSelectedMessageBuffer();
+        case ACCUMULATE_SIDEBAR_JUMP -> accumulateSidebarJumpDigit(_pendingCharacter);
+        case APPLY_SIDEBAR_JUMP -> applySidebarJump();
         case INSERT_NEWLINE -> insertComposeNewline();
         case BACKSPACE -> {
             if (_mode == Mode.COMPOSE) {
@@ -330,6 +353,36 @@ public class MailPanelView extends View {
         }
         _pendingAction = Action.NONE;
         _pendingCharacter = null;
+    }
+
+    private void accumulateSidebarJumpDigit(Character character) {
+        if (character == null || !Character.isDigit(character)) {
+            return;
+        }
+        if (_sidebarJumpDigits.length() == 0 && character == '0') {
+            return;
+        }
+        _sidebarJumpDigits.append(character);
+        setNeedsRedraw();
+    }
+
+    private void applySidebarJump() {
+        if (_sidebarJumpDigits.isEmpty()) {
+            return;
+        }
+        int index;
+        try {
+            index = Integer.parseInt(_sidebarJumpDigits.toString()) - 1;
+        } catch (NumberFormatException e) {
+            _sidebarJumpDigits.setLength(0);
+            return;
+        }
+        _sidebarJumpDigits.setLength(0);
+        if (index < 0) {
+            return;
+        }
+        _browsePane = BrowsePane.SIDEBAR;
+        moveSidebarTo(index);
     }
 
     @Override
@@ -1285,7 +1338,7 @@ public class MailPanelView extends View {
                     : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
             TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
             UiTheme.drawLine(graphics, Point.create(x, y + row + visible), width,
-                    AttributedString.create(" " + formatSidebarRow(sidebarRow, width - 1), foreground, background),
+                    AttributedString.create(" " + formatSidebarRow(index, sidebarRow, width - 1), foreground, background),
                     foreground, background);
         }
     }
@@ -1375,13 +1428,14 @@ public class MailPanelView extends View {
         _sidebarScrollOffset = Math.max(0, Math.min(_sidebarScrollOffset, maxOffset));
     }
 
-    private String formatSidebarRow(SidebarRow row, int width) {
-        String label = switch (row.kind()) {
+    private String formatSidebarRow(int index, SidebarRow row, int width) {
+        String baseLabel = switch (row.kind()) {
         case ALL -> row.label();
         case UNSORTED -> row.label();
         case ACCOUNT -> row.label();
         case TAG -> row.label();
         };
+        String label = (index + 1) + " " + baseLabel;
         int unread = switch (row.kind()) {
         case ALL -> _allUnreadCount;
         case UNSORTED -> _unsortedUnreadCount;
