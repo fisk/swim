@@ -3,10 +3,10 @@ package org.fisk.swim.mail;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.TreeSet;
 
 public interface MailClient extends AutoCloseable {
     MailSnapshot snapshot();
@@ -49,7 +49,7 @@ public interface MailClient extends AutoCloseable {
     }
 
     default List<String> loadTagNames() {
-        var tags = new TreeSet<String>();
+        var tags = new LinkedHashSet<String>();
         for (MailThreadSummary thread : snapshot().threads()) {
             tags.addAll(thread.tags());
         }

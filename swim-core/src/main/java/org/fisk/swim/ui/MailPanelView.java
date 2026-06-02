@@ -389,6 +389,7 @@ public class MailPanelView extends View {
 
         drawSidebarColumn(graphics, rect.getPoint().getX(), bodyTop, sidebarWidth, bodyHeight);
         drawThreadTable(graphics, threadsX, bodyTop, threadsWidth, bodyHeight);
+        drawAuthOverlay(graphics, rect, width, height);
     }
 
     private void drawCompose(
@@ -867,8 +868,9 @@ public class MailPanelView extends View {
         _unsortedUnreadCount = _client.loadUnsortedUnreadCount();
         _allUnreadCount = _snapshot.accounts().stream().mapToInt(org.fisk.swim.mail.MailAccountSummary::unreadCount).sum();
         rebuildSidebarRows();
-        _lastActionableUrl = firstUrl(_snapshot.statusMessage());
-        if (_awaitingOAuthCompletion && _snapshot != null && _snapshot.statusMessage().contains("Mail sign-in complete")) {
+        String actionableStatus = actionableSnapshotStatus();
+        _lastActionableUrl = firstUrl(actionableStatus);
+        if (_awaitingOAuthCompletion && actionableStatus.contains("Mail sign-in complete")) {
             _awaitingOAuthCompletion = false;
             _oauthPollGeneration++;
             refreshClientAsync("Refreshing mail...");
@@ -1654,7 +1656,10 @@ public class MailPanelView extends View {
                 EventThread.getInstance().enqueue(new RunnableEvent(() -> {
                     _refreshInFlight.set(false);
                     reload();
-                    if (_snapshot != null && !_snapshot.statusMessage().isBlank()) {
+                    String actionableStatus = actionableSnapshotStatus();
+                    if (!actionableStatus.isBlank()) {
+                        _statusMessage = actionableStatus;
+                    } else if (_snapshot != null && !_snapshot.statusMessage().isBlank()) {
                         _statusMessage = _snapshot.statusMessage();
                     }
                     setNeedsRedraw();
@@ -1692,6 +1697,77 @@ public class MailPanelView extends View {
         }, "mail-oauth-poll");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private String actionableSnapshotStatus() {
+        if (_snapshot == null) {
+            return "";
+        }
+        if (_snapshot.statusMessage() != null && !_snapshot.statusMessage().isBlank()) {
+            return _snapshot.statusMessage();
+        }
+        for (var account : _snapshot.accounts()) {
+            String status = account.syncStatus();
+            if (status == null || status.isBlank()) {
+                continue;
+            }
+            if (firstUrl(status) != null || status.contains("Mail sign-in complete")) {
+                return status;
+            }
+        }
+        return "";
+    }
+
+    private String authOverlayMessage() {
+        String status = actionableSnapshotStatus();
+        return status == null || status.isBlank() ? "" : status;
+    }
+
+    private void drawAuthOverlay(
+            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            Rect rect,
+            int width,
+            int height) {
+        String message = authOverlayMessage();
+        if (message.isBlank() || width < 24 || height < 8) {
+            return;
+        }
+        int modalWidth = Math.max(24, Math.min(width - 4, Math.max(40, width * 2 / 3)));
+        var wrapped = TextPanelView.wrapText(message, Math.max(1, modalWidth - 4));
+        String footerText = firstUrl(message) != null
+                ? " o open link  y copy link  e refresh "
+                : " e refresh ";
+        int modalHeight = Math.min(height - 2, wrapped.size() + 4);
+        int modalX = rect.getPoint().getX() + Math.max(0, (width - modalWidth) / 2);
+        int modalY = rect.getPoint().getY() + Math.max(1, (height - modalHeight) / 2);
+        int bodyRows = Math.max(0, modalHeight - 3);
+
+        String top = "┌" + "─".repeat(Math.max(0, modalWidth - 2)) + "┐";
+        String bottom = "└" + "─".repeat(Math.max(0, modalWidth - 2)) + "┘";
+        UiTheme.drawLine(graphics, Point.create(modalX, modalY), modalWidth,
+                AttributedString.create(top, UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+
+        String title = UiTheme.padRight(" Mail Sign-In Required", Math.max(0, modalWidth - 2));
+        UiTheme.drawLine(graphics, Point.create(modalX, modalY + 1), modalWidth,
+                AttributedString.create("│" + title + "│", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+
+        for (int i = 0; i < bodyRows; i++) {
+            String bodyLine = i < wrapped.size() ? wrapped.get(i) : "";
+            bodyLine = UiTheme.padRight(bodyLine, Math.max(0, modalWidth - 2));
+            UiTheme.drawLine(graphics, Point.create(modalX, modalY + 2 + i), modalWidth,
+                    AttributedString.create("│" + bodyLine + "│", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED),
+                    UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
+        }
+
+        String footer = UiTheme.padRight(footerText, Math.max(0, modalWidth - 2));
+        UiTheme.drawLine(graphics, Point.create(modalX, modalY + modalHeight - 2), modalWidth,
+                AttributedString.create("│" + footer + "│", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT),
+                UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        UiTheme.drawLine(graphics, Point.create(modalX, modalY + modalHeight - 1), modalWidth,
+                AttributedString.create(bottom, UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
     }
 
     private static String rootMessage(Throwable throwable) {

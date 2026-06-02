@@ -125,19 +125,19 @@ final class MicrosoftOAuth2Client {
 
     private String browserMessage(PendingBrowserAuthorization pending) {
         return "Complete browser sign-in at " + pending.authorizationUrl()
-                + " and wait for the callback, then press r in the mail panel.";
+                + " and wait for the callback, then press e in the mail panel.";
     }
 
     private String deviceCodeMessage(PendingDeviceAuthorization pending) {
         String message = pending.message();
         if (message != null && !message.isBlank()) {
-            return message + " Then press r in the mail panel.";
+            return message + " Then press e in the mail panel.";
         }
         String uri = pending.verificationUriComplete() != null && !pending.verificationUriComplete().isBlank()
                 ? pending.verificationUriComplete()
                 : pending.verificationUri();
         return "Authorize mail at " + uri + " with code " + pending.userCode()
-                + ", then press r in the mail panel.";
+                + ", then press e in the mail panel.";
     }
 
     private PendingBrowserAuthorization requestBrowserAuthorization(EmailAccountConfig account, String scopes) throws IOException {
@@ -482,7 +482,7 @@ final class MicrosoftOAuth2Client {
             }
             updatePendingBrowserAuthorization(paths, accountId, params);
             byte[] response = """
-                    <html><body><h2>SWIM mail sign-in complete</h2><p>You can return to SWIM and press r in the mail panel.</p></body></html>
+                    <html><body><h2>SWIM mail sign-in complete</h2><p>You can return to SWIM and press e in the mail panel.</p></body></html>
                     """.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
             exchange.sendResponseHeaders(200, response.length);

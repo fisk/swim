@@ -21,13 +21,21 @@ import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadFilter;
 import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.text.BufferContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class MailPanelViewTest {
     @TempDir
     Path tempDir;
+
+    @AfterEach
+    void tearDownTerminal() {
+        TerminalContext.shutdownInstance();
+    }
 
     @Test
     void constructorRefreshesWhenAccountHasNeverSynced() throws Exception {
@@ -98,7 +106,7 @@ class MailPanelViewTest {
     @Test
     void extractsActionableUrlFromOAuthStatusText() {
         String url = MailPanelView.firstUrl(
-                "Complete browser sign-in at https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press r in the mail panel.");
+                "Complete browser sign-in at https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press e in the mail panel.");
 
         assertEquals("https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=abc", url);
     }
@@ -122,7 +130,7 @@ class MailPanelViewTest {
                     return new MailSnapshot(
                             List.of(new MailAccountSummary("work", "Work", "IMAP", 0, 0, "", "")),
                             List.of(),
-                            "Complete browser sign-in at https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press r in the mail panel.");
+                            "Complete browser sign-in at https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press e in the mail panel.");
                 }
 
                 @Override
@@ -149,6 +157,133 @@ class MailPanelViewTest {
         } finally {
             ExternalResourceSupport.resetForTesting();
         }
+    }
+
+    @Test
+    void openLinkUsesAccountSyncStatusWhenGlobalMailStatusIsEmpty() {
+        AtomicReference<String> openedUrl = new AtomicReference<>();
+        ExternalResourceSupport.setUrlOpenerForTesting(url -> {
+            openedUrl.set(url);
+            return true;
+        });
+        try {
+            var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+                @Override
+                public MailSnapshot snapshot() {
+                    return new MailSnapshot(
+                            List.of(
+                                    new MailAccountSummary("work", "Work", "IMAP", 1, 0, "", "1 messages"),
+                                    new MailAccountSummary("outlook", "Outlook", "IMAP", 0, 0, "",
+                                            "Complete browser sign-in at https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press e in the mail panel.")),
+                            List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                    "snippet", "2026-05-15T10:00:00Z", false, 1, List.of())),
+                            "");
+                }
+
+                @Override
+                public MailMessageDetail loadMessage(long threadId) {
+                    return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                            "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+                }
+
+                @Override
+                public void refresh() {
+                }
+
+                @Override
+                public Path getDataPath() {
+                    return Path.of("/tmp/mail");
+                }
+            });
+
+            HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('o'));
+
+            assertEquals("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc", openedUrl.get());
+        } finally {
+            ExternalResourceSupport.resetForTesting();
+        }
+    }
+
+    @Test
+    void drawShowsModalOverlayForSecondaryAccountBrowserSignIn() {
+        var terminal = TerminalContextTestSupport.install(80, 20);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(
+                                new MailAccountSummary("work", "Work", "IMAP", 1, 0, "", "1 messages"),
+                                new MailAccountSummary("outlook", "Outlook", "IMAP", 0, 0, "",
+                                        "Complete browser sign-in at https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc and wait for the callback, then press e in the mail panel.")),
+                        List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                "snippet", "2026-05-15T10:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                        "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        panel.draw(panel.getBounds());
+        String rendered = renderedText(terminal.drawCalls());
+
+        assertTrue(rendered.contains("Mail Sign-In Required"));
+        assertTrue(rendered.contains("login.microsoftonline.com"));
+        assertTrue(rendered.contains("consumers"));
+        assertTrue(rendered.contains("o open link"));
+    }
+
+    @Test
+    void drawShowsModalOverlayForSecondaryAccountDeviceCodeSignIn() {
+        var terminal = TerminalContextTestSupport.install(80, 20);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(
+                                new MailAccountSummary("work", "Work", "IMAP", 1, 0, "", "1 messages"),
+                                new MailAccountSummary("outlook", "Outlook", "IMAP", 0, 0, "",
+                                        "To sign in, use a web browser to open the page https://www.microsoft.com/link and enter the code KY29RFQF to authenticate. Then press e in the mail panel.")),
+                        List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                "snippet", "2026-05-15T10:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                        "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        panel.draw(panel.getBounds());
+        String rendered = renderedText(terminal.drawCalls());
+
+        assertTrue(rendered.contains("Mail Sign-In Required"));
+        assertTrue(rendered.contains("https://www.microsoft.com/link"));
+        assertTrue(rendered.contains("KY29RFQF"));
+        assertTrue(rendered.contains("o open link"));
     }
 
     @Test
@@ -1268,5 +1403,13 @@ class MailPanelViewTest {
         }
         int endExclusive = Math.min(matching.size(), safeOffset + Math.max(0, limit));
         return new MailThreadPage(matching.subList(safeOffset, endExclusive), matching.size());
+    }
+
+    private static String renderedText(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls) {
+        var text = new StringBuilder();
+        for (var call : drawCalls) {
+            text.append(call.text()).append('\n');
+        }
+        return text.toString();
     }
 }

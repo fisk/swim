@@ -148,6 +148,221 @@ class H2MailClientTest {
     }
 
     @Test
+    void loadTagNamesPreservesConfigFileOrder() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    {
+                      "rules": [
+                        { "tag": "zeta", "field": "sender", "contains": "zeta@example.com" },
+                        { "tag": "alpha", "field": "sender", "contains": "alpha@example.com" },
+                        { "tag": "beta", "field": "sender", "contains": "beta@example.com" },
+                        { "tag": "alpha", "field": "recipient", "contains": "alpha-list@example.com" }
+                      ]
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false)) {
+                assertEquals(List.of("zeta", "alpha", "beta"), client.loadTagNames());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void snapshotUsesPendingBrowserAuthorizationWhenSyncStatusIsBlank() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "outlook",
+                          "name": "Outlook",
+                          "protocol": "IMAP",
+                          "host": "outlook.office365.com",
+                          "port": 993,
+                          "username": "osterlund.erik@outlook.com",
+                          "authType": "OAUTH2",
+                          "tenant": "consumers",
+                          "clientId": "client-id"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+            Files.writeString(paths.oauthTokensPath(), """
+                    {
+                      "accounts": {
+                        "outlook": {
+                          "pendingBrowserAuthorization": {
+                            "state": "state",
+                            "codeVerifier": "verifier",
+                            "authorizationUrl": "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc",
+                            "redirectUri": "http://localhost:12345",
+                            "expiresAt": "2999-01-01T00:00:00Z",
+                            "scopes": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send"
+                          }
+                        }
+                      }
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false)) {
+                var snapshot = client.snapshot();
+                assertTrue(snapshot.accounts().getFirst().syncStatus().contains("https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=abc"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void snapshotUsesPendingDeviceAuthorizationWhenSyncStatusIsBlank() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "outlook",
+                          "name": "Outlook",
+                          "protocol": "IMAP",
+                          "host": "outlook.office365.com",
+                          "port": 993,
+                          "username": "osterlund.erik@outlook.com",
+                          "authType": "DEVICE_CODE",
+                          "tenant": "consumers",
+                          "clientId": "client-id"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+            Files.writeString(paths.oauthTokensPath(), """
+                    {
+                      "accounts": {
+                        "outlook": {
+                          "pendingDeviceAuthorization": {
+                            "deviceCode": "device-code",
+                            "userCode": "KY29RFQF",
+                            "verificationUri": "https://www.microsoft.com/link",
+                            "message": "To sign in, use a web browser to open the page https://www.microsoft.com/link and enter the code KY29RFQF to authenticate.",
+                            "expiresAt": "2999-01-01T00:00:00Z",
+                            "intervalSeconds": 5,
+                            "scopes": "offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send"
+                          }
+                        }
+                      }
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false)) {
+                var snapshot = client.snapshot();
+                assertTrue(snapshot.accounts().getFirst().syncStatus().contains("KY29RFQF"));
+                assertTrue(snapshot.accounts().getFirst().syncStatus().contains("https://www.microsoft.com/link"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void snapshotClearsStaleAuthPromptWhenValidTokenExists() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "outlook",
+                          "name": "Outlook",
+                          "protocol": "IMAP",
+                          "host": "outlook.office365.com",
+                          "port": 993,
+                          "username": "osterlund.erik@outlook.com",
+                          "authType": "DEVICE_CODE",
+                          "tenant": "consumers",
+                          "clientId": "client-id"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+            Files.writeString(paths.oauthTokensPath(), """
+                    {
+                      "accounts": {
+                        "outlook": {
+                          "accessToken": "token",
+                          "refreshToken": "refresh",
+                          "expiresAt": "2999-01-01T00:00:00Z"
+                        }
+                      }
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                MailDb.recordAccountSyncState(connection, "outlook", null,
+                        "Authorize mail at https://www.microsoft.com/link with code CODE123, then press e in the mail panel.",
+                        false, 0L, 0L);
+
+                var snapshot = client.snapshot();
+                assertEquals("", snapshot.accounts().getFirst().syncStatus());
+                assertEquals("", snapshot.statusMessage());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void refreshReappliesTagRulesToExistingMessages() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());

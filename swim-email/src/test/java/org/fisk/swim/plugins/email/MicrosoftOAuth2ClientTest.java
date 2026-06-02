@@ -125,7 +125,7 @@ class MicrosoftOAuth2ClientTest {
             var result = client.acquireToken(browserOAuthAccount(), "IMAP");
 
             assertFalse(result.hasToken());
-            assertTrue(result.statusMessage().contains("press r"));
+            assertTrue(result.statusMessage().contains("press e"));
             assertTrue(launcher.uri != null);
             String cacheJson = Files.readString(paths.oauthTokensPath());
             assertFalse(cacheJson.contains("old-state"));
@@ -147,7 +147,7 @@ class MicrosoftOAuth2ClientTest {
             var firstResult = firstClient.acquireToken(browserOAuthAccount(), "IMAP");
 
             assertFalse(firstResult.hasToken());
-            assertTrue(firstResult.statusMessage().contains("press r"));
+            assertTrue(firstResult.statusMessage().contains("press e"));
             assertTrue(launcher.uri != null);
             OAuthTokenCache cache = readCache(paths);
             PendingBrowserAuthorization pending = cache.accounts().get("work").pendingBrowserAuthorization();

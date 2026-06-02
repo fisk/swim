@@ -650,9 +650,13 @@ final class MailDb {
     static List<String> loadTagNames(Connection connection) throws SQLException {
         var tags = new ArrayList<String>();
         try (PreparedStatement statement = connection.prepareStatement("""
-                select distinct tag_name
-                from tag_rules
-                order by tag_name
+                select tag_name
+                from (
+                    select tag_name, min(id) as first_rule_id
+                    from tag_rules
+                    group by tag_name
+                )
+                order by first_rule_id
                 """);
                 ResultSet resultSet = statement.executeQuery()) {
             while (resultSet.next()) {

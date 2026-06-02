@@ -1,7 +1,9 @@
 package org.fisk.swim.plugins.email;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -23,9 +25,13 @@ import org.fisk.swim.mail.MailThreadPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+
 final class H2MailClient implements MailClient {
     private static final Logger LOG = LoggerFactory.getLogger(H2MailClient.class);
     private static final int SNAPSHOT_THREAD_LIMIT = 100;
+    private static final Gson GSON = new GsonBuilder().create();
 
     private final EmailPaths _paths;
     private final Connection _readConnection;
@@ -86,7 +92,7 @@ final class H2MailClient implements MailClient {
     public MailSnapshot snapshot() {
         synchronized (_readLock) {
             try {
-                return MailDb.loadSnapshot(_readConnection, _paths, SNAPSHOT_THREAD_LIMIT);
+                return augmentSnapshotWithPendingAuth(MailDb.loadSnapshot(_readConnection, _paths, SNAPSHOT_THREAD_LIMIT));
             } catch (SQLException e) {
                 LOG.error("Failed to load mail snapshot", e);
                 return new MailSnapshot(java.util.List.of(), java.util.List.of(),
@@ -401,6 +407,140 @@ final class H2MailClient implements MailClient {
         } catch (ClassNotFoundException e) {
             throw new SQLException("H2 JDBC driver is unavailable", e);
         }
+    }
+
+    private MailSnapshot augmentSnapshotWithPendingAuth(MailSnapshot snapshot) {
+        if (snapshot == null || snapshot.accounts().isEmpty()) {
+            return snapshot;
+        }
+        OAuthTokenCache cache = loadOAuthTokenCache();
+        if (cache.accounts().isEmpty()) {
+            return snapshot;
+        }
+        boolean changed = false;
+        var accounts = new java.util.ArrayList<org.fisk.swim.mail.MailAccountSummary>(snapshot.accounts().size());
+        for (var account : snapshot.accounts()) {
+            String status = account.syncStatus();
+            OAuthTokenRecord record = cache.accounts().get(account.id());
+            String pending = pendingAuthMessage(record);
+            if (!pending.isBlank()) {
+                if (!pending.equals(status)) {
+                    status = pending;
+                    changed = true;
+                }
+            } else if (hasValidCachedAccessToken(record) && isAuthPrompt(status)) {
+                status = "";
+                changed = true;
+            }
+            accounts.add(new org.fisk.swim.mail.MailAccountSummary(
+                    account.id(),
+                    account.name(),
+                    account.protocol(),
+                    account.threadCount(),
+                    account.unreadCount(),
+                    account.lastSyncAt(),
+                    status));
+        }
+        if (!changed) {
+            return snapshot;
+        }
+        String statusMessage = snapshot.statusMessage();
+        if (isAuthPrompt(statusMessage) && accounts.stream().noneMatch(account -> isAuthPrompt(account.syncStatus()))) {
+            statusMessage = "";
+        }
+        return new MailSnapshot(accounts, snapshot.threads(), statusMessage);
+    }
+
+    private OAuthTokenCache loadOAuthTokenCache() {
+        try {
+            EmailConfigStore.ensureDefaultFiles(_paths);
+            if (!Files.isRegularFile(_paths.oauthTokensPath()) || Files.readString(_paths.oauthTokensPath()).trim().isEmpty()) {
+                return OAuthTokenCache.empty();
+            }
+            try (Reader reader = Files.newBufferedReader(_paths.oauthTokensPath())) {
+                OAuthTokenCache cache = GSON.fromJson(reader, OAuthTokenCache.class);
+                return cache == null ? OAuthTokenCache.empty() : cache;
+            }
+        } catch (IOException e) {
+            LOG.debug("Failed to load OAuth token cache for mail snapshot", e);
+            return OAuthTokenCache.empty();
+        }
+    }
+
+    private static String pendingAuthMessage(OAuthTokenRecord record) {
+        String device = pendingDeviceMessage(record);
+        if (!device.isBlank()) {
+            return device;
+        }
+        return pendingBrowserMessage(record);
+    }
+
+    private static boolean hasValidCachedAccessToken(OAuthTokenRecord record) {
+        if (record == null || record.accessToken() == null || record.accessToken().isBlank()) {
+            return false;
+        }
+        if (record.expiresAt() == null || record.expiresAt().isBlank()) {
+            return false;
+        }
+        return java.time.Instant.parse(record.expiresAt()).minusSeconds(60).isAfter(java.time.Instant.now());
+    }
+
+    private static boolean isAuthPrompt(String status) {
+        if (status == null || status.isBlank()) {
+            return false;
+        }
+        return status.contains("Authorize mail at")
+                || status.contains("Complete browser sign-in at")
+                || status.contains("Mail sign-in complete")
+                || status.contains("enter the code");
+    }
+
+    private static String pendingBrowserMessage(OAuthTokenRecord record) {
+        if (record == null || record.pendingBrowserAuthorization() == null) {
+            return "";
+        }
+        var pending = record.pendingBrowserAuthorization();
+        if (pending.authorizationUrl() == null || pending.authorizationUrl().isBlank()) {
+            return "";
+        }
+        if (pending.expiresAt() == null || pending.expiresAt().isBlank()) {
+            return "";
+        }
+        if (java.time.Instant.parse(pending.expiresAt()).isBefore(java.time.Instant.now())) {
+            return "";
+        }
+        if (pending.error() != null && !pending.error().isBlank()) {
+            return "";
+        }
+        if (pending.authorizationCode() != null && !pending.authorizationCode().isBlank()) {
+            return "Mail sign-in complete";
+        }
+        return "Complete browser sign-in at " + pending.authorizationUrl()
+                + " and wait for the callback, then press e in the mail panel.";
+    }
+
+    private static String pendingDeviceMessage(OAuthTokenRecord record) {
+        if (record == null || record.pendingDeviceAuthorization() == null) {
+            return "";
+        }
+        var pending = record.pendingDeviceAuthorization();
+        if (pending.expiresAt() == null || pending.expiresAt().isBlank()) {
+            return "";
+        }
+        if (java.time.Instant.parse(pending.expiresAt()).isBefore(java.time.Instant.now())) {
+            return "";
+        }
+        if (pending.message() != null && !pending.message().isBlank()) {
+            return pending.message() + " Then press e in the mail panel.";
+        }
+        String uri = pending.verificationUriComplete() != null && !pending.verificationUriComplete().isBlank()
+                ? pending.verificationUriComplete()
+                : pending.verificationUri();
+        if (uri == null || uri.isBlank() || pending.userCode() == null || pending.userCode().isBlank()) {
+            return "";
+        }
+        return "Authorize mail at " + uri + " with code " + pending.userCode()
+                + ", then press e in the mail panel.";
     }
 
     private MailMessageDetail loadThreadMessage(long threadId) {

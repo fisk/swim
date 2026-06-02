@@ -123,7 +123,7 @@ class ExchangeEwsMailSyncAdapterTest {
         assertTrue(batch.success());
         assertEquals(2, batch.messages().size());
         assertEquals("2 messages", batch.statusMessage());
-        assertEquals("subject:quarterly review|boss@example.com|me", batch.messages().get(0).threadKey());
+        assertEquals("message-id:<message-1@example.com>", batch.messages().get(0).threadKey());
         assertEquals(batch.messages().get(0).threadKey(), batch.messages().get(1).threadKey());
         assertTrue(batch.messages().get(0).unread());
         assertFalse(batch.messages().get(1).unread());
