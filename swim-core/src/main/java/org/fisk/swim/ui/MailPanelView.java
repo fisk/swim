@@ -1005,8 +1005,8 @@ public class MailPanelView extends View {
 
     private void rebuildSidebarRows() {
         var rows = new ArrayList<SidebarRow>();
-        rows.add(new SidebarRow(SidebarKind.ALL, "", "All Mail"));
         rows.add(new SidebarRow(SidebarKind.UNSORTED, "unsorted", "#unsorted"));
+        rows.add(new SidebarRow(SidebarKind.ALL, "all", "#all"));
         for (var account : _snapshot.accounts()) {
             rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.name()));
         }
@@ -1344,7 +1344,7 @@ public class MailPanelView extends View {
 
     private String formatSidebarRow(SidebarRow row, int width) {
         String label = switch (row.kind()) {
-        case ALL -> "All Mail";
+        case ALL -> row.label();
         case UNSORTED -> row.label();
         case ACCOUNT -> row.label();
         case TAG -> row.label();

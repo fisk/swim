@@ -637,7 +637,7 @@ class MailPanelViewTest {
     }
 
     @Test
-    void selectingUnsortedInSidebarFiltersToUntaggedThreads() throws Exception {
+    void constructorDefaultsToUnsortedAndSidebarCanSwitchToAll() throws Exception {
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
             @Override
@@ -670,7 +670,7 @@ class MailPanelViewTest {
         });
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (!Long.valueOf(1L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+        while (!Long.valueOf(2L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
 
@@ -678,12 +678,12 @@ class MailPanelViewTest {
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.down());
 
         deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (!Long.valueOf(2L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+        while (!Long.valueOf(1L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
             Thread.sleep(10);
         }
 
         assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
-        assertEquals(2L, lastLoadedThread.get());
+        assertEquals(1L, lastLoadedThread.get());
     }
 
     @Test
@@ -724,6 +724,9 @@ class MailPanelViewTest {
                 return Path.of("/tmp/mail");
             }
         });
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.left());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.down());
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!Long.valueOf(11L).equals(markedRead.get()) && System.nanoTime() < deadline) {
