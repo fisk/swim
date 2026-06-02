@@ -199,6 +199,66 @@ class WindowTest {
     }
 
     @Test
+    void successfulMailSendReturnsFocusToMailList() throws Exception {
+        Path path = tempDir.resolve("mail-send-focus.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            assertTrue(window.showMailWorkspace(new MailClient() {
+                @Override
+                public MailSnapshot snapshot() {
+                    return new MailSnapshot(
+                            java.util.List.of(new org.fisk.swim.mail.MailAccountSummary("work", "Work", "IMAP", 1, 0, "", "")),
+                            java.util.List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                    "snippet", "2026-05-15T10:00:00Z", true, 1, java.util.List.of())),
+                            "");
+                }
+
+                @Override
+                public MailMessageDetail loadMessage(long threadId) {
+                    return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                            "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+                }
+
+                @Override
+                public org.fisk.swim.mail.MailSendResult sendDraft(org.fisk.swim.mail.MailDraft draft) {
+                    return org.fisk.swim.mail.MailSendResult.success("sent");
+                }
+
+                @Override
+                public void refresh() {
+                }
+
+                @Override
+                public Path getDataPath() {
+                    return tempDir.resolve(".swim/email");
+                }
+            }));
+
+            var mailView = assertInstanceOf(MailPanelView.class, ((SplitView) HeadlessWindowHarness.getField(window, "_workspaceView"))
+                    .getFirstView());
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('c'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('@'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('b'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('.'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('c'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('o'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.key('m'));
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.ctrl('s'));
+
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (!(window.getActiveView() instanceof MailPanelView) && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+
+            assertInstanceOf(MailPanelView.class, window.getActiveView());
+            assertSame(window.getNormalMode(), window.getCurrentMode());
+        }
+    }
+
+    @Test
     void typingCommandPrefixUpdatesPopupMatches() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();

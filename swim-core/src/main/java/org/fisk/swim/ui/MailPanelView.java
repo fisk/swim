@@ -643,7 +643,9 @@ public class MailPanelView extends View {
                 _statusMessage = result.message();
                 if (result.success()) {
                     _mode = Mode.BROWSE;
+                    _browsePane = BrowsePane.THREADS;
                     reload();
+                    focusThreadList();
                     if (!_refreshInFlight.get()) {
                         refreshClientAsync(result.message());
                     } else {
@@ -656,6 +658,15 @@ public class MailPanelView extends View {
         }, "mail-send");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private void focusThreadList() {
+        Window window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        window.activateView(this);
+        window.switchToMode(window.getNormalMode());
     }
 
     private void cancelCompose() {
