@@ -1,6 +1,7 @@
 package org.fisk.swim.plugins.email;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.mail.MailDraft;
+import org.fisk.swim.mail.MailThreadFilter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -185,6 +187,61 @@ class H2MailClientTest {
                     (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
                     false)) {
                 assertEquals(List.of("zeta", "alpha", "beta"), client.loadTagNames());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void tagThreadQueryFilterUsesSqlPredicateForRecipientRules() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    {
+                      "rules": [
+                        {
+                          "tag": "hotspot-dev",
+                          "field": "recipient",
+                          "contains": "hotspot-dev@openjdk.org",
+                          "match": "exact"
+                        }
+                      ]
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                var method = MailDb.class.getDeclaredMethod("threadQueryFilter", java.sql.Connection.class, MailThreadFilter.class);
+                method.setAccessible(true);
+                Object filter = method.invoke(null, connection, MailThreadFilter.tag("hotspot-dev"));
+                var predicateMethod = filter.getClass().getDeclaredMethod("predicateSql");
+                predicateMethod.setAccessible(true);
+                String predicateSql = (String) predicateMethod.invoke(filter);
+
+                assertFalse(predicateSql.contains("t.id in ("));
+                assertTrue(predicateSql.contains("message_recipients"));
             }
         } finally {
             System.setProperty("user.home", originalUserHome);

@@ -1020,7 +1020,7 @@ public class MailPanelView extends View {
         rows.add(new SidebarRow(SidebarKind.UNSORTED, "unsorted", "#unsorted"));
         rows.add(new SidebarRow(SidebarKind.ALL, "all", "#all"));
         for (var account : _snapshot.accounts()) {
-            rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.name()));
+            rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.id()));
         }
         for (String tag : _availableTags) {
             rows.add(new SidebarRow(SidebarKind.TAG, tag, "#" + tag));

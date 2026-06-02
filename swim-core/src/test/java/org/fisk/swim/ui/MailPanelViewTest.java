@@ -778,6 +778,46 @@ class MailPanelViewTest {
     }
 
     @Test
+    void sidebarShowsAccountIdentifiersInsteadOfDisplayNames() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(
+                                new MailAccountSummary("oracle", "Erik Oesterlund", "IMAP", 1, 1, "", ""),
+                                new MailAccountSummary("outlook", "Erik Oesterlund", "IMAP", 1, 0, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "oracle", "Oracle thread", "Boss", "snippet",
+                                        "2026-05-13T08:00:00Z", true, 1, List.of()),
+                                new MailThreadSummary(2L, "outlook", "Outlook thread", "Friend", "snippet",
+                                        "2026-05-12T08:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "sender@example.com",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        @SuppressWarnings("unchecked")
+        List<Object> rows = (List<Object>) HeadlessWindowHarness.getField(panel, "_sidebarRows");
+
+        assertEquals("oracle", HeadlessWindowHarness.getField(rows.get(2), "label", String.class));
+        assertEquals("outlook", HeadlessWindowHarness.getField(rows.get(3), "label", String.class));
+    }
+
+    @Test
     void constructorDefaultsToUnsortedAndSidebarCanSwitchToAll() throws Exception {
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {

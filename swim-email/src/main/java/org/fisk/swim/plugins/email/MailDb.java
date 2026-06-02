@@ -1954,15 +1954,84 @@ final class MailDb {
         if (rules.isEmpty()) {
             return new ThreadQueryFilter("1 = 0", List.of());
         }
-        var threadIds = new LinkedHashSet<Long>();
+        var tokenThreadIds = new LinkedHashSet<Long>();
+        var nonTokenRules = new ArrayList<StoredTagRule>();
         for (StoredTagRule rule : rules) {
-            threadIds.addAll(matchingThreadIdsForRule(connection, rule));
+            if ("token".equals(rule.match())) {
+                tokenThreadIds.addAll(matchingThreadIdsForRule(connection, rule));
+            } else {
+                nonTokenRules.add(rule);
+            }
         }
-        if (threadIds.isEmpty()) {
+        var clauses = new ArrayList<String>();
+        var params = new ArrayList<Object>();
+        if (!nonTokenRules.isEmpty()) {
+            var rulePredicates = new ArrayList<String>();
+            for (StoredTagRule rule : nonTokenRules) {
+                rulePredicates.add(tagRuleMatchesMessagePredicate("tm", rule, params));
+            }
+            clauses.add("""
+                    exists (
+                        select 1
+                        from messages tm
+                        where tm.thread_id = t.id
+                          and (
+                              %s
+                          )
+                    )
+                    """.formatted(String.join("\n                              or ", rulePredicates)));
+        }
+        if (!tokenThreadIds.isEmpty()) {
+            String placeholders = String.join(", ", java.util.Collections.nCopies(tokenThreadIds.size(), "?"));
+            clauses.add("t.id in (" + placeholders + ")");
+            params.addAll(tokenThreadIds);
+        }
+        if (clauses.isEmpty()) {
             return new ThreadQueryFilter("1 = 0", List.of());
         }
-        String placeholders = String.join(", ", java.util.Collections.nCopies(threadIds.size(), "?"));
-        return new ThreadQueryFilter("t.id in (" + placeholders + ")", new ArrayList<>(threadIds));
+        if (clauses.size() == 1) {
+            return new ThreadQueryFilter(clauses.getFirst(), params);
+        }
+        return new ThreadQueryFilter("(\n" + String.join("\n or ", clauses) + "\n)", params);
+    }
+
+    private static String tagRuleMatchesMessagePredicate(String messageAlias, StoredTagRule rule, List<Object> params) {
+        if ("recipient".equals(rule.field())) {
+            String predicate = switch (rule.match()) {
+            case "exact" -> "mr.recipient_email_lc = ?";
+            case "prefix" -> "mr.recipient_email_lc like ?";
+            default -> "mr.recipient_email_lc like ?";
+            };
+            params.add(switch (rule.match()) {
+            case "exact" -> rule.contains().toLowerCase(java.util.Locale.ROOT);
+            case "prefix" -> rule.contains().toLowerCase(java.util.Locale.ROOT) + "%";
+            default -> "%" + rule.contains().toLowerCase(java.util.Locale.ROOT) + "%";
+            });
+            return """
+                    exists (
+                        select 1
+                        from message_recipients mr
+                        where mr.message_id = %s.id
+                          and %s
+                    )
+                    """.formatted(messageAlias, predicate);
+        }
+        String column = switch (rule.field()) {
+        case "subject" -> "subject";
+        case "body" -> "body_text";
+        default -> "from_email";
+        };
+        String predicate = switch (rule.match()) {
+        case "exact" -> "lower(coalesce(" + messageAlias + "." + column + ", '')) = ?";
+        case "prefix" -> "lower(coalesce(" + messageAlias + "." + column + ", '')) like ?";
+        default -> "lower(coalesce(" + messageAlias + "." + column + ", '')) like ?";
+        };
+        params.add(switch (rule.match()) {
+        case "exact" -> rule.contains().toLowerCase(java.util.Locale.ROOT);
+        case "prefix" -> rule.contains().toLowerCase(java.util.Locale.ROOT) + "%";
+        default -> "%" + rule.contains().toLowerCase(java.util.Locale.ROOT) + "%";
+        });
+        return predicate;
     }
 
     private static String threadSearchPredicate(String threadAlias, boolean includeTagMatch) {
