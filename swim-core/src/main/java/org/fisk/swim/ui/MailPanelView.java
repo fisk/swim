@@ -15,6 +15,7 @@ import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadFilter;
 import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.event.RunnableEvent;
@@ -807,13 +808,7 @@ public class MailPanelView extends View {
         _sidebarSelection = Math.max(0, Math.min(index, _sidebarRows.size() - 1));
         _selectedIndex = 0;
         _threadScrollOffset = 0;
-        ensureRowsLoadedThrough(0);
-        if (visibleThreadRows().isEmpty()) {
-            _selectedMessage = null;
-            updateMessageBuffer();
-        } else {
-            loadSelectedMessage();
-        }
+        reloadThreads();
         setNeedsRedraw();
     }
 
@@ -980,7 +975,7 @@ public class MailPanelView extends View {
     }
 
     private boolean appendThreadPage() {
-        MailThreadPage page = _client.loadThreads(_searchQuery, _threads.size(), THREAD_PAGE_SIZE);
+        MailThreadPage page = _client.loadThreads(_searchQuery, _threads.size(), THREAD_PAGE_SIZE, activeThreadFilter());
         _totalThreadCount = page.totalCount();
         if (page.threads().isEmpty()) {
             return false;
@@ -1033,10 +1028,23 @@ public class MailPanelView extends View {
         return rows;
     }
 
+    private MailThreadFilter activeThreadFilter() {
+        SidebarRow filter = _sidebarRows.isEmpty() ? null : _sidebarRows.get(Math.max(0, Math.min(_sidebarSelection, _sidebarRows.size() - 1)));
+        if (filter == null) {
+            return MailThreadFilter.all();
+        }
+        return switch (filter.kind()) {
+        case ALL -> MailThreadFilter.all();
+        case UNSORTED -> MailThreadFilter.unsorted();
+        case ACCOUNT -> MailThreadFilter.account(filter.value());
+        case TAG -> MailThreadFilter.tag(filter.value());
+        };
+    }
+
     private boolean matchesFilter(MailThreadSummary thread, SidebarRow filter) {
         return switch (filter.kind()) {
         case ALL -> true;
-        case UNSORTED -> thread.tags().isEmpty();
+        case UNSORTED -> thread.tags().isEmpty() || thread.addressedToAccount();
         case ACCOUNT -> filter.value().equals(thread.accountId());
         case TAG -> thread.tags().contains(filter.value());
         };
@@ -1128,11 +1136,12 @@ public class MailPanelView extends View {
         long threadId = row.thread().threadId();
         String accountId = row.thread().accountId();
         List<String> tags = row.thread().tags();
+        boolean addressedToAccount = row.thread().addressedToAccount();
         boolean wasUnread = row.message().unread() || row.thread().unread();
         Thread worker = new Thread(() -> {
             _client.markMessageRead(messageId);
             var eventThread = EventThread.getInstance();
-            Runnable apply = () -> applyLocalReadState(threadId, messageId, accountId, tags, wasUnread);
+            Runnable apply = () -> applyLocalReadState(threadId, messageId, accountId, tags, addressedToAccount, wasUnread);
             if (eventThread.isAlive()) {
                 eventThread.enqueue(new RunnableEvent(apply));
             } else {
@@ -1143,7 +1152,13 @@ public class MailPanelView extends View {
         worker.start();
     }
 
-    private void applyLocalReadState(long threadId, long messageId, String accountId, List<String> tags, boolean wasUnread) {
+    private void applyLocalReadState(
+            long threadId,
+            long messageId,
+            String accountId,
+            List<String> tags,
+            boolean addressedToAccount,
+            boolean wasUnread) {
         boolean changed = false;
         var updatedRows = new ArrayList<ThreadRow>(_threadRows.size());
         var threadUnread = new HashMap<Long, Boolean>();
@@ -1180,7 +1195,8 @@ public class MailPanelView extends View {
                     thread.receivedAt(),
                     unread,
                     thread.messageCount(),
-                    thread.tags()));
+                    thread.tags(),
+                    thread.addressedToAccount()));
         }
         _threads = List.copyOf(updatedThreads);
         var finalRows = new ArrayList<ThreadRow>(updatedRows.size());
@@ -1194,7 +1210,7 @@ public class MailPanelView extends View {
         _threadRows = List.copyOf(finalRows);
         _allUnreadCount = Math.max(0, _allUnreadCount - 1);
         _tagUnreadCounts = decrementTagUnreadCounts(_tagUnreadCounts, tags);
-        if (tags.isEmpty()) {
+        if (tags.isEmpty() || addressedToAccount) {
             _unsortedUnreadCount = Math.max(0, _unsortedUnreadCount - 1);
         }
         _snapshot = new MailSnapshot(adjustAccountUnreadCounts(_snapshot.accounts(), accountId),

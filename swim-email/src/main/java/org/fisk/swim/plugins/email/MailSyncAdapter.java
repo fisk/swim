@@ -5,6 +5,10 @@ import java.util.List;
 interface MailSyncAdapter {
     MailSyncBatch fetch(EmailAccountConfig account) throws Exception;
 
+    default MailSyncBatch fetch(EmailAccountConfig account, AccountSyncState syncState) throws Exception {
+        return fetch(account);
+    }
+
     default boolean hasMore() {
         return false;
     }

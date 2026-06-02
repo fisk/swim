@@ -24,6 +24,7 @@ import jakarta.mail.Multipart;
 import jakarta.mail.Part;
 import jakarta.mail.Session;
 import jakarta.mail.Store;
+import jakarta.mail.UIDFolder;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.search.HeaderTerm;
@@ -49,6 +50,16 @@ final class JakartaMailSupport {
     static MailSyncBatch fetchImapRange(EmailAccountConfig account, int endIndexInclusive) throws Exception {
         return fetch(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
                 endIndexInclusive);
+    }
+
+    static MailSyncBatch fetchImapSinceUid(EmailAccountConfig account, long lastSeenUid) throws Exception {
+        return fetchSinceUid(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
+                lastSeenUid);
+    }
+
+    static MailSyncBatch fetchImapOlderThanUid(EmailAccountConfig account, long nextBackfillUidInclusive) throws Exception {
+        return fetchOlderThanUid(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
+                nextBackfillUidInclusive);
     }
 
     static MailSyncBatch fetchPop3Range(EmailAccountConfig account, int endIndexInclusive) throws Exception {
@@ -116,13 +127,161 @@ final class JakartaMailSupport {
                 fetchProfile.add("Message-ID");
                 fetchProfile.add("In-Reply-To");
                 fetchProfile.add("References");
+                if (folder instanceof UIDFolder) {
+                    fetchProfile.add(UIDFolder.FetchProfileItem.UID);
+                }
                 folder.fetch(messages, fetchProfile);
                 List<ImportedMailMessage> imported = new ArrayList<>();
                 for (Message message : messages) {
-                    imported.add(toImportedMessage(account, folderName, message));
+                    long uid = folder instanceof UIDFolder uidFolder ? uidFolder.getUID(message) : 0L;
+                    imported.add(toImportedMessage(account, folderName, message, uid));
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
-                return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start), count, start, safeEnd);
+                long highWatermarkUid = imported.stream().mapToLong(ImportedMailMessage::serverUid).max().orElse(0L);
+                long nextBackfillUid = nextBackfillUid(imported);
+                return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start), count, start, safeEnd,
+                        highWatermarkUid, nextBackfillUid);
+            } finally {
+                if (folder.isOpen()) {
+                    folder.close(false);
+                }
+            }
+        } finally {
+            store.close();
+        }
+    }
+
+    private static MailSyncBatch fetchSinceUid(
+            EmailAccountConfig account,
+            String storeProtocol,
+            Properties properties,
+            String folderName,
+            long lastSeenUid) throws Exception {
+        if (lastSeenUid <= 0L) {
+            return fetch(account, storeProtocol, properties, folderName, Integer.MAX_VALUE);
+        }
+        if (account.host() == null || account.host().isBlank()) {
+            return MailSyncBatch.failure("Missing host");
+        }
+        if (account.username() == null || account.username().isBlank()) {
+            return MailSyncBatch.failure("Missing username");
+        }
+        String password;
+        if (account.usesOAuth2()) {
+            MicrosoftOAuth2Client.AcquireResult tokenResult = new MicrosoftOAuth2Client(EmailPaths.fromUserHome())
+                    .acquireToken(account, storeProtocol);
+            if (!tokenResult.hasToken()) {
+                return MailSyncBatch.failure(tokenResult.statusMessage());
+            }
+            configureOAuth2(properties, storeProtocol);
+            password = tokenResult.accessToken();
+        } else {
+            password = resolvePassword(account);
+            if (password == null) {
+                return MailSyncBatch.failure("Missing password env '" + account.passwordEnv() + "'");
+            }
+        }
+        Session session = Session.getInstance(properties);
+        Store store = session.getStore(storeProtocol);
+        try {
+            connectStore(store, account, password);
+            Folder folder = store.getFolder(folderName);
+            try {
+                if (folder == null || !folder.exists()) {
+                    return MailSyncBatch.failure("Folder '" + folderName + "' not found");
+                }
+                folder.open(Folder.READ_ONLY);
+                if (!(folder instanceof UIDFolder uidFolder)) {
+                    return fetch(account, storeProtocol, properties, folderName, Integer.MAX_VALUE);
+                }
+                int count = folder.getMessageCount();
+                Message[] messages = uidFolder.getMessagesByUID(lastSeenUid + 1L, UIDFolder.LASTUID);
+                if (messages == null || messages.length == 0) {
+                    return MailSyncBatch.success(List.of(), incrementalSyncStatus(0), count, 0, 0, lastSeenUid, 0L);
+                }
+                FetchProfile fetchProfile = new FetchProfile();
+                fetchProfile.add(FetchProfile.Item.ENVELOPE);
+                fetchProfile.add(FetchProfile.Item.FLAGS);
+                fetchProfile.add("Message-ID");
+                fetchProfile.add("In-Reply-To");
+                fetchProfile.add("References");
+                fetchProfile.add(UIDFolder.FetchProfileItem.UID);
+                folder.fetch(messages, fetchProfile);
+                List<ImportedMailMessage> imported = new ArrayList<>();
+                long highWatermarkUid = lastSeenUid;
+                for (Message message : messages) {
+                    long uid = uidFolder.getUID(message);
+                    highWatermarkUid = Math.max(highWatermarkUid, uid);
+                    imported.add(toImportedMessage(account, folderName, message, uid));
+                }
+                imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
+                return MailSyncBatch.success(imported, incrementalSyncStatus(imported.size()), count, 0, 0, highWatermarkUid,
+                        0L);
+            } finally {
+                if (folder.isOpen()) {
+                    folder.close(false);
+                }
+            }
+        } finally {
+            store.close();
+        }
+    }
+
+    private static MailSyncBatch fetchOlderThanUid(
+            EmailAccountConfig account,
+            String storeProtocol,
+            Properties properties,
+            String folderName,
+            long nextBackfillUidInclusive) throws Exception {
+        if (nextBackfillUidInclusive <= 0L) {
+            return MailSyncBatch.success(List.of(), "");
+        }
+        if (account.host() == null || account.host().isBlank()) {
+            return MailSyncBatch.failure("Missing host");
+        }
+        if (account.username() == null || account.username().isBlank()) {
+            return MailSyncBatch.failure("Missing username");
+        }
+        String password = resolveSecret(account, storeProtocol, properties);
+        Session session = Session.getInstance(properties);
+        Store store = session.getStore(storeProtocol);
+        try {
+            connectStore(store, account, password);
+            Folder folder = store.getFolder(folderName);
+            try {
+                if (folder == null || !folder.exists()) {
+                    return MailSyncBatch.failure("Folder '" + folderName + "' not found");
+                }
+                folder.open(Folder.READ_ONLY);
+                if (!(folder instanceof UIDFolder uidFolder)) {
+                    return MailSyncBatch.success(List.of(), "");
+                }
+                long startUid = Math.max(1L, nextBackfillUidInclusive - DEFAULT_MAX_MESSAGES_PER_SYNC + 1L);
+                int count = folder.getMessageCount();
+                Message[] messages = uidFolder.getMessagesByUID(startUid, nextBackfillUidInclusive);
+                if (messages == null || messages.length == 0) {
+                    return MailSyncBatch.success(List.of(), backgroundSyncStatus(0, count), count, 0, 0, 0L, 0L);
+                }
+                FetchProfile fetchProfile = new FetchProfile();
+                fetchProfile.add(FetchProfile.Item.ENVELOPE);
+                fetchProfile.add(FetchProfile.Item.FLAGS);
+                fetchProfile.add("Message-ID");
+                fetchProfile.add("In-Reply-To");
+                fetchProfile.add("References");
+                fetchProfile.add(UIDFolder.FetchProfileItem.UID);
+                folder.fetch(messages, fetchProfile);
+                List<ImportedMailMessage> imported = new ArrayList<>();
+                for (Message message : messages) {
+                    long uid = uidFolder.getUID(message);
+                    if (uid <= 0L || uid > nextBackfillUidInclusive) {
+                        continue;
+                    }
+                    imported.add(toImportedMessage(account, folderName, message, uid));
+                }
+                imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
+                long nextBackfillUid = nextBackfillUid(imported);
+                return MailSyncBatch.success(imported, backgroundSyncStatus(imported.size(), count), count, 0, 0, 0L,
+                        nextBackfillUid);
             } finally {
                 if (folder.isOpen()) {
                     folder.close(false);
@@ -266,7 +425,8 @@ final class JakartaMailSupport {
     private static ImportedMailMessage toImportedMessage(
             EmailAccountConfig account,
             String folderName,
-            Message message) throws MessagingException, IOException {
+            Message message,
+            long serverUid) throws MessagingException, IOException {
         Address fromAddress = firstAddress(message.getFrom());
         String fromName = displayName(fromAddress);
         String fromEmail = email(fromAddress);
@@ -290,7 +450,8 @@ final class JakartaMailSupport {
                 toInstant(message.getReceivedDate()),
                 snippet,
                 bodyText,
-                !message.isSet(Flags.Flag.SEEN));
+                !message.isSet(Flags.Flag.SEEN),
+                serverUid);
     }
 
     private static String threadKey(Message message, String subject, String fromEmail, String toSummary)
@@ -341,6 +502,25 @@ final class JakartaMailSupport {
             return loadedMessages + " messages";
         }
         return "Cached " + loadedMessages + " of " + totalMessages + " messages";
+    }
+
+    static String incrementalSyncStatus(int importedMessages) {
+        if (importedMessages <= 0) {
+            return "Up to date";
+        }
+        if (importedMessages == 1) {
+            return "1 new message";
+        }
+        return importedMessages + " new messages";
+    }
+
+    private static long nextBackfillUid(List<ImportedMailMessage> imported) {
+        long oldestFetchedUid = imported.stream()
+                .mapToLong(ImportedMailMessage::serverUid)
+                .filter(uid -> uid > 0L)
+                .min()
+                .orElse(0L);
+        return oldestFetchedUid > 1L ? oldestFetchedUid - 1L : 0L;
     }
 
     private static String extractText(Part part) throws MessagingException, IOException {

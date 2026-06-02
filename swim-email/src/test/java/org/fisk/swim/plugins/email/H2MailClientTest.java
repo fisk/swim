@@ -378,6 +378,62 @@ class H2MailClientTest {
     }
 
     @Test
+    void unsortedIncludesTaggedMessagesAddressedDirectlyToAccount() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    {
+                      "rules": [
+                        {
+                          "tag": "hotspot-dev",
+                          "field": "recipient",
+                          "contains": "hotspot-dev@openjdk.org",
+                          "match": "exact"
+                        }
+                      ]
+                    }
+                    """);
+
+            MailSyncAdapterFactory factory = account -> ignored -> MailSyncBatch.success(List.of(
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<m1@example.com>", "thread:list",
+                            "List mail", "Boss", "boss@example.com", "me@example.com, hotspot-dev@openjdk.org",
+                            List.of(
+                                    new ImportedMailRecipient("TO", "me@example.com", "me@example.com"),
+                                    new ImportedMailRecipient("CC", "hotspot-dev@openjdk.org", "hotspot-dev@openjdk.org")),
+                            "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                            "Please review", "Please review", true)), "1 messages");
+
+            try (var client = new H2MailClient(paths, factory)) {
+                var thread = client.snapshot().threads().getFirst();
+                assertTrue(thread.tags().contains("hotspot-dev"));
+                assertTrue(thread.addressedToAccount());
+                assertEquals(1, client.loadUnsortedUnreadCount());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void messagesWithSameSubjectButNoReplyHeadersStayInSeparateThreads() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());
@@ -643,6 +699,178 @@ class H2MailClientTest {
                 assertTrue(firstLoad.bodyText().contains("Hydrated body for <m1@example.com>"));
                 assertTrue(secondLoad.bodyText().contains("Hydrated body for <m1@example.com>"));
                 assertEquals(1, bodyLoads.get());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void refreshPassesStoredCompletedSyncStateAndPersistsUidHighWatermark() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD",
+                          "folder": "INBOX"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            AtomicReference<AccountSyncState> seenSyncState = new AtomicReference<>();
+            AtomicInteger fetchNextCalls = new AtomicInteger();
+            MailSyncAdapterFactory factory = account -> new MailSyncAdapter() {
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored) {
+                    throw new AssertionError("Expected refresh to use stored sync state");
+                }
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored, AccountSyncState syncState) {
+                    seenSyncState.set(syncState);
+                    return MailSyncBatch.success(List.of(), "Up to date", 0, 0, 0, 987L, 0L);
+                }
+
+                @Override
+                public boolean hasMore() {
+                    return false;
+                }
+
+                @Override
+                public MailSyncBatch fetchNext(EmailAccountConfig ignored) {
+                    fetchNextCalls.incrementAndGet();
+                    return MailSyncBatch.success(List.of(), "");
+                }
+            };
+
+            try (var client = new H2MailClient(paths, factory,
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                MailDb.recordAccountSyncState(connection, "work", "2026-05-15T08:00:00Z", "250 messages", true, 123L, 0L);
+
+                client.refresh();
+
+                assertEquals("work", seenSyncState.get().accountId());
+                assertEquals("2026-05-15T08:00:00Z", seenSyncState.get().lastSyncAt());
+                assertTrue(seenSyncState.get().backfillComplete());
+                assertEquals(123L, seenSyncState.get().lastSeenUid());
+                assertEquals(0L, seenSyncState.get().nextBackfillUid());
+                assertEquals(0, fetchNextCalls.get());
+
+                AccountSyncState storedState = MailDb.loadAccountSyncStates(connection).get("work");
+                assertEquals(987L, storedState.lastSeenUid());
+                assertTrue(storedState.backfillComplete());
+                assertEquals(0L, storedState.nextBackfillUid());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void refreshResumesStoredBackfillCursorAcrossRestart() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD",
+                          "folder": "INBOX"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            AtomicReference<AccountSyncState> seenSyncState = new AtomicReference<>();
+            AtomicInteger fetchNextCalls = new AtomicInteger();
+            CountDownLatch backfillFinished = new CountDownLatch(1);
+            MailSyncAdapterFactory factory = account -> new MailSyncAdapter() {
+                private long nextBackfillUid;
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored) {
+                    throw new AssertionError("Expected refresh to pass stored sync state");
+                }
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored, AccountSyncState syncState) {
+                    seenSyncState.set(syncState);
+                    nextBackfillUid = syncState.nextBackfillUid();
+                    return MailSyncBatch.success(List.of(), "Up to date", 0, 0, 0, 456L, nextBackfillUid);
+                }
+
+                @Override
+                public boolean hasMore() {
+                    return nextBackfillUid > 0L;
+                }
+
+                @Override
+                public MailSyncBatch fetchNext(EmailAccountConfig ignored) {
+                    int call = fetchNextCalls.incrementAndGet();
+                    if (call == 1) {
+                        nextBackfillUid = 40L;
+                        return MailSyncBatch.success(List.of(), "", 0, 0, 0, 0L, nextBackfillUid);
+                    }
+                    nextBackfillUid = 0L;
+                    backfillFinished.countDown();
+                    return MailSyncBatch.success(List.of(), "", 0, 0, 0, 0L, 0L);
+                }
+            };
+
+            try (var client = new H2MailClient(paths, factory,
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                MailDb.recordAccountSyncState(connection, "work", "2026-05-15T08:00:00Z", "Cached 250 of 500 messages", false,
+                        123L, 88L);
+
+                client.refresh();
+
+                assertEquals("work", seenSyncState.get().accountId());
+                assertTrue(!seenSyncState.get().backfillComplete());
+                assertEquals(123L, seenSyncState.get().lastSeenUid());
+                assertEquals(88L, seenSyncState.get().nextBackfillUid());
+                assertTrue(backfillFinished.await(2, TimeUnit.SECONDS));
+                assertEquals(2, fetchNextCalls.get());
+
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                AccountSyncState storedState = MailDb.loadAccountSyncStates(connection).get("work");
+                while ((storedState == null || !storedState.backfillComplete()) && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                    storedState = MailDb.loadAccountSyncStates(connection).get("work");
+                }
+                assertEquals(456L, storedState.lastSeenUid());
+                assertTrue(storedState.backfillComplete());
+                assertEquals(0L, storedState.nextBackfillUid());
             }
         } finally {
             System.setProperty("user.home", originalUserHome);

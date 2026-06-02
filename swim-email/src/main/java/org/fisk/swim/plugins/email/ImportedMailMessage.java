@@ -14,9 +14,30 @@ record ImportedMailMessage(
         String receivedAt,
         String snippet,
         String bodyText,
-        boolean unread) {
+        boolean unread,
+        long serverUid) {
     ImportedMailMessage {
         recipients = recipients == null ? java.util.List.of() : java.util.List.copyOf(recipients);
+        serverUid = Math.max(0L, serverUid);
+    }
+
+    ImportedMailMessage(
+            String accountId,
+            String folderName,
+            String internetMessageId,
+            String threadKey,
+            String subject,
+            String fromName,
+            String fromEmail,
+            String toSummary,
+            java.util.List<ImportedMailRecipient> recipients,
+            String sentAt,
+            String receivedAt,
+            String snippet,
+            String bodyText,
+            boolean unread) {
+        this(accountId, folderName, internetMessageId, threadKey, subject, fromName, fromEmail, toSummary, recipients, sentAt,
+                receivedAt, snippet, bodyText, unread, 0L);
     }
 
     String effectiveTimestamp() {

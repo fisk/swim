@@ -18,6 +18,7 @@ import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailMessageSummary;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailSendResult;
+import org.fisk.swim.mail.MailThreadFilter;
 import org.fisk.swim.mail.MailThreadPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,9 +97,14 @@ final class H2MailClient implements MailClient {
 
     @Override
     public MailThreadPage loadThreads(String query, int offset, int limit) {
+        return loadThreads(query, offset, limit, MailThreadFilter.all());
+    }
+
+    @Override
+    public MailThreadPage loadThreads(String query, int offset, int limit, MailThreadFilter filter) {
         synchronized (_readLock) {
             try {
-                return MailDb.loadThreadPage(_readConnection, query, offset, limit);
+                return MailDb.loadThreadPage(_readConnection, query, offset, limit, filter);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail threads", e);
                 return new MailThreadPage(java.util.List.of(), 0);
@@ -194,7 +200,11 @@ final class H2MailClient implements MailClient {
         }
         long generation = _refreshGeneration.incrementAndGet();
         try {
-            MailSyncEngine.RefreshPlan plan = _syncEngine.prepare(_paths);
+            java.util.Map<String, AccountSyncState> syncStates;
+            synchronized (_readLock) {
+                syncStates = MailDb.loadAccountSyncStates(_readConnection);
+            }
+            MailSyncEngine.RefreshPlan plan = _syncEngine.prepare(_paths, syncStates);
             if (_closed) {
                 return;
             }
@@ -332,10 +342,18 @@ final class H2MailClient implements MailClient {
                         String status = adapter.hasMore()
                                 ? JakartaMailSupport.backgroundSyncStatus(cachedMessages, batch.totalMessages())
                                 : cachedMessages + " messages";
+                        AccountSyncState currentState = MailDb.loadAccountSyncStates(_writeConnection)
+                                .getOrDefault(account.normalizedId(), AccountSyncState.empty(account.normalizedId()));
                         MailDb.recordAccountSyncState(_writeConnection, account.normalizedId(), Instant.now().toString(), status,
-                                !adapter.hasMore());
+                                !adapter.hasMore(),
+                                Math.max(currentState.lastSeenUid(), batch.highWatermarkUid()),
+                                adapter.hasMore() ? batch.nextBackfillUid() : 0L);
                     } else {
-                        MailDb.recordAccountSyncState(_writeConnection, account.normalizedId(), null, batch.statusMessage(), false);
+                        AccountSyncState currentState = MailDb.loadAccountSyncStates(_writeConnection)
+                                .getOrDefault(account.normalizedId(), AccountSyncState.empty(account.normalizedId()));
+                        MailDb.recordAccountSyncState(_writeConnection, account.normalizedId(), null, batch.statusMessage(), false,
+                                currentState.lastSeenUid(),
+                                currentState.nextBackfillUid());
                     }
                     _writeConnection.commit();
                 } catch (SQLException e) {
@@ -356,7 +374,11 @@ final class H2MailClient implements MailClient {
                 return;
             }
             try {
-                MailDb.recordAccountSyncState(_writeConnection, accountId, null, "Backfill failed: " + message, false);
+                AccountSyncState currentState = MailDb.loadAccountSyncStates(_writeConnection)
+                        .getOrDefault(accountId, AccountSyncState.empty(accountId));
+                MailDb.recordAccountSyncState(_writeConnection, accountId, null, "Backfill failed: " + message, false,
+                        currentState.lastSeenUid(),
+                        currentState.nextBackfillUid());
             } catch (SQLException e) {
                 LOG.warn("Failed to record backfill failure for {}", accountId, e);
             }

@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 final class MailSyncEngine {
     private final MailSyncAdapterFactory _adapterFactory;
@@ -14,12 +15,13 @@ final class MailSyncEngine {
         _adapterFactory = adapterFactory;
     }
 
-    RefreshPlan prepare(EmailPaths paths) throws IOException {
+    RefreshPlan prepare(EmailPaths paths, Map<String, AccountSyncState> syncStates) throws IOException {
         EmailAccountsConfig accounts = EmailConfigStore.loadAccounts(paths);
         EmailTagRulesConfig rules = EmailConfigStore.loadTagRules(paths);
         var results = new ArrayList<AccountSyncResult>();
         for (EmailAccountConfig account : accounts.accounts()) {
-            results.add(fetchAccount(account));
+            AccountSyncState syncState = syncStates.getOrDefault(account.normalizedId(), AccountSyncState.empty(account.normalizedId()));
+            results.add(fetchAccount(account, syncState));
         }
         return new RefreshPlan(accounts, rules, results);
     }
@@ -38,11 +40,15 @@ final class MailSyncEngine {
                             result.batch().statusMessage().isBlank()
                                     ? result.batch().messages().size() + " messages"
                                     : result.batch().statusMessage(),
-                            !result.adapter().hasMore());
+                            !result.adapter().hasMore(),
+                            Math.max(result.syncState().lastSeenUid(), result.batch().highWatermarkUid()),
+                            result.adapter().hasMore() ? result.batch().nextBackfillUid() : 0L);
                 } else {
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), null,
                             result.batch().statusMessage(),
-                            false);
+                            false,
+                            result.syncState().lastSeenUid(),
+                            result.syncState().nextBackfillUid());
                 }
             }
             MailDb.reapplyTags(connection);
@@ -55,12 +61,12 @@ final class MailSyncEngine {
         }
     }
 
-    private AccountSyncResult fetchAccount(EmailAccountConfig account) {
+    private AccountSyncResult fetchAccount(EmailAccountConfig account, AccountSyncState syncState) {
         try {
             MailSyncAdapter adapter = _adapterFactory.create(account);
-            return new AccountSyncResult(account, adapter, adapter.fetch(account));
+            return new AccountSyncResult(account, syncState, adapter, adapter.fetch(account, syncState));
         } catch (Exception e) {
-            return new AccountSyncResult(account, _adapterFactory.create(account),
+            return new AccountSyncResult(account, syncState, _adapterFactory.create(account),
                     MailSyncBatch.failure("Sync failed: " + rootMessage(e)));
         }
     }
@@ -78,6 +84,10 @@ final class MailSyncEngine {
     record RefreshPlan(EmailAccountsConfig accounts, EmailTagRulesConfig rules, List<AccountSyncResult> results) {
     }
 
-    record AccountSyncResult(EmailAccountConfig account, MailSyncAdapter adapter, MailSyncBatch batch) {
+    record AccountSyncResult(
+            EmailAccountConfig account,
+            AccountSyncState syncState,
+            MailSyncAdapter adapter,
+            MailSyncBatch batch) {
     }
 }

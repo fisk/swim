@@ -68,8 +68,17 @@ public interface MailClient extends AutoCloseable {
     }
 
     default MailThreadPage loadThreads(String query, int offset, int limit) {
+        return loadThreads(query, offset, limit, MailThreadFilter.all());
+    }
+
+    default MailThreadPage loadThreads(String query, int offset, int limit, MailThreadFilter filter) {
         MailSnapshot snapshot = snapshot();
         List<MailThreadSummary> filtered = filterThreads(snapshot.threads(), query);
+        if (filter != null && filter.kind() != MailThreadFilter.Kind.ALL) {
+            filtered = filtered.stream()
+                    .filter(filter::matches)
+                    .toList();
+        }
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.max(0, limit);
         if (safeOffset >= filtered.size() || safeLimit == 0) {
