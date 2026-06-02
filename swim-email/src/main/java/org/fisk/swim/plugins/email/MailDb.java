@@ -29,6 +29,17 @@ final class MailDb {
     private record StoredTagRule(String tag, String field, String contains, String match) {
     }
 
+    private record ThreadQueryFilter(String predicateSql, List<Object> params) {
+        ThreadQueryFilter {
+            predicateSql = predicateSql == null ? "" : predicateSql;
+            params = params == null ? List.of() : List.copyOf(params);
+        }
+
+        static ThreadQueryFilter none() {
+            return new ThreadQueryFilter("", List.of());
+        }
+    }
+
     record StoredMessage(
             long id,
             String accountId,
@@ -387,7 +398,8 @@ final class MailDb {
         String normalizedQuery = normalizeSearchQuery(query);
         boolean includeTagMatch = hasMatchingTagName(connection, normalizedQuery);
         MailThreadFilter effectiveFilter = filter == null ? MailThreadFilter.all() : filter;
-        int totalCount = countThreads(connection, normalizedQuery, includeTagMatch, effectiveFilter);
+        ThreadQueryFilter queryFilter = threadQueryFilter(connection, effectiveFilter);
+        int totalCount = countThreads(connection, normalizedQuery, includeTagMatch, queryFilter);
         if (safeLimit == 0 || safeOffset >= totalCount) {
             return new MailThreadPage(List.of(), totalCount);
         }
@@ -399,7 +411,7 @@ final class MailDb {
                 from threads t
                 join accounts a on a.id = t.account_id
                 """.formatted(threadAddressedToAccountSql("t", "a")));
-        String whereClause = threadWhereClause("t", "a", normalizedQuery, includeTagMatch, effectiveFilter);
+        String whereClause = threadWhereClause("t", "a", normalizedQuery, includeTagMatch, queryFilter);
         if (!whereClause.isBlank()) {
             sql.append("where ").append(whereClause).append("\n");
         }
@@ -408,7 +420,7 @@ final class MailDb {
                 limit ? offset ?
                 """);
         try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
-            int index = bindThreadParameters(statement, 1, normalizedQuery, includeTagMatch, effectiveFilter);
+            int index = bindThreadParameters(statement, 1, normalizedQuery, includeTagMatch, queryFilter);
             statement.setInt(index++, safeLimit);
             statement.setInt(index, safeOffset);
             try (ResultSet resultSet = statement.executeQuery()) {
@@ -815,6 +827,31 @@ final class MailDb {
         return List.copyOf(rules);
     }
 
+    private static List<StoredTagRule> loadTagRules(Connection connection, String tagName) throws SQLException {
+        if (tagName == null || tagName.isBlank()) {
+            return List.of();
+        }
+        var rules = new ArrayList<StoredTagRule>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select tag_name, field_name, contains_value, coalesce(match_type, 'contains')
+                from tag_rules
+                where tag_name = ?
+                order by id
+                """)) {
+            statement.setString(1, tagName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    rules.add(new StoredTagRule(
+                            resultSet.getString(1),
+                            normalizeField(resultSet.getString(2)),
+                            resultSet.getString(3),
+                            normalizeMatch(resultSet.getString(4))));
+                }
+            }
+        }
+        return List.copyOf(rules);
+    }
+
     private static Map<String, Integer> aggregateNonTokenTagUnreadCounts(Connection connection) throws SQLException {
         var counts = new LinkedHashMap<String, Integer>();
         try (PreparedStatement statement = connection.prepareStatement("""
@@ -1005,6 +1042,17 @@ final class MailDb {
 
     private static List<Long> matchingThreadIdsForRule(
             Connection connection,
+            StoredTagRule rule) throws SQLException {
+        return switch (rule.match()) {
+        case "exact" -> matchingThreadIdsForColumnRule(connection, rule, "=");
+        case "prefix" -> matchingThreadIdsForColumnRule(connection, rule, "prefix");
+        case "token" -> matchingThreadIdsForTokenRule(connection, rule);
+        default -> matchingThreadIdsForColumnRule(connection, rule, "contains");
+        };
+    }
+
+    private static List<Long> matchingThreadIdsForRule(
+            Connection connection,
             List<Long> threadIds,
             StoredTagRule rule) throws SQLException {
         return switch (rule.match()) {
@@ -1013,6 +1061,45 @@ final class MailDb {
         case "token" -> matchingThreadIdsForTokenRule(connection, threadIds, rule);
         default -> matchingThreadIdsForColumnRule(connection, threadIds, rule, "contains");
         };
+    }
+
+    private static List<Long> matchingThreadIdsForColumnRule(
+            Connection connection,
+            StoredTagRule rule,
+            String mode) throws SQLException {
+        if ("recipient".equals(rule.field())) {
+            return matchingThreadIdsForRecipientRule(connection, rule, mode);
+        }
+        String column = switch (rule.field()) {
+        case "subject" -> "subject";
+        case "body" -> "body_text";
+        default -> "from_email";
+        };
+        String predicate = switch (mode) {
+        case "=" -> "lower(coalesce(" + column + ", '')) = ?";
+        case "prefix" -> "lower(coalesce(" + column + ", '')) like ?";
+        default -> "lower(coalesce(" + column + ", '')) like ?";
+        };
+        var matched = new ArrayList<Long>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select distinct thread_id
+                from messages
+                where %s
+                order by thread_id
+                """.formatted(predicate))) {
+            String normalized = rule.contains().toLowerCase(java.util.Locale.ROOT);
+            statement.setString(1, switch (mode) {
+            case "=" -> normalized;
+            case "prefix" -> normalized + "%";
+            default -> "%" + normalized + "%";
+            });
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    matched.add(resultSet.getLong(1));
+                }
+            }
+        }
+        return matched;
     }
 
     private static List<Long> matchingThreadIdsForColumnRule(
@@ -1063,6 +1150,38 @@ final class MailDb {
 
     private static List<Long> matchingThreadIdsForRecipientRule(
             Connection connection,
+            StoredTagRule rule,
+            String mode) throws SQLException {
+        String predicate = switch (mode) {
+        case "=" -> "mr.recipient_email_lc = ?";
+        case "prefix" -> "mr.recipient_email_lc like ?";
+        default -> "mr.recipient_email_lc like ?";
+        };
+        var matched = new ArrayList<Long>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select distinct m.thread_id
+                from messages m
+                join message_recipients mr on mr.message_id = m.id
+                where %s
+                order by m.thread_id
+                """.formatted(predicate))) {
+            String normalized = rule.contains().toLowerCase(java.util.Locale.ROOT);
+            statement.setString(1, switch (mode) {
+            case "=" -> normalized;
+            case "prefix" -> normalized + "%";
+            default -> "%" + normalized + "%";
+            });
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    matched.add(resultSet.getLong(1));
+                }
+            }
+        }
+        return matched;
+    }
+
+    private static List<Long> matchingThreadIdsForRecipientRule(
+            Connection connection,
             List<Long> threadIds,
             StoredTagRule rule,
             String mode) throws SQLException {
@@ -1091,6 +1210,54 @@ final class MailDb {
             case "prefix" -> normalized + "%";
             default -> "%" + normalized + "%";
             });
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    matched.add(resultSet.getLong(1));
+                }
+            }
+        }
+        return matched;
+    }
+
+    private static List<Long> matchingThreadIdsForTokenRule(
+            Connection connection,
+            StoredTagRule rule) throws SQLException {
+        if (!"subject".equals(rule.field()) && !"body".equals(rule.field())) {
+            return matchingThreadIdsForColumnRule(connection, rule, "contains");
+        }
+        var messageIds = new ArrayList<Long>();
+        try (ResultSet resultSet = FullText.searchData(connection, rule.contains(), 0, 0)) {
+            while (resultSet.next()) {
+                if (!"MESSAGES".equalsIgnoreCase(resultSet.getString("TABLE"))) {
+                    continue;
+                }
+                Object[] columns = (Object[]) resultSet.getObject("COLUMNS");
+                Object[] keys = (Object[]) resultSet.getObject("KEYS");
+                if (columns == null || keys == null) {
+                    continue;
+                }
+                for (int i = 0; i < columns.length && i < keys.length; i++) {
+                    if ("ID".equalsIgnoreCase(String.valueOf(columns[i]))) {
+                        messageIds.add(Long.parseLong(String.valueOf(keys[i])));
+                    }
+                }
+            }
+        }
+        if (messageIds.isEmpty()) {
+            return List.of();
+        }
+        String messagePlaceholders = String.join(", ", java.util.Collections.nCopies(messageIds.size(), "?"));
+        var matched = new ArrayList<Long>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select distinct thread_id
+                from messages
+                where id in (%s)
+                order by thread_id
+                """.formatted(messagePlaceholders))) {
+            int index = 1;
+            for (Long messageId : messageIds) {
+                statement.setLong(index++, messageId);
+            }
             try (ResultSet resultSet = statement.executeQuery()) {
                 while (resultSet.next()) {
                     matched.add(resultSet.getLong(1));
@@ -1716,7 +1883,7 @@ final class MailDb {
             Connection connection,
             String query,
             boolean includeTagMatch,
-            MailThreadFilter filter) throws SQLException {
+            ThreadQueryFilter filter) throws SQLException {
         StringBuilder sql = new StringBuilder("select count(*) from threads t\n");
         sql.append("join accounts a on a.id = t.account_id\n");
         String whereClause = threadWhereClause("t", "a", query, includeTagMatch, filter);
@@ -1736,33 +1903,25 @@ final class MailDb {
             String accountAlias,
             String query,
             boolean includeTagMatch,
-            MailThreadFilter filter) {
+            ThreadQueryFilter filter) {
         var clauses = new ArrayList<String>();
         if (query != null && !query.isBlank()) {
             clauses.add(threadSearchPredicate(threadAlias, includeTagMatch));
         }
-        String filterPredicate = threadFilterPredicate(threadAlias, accountAlias, filter);
+        String filterPredicate = filter == null ? "" : filter.predicateSql();
         if (!filterPredicate.isBlank()) {
             clauses.add(filterPredicate);
         }
         return String.join("\n  and ", clauses);
     }
 
-    private static String threadFilterPredicate(String threadAlias, String accountAlias, MailThreadFilter filter) {
+    private static ThreadQueryFilter threadQueryFilter(Connection connection, MailThreadFilter filter) throws SQLException {
         MailThreadFilter effectiveFilter = filter == null ? MailThreadFilter.all() : filter;
         return switch (effectiveFilter.kind()) {
-        case ALL -> "";
-        case ACCOUNT -> threadAlias + ".account_id = ?";
-        case TAG -> """
-                exists (
-                    select 1
-                    from tag_rules tr
-                    join messages tm on tm.thread_id = %1$s.id
-                    where tr.tag_name = ?
-                      and %2$s
-                )
-                """.formatted(threadAlias, nonTokenRuleMatchesMessageSql("tm"));
-        case UNSORTED -> """
+        case ALL -> ThreadQueryFilter.none();
+        case ACCOUNT -> new ThreadQueryFilter("t.account_id = ?", List.of(effectiveFilter.value()));
+        case TAG -> tagThreadQueryFilter(connection, effectiveFilter.value());
+        case UNSORTED -> new ThreadQueryFilter("""
                 (
                     %1$s
                     or not exists (
@@ -1771,7 +1930,7 @@ final class MailDb {
                         where %2$s
                     )
                 )
-                """.formatted(threadAddressedToAccountSql(threadAlias, accountAlias), threadHasAnyTagSql(threadAlias));
+                """.formatted(threadAddressedToAccountSql("t", "a"), threadHasAnyTagSql("t")), List.of());
         };
     }
 
@@ -1784,6 +1943,22 @@ final class MailDb {
                       and %2$s
                 )
                 """.formatted(threadAlias, nonTokenRuleMatchesMessageSql("tm"));
+    }
+
+    private static ThreadQueryFilter tagThreadQueryFilter(Connection connection, String tagName) throws SQLException {
+        List<StoredTagRule> rules = loadTagRules(connection, tagName);
+        if (rules.isEmpty()) {
+            return new ThreadQueryFilter("1 = 0", List.of());
+        }
+        var threadIds = new LinkedHashSet<Long>();
+        for (StoredTagRule rule : rules) {
+            threadIds.addAll(matchingThreadIdsForRule(connection, rule));
+        }
+        if (threadIds.isEmpty()) {
+            return new ThreadQueryFilter("1 = 0", List.of());
+        }
+        String placeholders = String.join(", ", java.util.Collections.nCopies(threadIds.size(), "?"));
+        return new ThreadQueryFilter("t.id in (" + placeholders + ")", new ArrayList<>(threadIds));
     }
 
     private static String threadSearchPredicate(String threadAlias, boolean includeTagMatch) {
@@ -1837,18 +2012,20 @@ final class MailDb {
             int index,
             String query,
             boolean includeTagMatch,
-            MailThreadFilter filter) throws SQLException {
+            ThreadQueryFilter filter) throws SQLException {
         if (query != null && !query.isBlank()) {
             index = bindSearchParameters(statement, index, query, includeTagMatch);
         }
-        MailThreadFilter effectiveFilter = filter == null ? MailThreadFilter.all() : filter;
-        return switch (effectiveFilter.kind()) {
-        case ALL, UNSORTED -> index;
-        case ACCOUNT, TAG -> {
-            statement.setString(index++, effectiveFilter.value());
-            yield index;
+        if (filter != null) {
+            for (Object value : filter.params()) {
+                if (value instanceof Long longValue) {
+                    statement.setLong(index++, longValue);
+                } else {
+                    statement.setString(index++, String.valueOf(value));
+                }
+            }
         }
-        };
+        return index;
     }
 
     private static int bindSearchParameters(PreparedStatement statement, int index, String query, boolean includeTagMatch)

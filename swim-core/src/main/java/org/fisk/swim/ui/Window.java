@@ -1445,8 +1445,8 @@ public class Window implements Drawable {
         BufferContext messageContext = createMailMessageContext(Rect.create(0, 0, 0, 0));
         MailPanelView mailView = new MailPanelView(Rect.create(0, 0, 0, 0), client);
         mailView.attachMessageBuffer(messageContext);
-        var split = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.HORIZONTAL,
-                mailView, messageContext.getBufferView(), 0.38);
+        var split = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.VERTICAL,
+                mailView, messageContext.getBufferView(), 0.48);
         workspace._workspaceView = split;
         workspace._activeView = mailView;
         workspace._activeBufferView = messageContext.getBufferView();
