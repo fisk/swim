@@ -86,6 +86,7 @@ public class MailPanelView extends View {
         COPY_LINK,
         MOVE_LEFT,
         MOVE_RIGHT,
+        OPEN_MESSAGE_BUFFER,
         INSERT_NEWLINE,
         BACKSPACE,
         INSERT_CHAR
@@ -213,6 +214,7 @@ public class MailPanelView extends View {
         case ArrowUp -> Action.MOVE_UP;
         case ArrowLeft -> Action.MOVE_LEFT;
         case ArrowRight -> Action.MOVE_RIGHT;
+        case Enter -> Action.OPEN_MESSAGE_BUFFER;
         case Escape -> Action.CLOSE;
         case Character -> switch (event.getCharacter()) {
         case 'j' -> Action.MOVE_DOWN;
@@ -307,6 +309,7 @@ public class MailPanelView extends View {
                 setNeedsRedraw();
             }
         }
+        case OPEN_MESSAGE_BUFFER -> focusSelectedMessageBuffer();
         case INSERT_NEWLINE -> insertComposeNewline();
         case BACKSPACE -> {
             if (_mode == Mode.COMPOSE) {
@@ -501,6 +504,18 @@ public class MailPanelView extends View {
             setMessageBufferContent("", false, true);
         }
         setNeedsRedraw();
+    }
+
+    private void focusSelectedMessageBuffer() {
+        if (_mode != Mode.BROWSE || _browsePane != BrowsePane.THREADS || _messageBufferContext == null) {
+            return;
+        }
+        Window window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        window.activateView(_messageBufferContext.getBufferView());
+        window.switchToMode(window.getNormalMode());
     }
 
     private void startReply(boolean replyAll) {
