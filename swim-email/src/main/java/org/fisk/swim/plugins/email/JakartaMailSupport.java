@@ -270,7 +270,8 @@ final class JakartaMailSupport {
         Address fromAddress = firstAddress(message.getFrom());
         String fromName = displayName(fromAddress);
         String fromEmail = email(fromAddress);
-        String toSummary = summarizeAddresses(message.getRecipients(Message.RecipientType.TO));
+        List<ImportedMailRecipient> recipients = collectRecipients(message);
+        String toSummary = summarizeRecipients(recipients);
         String subject = message.getSubject();
         String bodyText = "";
         String snippetSource = normalizeWhitespace(subject);
@@ -284,6 +285,7 @@ final class JakartaMailSupport {
                 fromName,
                 fromEmail,
                 toSummary,
+                recipients,
                 toInstant(message.getSentDate()),
                 toInstant(message.getReceivedDate()),
                 snippet,
@@ -302,10 +304,8 @@ final class JakartaMailSupport {
             int split = references.lastIndexOf(' ');
             return "ref:" + (split >= 0 ? references.substring(split + 1) : references);
         }
-        String normalizedSubject = normalizeSubject(subject);
-        String normalizedParticipants = normalizeWhitespace((fromEmail == null ? "" : fromEmail)
-                + "|" + (toSummary == null ? "" : toSummary)).toLowerCase(java.util.Locale.ROOT);
-        return "subject:" + normalizedSubject + "|" + normalizedParticipants;
+        String messageId = normalizeHeader(firstHeader(message, "Message-ID"));
+        return messageId.isBlank() ? "" : "message-id:" + messageId;
     }
 
     private static String normalizeSubject(String subject) {
@@ -458,6 +458,37 @@ final class JakartaMailSupport {
                 values.add(display);
             } else if (email != null && !email.isBlank()) {
                 values.add(email);
+            }
+        }
+        return String.join(", ", values);
+    }
+
+    private static List<ImportedMailRecipient> collectRecipients(Message message) throws MessagingException {
+        var recipients = new ArrayList<ImportedMailRecipient>();
+        appendRecipients(recipients, "TO", message.getRecipients(Message.RecipientType.TO));
+        appendRecipients(recipients, "CC", message.getRecipients(Message.RecipientType.CC));
+        return List.copyOf(recipients);
+    }
+
+    private static void appendRecipients(List<ImportedMailRecipient> recipients, String type, Address[] addresses) {
+        if (addresses == null) {
+            return;
+        }
+        for (Address address : addresses) {
+            recipients.add(new ImportedMailRecipient(type, displayName(address), email(address)));
+        }
+    }
+
+    private static String summarizeRecipients(List<ImportedMailRecipient> recipients) {
+        if (recipients == null || recipients.isEmpty()) {
+            return "";
+        }
+        var values = new ArrayList<String>();
+        for (ImportedMailRecipient recipient : recipients) {
+            if (recipient.name() != null && !recipient.name().isBlank()) {
+                values.add(recipient.name());
+            } else if (recipient.email() != null && !recipient.email().isBlank()) {
+                values.add(recipient.email());
             }
         }
         return String.join(", ", values);

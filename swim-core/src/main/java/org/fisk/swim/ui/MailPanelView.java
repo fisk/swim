@@ -39,6 +39,7 @@ public class MailPanelView extends View {
 
     private enum SidebarKind {
         ALL,
+        UNSORTED,
         ACCOUNT,
         TAG
     }
@@ -93,6 +94,9 @@ public class MailPanelView extends View {
     private MailSnapshot _snapshot;
     private List<SidebarRow> _sidebarRows = List.of();
     private List<String> _availableTags = List.of();
+    private Map<String, Integer> _tagUnreadCounts = Map.of();
+    private int _unsortedUnreadCount;
+    private int _allUnreadCount;
     private List<MailThreadSummary> _threads = List.of();
     private List<ThreadRow> _threadRows = List.of();
     private final Map<Long, List<MailMessageSummary>> _threadMessagesByThreadId = new LinkedHashMap<>();
@@ -365,9 +369,9 @@ public class MailPanelView extends View {
             bodyTop++;
             bodyHeight = Math.max(0, bodyHeight - 1);
         }
-        int sidebarWidth = Math.max(18, Math.min(26, Math.max(18, width / 4)));
+        int sidebarWidth = Math.max(24, Math.min(40, Math.max(24, width / 3)));
         if (width - sidebarWidth <= 8) {
-            sidebarWidth = Math.max(1, width / 3);
+            sidebarWidth = Math.max(1, width / 4);
         }
         int separatorX = rect.getPoint().getX() + sidebarWidth;
         int threadsX = separatorX + 1;
@@ -849,6 +853,9 @@ public class MailPanelView extends View {
     private void reload() {
         _snapshot = _client.snapshot();
         _availableTags = _client.loadTagNames();
+        _tagUnreadCounts = _client.loadTagUnreadCounts();
+        _unsortedUnreadCount = _client.loadUnsortedUnreadCount();
+        _allUnreadCount = _snapshot.accounts().stream().mapToInt(org.fisk.swim.mail.MailAccountSummary::unreadCount).sum();
         rebuildSidebarRows();
         _lastActionableUrl = firstUrl(_snapshot.statusMessage());
         if (_awaitingOAuthCompletion && _snapshot != null && _snapshot.statusMessage().contains("Mail sign-in complete")) {
@@ -888,6 +895,9 @@ public class MailPanelView extends View {
         setNeedsRedraw();
 
         Thread worker = new Thread(() -> {
+            if (_messageLoadGeneration.get() != generation) {
+                return;
+            }
             MailMessageDetail loaded = messageId > 0L
                     ? _client.loadMessageById(messageId)
                     : _client.loadMessage(threadId);
@@ -903,6 +913,7 @@ public class MailPanelView extends View {
                 }
                 _selectedMessage = loaded;
                 updateMessageBuffer();
+                markDisplayedMessageRead(safeRow);
                 setNeedsRedraw();
             };
             var eventThread = EventThread.getInstance();
@@ -995,6 +1006,7 @@ public class MailPanelView extends View {
     private void rebuildSidebarRows() {
         var rows = new ArrayList<SidebarRow>();
         rows.add(new SidebarRow(SidebarKind.ALL, "", "All Mail"));
+        rows.add(new SidebarRow(SidebarKind.UNSORTED, "unsorted", "#unsorted"));
         for (var account : _snapshot.accounts()) {
             rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.name()));
         }
@@ -1024,6 +1036,7 @@ public class MailPanelView extends View {
     private boolean matchesFilter(MailThreadSummary thread, SidebarRow filter) {
         return switch (filter.kind()) {
         case ALL -> true;
+        case UNSORTED -> thread.tags().isEmpty();
         case ACCOUNT -> filter.value().equals(thread.accountId());
         case TAG -> thread.tags().contains(filter.value());
         };
@@ -1107,6 +1120,119 @@ public class MailPanelView extends View {
                 row.thread().tags());
     }
 
+    private void markDisplayedMessageRead(ThreadRow row) {
+        if (row == null || row.message().messageId() <= 0L || (!row.message().unread() && !row.thread().unread())) {
+            return;
+        }
+        long messageId = row.message().messageId();
+        long threadId = row.thread().threadId();
+        String accountId = row.thread().accountId();
+        List<String> tags = row.thread().tags();
+        boolean wasUnread = row.message().unread() || row.thread().unread();
+        Thread worker = new Thread(() -> {
+            _client.markMessageRead(messageId);
+            var eventThread = EventThread.getInstance();
+            Runnable apply = () -> applyLocalReadState(threadId, messageId, accountId, tags, wasUnread);
+            if (eventThread.isAlive()) {
+                eventThread.enqueue(new RunnableEvent(apply));
+            } else {
+                apply.run();
+            }
+        }, "mail-mark-read");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void applyLocalReadState(long threadId, long messageId, String accountId, List<String> tags, boolean wasUnread) {
+        boolean changed = false;
+        var updatedRows = new ArrayList<ThreadRow>(_threadRows.size());
+        var threadUnread = new HashMap<Long, Boolean>();
+        for (ThreadRow row : _threadRows) {
+            MailMessageSummary message = row.message();
+            if (message.messageId() == messageId && message.unread()) {
+                message = new MailMessageSummary(
+                        message.messageId(),
+                        message.threadId(),
+                        message.parentMessageId(),
+                        message.subject(),
+                        message.from(),
+                        message.to(),
+                        message.receivedAt(),
+                        message.snippet(),
+                        false);
+                changed = true;
+            }
+            updatedRows.add(new ThreadRow(row.thread(), message, row.treePrefix()));
+            threadUnread.merge(row.thread().threadId(), message.unread(), Boolean::logicalOr);
+        }
+        if (!changed && !wasUnread) {
+            return;
+        }
+        var updatedThreads = new ArrayList<MailThreadSummary>(_threads.size());
+        for (MailThreadSummary thread : _threads) {
+            boolean unread = threadUnread.getOrDefault(thread.threadId(), false);
+            updatedThreads.add(new MailThreadSummary(
+                    thread.threadId(),
+                    thread.accountId(),
+                    thread.subject(),
+                    thread.participants(),
+                    thread.snippet(),
+                    thread.receivedAt(),
+                    unread,
+                    thread.messageCount(),
+                    thread.tags()));
+        }
+        _threads = List.copyOf(updatedThreads);
+        var finalRows = new ArrayList<ThreadRow>(updatedRows.size());
+        for (ThreadRow row : updatedRows) {
+            MailThreadSummary updatedThread = _threads.stream()
+                    .filter(thread -> thread.threadId() == row.thread().threadId())
+                    .findFirst()
+                    .orElse(row.thread());
+            finalRows.add(new ThreadRow(updatedThread, row.message(), row.treePrefix()));
+        }
+        _threadRows = List.copyOf(finalRows);
+        _allUnreadCount = Math.max(0, _allUnreadCount - 1);
+        _tagUnreadCounts = decrementTagUnreadCounts(_tagUnreadCounts, tags);
+        if (tags.isEmpty()) {
+            _unsortedUnreadCount = Math.max(0, _unsortedUnreadCount - 1);
+        }
+        _snapshot = new MailSnapshot(adjustAccountUnreadCounts(_snapshot.accounts(), accountId),
+                _snapshot.threads(), _snapshot.statusMessage());
+    }
+
+    private static Map<String, Integer> decrementTagUnreadCounts(Map<String, Integer> counts, List<String> tags) {
+        var updated = new LinkedHashMap<String, Integer>(counts);
+        for (String tag : tags) {
+            Integer current = updated.get(tag);
+            if (current != null && current > 0) {
+                updated.put(tag, current - 1);
+            }
+        }
+        return updated;
+    }
+
+    private static List<org.fisk.swim.mail.MailAccountSummary> adjustAccountUnreadCounts(
+            List<org.fisk.swim.mail.MailAccountSummary> accounts,
+            String accountId) {
+        var updated = new ArrayList<org.fisk.swim.mail.MailAccountSummary>(accounts.size());
+        for (var account : accounts) {
+            if (account.id().equals(accountId) && account.unreadCount() > 0) {
+                updated.add(new org.fisk.swim.mail.MailAccountSummary(
+                        account.id(),
+                        account.name(),
+                        account.protocol(),
+                        account.threadCount(),
+                        account.unreadCount() - 1,
+                        account.lastSyncAt(),
+                        account.syncStatus()));
+            } else {
+                updated.add(account);
+            }
+        }
+        return List.copyOf(updated);
+    }
+
     private void drawSidebarColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
         if (width <= 0 || height <= 0) {
             return;
@@ -1126,7 +1252,7 @@ public class MailPanelView extends View {
                     : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
             TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
             UiTheme.drawLine(graphics, Point.create(x, y + row + visible), width,
-                    AttributedString.create(" " + formatSidebarRow(sidebarRow), foreground, background),
+                    AttributedString.create(" " + formatSidebarRow(sidebarRow, width - 1), foreground, background),
                     foreground, background);
         }
     }
@@ -1165,6 +1291,9 @@ public class MailPanelView extends View {
         lines.add("Subject: " + safe(_selectedMessage.subject(), "(no subject)"));
         lines.add("From: " + safe(_selectedMessage.from(), "(unknown)"));
         lines.add("To: " + safe(_selectedMessage.to(), "(unknown)"));
+        if (_selectedMessage.cc() != null && !_selectedMessage.cc().isBlank()) {
+            lines.add("Cc: " + _selectedMessage.cc());
+        }
         lines.add("Date: " + safe(_selectedMessage.sentAt(), "(unknown)"));
         if (!_selectedMessage.tags().isEmpty()) {
             lines.add("Tags: " + String.join(", ", _selectedMessage.tags()));
@@ -1213,12 +1342,29 @@ public class MailPanelView extends View {
         _sidebarScrollOffset = Math.max(0, Math.min(_sidebarScrollOffset, maxOffset));
     }
 
-    private String formatSidebarRow(SidebarRow row) {
-        return switch (row.kind()) {
+    private String formatSidebarRow(SidebarRow row, int width) {
+        String label = switch (row.kind()) {
         case ALL -> "All Mail";
+        case UNSORTED -> row.label();
         case ACCOUNT -> row.label();
         case TAG -> row.label();
         };
+        int unread = switch (row.kind()) {
+        case ALL -> _allUnreadCount;
+        case UNSORTED -> _unsortedUnreadCount;
+        case ACCOUNT -> _snapshot.accounts().stream()
+                .filter(account -> row.value().equals(account.id()))
+                .mapToInt(org.fisk.swim.mail.MailAccountSummary::unreadCount)
+                .findFirst()
+                .orElse(0);
+        case TAG -> _tagUnreadCounts.getOrDefault(row.value(), 0);
+        };
+        if (unread <= 0) {
+            return truncateToWidth(label, width);
+        }
+        String suffix = "(" + unread + ")";
+        int leftWidth = Math.max(0, width - suffix.length() - 1);
+        return padRight(truncateToWidth(label, leftWidth), leftWidth) + " " + suffix;
     }
 
     private String formatThreadTableRow(ThreadRow row, int width) {
@@ -1397,6 +1543,9 @@ public class MailPanelView extends View {
         lines.add("Subject: " + safe(_selectedMessage.subject(), "(no subject)"));
         lines.add("From: " + safe(_selectedMessage.from(), "(unknown)"));
         lines.add("To: " + safe(_selectedMessage.to(), "(unknown)"));
+        if (_selectedMessage.cc() != null && !_selectedMessage.cc().isBlank()) {
+            lines.add("Cc: " + _selectedMessage.cc());
+        }
         lines.add("Date: " + safe(_selectedMessage.sentAt(), "(unknown)"));
         if (!_selectedMessage.tags().isEmpty()) {
             lines.add("Tags: " + String.join(", ", _selectedMessage.tags()));

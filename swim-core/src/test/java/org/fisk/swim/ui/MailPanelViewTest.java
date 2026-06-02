@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -431,6 +432,37 @@ class MailPanelViewTest {
     }
 
     @Test
+    void detailViewShowsCcWhenPresent() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 10, 1, "", "")),
+                        sampleThreads(10),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Quarterly review", "Boss <boss@example.com>",
+                        "me@example.com", "team@example.com", "2026-05-13T08:00:00Z", "Please review", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        MailMessageDetail detail = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
+        assertEquals("team@example.com", detail.cc());
+    }
+
+    @Test
     void refreshUsesEKey() {
         AtomicReference<Integer> refreshCalls = new AtomicReference<>(0);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -602,6 +634,115 @@ class MailPanelViewTest {
 
         assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
         assertEquals(1L, lastLoadedThread.get());
+    }
+
+    @Test
+    void selectingUnsortedInSidebarFiltersToUntaggedThreads() throws Exception {
+        AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 2, 1, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "work", "Tagged thread", "Boss", "snippet",
+                                        "2026-05-13T08:00:00Z", true, 1, List.of("vip")),
+                                new MailThreadSummary(2L, "work", "Untagged thread", "Friend", "snippet",
+                                        "2026-05-12T08:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                lastLoadedThread.set(threadId);
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "sender@example.com",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body " + threadId, List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(1L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.left());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.down());
+
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(2L).equals(lastLoadedThread.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+        assertEquals(2L, lastLoadedThread.get());
+    }
+
+    @Test
+    void loadingUnreadMessageMarksItReadAndUpdatesUnreadCounts() throws Exception {
+        AtomicReference<Long> markedRead = new AtomicReference<>(0L);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 1, 1, "", "")),
+                        List.of(new MailThreadSummary(7L, "work", "Tagged thread", "Boss", "snippet",
+                                "2026-05-13T08:00:00Z", true, 1, List.of("vip"))),
+                        "");
+            }
+
+            @Override
+            public Map<String, Integer> loadTagUnreadCounts() {
+                return Map.of("vip", 1);
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(11L, threadId, "Tagged thread", "Boss <boss@example.com>",
+                        "me@example.com", "2026-05-13T08:00:00Z", "Body", List.of("vip"));
+            }
+
+            @Override
+            public void markMessageRead(long messageId) {
+                markedRead.set(messageId);
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Long.valueOf(11L).equals(markedRead.get()) && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (!Integer.valueOf(0).equals(HeadlessWindowHarness.getField(panel, "_allUnreadCount", Integer.class))
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
+
+        assertEquals(11L, markedRead.get());
+        assertEquals(0, HeadlessWindowHarness.getField(panel, "_allUnreadCount", Integer.class));
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> tagUnreadCounts = (Map<String, Integer>) HeadlessWindowHarness.getField(panel, "_tagUnreadCounts");
+        assertEquals(0, tagUnreadCounts.get("vip"));
+        MailSnapshot snapshot = HeadlessWindowHarness.getField(panel, "_snapshot", MailSnapshot.class);
+        assertEquals(0, snapshot.accounts().getFirst().unreadCount());
     }
 
     @Test

@@ -4,7 +4,9 @@ import java.util.List;
 
 record EmailTagRulesConfig(List<EmailTagRuleConfig> rules) {
     EmailTagRulesConfig {
-        rules = rules == null ? List.of() : List.copyOf(rules);
+        rules = rules == null
+                ? List.of()
+                : rules.stream().filter(java.util.Objects::nonNull).toList();
     }
 
     static EmailTagRulesConfig empty() {

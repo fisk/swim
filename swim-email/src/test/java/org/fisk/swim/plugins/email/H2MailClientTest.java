@@ -229,6 +229,206 @@ class H2MailClientTest {
     }
 
     @Test
+    void dynamicTagRulesSupportExactPrefixAndTokenMatching() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    {
+                      "rules": [
+                        {
+                          "tag": "vip",
+                          "field": "sender",
+                          "contains": "boss@example.com",
+                          "match": "exact"
+                        },
+                        {
+                          "tag": "quarterly",
+                          "field": "subject",
+                          "contains": "Quarterly",
+                          "match": "prefix"
+                        },
+                        {
+                          "tag": "migration",
+                          "field": "body",
+                          "contains": "migration",
+                          "match": "token"
+                        }
+                      ]
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl());
+                    var threadInsert = connection.prepareStatement("""
+                            insert into threads (id, account_id, folder_name, subject, participants, snippet, last_message_at, unread_count, message_count)
+                            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """);
+                    var messageInsert = connection.prepareStatement("""
+                            insert into messages (id, account_id, thread_id, subject, from_name, from_email, to_summary, sent_at, received_at, snippet, body_text, is_read)
+                            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """)) {
+                threadInsert.setLong(1, 7L);
+                threadInsert.setString(2, "work");
+                threadInsert.setString(3, "INBOX");
+                threadInsert.setString(4, "Quarterly review");
+                threadInsert.setString(5, "Boss");
+                threadInsert.setString(6, "Migration planning");
+                threadInsert.setString(7, "2026-05-13T08:30:00Z");
+                threadInsert.setInt(8, 1);
+                threadInsert.setInt(9, 1);
+                threadInsert.executeUpdate();
+
+                messageInsert.setLong(1, 11L);
+                messageInsert.setString(2, "work");
+                messageInsert.setLong(3, 7L);
+                messageInsert.setString(4, "Quarterly review");
+                messageInsert.setString(5, "Boss");
+                messageInsert.setString(6, "boss@example.com");
+                messageInsert.setString(7, "me@example.com");
+                messageInsert.setString(8, "2026-05-13T08:30:00Z");
+                messageInsert.setString(9, "2026-05-13T08:30:05Z");
+                messageInsert.setString(10, "Migration planning");
+                messageInsert.setString(11, "The migration rollout is attached.");
+                messageInsert.setInt(12, 0);
+                messageInsert.executeUpdate();
+
+                var snapshot = client.snapshot();
+                assertTrue(snapshot.threads().getFirst().tags().contains("vip"));
+                assertTrue(snapshot.threads().getFirst().tags().contains("quarterly"));
+                assertTrue(snapshot.threads().getFirst().tags().contains("migration"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void exactRecipientRuleMatchesSingleRecipientRowWithinMultipleRecipients() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    {
+                      "rules": [
+                        {
+                          "tag": "hotspot-dev",
+                          "field": "recipient",
+                          "contains": "hotspot-dev@openjdk.org",
+                          "match": "exact"
+                        }
+                      ]
+                    }
+                    """);
+
+            MailSyncAdapterFactory factory = account -> ignored -> MailSyncBatch.success(List.of(
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<m1@example.com>", "thread:list",
+                            "List mail", "Boss", "boss@example.com", "me@example.com, hotspot-dev@openjdk.org",
+                            List.of(
+                                    new ImportedMailRecipient("TO", "me@example.com", "me@example.com"),
+                                    new ImportedMailRecipient("CC", "hotspot-dev@openjdk.org", "hotspot-dev@openjdk.org")),
+                            "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                            "Please review", "Please review", true)), "1 messages");
+
+            try (var client = new H2MailClient(paths, factory)) {
+                var snapshot = client.snapshot();
+                assertTrue(snapshot.threads().getFirst().tags().contains("hotspot-dev"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void messagesWithSameSubjectButNoReplyHeadersStayInSeparateThreads() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            MailSyncAdapterFactory factory = account -> ignored -> MailSyncBatch.success(List.of(
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<m1@example.com>", "message-id:<m1@example.com>",
+                            "Quarterly review", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
+                            "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                            "First message", "First message", true),
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<m2@example.com>", "message-id:<m2@example.com>",
+                            "Quarterly review", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
+                            "2026-05-13T09:30:00Z", "2026-05-13T09:31:00Z",
+                            "Second message", "Second message", false)), "2 messages");
+
+            try (var client = new H2MailClient(paths, factory)) {
+                var snapshot = client.snapshot();
+                assertEquals(2, snapshot.threads().size());
+                assertEquals(1, snapshot.threads().get(0).messageCount());
+                assertEquals(1, snapshot.threads().get(1).messageCount());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void refreshImportsMessagesFromSyncAdapterIntoThreadedSnapshot() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());
@@ -266,11 +466,13 @@ class H2MailClientTest {
                     new ImportedMailMessage(
                             "work", "INBOX", "<m1@example.com>", "thread:quarterly-review",
                             "Quarterly review", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
                             "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
                             "Please review", "Please review the attached document.", true),
                     new ImportedMailMessage(
                             "work", "INBOX", "<m2@example.com>", "thread:quarterly-review",
                             "Re: Quarterly review", "Me", "me@example.com", "boss@example.com",
+                            List.of(new ImportedMailRecipient("TO", "boss@example.com", "boss@example.com")),
                             "2026-05-13T09:00:00Z", "2026-05-13T09:00:05Z",
                             "Looks good", "Looks good to me.", false)), "2 messages");
 
@@ -319,21 +521,25 @@ class H2MailClientTest {
                     new ImportedMailMessage(
                             "work", "INBOX", "<root@example.com>", "subject:project sync|boss@example.com|me@example.com",
                             "Project sync", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
                             "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
                             "Initial plan", "Initial plan", true),
                     new ImportedMailMessage(
                             "work", "INBOX", "<reply-1@example.com>", "reply:<root@example.com>",
                             "Re: Project sync", "Me", "me@example.com", "boss@example.com",
+                            List.of(new ImportedMailRecipient("TO", "boss@example.com", "boss@example.com")),
                             "2026-05-13T09:00:00Z", "2026-05-13T09:00:05Z",
                             "Looks good", "Looks good", false),
                     new ImportedMailMessage(
                             "work", "INBOX", "<reply-2@example.com>", "reply:<reply-1@example.com>",
                             "Re: Project sync", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
                             "2026-05-13T10:00:00Z", "2026-05-13T10:00:05Z",
                             "Approved", "Approved", false),
                     new ImportedMailMessage(
                             "work", "INBOX", "<other@example.com>", "subject:other topic|teammate@example.com|me@example.com",
                             "Other topic", "Teammate", "teammate@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "me@example.com", "me@example.com")),
                             "2026-05-13T09:30:00Z", "2026-05-13T09:30:05Z",
                             "Other thread", "Other thread", false)), "4 messages");
 

@@ -153,6 +153,41 @@ final class H2MailClient implements MailClient {
     }
 
     @Override
+    public Map<String, Integer> loadTagUnreadCounts() {
+        synchronized (_readLock) {
+            try {
+                return MailDb.loadTagUnreadCounts(_readConnection);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail tag unread counts", e);
+                return Map.of();
+            }
+        }
+    }
+
+    @Override
+    public int loadUnsortedUnreadCount() {
+        synchronized (_readLock) {
+            try {
+                return MailDb.loadUnsortedUnreadCount(_readConnection);
+            } catch (SQLException e) {
+                LOG.error("Failed to load unsorted unread count", e);
+                return 0;
+            }
+        }
+    }
+
+    @Override
+    public void markMessageRead(long messageId) {
+        synchronized (_writeLock) {
+            try {
+                MailDb.markMessageRead(_writeConnection, messageId);
+            } catch (SQLException e) {
+                LOG.warn("Failed to mark message {} as read", messageId, e);
+            }
+        }
+    }
+
+    @Override
     public void refresh() {
         if (_closed || _backfillInFlight.get() || !_refreshInFlight.compareAndSet(false, true)) {
             return;
@@ -353,7 +388,7 @@ final class H2MailClient implements MailClient {
                 detail = MailDb.loadMessage(_readConnection, threadId);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail message for thread {}", threadId, e);
-                return new MailMessageDetail(0L, threadId, "(error)", "", "", "", e.getMessage(), java.util.List.of());
+                return new MailMessageDetail(0L, threadId, "(error)", "", "", "", "", e.getMessage(), java.util.List.of());
             }
         }
         return hydrateMessageBodyIfNeeded(detail, () -> {
@@ -374,7 +409,7 @@ final class H2MailClient implements MailClient {
                 detail = MailDb.loadMessageById(_readConnection, messageId);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail message {}", messageId, e);
-                return new MailMessageDetail(0L, 0L, "(error)", "", "", "", e.getMessage(), java.util.List.of());
+                return new MailMessageDetail(0L, 0L, "(error)", "", "", "", "", e.getMessage(), java.util.List.of());
             }
         }
         return hydrateMessageBodyIfNeeded(detail, () -> {

@@ -56,6 +56,17 @@ public interface MailClient extends AutoCloseable {
         return List.copyOf(tags);
     }
 
+    default Map<String, Integer> loadTagUnreadCounts() {
+        return Map.of();
+    }
+
+    default int loadUnsortedUnreadCount() {
+        return 0;
+    }
+
+    default void markMessageRead(long messageId) {
+    }
+
     default MailThreadPage loadThreads(String query, int offset, int limit) {
         MailSnapshot snapshot = snapshot();
         List<MailThreadSummary> filtered = filterThreads(snapshot.threads(), query);

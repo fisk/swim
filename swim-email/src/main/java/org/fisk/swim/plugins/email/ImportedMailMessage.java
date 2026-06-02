@@ -9,11 +9,16 @@ record ImportedMailMessage(
         String fromName,
         String fromEmail,
         String toSummary,
+        java.util.List<ImportedMailRecipient> recipients,
         String sentAt,
         String receivedAt,
         String snippet,
         String bodyText,
         boolean unread) {
+    ImportedMailMessage {
+        recipients = recipients == null ? java.util.List.of() : java.util.List.copyOf(recipients);
+    }
+
     String effectiveTimestamp() {
         if (receivedAt != null && !receivedAt.isBlank()) {
             return receivedAt;

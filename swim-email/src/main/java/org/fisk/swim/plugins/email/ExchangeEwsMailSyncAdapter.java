@@ -214,7 +214,8 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
             String snippet = body.length() > 180 ? body.substring(0, 180) : body;
             String fromName = childText(message, "From/Mailbox/Name");
             String fromEmail = childText(message, "From/Mailbox/EmailAddress");
-            String toSummary = recipientsText(message);
+            List<ImportedMailRecipient> recipients = recipients(message);
+            String toSummary = recipientsText(recipients);
             String dateSent = normalizeDate(childText(message, "DateTimeSent"));
             String dateReceived = normalizeDate(childText(message, "DateTimeReceived"));
             boolean unread = !Boolean.parseBoolean(childText(message, "IsRead"));
@@ -228,6 +229,7 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
                     fromName,
                     fromEmail,
                     toSummary,
+                    recipients,
                     dateSent,
                     dateReceived,
                     snippet,
@@ -255,24 +257,32 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
                 return existing;
             }
         }
-        String normalizedSubject = normalizeSubject(subject);
-        String participants = normalizeWhitespace((fromEmail == null ? "" : fromEmail)
-                + "|" + (toSummary == null ? "" : toSummary)).toLowerCase(Locale.ROOT);
-        String generated = "subject:" + normalizedSubject + "|" + participants;
+        String generated = normalizedId.isBlank() ? "" : "message-id:" + normalizedId;
         if (!normalizedId.isBlank()) {
             threadIdsByMessage.put(normalizedId, generated);
         }
         return generated;
     }
 
-    private static String recipientsText(Element message) throws Exception {
-        NodeList recipients = nodes(message, "./*[local-name()='ToRecipients']/*[local-name()='Mailbox']");
+    private static List<ImportedMailRecipient> recipients(Element message) throws Exception {
+        var recipients = new ArrayList<ImportedMailRecipient>();
+        appendRecipients(recipients, "TO", nodes(message, "./*[local-name()='ToRecipients']/*[local-name()='Mailbox']"));
+        appendRecipients(recipients, "CC", nodes(message, "./*[local-name()='CcRecipients']/*[local-name()='Mailbox']"));
+        return List.copyOf(recipients);
+    }
+
+    private static void appendRecipients(List<ImportedMailRecipient> recipients, String type, NodeList mailboxes)
+            throws Exception {
+        for (int i = 0; i < mailboxes.getLength(); i++) {
+            Element recipient = (Element) mailboxes.item(i);
+            recipients.add(new ImportedMailRecipient(type, childText(recipient, "Name"), childText(recipient, "EmailAddress")));
+        }
+    }
+
+    private static String recipientsText(List<ImportedMailRecipient> recipients) throws Exception {
         List<String> values = new ArrayList<>();
-        for (int i = 0; i < recipients.getLength(); i++) {
-            Element recipient = (Element) recipients.item(i);
-            String name = childText(recipient, "Name");
-            String email = childText(recipient, "EmailAddress");
-            values.add(!name.isBlank() ? name : email);
+        for (ImportedMailRecipient recipient : recipients) {
+            values.add(recipient.name() != null && !recipient.name().isBlank() ? recipient.name() : recipient.email());
         }
         return String.join(", ", values);
     }
