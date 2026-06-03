@@ -48,6 +48,7 @@ class SwimAppImplTest {
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
+        assertEquals(path, bindings.preloadMailPluginPath);
 
         bindings.eventThread.fireOnEvent();
 
@@ -67,6 +68,7 @@ class SwimAppImplTest {
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
+        assertNull(bindings.preloadMailPluginPath);
     }
 
     @Test
@@ -220,6 +222,7 @@ class SwimAppImplTest {
         private boolean shutdownEventThreadCalled;
         private boolean shutdownTerminalContextCalled;
         private boolean clearRuntimeCalled;
+        private Path preloadMailPluginPath;
 
         @Override
         public void setHost(SwimHost host) {
@@ -247,6 +250,11 @@ class SwimAppImplTest {
         @Override
         public Thread createIoThread() {
             return ioThread;
+        }
+
+        @Override
+        public void preloadMailPlugin(Path path) {
+            preloadMailPluginPath = path;
         }
 
         @Override

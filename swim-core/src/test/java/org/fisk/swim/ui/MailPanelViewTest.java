@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.mail.MailAccountSummary;
@@ -1273,6 +1274,68 @@ class MailPanelViewTest {
         assertEquals("Message 12", HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class).subject());
         assertEquals(0, messageBuffer.getBuffer().getCursor().getPosition());
         assertEquals(0, messageBuffer.getBufferView().getStartLine());
+    }
+
+    @Test
+    void initialThreadPageUsesBulkThreadMessageLoad() {
+        AtomicInteger singleLoads = new AtomicInteger();
+        AtomicInteger bulkLoads = new AtomicInteger();
+        new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "work", "Thread 1", "Boss", "snippet",
+                                        "2026-05-13T08:00:00Z", true, 1, List.of()),
+                                new MailThreadSummary(2L, "work", "Thread 2", "Boss", "snippet",
+                                        "2026-05-13T07:00:00Z", false, 1, List.of()),
+                                new MailThreadSummary(3L, "work", "Thread 3", "Boss", "snippet",
+                                        "2026-05-13T06:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailThreadPage loadThreads(String query, int offset, int limit, MailThreadFilter filter) {
+                return new MailThreadPage(snapshot().threads(), 3);
+            }
+
+            @Override
+            public List<MailMessageSummary> loadThreadMessages(long threadId) {
+                singleLoads.incrementAndGet();
+                return List.of(new MailMessageSummary(threadId, threadId, 0L, "Thread " + threadId,
+                        "Boss <boss@example.com>", "me@example.com", "2026-05-13T08:00:00Z", "snippet", false));
+            }
+
+            @Override
+            public Map<Long, List<MailMessageSummary>> loadThreadMessages(List<Long> threadIds) {
+                bulkLoads.incrementAndGet();
+                var result = new java.util.LinkedHashMap<Long, List<MailMessageSummary>>();
+                for (Long threadId : threadIds) {
+                    result.put(threadId, List.of(new MailMessageSummary(threadId, threadId, 0L, "Thread " + threadId,
+                            "Boss <boss@example.com>", "me@example.com", "2026-05-13T08:00:00Z", "snippet", false)));
+                }
+                return result;
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId,
+                        "Boss <boss@example.com>", "me@example.com", "2026-05-13T08:00:00Z", "Body", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        });
+
+        assertEquals(0, singleLoads.get());
+        assertEquals(1, bulkLoads.get());
     }
 
     @Test

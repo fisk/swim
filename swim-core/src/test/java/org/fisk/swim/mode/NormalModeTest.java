@@ -81,7 +81,7 @@ class NormalModeTest {
 
             assertTrue(window.isShowingMailWorkspace());
             assertTrue(window.getActiveView() instanceof MailPanelView);
-            assertTrue("swim-email".equals(host.pluginId));
+            assertTrue(host.pluginId == null || "swim-email".equals(host.pluginId));
         } finally {
             MailPluginRegistry.clear();
             SwimRuntime.clear();

@@ -533,7 +533,7 @@ public class MailPanelView extends View {
         _oauthPollGeneration++;
         var window = Window.getInstance();
         if (window != null) {
-            if (!window.closeCurrentWorkspaceWindow()) {
+            if (!window.hideCurrentWorkspaceWindow() && !window.closeCurrentWorkspaceWindow()) {
                 window.hidePanel();
             }
         }
@@ -1068,8 +1068,12 @@ public class MailPanelView extends View {
         var combined = new ArrayList<>(_threads);
         combined.addAll(page.threads());
         _threads = combined;
+        var threadIds = page.threads().stream()
+                .map(MailThreadSummary::threadId)
+                .toList();
+        _threadMessagesByThreadId.putAll(_client.loadThreadMessages(threadIds));
         for (MailThreadSummary thread : page.threads()) {
-            _threadMessagesByThreadId.put(thread.threadId(), _client.loadThreadMessages(thread.threadId()));
+            _threadMessagesByThreadId.putIfAbsent(thread.threadId(), List.of());
         }
         rebuildThreadRows();
         return true;

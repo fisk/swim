@@ -16,12 +16,15 @@ public final class MailUiSupport {
             return;
         }
         if (window.isShowingMailWorkspace()) {
-            window.closeCurrentWorkspaceWindow();
+            window.hideCurrentWorkspaceWindow();
             return;
         }
 
-        SwimRuntime.loadPlugin(PLUGIN_ID);
         MailClient client = MailPluginRegistry.getClient();
+        if (client == null) {
+            SwimRuntime.loadPlugin(PLUGIN_ID);
+            client = MailPluginRegistry.getClient();
+        }
         if (client == null) {
             window.getCommandView().setMessage("Mail plugin unavailable");
             return;

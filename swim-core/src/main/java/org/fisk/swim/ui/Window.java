@@ -210,6 +210,11 @@ public class Window implements Drawable {
             activateView(_workspaceView);
             return true;
         }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.MAIL) {
+                return activateWorkspace(workspace);
+            }
+        }
         return openMailWorkspace(client);
     }
 
@@ -558,6 +563,16 @@ public class Window implements Drawable {
         }
         _currentWorkspace = null;
         return activateWorkspace(_workspaceHistory.getFirst());
+    }
+
+    public boolean hideCurrentWorkspaceWindow() {
+        if (_currentWorkspace == null || _currentWorkspace._kind == WorkspaceKind.BUFFER) {
+            return false;
+        }
+        if (_workspaceHistory.size() <= 1) {
+            return openBufferWorkspace(null);
+        }
+        return activateWorkspace(_workspaceHistory.get(1));
     }
 
     public boolean closeShellView(ShellPanelView shellView) {

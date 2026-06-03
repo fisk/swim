@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.stream.Stream;
 
 public final class SwimHomeFixture {
     private final Path _home;
@@ -58,7 +59,7 @@ public final class SwimHomeFixture {
     }
 
     public Path emailDatabasePath() throws IOException {
-        return emailHome().resolve("mail.db");
+        return emailHome().resolve("mail.mv.db");
     }
 
     public Path writeNemoConfig(String text) throws IOException {
@@ -91,6 +92,38 @@ public final class SwimHomeFixture {
         String output = new String(process.getInputStream().readAllBytes());
         if (process.waitFor() != 0) {
             throw new IOException("sqlite3 failed: " + output);
+        }
+    }
+
+    public void runH2(String sql) throws Exception {
+        Path jar = findH2Jar();
+        Path base = emailHome().resolve("mail");
+        var process = new ProcessBuilder(
+                "java",
+                "-cp",
+                jar.toString(),
+                "org.h2.tools.Shell",
+                "-url",
+                "jdbc:h2:file:" + base,
+                "-sql",
+                sql)
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes());
+        if (process.waitFor() != 0) {
+            throw new IOException("H2 shell failed: " + output);
+        }
+    }
+
+    private static Path findH2Jar() throws IOException {
+        Path repo = Path.of(System.getProperty("user.home"), ".m2", "repository", "com", "h2database", "h2");
+        try (Stream<Path> stream = Files.walk(repo)) {
+            return stream
+                    .filter(path -> Files.isRegularFile(path) && path.getFileName().toString().startsWith("h2-")
+                            && path.getFileName().toString().endsWith(".jar"))
+                    .sorted(Comparator.comparing(Path::toString).reversed())
+                    .findFirst()
+                    .orElseThrow(() -> new IOException("Unable to locate H2 jar under " + repo));
         }
     }
 

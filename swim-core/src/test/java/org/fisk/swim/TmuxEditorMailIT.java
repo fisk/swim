@@ -33,7 +33,7 @@ class TmuxEditorMailIT {
             session.waitForText("mail fixture", STARTUP_TIMEOUT);
 
             session.sendLiteral("e");
-            session.waitForText("Work [IMAP]", UI_TIMEOUT);
+            session.waitForText("3 work", UI_TIMEOUT);
             session.waitForText("Boss update", UI_TIMEOUT);
             session.waitForText("Needle detail body", UI_TIMEOUT);
             session.sendLiteral("j");
@@ -109,8 +109,36 @@ class TmuxEditorMailIT {
         }
     }
 
+    @Test
+    @Timeout(60)
+    void installedLauncherBinaryPreservesSelectedMailAcrossCloseAndReopen() throws Exception {
+        InstalledSwimDriver.assumePluginAvailable("swim-email-0.0.1-SNAPSHOT.jar");
+
+        Path file = tempDir.resolve("mail-reopen.txt");
+        Files.writeString(file, "mail reopen fixture\n");
+        SwimHomeFixture home = createSeededMailHome();
+
+        try (var session = InstalledSwimDriver.startWithHome(home.home(), tempDir, file.getFileName().toString())) {
+            session.waitForText("mail reopen fixture", STARTUP_TIMEOUT);
+
+            session.sendLiteral("e");
+            session.waitForText("Boss update", UI_TIMEOUT);
+            session.waitForText("Needle detail body", UI_TIMEOUT);
+
+            session.sendLiteral("j");
+            session.waitForText("Team notes", UI_TIMEOUT);
+            session.waitForText("Plain body", UI_TIMEOUT);
+
+            session.sendLiteral("q");
+            session.waitForText("mail reopen fixture", UI_TIMEOUT);
+
+            session.sendLiteral("e");
+            session.waitForText("Team notes", UI_TIMEOUT);
+            session.waitForText("Plain body", UI_TIMEOUT);
+        }
+    }
+
     private SwimHomeFixture createSeededMailHome() throws Exception {
-        Assumptions.assumeTrue(Files.isExecutable(Path.of("/usr/bin/sqlite3")), "sqlite3 is required for seeded mail tmux tests");
         SwimHomeFixture home = SwimHomeFixture.create(tempDir);
         home.writeEmailAccounts("""
                 {
@@ -139,7 +167,7 @@ class TmuxEditorMailIT {
                   "accounts": {}
                 }
                 """);
-        home.runSqlite("""
+        home.runH2("""
                 create table if not exists accounts (
                     id text primary key,
                     name text not null,
@@ -155,7 +183,7 @@ class TmuxEditorMailIT {
                     updated_at text not null
                 );
                 create table if not exists threads (
-                    id integer primary key autoincrement,
+                    id bigint primary key,
                     account_id text not null,
                     folder_name text,
                     subject text,
@@ -166,9 +194,10 @@ class TmuxEditorMailIT {
                     message_count integer not null default 0
                 );
                 create table if not exists messages (
-                    id integer primary key autoincrement,
+                    id bigint primary key,
                     account_id text not null,
                     thread_id integer,
+                    thread_key text,
                     internet_message_id text,
                     folder_name text,
                     subject text,
@@ -181,38 +210,45 @@ class TmuxEditorMailIT {
                     body_text text,
                     is_read integer not null default 0
                 );
-                create table if not exists tags (
-                    name text primary key,
-                    color text
-                );
                 create table if not exists tag_rules (
-                    id integer primary key autoincrement,
+                    id bigint primary key,
                     tag_name text not null,
                     field_name text not null,
-                    contains_value text not null
+                    contains_value text not null,
+                    match_type text
                 );
-                create table if not exists message_tags (
-                    message_id integer not null,
-                    tag_name text not null,
-                    primary key (message_id, tag_name)
+                create table if not exists message_recipients (
+                    message_id bigint not null,
+                    recipient_type text not null,
+                    recipient_name text,
+                    recipient_email text not null,
+                    recipient_email_lc text not null,
+                    primary key (message_id, recipient_type, recipient_email_lc)
                 );
                 create table if not exists account_sync_state (
                     account_id text primary key,
                     last_sync_at text,
-                    status_message text not null default ''
+                    status_message text not null default '',
+                    backfill_complete integer not null default 0,
+                    last_seen_uid bigint not null default 0,
+                    next_backfill_uid bigint not null default 0
                 );
                 insert into accounts (id, name, protocol, host, port, username, password_env, updated_at)
                 values ('work', 'Work', 'IMAP', 'mail.example.com', 993, 'me@example.com', 'SWIM_TEST_PASSWORD', '2026-05-29T08:00:00Z');
-                insert into account_sync_state (account_id, last_sync_at, status_message)
-                values ('work', '2026-05-29T08:00:00Z', 'seeded');
+                insert into account_sync_state (account_id, last_sync_at, status_message, backfill_complete, last_seen_uid, next_backfill_uid)
+                values ('work', '2026-05-29T08:00:00Z', 'seeded', 1, 0, 0);
                 insert into threads (id, account_id, folder_name, subject, participants, snippet, last_message_at, unread_count, message_count)
                 values
                   (1, 'work', 'INBOX', 'Boss update', 'Boss <boss@example.com>', 'Needle summary snippet', '2026-05-29T09:00:00Z', 1, 1),
                   (2, 'work', 'INBOX', 'Team notes', 'Teammate <mate@example.com>', 'General team update', '2026-05-28T09:00:00Z', 0, 1);
-                insert into messages (id, account_id, thread_id, internet_message_id, folder_name, subject, from_name, from_email, to_summary, sent_at, received_at, snippet, body_text, is_read)
+                insert into messages (id, account_id, thread_id, thread_key, internet_message_id, folder_name, subject, from_name, from_email, to_summary, sent_at, received_at, snippet, body_text, is_read)
                 values
-                  (11, 'work', 1, '<m1@example.com>', 'INBOX', 'Boss update', 'Boss', 'boss@example.com', 'me@example.com', '2026-05-29T09:00:00Z', '2026-05-29T09:00:05Z', 'Needle summary snippet', 'Needle detail body', 0),
-                  (12, 'work', 2, '<m2@example.com>', 'INBOX', 'Team notes', 'Teammate', 'mate@example.com', 'me@example.com', '2026-05-28T09:00:00Z', '2026-05-28T09:00:05Z', 'General team update', 'Plain body', 1);
+                  (11, 'work', 1, 'message-id:<m1@example.com>', '<m1@example.com>', 'INBOX', 'Boss update', 'Boss', 'boss@example.com', 'me@example.com', '2026-05-29T09:00:00Z', '2026-05-29T09:00:05Z', 'Needle summary snippet', 'Needle detail body', 0),
+                  (12, 'work', 2, 'message-id:<m2@example.com>', '<m2@example.com>', 'INBOX', 'Team notes', 'Teammate', 'mate@example.com', 'me@example.com', '2026-05-28T09:00:00Z', '2026-05-28T09:00:05Z', 'General team update', 'Plain body', 1);
+                insert into message_recipients (message_id, recipient_type, recipient_name, recipient_email, recipient_email_lc)
+                values
+                  (11, 'TO', 'Me', 'me@example.com', 'me@example.com'),
+                  (12, 'TO', 'Me', 'me@example.com', 'me@example.com');
                 """);
         return home;
     }
