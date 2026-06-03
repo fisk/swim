@@ -412,7 +412,70 @@ class H2MailClientTest {
 
                 var snapshot = client.snapshot();
                 assertEquals("", snapshot.accounts().getFirst().syncStatus());
-                assertEquals("", snapshot.statusMessage());
+                assertFalse(snapshot.statusMessage().contains("Authorize mail at"));
+                assertFalse(snapshot.statusMessage().contains("Complete browser sign-in at"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void snapshotIgnoresPendingBrowserPromptWhenValidTokenExists() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "oracle",
+                          "name": "Oracle",
+                          "protocol": "IMAP",
+                          "host": "outlook.office365.com",
+                          "port": 993,
+                          "username": "erik.osterlund@oracle.com",
+                          "authType": "OAUTH2",
+                          "tenant": "common",
+                          "clientId": "client-id"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+            Files.writeString(paths.oauthTokensPath(), """
+                    {
+                      "accounts": {
+                        "oracle": {
+                          "accessToken": "token",
+                          "refreshToken": "refresh",
+                          "expiresAt": "2999-01-01T00:00:00Z",
+                          "pendingBrowserAuthorization": {
+                            "state": "state",
+                            "codeVerifier": "verifier",
+                            "authorizationUrl": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=abc",
+                            "redirectUri": "http://localhost:12345",
+                            "expiresAt": "2999-01-01T00:00:00Z",
+                            "authorizationCode": "auth-code",
+                            "scopes": "offline_access"
+                          }
+                        }
+                      }
+                    }
+                    """);
+
+            try (var client = new H2MailClient(paths,
+                    account -> ignored -> MailSyncBatch.success(List.of(), "0 messages"),
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false)) {
+                var snapshot = client.snapshot();
+                assertEquals("", snapshot.accounts().getFirst().syncStatus());
+                assertFalse(snapshot.statusMessage().contains("Authorize mail at"));
+                assertFalse(snapshot.statusMessage().contains("Complete browser sign-in at"));
             }
         } finally {
             System.setProperty("user.home", originalUserHome);

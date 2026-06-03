@@ -432,6 +432,10 @@ final class H2MailClient implements MailClient {
                 status = "";
                 changed = true;
             }
+            if (status == null) {
+                status = "";
+                changed = true;
+            }
             accounts.add(new org.fisk.swim.mail.MailAccountSummary(
                     account.id(),
                     account.name(),
@@ -468,6 +472,9 @@ final class H2MailClient implements MailClient {
     }
 
     private static String pendingAuthMessage(OAuthTokenRecord record) {
+        if (hasValidCachedAccessToken(record)) {
+            return "";
+        }
         String device = pendingDeviceMessage(record);
         if (!device.isBlank()) {
             return device;
