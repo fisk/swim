@@ -30,7 +30,7 @@ public class SplitView extends View {
 
     private static final class BranchNode implements Node {
         private final Orientation _orientation;
-        private final double _ratio;
+        private double _ratio;
         private Node _first;
         private Node _second;
         private Rect _bounds = Rect.create(0, 0, 0, 0);
@@ -95,6 +95,44 @@ public class SplitView extends View {
 
     public boolean isSingleLeaf() {
         return _root instanceof LeafNode;
+    }
+
+    public boolean resizeLeaf(View target, Orientation orientation, int deltaCells) {
+        if (target == null || deltaCells == 0) {
+            return false;
+        }
+        var branch = findNearestBranch(_root, target, orientation);
+        if (branch == null) {
+            return false;
+        }
+        int available = availableSize(branch);
+        if (available <= 1) {
+            return false;
+        }
+        double deltaRatio = (double) deltaCells / available;
+        if (containsLeaf(branch._first, target)) {
+            branch._ratio += deltaRatio;
+        } else if (containsLeaf(branch._second, target)) {
+            branch._ratio -= deltaRatio;
+        } else {
+            return false;
+        }
+        double minRatio = 1.0 / available;
+        double maxRatio = (available - 1.0) / available;
+        branch._ratio = Math.max(minRatio, Math.min(maxRatio, branch._ratio));
+        layoutTree(getBounds());
+        setNeedsRedraw();
+        return true;
+    }
+
+    public boolean equalize() {
+        if (!(_root instanceof BranchNode)) {
+            return false;
+        }
+        equalizeNode(_root);
+        layoutTree(getBounds());
+        setNeedsRedraw();
+        return true;
     }
 
     public boolean split(View existingView, View newView, Orientation orientation, double ratio, boolean existingFirst) {
@@ -230,6 +268,12 @@ public class SplitView extends View {
 
     private static int dividerThickness(Orientation orientation, int size) {
         return size >= 3 ? DIVIDER_THICKNESS : 0;
+    }
+
+    private static int availableSize(BranchNode branch) {
+        return branch._orientation == Orientation.HORIZONTAL
+                ? Math.max(0, branch._bounds.getSize().getWidth() - dividerThickness(branch._orientation, branch._bounds.getSize().getWidth()))
+                : Math.max(0, branch._bounds.getSize().getHeight() - dividerThickness(branch._orientation, branch._bounds.getSize().getHeight()));
     }
 
     private static Rect contentRect(Rect frame) {
@@ -423,6 +467,28 @@ public class SplitView extends View {
         }
         var branch = (BranchNode) node;
         return containsLeaf(branch._first, view) || containsLeaf(branch._second, view);
+    }
+
+    private static BranchNode findNearestBranch(Node node, View target, Orientation orientation) {
+        if (!(node instanceof BranchNode branch) || !containsLeaf(node, target)) {
+            return null;
+        }
+        BranchNode descendant = containsLeaf(branch._first, target)
+                ? findNearestBranch(branch._first, target, orientation)
+                : findNearestBranch(branch._second, target, orientation);
+        if (descendant != null) {
+            return descendant;
+        }
+        return branch._orientation == orientation ? branch : null;
+    }
+
+    private static void equalizeNode(Node node) {
+        if (!(node instanceof BranchNode branch)) {
+            return;
+        }
+        branch._ratio = 0.5;
+        equalizeNode(branch._first);
+        equalizeNode(branch._second);
     }
 
     private static void collectLeafViews(Node node, List<View> leaves) {

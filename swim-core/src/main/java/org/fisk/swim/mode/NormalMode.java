@@ -3,6 +3,7 @@ package org.fisk.swim.mode;
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.debug.DebuggerManager;
+import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
@@ -15,6 +16,10 @@ import org.fisk.swim.ui.PluginPanelView;
 import org.fisk.swim.ui.ProjectSearchUiSupport;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.ui.Window;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.MotionResponder;
+import org.fisk.swim.event.Response;
+import org.fisk.swim.event.TextEventResponder;
 
 public class NormalMode extends Mode {
     private static final String TREE_VIEW_PLUGIN_ID = "swim-tree-view";
@@ -54,6 +59,16 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<CTRL>-w W", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); });
         _rootResponder.addEventResponder("<CTRL>-w q", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); });
         _rootResponder.addEventResponder("<CTRL>-w o", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); });
+        _rootResponder.addEventResponder(ctrlWMotion(">", count ->
+                announceIfUnmoved(window.resizeActiveViewWidth(4 * count), "No vertical split to resize")));
+        _rootResponder.addEventResponder(ctrlWMotion("<", count ->
+                announceIfUnmoved(window.resizeActiveViewWidth(-4 * count), "No vertical split to resize")));
+        _rootResponder.addEventResponder(ctrlWMotion("+", count ->
+                announceIfUnmoved(window.resizeActiveViewHeight(2 * count), "No horizontal split to resize")));
+        _rootResponder.addEventResponder(ctrlWMotion("-", count ->
+                announceIfUnmoved(window.resizeActiveViewHeight(-2 * count), "No horizontal split to resize")));
+        _rootResponder.addEventResponder(ctrlWMotion("=", ignored ->
+                announceIfUnmoved(window.equalizeSplits(), "No split to equalize")));
         _rootResponder.addEventResponder("<CTRL>-s", () -> {
             if (window.sendActiveMailCompose()) {
                 return;
@@ -217,6 +232,37 @@ public class NormalMode extends Mode {
         if (!changed) {
             _window.getCommandView().setMessage(message);
         }
+    }
+
+    private static EventResponder ctrlWMotion(String motion, MotionResponder.Responder responder) {
+        return new EventResponder() {
+            private final TextEventResponder _prefix = new TextEventResponder("<CTRL>-w", () -> {
+            });
+            private final MotionResponder _motion = new MotionResponder(motion, responder);
+            private boolean _handled;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _handled = false;
+                var prefixResponse = _prefix.processEvent(events);
+                if (prefixResponse != Response.YES) {
+                    return prefixResponse;
+                }
+                if (events.consumed()) {
+                    return Response.MAYBE;
+                }
+                var motionResponse = _motion.processEvent(events);
+                _handled = motionResponse == Response.YES;
+                return motionResponse;
+            }
+
+            @Override
+            public void respond() {
+                if (_handled) {
+                    _motion.respond();
+                }
+            }
+        };
     }
 
     private enum ShellTarget {

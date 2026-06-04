@@ -390,6 +390,23 @@ public class Window implements Drawable {
         return closeView(getActiveView());
     }
 
+    public boolean resizeActiveViewWidth(int deltaColumns) {
+        ensureLayoutState();
+        return _workspaceView instanceof SplitView splitRoot
+                && splitRoot.resizeLeaf(getActiveView(), SplitView.Orientation.HORIZONTAL, deltaColumns);
+    }
+
+    public boolean resizeActiveViewHeight(int deltaRows) {
+        ensureLayoutState();
+        return _workspaceView instanceof SplitView splitRoot
+                && splitRoot.resizeLeaf(getActiveView(), SplitView.Orientation.VERTICAL, deltaRows);
+    }
+
+    public boolean equalizeSplits() {
+        ensureLayoutState();
+        return _workspaceView instanceof SplitView splitRoot && splitRoot.equalize();
+    }
+
     public boolean closeOtherViews() {
         ensureLayoutState();
         var keepView = getEditableBufferView();

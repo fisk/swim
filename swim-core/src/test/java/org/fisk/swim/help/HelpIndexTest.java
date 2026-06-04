@@ -19,6 +19,9 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  :help shows this tutorial."));
         assertTrue(rendered.contains("  :vsplit opens another view to the right of the active buffer."));
         assertTrue(rendered.contains("Pane shortcuts"));
+        assertTrue(rendered.contains("  Ctrl-w > and Ctrl-w < make the active pane wider or narrower."));
+        assertTrue(rendered.contains("  Ctrl-w + and Ctrl-w - make the active pane taller or shorter."));
+        assertTrue(rendered.contains("  Ctrl-w = equalizes split sizes."));
         assertTrue(rendered.contains("  Ctrl-g c w opens a new shell workspace."));
         assertTrue(rendered.contains("  Ctrl-g c v opens a shell in a split to the right."));
         assertTrue(rendered.contains("  Ctrl-g c h opens a shell in a split below."));

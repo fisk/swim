@@ -46,6 +46,8 @@ class KeyMenuViewTest {
         assertTrue(view.bodyText().contains("v split right"));
         assertTrue(view.bodyText().contains("h focus left"));
         assertTrue(view.bodyText().contains("q close pane"));
+        assertTrue(view.bodyText().contains("> wider"));
+        assertTrue(view.bodyText().contains("+ taller"));
     }
 
     @Test

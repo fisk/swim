@@ -826,6 +826,80 @@ class WindowTest {
     }
 
     @Test
+    void ctrlWGreaterAndLessResizeVerticalSplit() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-width.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var left = window.getBufferContext().getBufferView();
+            window.splitActiveBufferHorizontally();
+            var right = assertInstanceOf(BufferView.class, window.getActiveView());
+
+            String initialLeft = left.getBounds().toString();
+            String initialRight = right.getBounds().toString();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('>'));
+
+            assertTrue(!initialRight.equals(right.getBounds().toString()));
+            assertTrue(right.getBounds().getSize().getWidth() > 16);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('<'));
+
+            assertEquals(initialLeft, left.getBounds().toString());
+            assertEquals(initialRight, right.getBounds().toString());
+        }
+    }
+
+    @Test
+    void ctrlWCountedResizeAppliesMultipleSteps() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-count.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferHorizontally();
+            var right = assertInstanceOf(BufferView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.ctrl('w'),
+                    HeadlessWindowHarness.key('3'),
+                    HeadlessWindowHarness.key('>'));
+
+            assertTrue(right.getBounds().getSize().getWidth() > 20);
+        }
+    }
+
+    @Test
+    void ctrlWPlusAndMinusResizeHorizontalSplit() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-height.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var bottom = window.splitActiveBufferVertically();
+
+            String initialBottom = bottom.getBounds().toString();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('+'));
+
+            assertTrue(bottom.getBounds().getSize().getHeight() > 2);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('-'));
+
+            assertEquals(initialBottom, bottom.getBounds().toString());
+        }
+    }
+
+    @Test
+    void ctrlWEqualsEqualizesSplitSizes() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-equalize.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var left = window.getBufferContext().getBufferView();
+            window.splitActiveBufferHorizontally();
+            var right = assertInstanceOf(BufferView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('>'));
+            assertTrue(right.getBounds().getSize().getWidth() > left.getBounds().getSize().getWidth());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('='));
+
+            assertTrue(Math.abs(left.getBounds().getSize().getWidth() - right.getBounds().getSize().getWidth()) <= 1);
+        }
+    }
+
+    @Test
     void splitWorkspaceStaysBelowCommandPopupLayer() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("popup-layer.txt", "abc"), 40, 12)) {
             var window = harness.getWindow();
