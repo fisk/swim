@@ -160,6 +160,29 @@ class CommandViewTest {
     }
 
     @Test
+    void blankCommandMenuPrefersLastExecutedCommand() throws Exception {
+        Path path = tempDir.resolve("command-last.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var commandView = harness.getWindow().getCommandView();
+
+            invokeRunCommand(commandView, "focus left");
+            commandView.activate(":");
+
+            var state = commandView.getMenuState();
+            assertTrue(state.visible());
+            assertEquals("", state.prefix());
+            assertEquals("focus left", state.selectedMatch().primaryName());
+            assertEquals("last command", state.selectedMatch().description());
+
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.tab());
+
+            assertEquals("focus left", commandView.getCommandText());
+        }
+    }
+
+    @Test
     void splitAndFocusCommandsManipulateActivePane() throws Exception {
         Path path = tempDir.resolve("split-commands.txt");
         Files.writeString(path, "abc");

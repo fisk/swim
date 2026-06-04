@@ -51,6 +51,7 @@ public class CommandView extends View {
     private String _prompt = null;
     private StringBuilder _command = null;
     private int _commandSelection;
+    private String _lastCommand = null;
     private ListEventResponder _responders = new ListEventResponder();
     private boolean _searchForward;
     private String _searchString;
@@ -191,6 +192,7 @@ public class CommandView extends View {
         if (rawCommand.equals("")) {
             return;
         }
+        _lastCommand = rawCommand;
         int splitIndex = rawCommand.indexOf(' ');
         String command;
         String argument = "";
@@ -287,6 +289,10 @@ public class CommandView extends View {
     }
 
     private void applyCommandSpec(CommandSpec spec) {
+        if (spec.replaceEntireInput()) {
+            _command = new StringBuilder(spec.replacement());
+            return;
+        }
         String current = _command == null ? "" : _command.toString();
         int tokenStart = 0;
         while (tokenStart < current.length() && Character.isWhitespace(current.charAt(tokenStart))) {
@@ -299,7 +305,7 @@ public class CommandView extends View {
         String before = current.substring(0, tokenStart);
         String after = current.substring(tokenEnd);
         boolean hasArguments = !after.isBlank();
-        String replacement = spec.primaryName();
+        String replacement = spec.replacement();
         if (!hasArguments && spec.expectsArgument()) {
             replacement += " ";
         }
@@ -364,15 +370,26 @@ public class CommandView extends View {
     }
 
     private List<CommandSpec> matchingCommandSpecs() {
-        return matchingCommandSpecs(commandPrefix());
+        return matchingCommandSpecs(commandPrefix(), _lastCommand);
     }
 
     private static List<CommandSpec> matchingCommandSpecs(String prefix) {
-        return matchingCommandSpecs(prefix, COMMAND_SPECS);
+        return matchingCommandSpecs(prefix, null, COMMAND_SPECS);
+    }
+
+    private static List<CommandSpec> matchingCommandSpecs(String prefix, String lastCommand) {
+        return matchingCommandSpecs(prefix, lastCommand, COMMAND_SPECS);
     }
 
     private static List<CommandSpec> matchingCommandSpecs(String prefix, List<CommandSpec> commandSpecs) {
+        return matchingCommandSpecs(prefix, null, commandSpecs);
+    }
+
+    private static List<CommandSpec> matchingCommandSpecs(String prefix, String lastCommand, List<CommandSpec> commandSpecs) {
         var matches = new ArrayList<CommandSpec>();
+        if (prefix.isBlank() && lastCommand != null && !lastCommand.isBlank()) {
+            matches.add(CommandSpec.lastCommand(lastCommand));
+        }
         for (var spec : commandSpecs) {
             if (prefix.isBlank() || spec.matches(prefix)) {
                 matches.add(spec);
@@ -567,7 +584,8 @@ public class CommandView extends View {
         if (_command == null || !isCommandPrompt()) {
             return CommandMenuState.hidden();
         }
-        return CommandMenuState.forCommandText(_command.toString(), normalizeSelection(matchingCommandSpecs().size()));
+        var matches = matchingCommandSpecs();
+        return new CommandMenuState(true, commandPrefix(), List.copyOf(matches), normalizeSelection(matches.size()));
     }
 
     public void activate(String prompt) {
@@ -604,7 +622,21 @@ public class CommandView extends View {
         COMPLETE_MATCH
     }
 
-    public static record CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
+    public static record CommandSpec(
+            String primaryName,
+            List<String> aliases,
+            String arguments,
+            String description,
+            String replacementText,
+            boolean replaceEntireInput) {
+        public CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
+            this(primaryName, aliases, arguments, description, primaryName, false);
+        }
+
+        static CommandSpec lastCommand(String command) {
+            return new CommandSpec(command, List.of(), "", "last command", command, true);
+        }
+
         boolean expectsArgument() {
             return !arguments.isBlank();
         }
@@ -644,6 +676,10 @@ public class CommandView extends View {
                 }
             }
             return 4;
+        }
+
+        String replacement() {
+            return replacementText == null ? primaryName : replacementText;
         }
 
         String label() {
