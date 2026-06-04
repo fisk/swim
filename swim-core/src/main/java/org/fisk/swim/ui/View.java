@@ -101,6 +101,17 @@ public class View implements Drawable, EventResponder {
         view._parent = this;
     }
 
+    public void insertSubview(int index, View view) {
+        if (index < 0) {
+            index = 0;
+        }
+        if (index > _subviews.size()) {
+            index = _subviews.size();
+        }
+        _subviews.add(index, view);
+        view._parent = this;
+    }
+
     public void removeFromParent() {
         if (_parent != null) {
             _parent._subviews.remove(this);

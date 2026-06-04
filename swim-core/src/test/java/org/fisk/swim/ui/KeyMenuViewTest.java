@@ -49,6 +49,19 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void ctrlGThenCShowsShellCreationContinuations() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        view.observe(HeadlessWindowHarness.ctrl('g'));
+        view.observe(HeadlessWindowHarness.key('c'));
+
+        assertEquals("C-g c", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("w new shell workspace"));
+        assertTrue(view.bodyText().contains("v shell in split right"));
+        assertTrue(view.bodyText().contains("h shell in split below"));
+    }
+
+    @Test
     void invalidContinuationResetsAndStartsNewRootChain() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
 

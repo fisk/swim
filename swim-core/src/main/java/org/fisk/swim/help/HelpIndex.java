@@ -79,6 +79,9 @@ public class HelpIndex {
                 "While typing : commands, Up/Down browses matches and Tab completes them.",
                 ":nemo <question> asks Nemo about the current file and opens the persistent chat pane.",
                 "Inside Nemo, use :sessions, :workers, :new, and :switch to manage multiple chat sessions.",
+                ":shell opens a new shell workspace.",
+                ":vshell opens a shell in a split to the right.",
+                ":hshell opens a shell in a split below.",
                 ":w writes the current buffer to disk.",
                 ":reload loads the latest built SWIM core.",
                 ":rebuild and :upgrade rebuild and reload SWIM.",
@@ -87,7 +90,10 @@ public class HelpIndex {
                 "Ctrl-w s splits below and Ctrl-w v splits to the right.",
                 "Ctrl-w h/j/k/l moves focus left, down, up, or right.",
                 "Ctrl-w w cycles panes and Ctrl-w W cycles backward.",
-                "Ctrl-w q closes the active pane and Ctrl-w o keeps only that pane.");
+                "Ctrl-w q closes the active pane and Ctrl-w o keeps only that pane.",
+                "Ctrl-g c w opens a new shell workspace.",
+                "Ctrl-g c v opens a shell in a split to the right.",
+                "Ctrl-g c h opens a shell in a split below.");
         addSection(items, "Discoverability",
                 "The two-line top menu shows key chains in NORMAL mode.",
                 "It switches to contextual hints while the command line, lists, panels, or chat are active.",

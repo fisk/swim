@@ -37,25 +37,11 @@ public class ModeLineView extends View {
     }
 
     private String getMode() {
-        return Window.getInstance().modeNameForDisplay();
+        return frameModeName(Window.getInstance() == null ? null : Window.getInstance().getActiveView(), true);
     }
     
     private String getName() {
-        var window = Window.getInstance();
-        if (window.getActiveView() instanceof ShellPanelView) {
-            return "Shell";
-        }
-        var buffer = window.getBufferContext().getBuffer();
-        var path = buffer.getPath();
-        if (path == null) {
-            return "*scratch*";
-        }
-        var root = ProjectPaths.getProjectRootPath(path);
-        if (root != null) {
-            return root.relativize(path).toString();
-        } else {
-            return buffer.getPath().toString();
-        }
+        return frameName(Window.getInstance() == null ? null : Window.getInstance().getActiveView());
     }
 
     private String getBranch() {
@@ -147,21 +133,7 @@ public class ModeLineView extends View {
     }
 
     private String getLine() {
-        if (Window.getInstance().getActiveView() instanceof ShellPanelView shellPanelView) {
-            var cursor = shellPanelView.getCursor();
-            if (cursor == null) {
-                return "prompt";
-            }
-            return "prompt " + (cursor.getYOnScreen() + 1) + ", " + (cursor.getXOnScreen() + 1);
-        }
-        var window = Window.getInstance();
-        var buffer = window.getBufferContext().getBuffer();
-        var cursor = buffer.getCursor();
-        var textLayout = window.getBufferContext().getTextLayout();
-        var line = cursor.getYAbsolute();
-        var position = cursor.getPosition();
-        var index = textLayout.getLogicalLineAt(position).getIndex(position);
-        return "" + (position + 1) + ": " + (line + 1) + ", " + (index + 1);
+        return frameLine(Window.getInstance() == null ? null : Window.getInstance().getActiveView());
     }
 
     private TextColor getModeColor() {
@@ -195,13 +167,26 @@ public class ModeLineView extends View {
     }
 
     private AttributedString getLeftString() {
+        return leftStringForView(Window.getInstance() == null ? null : Window.getInstance().getActiveView(), true, _backgroundColour);
+    }
+
+    static AttributedString leftStringForView(View view, boolean active, TextColor trailingBackground) {
         var str = new AttributedString();
-        TextColor modeColour = getModeColor();
-        UiTheme.appendSegment(str, getMode(), UiTheme.TEXT_ON_ACCENT, modeColour);
-        UiTheme.appendRightSeparator(str, modeColour, UiTheme.SURFACE_ACCENT);
-        UiTheme.appendSegment(str, getName(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
-        UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT, _backgroundColour);
-        str.append(" " + Powerline.SYMBOL_LN + " " + getLine() + " ", UiTheme.TEXT_MUTED, _backgroundColour);
+        String mode = frameModeName(view, active);
+        String name = frameName(view);
+        String line = frameLine(view);
+        if (mode != null && !mode.isBlank()) {
+            TextColor modeColour = UiTheme.modeColor(mode);
+            UiTheme.appendSegment(str, mode, UiTheme.TEXT_ON_ACCENT, modeColour);
+            UiTheme.appendRightSeparator(str, modeColour, UiTheme.SURFACE_ACCENT);
+        }
+        if (name != null && !name.isBlank()) {
+            UiTheme.appendSegment(str, name, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
+            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT, trailingBackground);
+        }
+        if (line != null && !line.isBlank()) {
+            str.append(" " + Powerline.SYMBOL_LN + " " + line + " ", UiTheme.TEXT_MUTED, trailingBackground);
+        }
         return str;
     }
 
@@ -233,7 +218,9 @@ public class ModeLineView extends View {
 
     private AttributedString getString() {
         var str = new AttributedString();
-        var left = getLeftString();
+        var left = Window.getInstance() != null && Window.getInstance().usesFrameModeLines()
+                ? new AttributedString()
+                : getLeftString();
         var right = getRightString();
 
         str.append(left);
@@ -250,5 +237,78 @@ public class ModeLineView extends View {
         var textGraphics = terminalContext.getGraphics();
         UiTheme.drawLine(textGraphics, rect.getPoint(), rect.getSize().getWidth(), getString(), UiTheme.TEXT_MUTED,
                 _backgroundColour);
+    }
+
+    static String frameModeName(View view, boolean active) {
+        if (view instanceof ShellPanelView shellPanelView) {
+            return shellPanelView.modeName();
+        }
+        if (view instanceof BufferView) {
+            if (active && Window.getInstance() != null) {
+                return Window.getInstance().modeNameForDisplay();
+            }
+            return "NORMAL";
+        }
+        return null;
+    }
+
+    static String frameName(View view) {
+        if (view instanceof BufferView bufferView) {
+            var path = bufferView.getBufferContext().getBuffer().getPath();
+            if (path == null) {
+                return "*scratch*";
+            }
+            var root = ProjectPaths.getProjectRootPath(path);
+            if (root != null) {
+                return root.relativize(path).toString();
+            }
+            return path.toString();
+        }
+        if (view instanceof ShellPanelView shellPanelView) {
+            return shellPanelView.getTitle();
+        }
+        if (view instanceof DirectoryBrowserView directoryBrowserView) {
+            return directoryBrowserView.getTitle();
+        }
+        if (view instanceof PluginPanelView pluginPanelView) {
+            return pluginPanelView.getTitle();
+        }
+        if (view instanceof ProjectSearchPanelView projectSearchPanelView) {
+            return projectSearchPanelView.getTitle();
+        }
+        if (view instanceof TextPanelView textPanelView) {
+            return textPanelView.getTitle();
+        }
+        if (view instanceof ListView listView) {
+            return listView.getTitle();
+        }
+        if (view instanceof ChatPanelView chatPanelView) {
+            return chatPanelView.getTitle();
+        }
+        if (view instanceof MailPanelView) {
+            return "Mail";
+        }
+        return "";
+    }
+
+    static String frameLine(View view) {
+        if (view instanceof ShellPanelView shellPanelView) {
+            var cursor = shellPanelView.getCursor();
+            if (cursor == null) {
+                return "prompt";
+            }
+            return "prompt " + (cursor.getYOnScreen() + 1) + ", " + (cursor.getXOnScreen() + 1);
+        }
+        if (view instanceof BufferView bufferView) {
+            var bufferContext = bufferView.getBufferContext();
+            var buffer = bufferContext.getBuffer();
+            var cursor = buffer.getCursor();
+            var textLayout = bufferContext.getTextLayout();
+            var line = cursor.getYAbsolute();
+            var position = cursor.getPosition();
+            var index = textLayout.getLogicalLineAt(position).getIndex(position);
+            return (position + 1) + ": " + (line + 1) + ", " + (index + 1);
+        }
+        return "";
     }
 }

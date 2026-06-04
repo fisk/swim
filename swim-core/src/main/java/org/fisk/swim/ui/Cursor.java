@@ -178,6 +178,7 @@ public class Cursor {
     public void setPosition(int position) {
         _position = position;
         calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
     }
 
     public Line getPhysicalLine() {

@@ -299,7 +299,7 @@ class Demo {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
                     HeadlessWindowHarness.key('v'));
-            assertEquals("{12, 2, 12, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
+            assertEquals("{12, 2, 12, 6}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
 
             window.setBufferPath(second);
             var rightBuffer = window.getBufferContext().getBuffer();
@@ -337,8 +337,8 @@ class Demo {
 
             assertEquals("swim-tree-view", host.pluginId);
             assertTrue(window.getPanelView() instanceof PluginPanelView);
-            assertEquals("{0, 2, 6, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getPanelView()).toString());
-            assertEquals("{6, 2, 18, 7}", absoluteBounds(window.getBufferContext().getBufferView()).toString());
+            assertEquals("{0, 2, 6, 6}", absoluteBounds((org.fisk.swim.ui.View) window.getPanelView()).toString());
+            assertEquals("{7, 2, 17, 6}", absoluteBounds(window.getBufferContext().getBufferView()).toString());
 
             HeadlessWindowHarness.dispatch((PluginPanelView) window.getPanelView(), HeadlessWindowHarness.enter());
 

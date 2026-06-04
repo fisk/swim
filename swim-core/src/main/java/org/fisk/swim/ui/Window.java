@@ -154,6 +154,11 @@ public class Window implements Drawable {
         if (path != null && path.toFile().isDirectory()) {
             return showDirectoryBrowser(path);
         }
+        if (_currentWorkspace != null
+                && _currentWorkspace._kind == WorkspaceKind.BUFFER
+                && _activeView instanceof DirectoryBrowserView directoryBrowserView) {
+            return replaceDirectoryBrowserFrameWithBuffer(directoryBrowserView, path);
+        }
         if (_currentWorkspace != null && _currentWorkspace._kind != WorkspaceKind.BUFFER) {
             return openBufferWorkspace(path);
         }
@@ -189,6 +194,16 @@ public class Window implements Drawable {
     public boolean showDirectoryBrowser(Path directory) {
         if (directory == null || !directory.toFile().isDirectory()) {
             return false;
+        }
+        if (_currentWorkspace != null
+                && _currentWorkspace._kind == WorkspaceKind.BUFFER
+                && _activeView instanceof DirectoryBrowserView browserView) {
+            browserView.setDirectory(directory);
+            activateView(browserView);
+            return true;
+        }
+        if (canEmbedDirectoryBrowserInCurrentWorkspace()) {
+            return replaceActiveBufferFrameWithDirectoryBrowser(directory);
         }
         if (_currentWorkspace != null
                 && _currentWorkspace._kind == WorkspaceKind.DIRECTORY
@@ -244,6 +259,14 @@ public class Window implements Drawable {
         return openShellWorkspace();
     }
 
+    public boolean showShellSplitHorizontally() {
+        return openShellSplit(SplitView.Orientation.HORIZONTAL);
+    }
+
+    public boolean showShellSplitVertically() {
+        return openShellSplit(SplitView.Orientation.VERTICAL);
+    }
+
     public boolean enterShellBrowse(ShellPanelView shellView) {
         ensureLayoutState();
         if (_currentWorkspace == null || _currentWorkspace._kind != WorkspaceKind.SHELL || shellView == null
@@ -269,7 +292,7 @@ public class Window implements Drawable {
         _activeBufferView = browse.getBufferView();
         _bufferContext = browse;
         if (_workspaceView.getParent() == null) {
-            _rootView.addSubview(_workspaceView);
+            attachWorkspaceView();
         }
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_currentMode != null) {
@@ -299,7 +322,7 @@ public class Window implements Drawable {
         _currentWorkspace._workspaceView = _workspaceView;
         _currentWorkspace._activeView = _activeView;
         if (_workspaceView.getParent() == null) {
-            _rootView.addSubview(_workspaceView);
+            attachWorkspaceView();
         }
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_rootView != null) {
@@ -393,7 +416,7 @@ public class Window implements Drawable {
 
         keepView.removeFromParent();
         _workspaceView = keepView;
-        _rootView.addSubview(keepView);
+        attachWorkspaceView();
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         _rootView.setNeedsRedraw();
         activateView(keepView);
@@ -550,6 +573,11 @@ public class Window implements Drawable {
         return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL;
     }
 
+    boolean usesFrameModeLines() {
+        ensureLayoutState();
+        return _workspaceView instanceof SplitView;
+    }
+
     public boolean closeCurrentWorkspaceWindow() {
         if (_currentWorkspace == null || _currentWorkspace._kind == WorkspaceKind.BUFFER) {
             return false;
@@ -588,6 +616,9 @@ public class Window implements Drawable {
             shellView.removeFromParent();
             return true;
         }
+        if (_workspaceView instanceof SplitView splitRoot && splitRoot.containsLeaf(shellView)) {
+            return closeView(shellView);
+        }
         WorkspaceState target = null;
         for (var workspace : _workspaceHistory) {
             if (workspace._kind == WorkspaceKind.SHELL
@@ -612,6 +643,17 @@ public class Window implements Drawable {
             return;
         }
         _savedPanelShell = null;
+        if (shellView.getParent() == _rootView) {
+            _panelView = null;
+            shellView.closeForPanel();
+            shellView.removeFromParent();
+            if (_activeBufferView != null) {
+                activateView(_activeBufferView);
+            } else if (_workspaceView != null) {
+                activateView(findFocusableView(_workspaceView));
+            }
+            return;
+        }
         closeView(shellView);
     }
 
@@ -716,6 +758,46 @@ public class Window implements Drawable {
         }
         if (_mailNotificationView != null) {
             _mailNotificationView.setNeedsRedraw();
+        }
+    }
+
+    private void attachWorkspaceView() {
+        if (_rootView == null || _workspaceView == null) {
+            return;
+        }
+        if (_workspaceView.getParent() == _rootView) {
+            _workspaceView.removeFromParent();
+        }
+        int index = (_keyMenuView != null && _keyMenuView.getParent() == _rootView) ? 1 : 0;
+        _rootView.insertSubview(index, _workspaceView);
+    }
+
+    private void attachOverlayPanel(View panelView) {
+        if (_rootView == null || panelView == null) {
+            return;
+        }
+        if (panelView.getParent() == _rootView) {
+            panelView.removeFromParent();
+        }
+        int index = rootSubviews().size();
+        if (_modeLineView != null && _modeLineView.getParent() == _rootView) {
+            index = rootSubviews().indexOf(_modeLineView);
+        }
+        _rootView.insertSubview(index, panelView);
+    }
+
+    private boolean isOverlayPanel(View panelView) {
+        return panelView instanceof ChatPanelView || panelView instanceof ShellPanelView;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<View> rootSubviews() {
+        try {
+            var field = View.class.getDeclaredField("_subviews");
+            field.setAccessible(true);
+            return (List<View>) field.get(_rootView);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -828,6 +910,9 @@ public class Window implements Drawable {
         }
         _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
         _size = size;
+        if (_activeView instanceof BufferView bufferView) {
+            bufferView.adaptViewToCursor();
+        }
         var cursor = _rootView.getCursor();
         if (cursor != null) {
             screen.setCursorPosition(new TerminalPosition(cursor.getXOnScreen(), cursor.getYOnScreen()));
@@ -868,6 +953,13 @@ public class Window implements Drawable {
         if (_panelView != null) {
             return false;
         }
+        if (isOverlayPanel(panelView)) {
+            _panelView = panelView;
+            attachOverlayPanel(panelView);
+            applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
+            activateView(panelView);
+            return true;
+        }
         if (!splitView(getActiveView(), panelView, orientation, ratio, !panelFirst)) {
             return false;
         }
@@ -893,6 +985,31 @@ public class Window implements Drawable {
 
     public void hidePanel() {
         if (_panelView == null) {
+            return;
+        }
+        if (_panelView instanceof ChatPanelView chatPanelView) {
+            _panelView = null;
+            chatPanelView.removeFromParent();
+            if (_activeBufferView != null) {
+                activateView(_activeBufferView);
+            } else if (_workspaceView != null) {
+                activateView(findFocusableView(_workspaceView));
+            }
+            return;
+        }
+        if (_panelView instanceof ShellPanelView shellView && shellView.getParent() == _rootView) {
+            _panelView = null;
+            if (_savedPanelShell == shellView) {
+                shellView.detachFromParentPreservingSession();
+            } else {
+                shellView.closeForPanel();
+                shellView.removeFromParent();
+            }
+            if (_activeBufferView != null) {
+                activateView(_activeBufferView);
+            } else if (_workspaceView != null) {
+                activateView(findFocusableView(_workspaceView));
+            }
             return;
         }
         if (_panelView instanceof ShellPanelView shellView && _savedPanelShell == shellView) {
@@ -955,7 +1072,7 @@ public class Window implements Drawable {
         _workspaceView = _bufferContext.getBufferView();
         _activeView = _workspaceView;
         _activeBufferView = _bufferContext.getBufferView();
-        _rootView.addSubview(_workspaceView);
+        attachWorkspaceView();
 
         _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
                 terminalSize.getRows() >= 2 ? 1 : 0));
@@ -1111,20 +1228,18 @@ public class Window implements Drawable {
         if (existingView == null || newView == null || existingView == newView) {
             return false;
         }
-
-        var previousParent = existingView.getParent();
-        boolean replacingWorkspaceRoot = existingView == _workspaceView;
-        var bounds = existingView.getBounds();
-        existingView.removeFromParent();
-
-        var splitView = existingFirst
-                ? new SplitView(bounds, orientation, existingView, newView, ratio)
-                : new SplitView(bounds, orientation, newView, existingView, ratio);
-        if (previousParent instanceof SplitView splitParent) {
-            splitParent.replaceChild(existingView, splitView);
-        } else if (replacingWorkspaceRoot) {
+        if (_workspaceView instanceof SplitView splitRoot && splitRoot.containsLeaf(existingView)) {
+            if (!splitRoot.split(existingView, newView, orientation, ratio, existingFirst)) {
+                return false;
+            }
+        } else if (existingView == _workspaceView) {
+            var bounds = existingView.getBounds();
+            existingView.removeFromParent();
+            var splitView = existingFirst
+                    ? new SplitView(bounds, orientation, existingView, newView, ratio)
+                    : new SplitView(bounds, orientation, newView, existingView, ratio);
             _workspaceView = splitView;
-            _rootView.addSubview(splitView);
+            attachWorkspaceView();
         } else {
             return false;
         }
@@ -1144,25 +1259,10 @@ public class Window implements Drawable {
         if (view instanceof BufferView && getBufferLeafCount() <= 1) {
             return false;
         }
-        if (!(view.getParent() instanceof SplitView splitParent)) {
+        if (!(_workspaceView instanceof SplitView splitRoot) || !splitRoot.containsLeaf(view)) {
             return false;
         }
-
-        var sibling = splitParent.getSibling(view);
-        var grandParent = splitParent.getParent();
-        boolean replacingWorkspaceRoot = splitParent == _workspaceView;
-        view.removeFromParent();
-        sibling.removeFromParent();
-        splitParent.removeFromParent();
-
-        if (grandParent instanceof SplitView grandSplit) {
-            grandSplit.replaceChild(splitParent, sibling);
-        } else if (replacingWorkspaceRoot) {
-            _workspaceView = sibling;
-            _rootView.addSubview(sibling);
-        } else {
-            return false;
-        }
+        var focusFallback = splitRoot.removeLeaf(view);
 
         if (view == _panelView) {
             _panelView = null;
@@ -1170,9 +1270,16 @@ public class Window implements Drawable {
         if (view instanceof BufferView bufferView) {
             unregisterBufferView(bufferView);
             if (_activeBufferView == bufferView) {
-                _activeBufferView = findFirstBufferView();
+                _activeBufferView = splitRoot.isSingleLeaf() ? null : findFirstBufferView();
                 _bufferContext = getBufferContextFor(_activeBufferView);
             }
+        }
+
+        if (splitRoot.isSingleLeaf()) {
+            var remaining = splitRoot.detachSingleLeaf();
+            splitRoot.removeFromParent();
+            _workspaceView = remaining;
+            attachWorkspaceView();
         }
 
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
@@ -1181,7 +1288,7 @@ public class Window implements Drawable {
         }
 
         if (_activeView == view || _activeView == null) {
-            var focusTarget = findFocusableView(sibling);
+            var focusTarget = focusFallback != null ? focusFallback : findFocusableView(_workspaceView);
             if (!(focusTarget instanceof BufferView) && _activeBufferView != null) {
                 _bufferContext = getBufferContextFor(_activeBufferView);
             }
@@ -1196,32 +1303,25 @@ public class Window implements Drawable {
     }
 
     private void hideReusableShellPanel(ShellPanelView shellView) {
-        if (!(shellView.getParent() instanceof SplitView splitParent)) {
+        if (!(_workspaceView instanceof SplitView splitRoot) || !splitRoot.containsLeaf(shellView)) {
             return;
         }
-        var sibling = splitParent.getSibling(shellView);
-        var grandParent = splitParent.getParent();
-        boolean replacingWorkspaceRoot = splitParent == _workspaceView;
         shellView.detachFromParentPreservingSession();
-        sibling.removeFromParent();
-        splitParent.removeFromParent();
-
-        if (grandParent instanceof SplitView grandSplit) {
-            grandSplit.replaceChild(splitParent, sibling);
-        } else if (replacingWorkspaceRoot) {
-            _workspaceView = sibling;
-            _rootView.addSubview(sibling);
-        } else {
-            return;
-        }
+        var focusFallback = splitRoot.removeLeaf(shellView);
 
         _panelView = null;
+        if (splitRoot.isSingleLeaf()) {
+            var remaining = splitRoot.detachSingleLeaf();
+            splitRoot.removeFromParent();
+            _workspaceView = remaining;
+            attachWorkspaceView();
+        }
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_rootView != null) {
             _rootView.setNeedsRedraw();
         }
         if (_activeView == shellView || _activeView == null) {
-            var focusTarget = findFocusableView(sibling);
+            var focusTarget = focusFallback != null ? focusFallback : findFocusableView(_workspaceView);
             if (!(focusTarget instanceof BufferView) && _activeBufferView != null) {
                 _bufferContext = getBufferContextFor(_activeBufferView);
             }
@@ -1236,15 +1336,14 @@ public class Window implements Drawable {
 
     private void replaceViewInLayout(View existingView, View replacementView) {
         ensureLayoutState();
-        var previousParent = existingView.getParent();
-        boolean replacingWorkspaceRoot = existingView == _workspaceView;
-        existingView.removeFromParent();
-
-        if (previousParent instanceof SplitView splitParent) {
-            splitParent.replaceChild(existingView, replacementView);
-        } else if (replacingWorkspaceRoot) {
+        if (_workspaceView instanceof SplitView splitRoot && splitRoot.containsLeaf(existingView)) {
+            if (!splitRoot.replaceLeaf(existingView, replacementView)) {
+                throw new IllegalStateException("View is not part of the workspace layout");
+            }
+        } else if (existingView == _workspaceView) {
+            existingView.removeFromParent();
             _workspaceView = replacementView;
-            _rootView.addSubview(replacementView);
+            attachWorkspaceView();
         } else {
             throw new IllegalStateException("View is not part of the workspace layout");
         }
@@ -1275,6 +1374,11 @@ public class Window implements Drawable {
         }
         if (_workspaceView != null) {
             _workspaceView.setBounds(Rect.create(0, contentTop, size.getWidth(), contentHeight));
+        }
+        if (isOverlayPanel(_panelView) && _panelView != null && _panelView.getParent() == _rootView) {
+            double overlayRatio = _panelView instanceof ChatPanelView ? 0.70 : (1.0 / 3.0);
+            int overlayHeight = Math.max(1, (int) Math.ceil(contentHeight * overlayRatio));
+            _panelView.setBounds(Rect.create(0, contentTop + contentHeight - overlayHeight, size.getWidth(), overlayHeight));
         }
         if (_modeLineView != null) {
             _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(), modeLineHeight));
@@ -1321,6 +1425,55 @@ public class Window implements Drawable {
             return null;
         }
         return _bufferContextsByView.get(bufferView);
+    }
+
+    private boolean canEmbedDirectoryBrowserInCurrentWorkspace() {
+        ensureLayoutState();
+        return _currentWorkspace != null
+                && _currentWorkspace._kind == WorkspaceKind.BUFFER
+                && _activeView instanceof BufferView activeBufferView
+                && getBufferLeafCount() > 1
+                && getBufferContextFor(activeBufferView) != null;
+    }
+
+    private boolean replaceActiveBufferFrameWithDirectoryBrowser(Path directory) {
+        ensureLayoutState();
+        if (!(getActiveView() instanceof BufferView activeBufferView)) {
+            return false;
+        }
+        var activeBufferContext = getBufferContextFor(activeBufferView);
+        if (activeBufferContext == null) {
+            return false;
+        }
+        var browserView = new DirectoryBrowserView(activeBufferView.getBounds(), directory);
+        replaceViewInLayout(activeBufferView, browserView);
+        unregisterBufferView(activeBufferView);
+        _activeBufferView = findFirstBufferView();
+        _bufferContext = getBufferContextFor(_activeBufferView);
+        _activeView = browserView;
+        activateView(browserView);
+        return true;
+    }
+
+    private boolean replaceDirectoryBrowserFrameWithBuffer(DirectoryBrowserView browserView, Path path) {
+        ensureLayoutState();
+        BufferContext nextBufferContext;
+        try {
+            nextBufferContext = new BufferContext(browserView.getBounds(), path);
+        } catch (Throwable e) {
+            _log.error("Failed to open buffer " + path, e);
+            return false;
+        }
+        ClangdLspPluginSupport.ensureStartedForProject(path);
+        var nextBufferView = nextBufferContext.getBufferView();
+        registerBufferView(nextBufferContext, nextBufferView);
+        replaceViewInLayout(browserView, nextBufferView);
+        _bufferContext = nextBufferContext;
+        _activeBufferView = nextBufferView;
+        _activeView = nextBufferView;
+        setupModes();
+        activateView(nextBufferView);
+        return true;
     }
 
     private BufferContext createSplitBufferContext() {
@@ -1397,7 +1550,7 @@ public class Window implements Drawable {
 
     private View findFocusableView(View view) {
         if (view instanceof SplitView splitView) {
-            return findFocusableView(splitView.getFirstView());
+            return splitView.firstLeaf();
         }
         return view;
     }
@@ -1422,7 +1575,7 @@ public class Window implements Drawable {
         restoreWorkspace(workspace);
         _currentWorkspace = workspace;
         if (_workspaceView != null && _workspaceView.getParent() == null) {
-            _rootView.addSubview(_workspaceView);
+            attachWorkspaceView();
         }
         moveWorkspaceToFront(workspace);
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
@@ -1526,6 +1679,30 @@ public class Window implements Drawable {
         } catch (IOException e) {
             if (_commandView != null) {
                 _commandView.setMessage("Failed to start shell: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    private boolean openShellSplit(SplitView.Orientation orientation) {
+        try {
+            var shellView = ShellPanelView.createWorkspace(this);
+            shellView.setOnExit(() -> closeShellView(shellView));
+            boolean opened = orientation == SplitView.Orientation.HORIZONTAL
+                    ? splitActiveViewHorizontally(shellView)
+                    : splitActiveViewVertically(shellView);
+            if (!opened) {
+                shellView.closeForPanel();
+                shellView.removeFromParent();
+                if (_commandView != null) {
+                    _commandView.setMessage("Failed to split shell workspace");
+                }
+                return false;
+            }
+            return true;
+        } catch (IOException e) {
+            if (_commandView != null) {
+                _commandView.setMessage("Failed to start shell workspace: " + e.getMessage());
             }
             return false;
         }
@@ -1758,11 +1935,11 @@ public class Window implements Drawable {
             return mailPanelView;
         }
         if (view instanceof SplitView splitView) {
-            MailPanelView first = findMailPanelView(splitView.getFirstView());
-            if (first != null) {
-                return first;
+            for (var leaf : splitView.leafViews()) {
+                if (leaf instanceof MailPanelView mailPanelView) {
+                    return mailPanelView;
+                }
             }
-            return findMailPanelView(splitView.getSecondView());
         }
         return null;
     }
@@ -1797,8 +1974,7 @@ public class Window implements Drawable {
             return;
         }
         if (view instanceof SplitView splitView) {
-            collectLeafViews(splitView.getFirstView(), leaves);
-            collectLeafViews(splitView.getSecondView(), leaves);
+            leaves.addAll(splitView.leafViews());
             return;
         }
         leaves.add(view);

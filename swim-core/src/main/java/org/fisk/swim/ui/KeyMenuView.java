@@ -275,7 +275,7 @@ public class KeyMenuView extends View {
             case CHAT_PANEL -> _chatPending
                     ? "type to chat  •  Enter send  •  :abort while pending  •  Esc close"
                     : "type to chat  •  Enter send  •  Esc close";
-            case SHELL -> "Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g c new shell  •  Ctrl-g q close";
+            case SHELL -> "Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g c w new shell ws  •  Ctrl-g c v/h split shell  •  Ctrl-g q close";
             case PANEL -> "Esc returns to the buffer";
             default -> "focus the buffer to browse normal-mode key chains";
             };
@@ -393,7 +393,10 @@ public class KeyMenuView extends View {
                 .child("q", leaf("close pane"))
                 .child("o", leaf("only this pane")));
         root.child("<CTRL>-g", branch("shell")
-                .child("c", leaf("new shell workspace"))
+                .child("c", branch("create shell")
+                        .child("w", leaf("new shell workspace"))
+                        .child("v", leaf("shell in split right"))
+                        .child("h", leaf("shell in split below")))
                 .child("w", leaf("workspace switch")));
         root.child("<SPACE>", branch("code")
                 .child("e", branch("actions")

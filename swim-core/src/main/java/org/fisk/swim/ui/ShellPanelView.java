@@ -171,7 +171,7 @@ public class ShellPanelView extends View {
         }
         return CommandView.CommandMenuState.forCommandText(_command.toString(), 0,
                 List.of(new CommandView.CommandSpec("q", List.of("quit"), "", "close shell terminal"),
-                        new CommandView.CommandSpec("c", List.of("create", "new"), "", "create a new shell workspace"),
+                        new CommandView.CommandSpec("c", List.of("create", "new"), "w|v|h", "create shell workspace or split shell"),
                         new CommandView.CommandSpec("e", List.of("editor", "buffer"), "", "return to the editor"),
                         new CommandView.CommandSpec("v", List.of("view", "browse"), "",
                                 "browse terminal output as a read-only buffer"),
@@ -367,6 +367,12 @@ public class ShellPanelView extends View {
             _command.setLength(0);
             if ("q".equals(command) || "quit".equals(command)) {
                 closeShell();
+            } else if ("cw".equals(command) || "c w".equals(command) || "create w".equals(command) || "new w".equals(command)) {
+                createShell("w");
+            } else if ("cv".equals(command) || "c v".equals(command) || "create v".equals(command) || "new v".equals(command)) {
+                createShell("v");
+            } else if ("ch".equals(command) || "c h".equals(command) || "create h".equals(command) || "new h".equals(command)) {
+                createShell("h");
             } else if ("e".equals(command) || "editor".equals(command) || "buffer".equals(command)) {
                 Window.getInstance().returnToEditor();
             } else if ("v".equals(command) || "view".equals(command) || "browse".equals(command)) {
@@ -375,7 +381,7 @@ public class ShellPanelView extends View {
                 switchWorkspace(command);
             } else if ("h".equals(command) || "help".equals(command)) {
                 Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close");
+                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c w new shell ws  •  Ctrl-g c v/h split shell  •  Ctrl-g q close");
             }
             Window.getInstance().refreshChromeState();
             setNeedsRedraw();
@@ -390,14 +396,31 @@ public class ShellPanelView extends View {
                     return;
                 }
             }
+            if (_command.length() == 1 && _command.charAt(0) == 'c') {
+                if (character == 'w' || character == 'v' || character == 'h') {
+                    _commandMode = false;
+                    _command.setLength(0);
+                    createShell(String.valueOf(character));
+                    Window.getInstance().refreshChromeState();
+                    setNeedsRedraw();
+                    return;
+                }
+                if (Character.isWhitespace(character)) {
+                    _command.append(event.getCharacter());
+                    Window.getInstance().refreshChromeState();
+                    setNeedsRedraw();
+                    return;
+                }
+            }
             if (_command.length() == 0 && character == 'q') {
                 _commandMode = false;
                 _command.setLength(0);
                 closeShell();
             } else if (_command.length() == 0 && character == 'c') {
-                _commandMode = false;
-                _command.setLength(0);
-                createShell();
+                _command.append(event.getCharacter());
+                Window.getInstance().refreshChromeState();
+                setNeedsRedraw();
+                return;
             } else if (_command.length() == 0 && character == 'e') {
                 _commandMode = false;
                 _command.setLength(0);
@@ -410,7 +433,7 @@ public class ShellPanelView extends View {
                 _commandMode = false;
                 _command.setLength(0);
                 Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c new shell  •  Ctrl-g q close");
+                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c w new shell ws  •  Ctrl-g c v/h split shell  •  Ctrl-g q close");
             } else if (_command.length() == 0 && character == 'w') {
                 _command.append(event.getCharacter());
                 Window.getInstance().refreshChromeState();
@@ -576,6 +599,10 @@ public class ShellPanelView extends View {
         }
     }
 
+    void closeForPanel() {
+        closeProcess();
+    }
+
     private Point absoluteOrigin() {
         int x = getBounds().getPoint().getX();
         int y = getBounds().getPoint().getY();
@@ -644,7 +671,7 @@ public class ShellPanelView extends View {
         }
     }
 
-    private void createShell() {
+    private void createShell(String target) {
         var window = Window.getInstance();
         if (window == null) {
             return;
@@ -652,7 +679,12 @@ public class ShellPanelView extends View {
         if (window.getPanelView() == this) {
             window.hidePanel();
         }
-        if (!window.showShellWorkspace()) {
+        boolean opened = switch (target) {
+        case "v" -> window.showShellSplitHorizontally();
+        case "h" -> window.showShellSplitVertically();
+        default -> window.showShellWorkspace();
+        };
+        if (!opened) {
             window.getCommandView().setMessage("Failed to start shell workspace");
         }
     }

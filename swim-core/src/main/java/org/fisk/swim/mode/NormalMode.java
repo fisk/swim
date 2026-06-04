@@ -59,11 +59,9 @@ public class NormalMode extends Mode {
                 return;
             }
         });
-        _rootResponder.addEventResponder("<CTRL>-g c", () -> {
-            if (!window.showShellWorkspace()) {
-                window.getCommandView().setMessage("Failed to start shell workspace");
-            }
-        });
+        _rootResponder.addEventResponder("<CTRL>-g c w", () -> { startShell(window, ShellTarget.WORKSPACE); });
+        _rootResponder.addEventResponder("<CTRL>-g c v", () -> { startShell(window, ShellTarget.VERTICAL_SPLIT); });
+        _rootResponder.addEventResponder("<CTRL>-g c h", () -> { startShell(window, ShellTarget.HORIZONTAL_SPLIT); });
         _rootResponder.addEventResponder("u", () -> { window.getBufferContext().getBuffer().undo(); });
         _rootResponder.addEventResponder("<CTRL>-r", () -> {window.getBufferContext().getBuffer().redo(); });
         _rootResponder.addEventResponder("d i w", () -> {
@@ -218,6 +216,23 @@ public class NormalMode extends Mode {
     private void announceIfUnmoved(boolean changed, String message) {
         if (!changed) {
             _window.getCommandView().setMessage(message);
+        }
+    }
+
+    private enum ShellTarget {
+        WORKSPACE,
+        VERTICAL_SPLIT,
+        HORIZONTAL_SPLIT
+    }
+
+    private void startShell(Window window, ShellTarget target) {
+        boolean opened = switch (target) {
+        case WORKSPACE -> window.showShellWorkspace();
+        case VERTICAL_SPLIT -> window.showShellSplitHorizontally();
+        case HORIZONTAL_SPLIT -> window.showShellSplitVertically();
+        };
+        if (!opened) {
+            window.getCommandView().setMessage("Failed to start shell workspace");
         }
     }
 

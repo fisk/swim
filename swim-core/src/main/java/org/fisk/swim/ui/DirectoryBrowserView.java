@@ -210,6 +210,9 @@ public class DirectoryBrowserView extends View {
     private void close() {
         var window = Window.getInstance();
         if (window != null) {
+            if (window.getActiveView() == this && window.closeActiveView()) {
+                return;
+            }
             if (!window.closeCurrentWorkspaceWindow()) {
                 window.hidePanel();
             }

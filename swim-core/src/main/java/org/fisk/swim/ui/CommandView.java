@@ -44,6 +44,8 @@ public class CommandView extends View {
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
             new CommandSpec("shell", List.of("sh"), "", "open a shell workspace"),
+            new CommandSpec("vshell", List.of(), "", "open a shell in a split to the right"),
+            new CommandSpec("hshell", List.of(), "", "open a shell in a split below"),
             new CommandSpec("upgrade", List.of(), "", "alias for :rebuild"),
             new CommandSpec("w", List.of(), "", "write the current buffer"));
 
@@ -260,6 +262,16 @@ public class CommandView extends View {
                 _message = "Failed to open shell workspace";
             }
             break;
+        case "vshell":
+            if (!Window.getInstance().showShellSplitHorizontally()) {
+                _message = "Failed to open shell workspace";
+            }
+            break;
+        case "hshell":
+            if (!Window.getInstance().showShellSplitVertically()) {
+                _message = "Failed to open shell workspace";
+            }
+            break;
         case "w":
             Window.getInstance().getBufferContext().getBuffer().write();
             break;
@@ -314,6 +326,13 @@ public class CommandView extends View {
 
     private void splitBuffer(boolean vertical) {
         var window = Window.getInstance();
+        if (window.getActiveView() instanceof ShellPanelView) {
+            boolean opened = vertical ? window.showShellSplitHorizontally() : window.showShellSplitVertically();
+            if (!opened) {
+                _message = "Failed to split view";
+            }
+            return;
+        }
         var splitView = vertical ? window.splitActiveBufferHorizontally() : window.splitActiveBufferVertically();
         if (splitView == null) {
             _message = "Failed to split view";

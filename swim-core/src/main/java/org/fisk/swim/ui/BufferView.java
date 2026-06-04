@@ -26,6 +26,10 @@ public class BufferView extends View {
         return AttributedString.create(_bufferContext.getBuffer().getString(), _backgroundColour, TextColor.ANSI.DEFAULT);
     }
 
+    BufferContext getBufferContext() {
+        return _bufferContext;
+    }
+
     @Override
     public void setBounds(Rect rect) {
         var previous = getBounds();

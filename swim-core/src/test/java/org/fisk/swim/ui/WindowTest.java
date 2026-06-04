@@ -363,6 +363,46 @@ class WindowTest {
     }
 
     @Test
+    void chatPanelOverlaysWorkspaceInsteadOfJoiningSplitTree() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferVertically();
+            int leavesBefore = leafViews(window).size();
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+
+            assertTrue(window.showPanel(chat));
+
+            assertEquals(leavesBefore, leafViews(window).size());
+            assertSame(chat, window.getPanelView());
+            assertSame(chat, window.getActiveView());
+            assertEquals("{0, 4, 32, 5}", chat.getBounds().toString());
+            assertTrue(rootSubviews(window).indexOf(chat) > rootSubviews(window).indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class)));
+            assertTrue(rootSubviews(window).indexOf(chat) < rootSubviews(window).indexOf(window.getModeLineView()));
+        }
+    }
+
+    @Test
+    void shellPanelOverlaysWorkspaceInsteadOfJoiningSplitTree() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferVertically();
+            int leavesBefore = leafViews(window).size();
+            var shell = new ShellPanelView(Rect.create(0, 0, 0, 0), "Shell", command -> {
+            }, "/bin/sh");
+
+            assertTrue(window.showPanel(shell));
+
+            assertEquals(leavesBefore, leafViews(window).size());
+            assertSame(shell, window.getPanelView());
+            assertSame(shell, window.getActiveView());
+            assertEquals("{0, 6, 32, 3}", shell.getBounds().toString());
+            assertTrue(rootSubviews(window).indexOf(shell) > rootSubviews(window).indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class)));
+            assertTrue(rootSubviews(window).indexOf(shell) < rootSubviews(window).indexOf(window.getModeLineView()));
+            window.closePanelShellSession();
+        }
+    }
+
+    @Test
     void shellPanelUsesShellSpecificCommandCompletionPopup() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
@@ -435,16 +475,45 @@ class WindowTest {
     }
 
     @Test
-    void normalModeCtrlGCOpensShellWorkspace() throws Exception {
+    void normalModeCtrlGCWOpensShellWorkspace() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
 
-            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'), HeadlessWindowHarness.key('c'));
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'),
+                    HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('w'));
 
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
             assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Shell"));
             assertEquals(32, shell.getBounds().getSize().getWidth());
             assertEquals(7, shell.getBounds().getSize().getHeight());
+        }
+    }
+
+    @Test
+    void normalModeCtrlGCVOpensShellInVerticalSplit() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'),
+                    HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('v'));
+
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertEquals("{16, 0, 16, 6}", shell.getBounds().toString());
+            assertEquals(2, leafViews(window).size());
+        }
+    }
+
+    @Test
+    void normalModeCtrlGCHOpensShellInHorizontalSplit() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('g'),
+                    HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('h'));
+
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertEquals("{0, 4, 32, 2}", shell.getBounds().toString());
+            assertEquals(2, leafViews(window).size());
         }
     }
 
@@ -456,7 +525,7 @@ class WindowTest {
 
         try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
             var window = harness.getWindow();
-            assertTrue(window.showDirectoryBrowser(directory));
+            assertTrue((Boolean) invoke(window, "openDirectoryWorkspace", new Class<?>[] { Path.class }, directory));
             assertTrue(window.switchToRecentWindow(2));
             assertTrue(window.showShellWorkspace());
 
@@ -514,6 +583,25 @@ class WindowTest {
             assertEquals("NORMAL", window.modeNameForDisplay());
             assertTrue(window.getBufferContext().getBuffer().isReadOnly());
             assertTrue(process.isAlive());
+        }
+    }
+
+    @Test
+    void shellWorkspaceCtrlGCVCreatesAnotherShellFrame() throws Exception {
+        Path file = writeFile("window.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('c'));
+            HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('v'));
+
+            assertTrue(window.getActiveView() instanceof ShellPanelView);
+            assertEquals(2, leafViews(window).size());
+            assertTrue(leafViews(window).stream().allMatch(view -> view instanceof ShellPanelView));
         }
     }
 
@@ -668,7 +756,7 @@ class WindowTest {
             window.splitActiveBufferHorizontally();
             assertEquals(2, leafViews(window).size());
 
-            assertTrue(window.showDirectoryBrowser(directory));
+            assertTrue((Boolean) invoke(window, "openDirectoryWorkspace", new Class<?>[] { Path.class }, directory));
             assertTrue(window.switchToRecentWindow(2));
 
             assertEquals(2, leafViews(window).size());
@@ -719,6 +807,67 @@ class WindowTest {
             assertEquals(1, originalContext.getBuffer().getCursor().getPosition());
             assertEquals(5, splitContext.getBuffer().getCursor().getPosition());
             assertNotSame(originalView, splitView);
+        }
+    }
+
+    @Test
+    void splitThenVsplitDoesNotLoseAnExtraRowToHorizontalSeparator() throws Exception {
+        Path file = writeFile("nested-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 24, 11)) {
+            var window = harness.getWindow();
+
+            var bottomView = window.splitActiveBufferVertically();
+            assertEquals("{0, 4, 24, 2}", absoluteBounds(bottomView).toString());
+
+            var rightView = window.splitActiveBufferHorizontally();
+            assertEquals("{12, 4, 12, 2}", rightView.getBounds().toString());
+        }
+    }
+
+    @Test
+    void splitWorkspaceStaysBelowCommandPopupLayer() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("popup-layer.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferVertically();
+            window.splitActiveBufferHorizontally();
+
+            var subviews = rootSubviews(window);
+            int workspaceIndex = subviews.indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class));
+            int commandMenuIndex = subviews.indexOf(window.getCommandMenuView());
+            int commandViewIndex = subviews.indexOf(window.getCommandView());
+
+            assertTrue(workspaceIndex >= 0);
+            assertTrue(commandViewIndex > workspaceIndex);
+            assertTrue(commandMenuIndex > workspaceIndex);
+        }
+    }
+
+    @Test
+    void nestedSplitCursorStaysOffSeparatorRow() throws Exception {
+        var installedTerminal = TerminalContextTestSupport.install(80, 16);
+        Path file = writeFile("nested-cursor.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 24, 11)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferVertically();
+            var rightView = window.splitActiveBufferHorizontally();
+            var buffer = window.getBufferContext().getBuffer();
+            int index = buffer.getString().indexOf("beta") + 1;
+            buffer.getCursor().setPosition(index);
+
+            window.update(true);
+
+            var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(index);
+            var absolute = absoluteScreenBounds(rightView);
+            int expectedColumn = absolute.getPoint().getX() + index - line.getStartPosition();
+            int expectedRow = absolute.getPoint().getY() + line.getY() - rightView.getStartLine();
+            var cursorPosition = installedTerminal.cursorPosition().get();
+            assertEquals(expectedColumn, cursorPosition.getColumn());
+            assertEquals(expectedRow, cursorPosition.getRow());
+            assertTrue(cursorPosition.getRow() < absolute.getPoint().getY() + absolute.getSize().getHeight() - 1);
+        } finally {
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
         }
     }
 
@@ -828,6 +977,44 @@ class WindowTest {
         }
     }
 
+    @Test
+    void openingDirectoryInSplitReplacesOnlyActiveFrame() throws Exception {
+        Path first = writeFile("split-browser-left.txt", "left\n");
+        Path second = writeFile("split-browser-right.txt", "right\n");
+        Path directory = tempDir.resolve("frame-browser");
+        Files.createDirectories(directory);
+        Path opened = Files.writeString(directory.resolve("OpenMe.txt"), "opened\n");
+
+        try (var harness = HeadlessWindowHarness.create(first, 60, 14)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferHorizontally();
+            assertTrue(window.setBufferPath(second));
+            assertEquals(second.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            assertTrue(window.focusView(Window.Direction.LEFT));
+            assertEquals(first.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            assertTrue(window.setBufferPath(directory));
+            assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
+            assertEquals(2, leafViews(window).size());
+
+            var browser = assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
+            HeadlessWindowHarness.dispatch(browser, HeadlessWindowHarness.down());
+            HeadlessWindowHarness.dispatch(browser, HeadlessWindowHarness.enter());
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals(opened.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertEquals(2, leafViews(window).size());
+
+            assertTrue(window.focusView(Window.Direction.RIGHT));
+            assertEquals(second.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
     private Path writeFile(String name, String text) throws IOException {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
@@ -836,6 +1023,16 @@ class WindowTest {
 
     private static Rect absoluteBounds(View view) {
         return view.getBounds();
+    }
+
+    private static Rect absoluteScreenBounds(View view) {
+        int x = view.getBounds().getPoint().getX();
+        int y = view.getBounds().getPoint().getY();
+        for (var parent = view.getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Rect.create(x, y, view.getBounds().getSize().getWidth(), view.getBounds().getSize().getHeight());
     }
 
     private static ListView.ListItem item(String label) {
@@ -861,6 +1058,11 @@ class WindowTest {
         var field = ShellPanelView.class.getDeclaredField("_process");
         field.setAccessible(true);
         return (Process) field.get(shell);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<View> rootSubviews(Window window) {
+        return (List<View>) HeadlessWindowHarness.getField(window.getRootView(), "_subviews");
     }
 
     private static TerminalEmulator emulatorOf(ShellPanelView shell) throws Exception {

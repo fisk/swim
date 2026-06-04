@@ -116,7 +116,7 @@ class CommandViewTest {
             assertTrue(state.visible());
             assertEquals("v", state.prefix());
             assertEquals("vsplit", state.selectedMatch().primaryName());
-            assertEquals(1, state.matches().size());
+            assertEquals(2, state.matches().size());
         }
     }
 
@@ -194,13 +194,50 @@ class CommandViewTest {
             invokeRunCommand(window.getCommandView(), "vsplit");
             var splitView = (View) window.getActiveView();
 
-            assertEquals("{15, 0, 15, 4}", absoluteBounds(splitView).toString());
+            assertEquals("{15, 0, 15, 3}", absoluteBounds(splitView).toString());
 
             invokeRunCommand(window.getCommandView(), "focus left");
             assertSame(originalView, window.getActiveView());
 
             invokeRunCommand(window.getCommandView(), "focus right");
             assertSame(splitView, window.getActiveView());
+        }
+    }
+
+    @Test
+    void vsplitOnShellWorkspaceCreatesAnotherShellFrame() throws Exception {
+        Path path = tempDir.resolve("shell-vsplit-command.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+
+            invokeRunCommand(window.getCommandView(), "vsplit");
+
+            assertTrue(window.getActiveView() instanceof ShellPanelView);
+            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals(2, leafViews(window).size());
+            assertTrue(leafViews(window).stream().allMatch(view -> view instanceof ShellPanelView));
+        }
+    }
+
+    @Test
+    void vshellAndHshellCommandsOpenSplitShells() throws Exception {
+        Path path = tempDir.resolve("shell-split-commands.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 32, 11)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "vshell");
+            assertTrue(window.getActiveView() instanceof ShellPanelView);
+            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
+
+            invokeRunCommand(window.getCommandView(), "close");
+            invokeRunCommand(window.getCommandView(), "hshell");
+            assertTrue(window.getActiveView() instanceof ShellPanelView);
+            assertEquals("{0, 4, 32, 2}", ((View) window.getActiveView()).getBounds().toString());
         }
     }
 
@@ -310,6 +347,13 @@ class CommandViewTest {
         Method method = CommandView.class.getDeclaredMethod("runCommand", String.class);
         method.setAccessible(true);
         method.invoke(commandView, command);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<View> leafViews(Window window) throws Exception {
+        Method method = Window.class.getDeclaredMethod("getLeafViews");
+        method.setAccessible(true);
+        return (List<View>) method.invoke(window);
     }
 
     private static Rect absoluteBounds(View view) {

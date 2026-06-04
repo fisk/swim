@@ -168,6 +168,42 @@ class ModeLineViewTest {
         }
     }
 
+    @Test
+    void splitWorkspaceOmitsFrameLocalLeftSegmentsFromGlobalModeLine() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("mode-line-split.txt", "abc"), 50, 8)) {
+            var window = harness.getWindow();
+
+            window.splitActiveBufferHorizontally();
+
+            var rendered = invoke(window.getModeLineView(), "getString", AttributedString.class).toString();
+
+            assertTrue(!rendered.contains("NORMAL"));
+            assertTrue(!rendered.contains("mode-line-split.txt"));
+        }
+    }
+
+    @Test
+    void frameLeftStringUsesSpecificBufferViewState() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("frame-left.txt", "abc"), 50, 8)) {
+            var window = harness.getWindow();
+            var original = window.getBufferContext().getBufferView();
+            window.getBufferContext().getBuffer().getCursor().setPosition(1);
+
+            var split = window.splitActiveBufferHorizontally();
+            split.getBufferContext().getBuffer().getCursor().setPosition(2);
+
+            var left = ModeLineView.leftStringForView(original, false, UiTheme.MODELINE_BACKGROUND).toString();
+            var right = ModeLineView.leftStringForView(split, true, UiTheme.MODELINE_BACKGROUND).toString();
+
+            assertTrue(left.contains("NORMAL"));
+            assertTrue(left.contains("frame-left.txt"));
+            assertTrue(left.contains("2: 1, 2"));
+            assertTrue(right.contains("NORMAL"));
+            assertTrue(right.contains("frame-left.txt"));
+            assertTrue(right.contains("3: 1, 3"));
+        }
+    }
+
     private Path writeFile(String name, String text) throws IOException {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
