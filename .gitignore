@@ -12,6 +12,7 @@ build
 /swim-tree-view/target/
 /swim-email/target/
 /swim-git/target/
+/swim-slack/target/
 /image/
 /plugins/
 /workspace/

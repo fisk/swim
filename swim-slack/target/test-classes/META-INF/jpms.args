@@ -1,4 +1,0 @@
---patch-module
-org.fisk.swim.slack=_
---add-reads
-org.fisk.swim.slack=ALL-UNNAMED

@@ -1,9 +1,0 @@
-/Users/eosterlu/.swim/swim-slack/src/main/java/module-info.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackConfigStore.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackHttpClient.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackPaths.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackPlugin.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackPluginSupport.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackTokenResolver.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackWorkspaceConfig.java
-/Users/eosterlu/.swim/swim-slack/src/main/java/org/fisk/swim/plugins/slack/SlackWorkspacesConfig.java
