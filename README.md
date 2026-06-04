@@ -45,6 +45,7 @@ The launcher binary in `image/bin/swim` is built from a custom `jlink` image. Ru
 - `swim-java-lsp-...jar`: Java language support
 - `swim-clangd-lsp-...jar`: C/C++ language support via `clangd`
 - `swim-tree-view-...jar`: the project tree plugin
+- `swim-slack-...jar`: the Slack client plugin
 - `runtime-libs/`: shared runtime dependencies for the plugin layer
 
 The Oracle Java VS Code extension payload is installed automatically during the build under `deps/oracle.oracle-java`, so Java support does not depend on a separate VS Code installation.
@@ -94,6 +95,7 @@ This makes it possible to explore commands and key chains without memorizing eve
 SWIM now has two layout levels:
 
 - Fullscreen windows (workspaces) for buffers, directory browsing, and mail.
+- Fullscreen windows (workspaces) for buffers, directory browsing, mail, and Slack.
 - Fullscreen shell workspaces opened with `:shell` or `Ctrl-g c`.
 - Split panes inside the active buffer window.
 - Side/bottom panels for contextual tools such as project search, shell, Nemo chat, and plugin views.
@@ -102,6 +104,7 @@ Window behavior:
 
 - Opening a directory creates a fullscreen directory-browse window.
 - Opening mail with `e` creates a fullscreen mail window.
+- Opening Slack with `:slack` creates a fullscreen Slack window.
 - `:shell` creates a fullscreen shell workspace.
 - Typing `>` opens a bottom shell panel for quick commands without leaving the current window.
 - Opening a file from another window creates or activates a buffer window for that file.
@@ -251,6 +254,48 @@ Current sync behavior:
 - The current EWS adapter supports distinguished folders such as `INBOX`, `SentItems`, `Drafts`, `DeletedItems`, and `JunkEmail`.
 - NTLM and custom EWS folder traversal are not finished yet.
 - The thread list is paged and extended lazily as you scroll.
+
+## Slack Client
+
+The Slack client ships as the separate `swim-slack` plugin and stores its configuration under `~/.swim/slack`.
+
+- Open or close the fullscreen Slack workspace with `:slack`.
+- Slack workspace configuration lives in `~/.swim/slack/workspaces.json`.
+- The left pane shows configured workspaces and the channels or DMs for the active workspace.
+- The top-right pane shows recent messages for the selected channel.
+- The lower buffer shows the selected thread in a normal read-only buffer.
+- Press `Enter` in the message list to focus that read-only buffer for normal navigation and search.
+- Press `c` to compose a new message in the selected conversation.
+- Press `r` to reply in the selected thread.
+- While composing, the lower buffer becomes editable and `Ctrl-s` sends the message.
+- Press `e` to refresh Slack metadata and channel state.
+
+Current Slack workspace config shape:
+
+```json
+{
+  "workspaces": [
+    {
+      "id": "work",
+      "label": "Work Slack",
+      "tokenEnv": "SWIM_SLACK_TOKEN"
+    }
+  ]
+}
+```
+
+Supported token configuration fields are:
+
+- `token`: literal token stored directly in the config file
+- `tokenEnv`: environment variable or Java system property containing the token
+- `tokenCommand`: shell command whose stdout is the token
+
+Current Slack behavior:
+
+- Workspace and channel metadata are refreshed when you open Slack or press `e`.
+- Channel history is loaded on demand for the selected conversation.
+- Thread bodies are loaded on demand for the selected message.
+- Sending invalidates the current channel cache so the refreshed message list includes the new post.
 
 Example on-prem Exchange account:
 

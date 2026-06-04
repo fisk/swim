@@ -21,6 +21,7 @@ import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.junit.jupiter.api.Test;
@@ -207,6 +208,71 @@ class WindowTest {
 
             assertSame(firstMailView, secondMailView);
             assertEquals(1, HeadlessWindowHarness.getField(secondMailView, "_selectedIndex", Integer.class));
+        }
+    }
+
+    @Test
+    void slackWorkspacePlacesMessageViewerBelowSlackPanelAndComposeSendsFromBuffer() throws Exception {
+        Path path = tempDir.resolve("slack-layout.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var client = new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json"));
+
+            assertTrue(window.showSlackWorkspace(client));
+
+            var split = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            assertEquals(SplitView.Orientation.VERTICAL, split.getOrientation());
+            var slackView = assertInstanceOf(SlackPanelView.class, split.getFirstView());
+            assertInstanceOf(BufferView.class, split.getSecondView());
+
+            HeadlessWindowHarness.dispatch(slackView, HeadlessWindowHarness.key('c'));
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertFalse(window.getBufferContext().getBuffer().isReadOnly());
+            assertSame(window.getInputMode(), window.getCurrentMode());
+
+            window.getBufferContext().getBuffer().insert("Hello Slack");
+            HeadlessWindowHarness.dispatch(window.getInputMode(), HeadlessWindowHarness.ctrl('s'));
+
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (client.sentDrafts().isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(10L);
+            }
+
+            assertEquals(1, client.sentDrafts().size());
+            assertEquals("Hello Slack", client.sentDrafts().getFirst().text());
+        }
+    }
+
+    @Test
+    void slackWorkspaceIsReusedAcrossHideAndReopen() throws Exception {
+        Path path = tempDir.resolve("slack-reuse.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var client = new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json"));
+
+            assertTrue(window.showSlackWorkspace(client));
+            var firstSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            var firstSlackView = assertInstanceOf(SlackPanelView.class, firstSplit.getFirstView());
+
+            HeadlessWindowHarness.dispatch(firstSlackView, HeadlessWindowHarness.key('h'));
+            HeadlessWindowHarness.dispatch(firstSlackView, HeadlessWindowHarness.key('j'));
+            HeadlessWindowHarness.dispatch(firstSlackView, HeadlessWindowHarness.key('j'));
+            assertEquals("D1", HeadlessWindowHarness.getField(firstSlackView, "_selectedConversationId", String.class));
+
+            assertTrue(window.hideCurrentWorkspaceWindow());
+            assertFalse(window.isShowingSlackWorkspace());
+
+            assertTrue(window.showSlackWorkspace(client));
+            var secondSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            var secondSlackView = assertInstanceOf(SlackPanelView.class, secondSplit.getFirstView());
+
+            assertSame(firstSlackView, secondSlackView);
+            assertEquals("D1", HeadlessWindowHarness.getField(secondSlackView, "_selectedConversationId", String.class));
         }
     }
 

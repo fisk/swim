@@ -17,6 +17,7 @@ class HelpIndexTest {
         assertFalse(rendered.isEmpty());
         assertTrue(rendered.contains("SWIM tutorial"));
         assertTrue(rendered.contains("  :help shows this tutorial."));
+        assertTrue(rendered.contains("  :slack opens the fullscreen Slack workspace."));
         assertTrue(rendered.contains("  :vsplit opens another view to the right of the active buffer."));
         assertTrue(rendered.contains("Pane shortcuts"));
         assertTrue(rendered.contains("  Ctrl-w > and Ctrl-w < make the active pane wider or narrower."));

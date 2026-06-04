@@ -23,6 +23,9 @@ import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.slack.FakeSlackClient;
+import org.fisk.swim.slack.SlackPluginRegistry;
+import org.fisk.swim.ui.SlackPanelView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -84,6 +87,29 @@ class NormalModeTest {
             assertTrue(host.pluginId == null || "swim-email".equals(host.pluginId));
         } finally {
             MailPluginRegistry.clear();
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void sStartsSlackWorkspace() throws Exception {
+        Path path = tempDir.resolve("slack-opens-workspace.txt");
+        Files.writeString(path, "abc");
+
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        SlackPluginRegistry.register(new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json")));
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('s'));
+
+            assertTrue(window.isShowingSlackWorkspace());
+            assertTrue(((org.fisk.swim.ui.SplitView) HeadlessWindowHarness.getField(window, "_workspaceView")).getFirstView()
+                    instanceof SlackPanelView);
+            assertTrue(host.pluginId == null || "swim-slack".equals(host.pluginId));
+        } finally {
+            SlackPluginRegistry.clear();
             SwimRuntime.clear();
         }
     }

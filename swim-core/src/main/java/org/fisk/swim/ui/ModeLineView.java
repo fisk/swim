@@ -288,6 +288,9 @@ public class ModeLineView extends View {
         if (view instanceof MailPanelView) {
             return "Mail";
         }
+        if (view instanceof SlackPanelView) {
+            return "Slack";
+        }
         return "";
     }
 

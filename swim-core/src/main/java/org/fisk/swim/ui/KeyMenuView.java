@@ -169,7 +169,7 @@ public class KeyMenuView extends View {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  windows w <n> Enter  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  slack s  •  windows w <n> Enter  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
     }
@@ -371,6 +371,7 @@ public class KeyMenuView extends View {
         root.child("m", leaf("project files"));
         root.child("M", leaf("project search"));
         root.child("e", leaf("email"));
+        root.child("s", leaf("slack"));
         root.child("<ESC>", leaf("start Nemo chat"));
         root.child("/", leaf("search forward"));
         root.child("?", leaf("search backward"));

@@ -80,6 +80,7 @@ public class HelpIndex {
                 ":nemo <question> asks Nemo about the current file and opens the persistent chat pane.",
                 "Inside Nemo, use :sessions, :workers, :new, and :switch to manage multiple chat sessions.",
                 ":shell opens a new shell workspace.",
+                ":slack opens the fullscreen Slack workspace.",
                 ":vshell opens a shell in a split to the right.",
                 ":hshell opens a shell in a split below.",
                 ":w writes the current buffer to disk.",

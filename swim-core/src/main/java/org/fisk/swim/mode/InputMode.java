@@ -69,6 +69,9 @@ public class InputMode extends Mode {
             if (_window.sendActiveMailCompose()) {
                 return;
             }
+            if (_window.sendActiveSlackCompose()) {
+                return;
+            }
         });
         _rootResponder.addEventResponder("<LEFT>", () -> {
             var languageMode = languageMode(buffer);

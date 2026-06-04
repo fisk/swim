@@ -10,6 +10,7 @@ import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.nemo.NemoClient;
+import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.PluginPanelView;
@@ -71,6 +72,9 @@ public class NormalMode extends Mode {
                 announceIfUnmoved(window.equalizeSplits(), "No split to equalize")));
         _rootResponder.addEventResponder("<CTRL>-s", () -> {
             if (window.sendActiveMailCompose()) {
+                return;
+            }
+            if (window.sendActiveSlackCompose()) {
                 return;
             }
         });
@@ -180,6 +184,9 @@ public class NormalMode extends Mode {
         });
         _rootResponder.addEventResponder("e", () -> {
             MailUiSupport.toggle(window);
+        });
+        _rootResponder.addEventResponder("s", () -> {
+            SlackUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("t", () -> {
             toggleTreeView();

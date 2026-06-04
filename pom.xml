@@ -17,6 +17,7 @@
     <module>swim-tree-view</module>
     <module>swim-email</module>
     <module>swim-git</module>
+    <module>swim-slack</module>
   </modules>
 
   <properties>

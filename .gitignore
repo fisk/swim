@@ -17,6 +17,7 @@ build
 /workspace/
 /email/
 /email/accounts.json
+/slack/
 /nemo.conf
 /nemo/
 /deps/oracle.oracle-java/

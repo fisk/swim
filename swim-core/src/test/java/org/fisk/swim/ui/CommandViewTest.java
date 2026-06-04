@@ -3,6 +3,7 @@ package org.fisk.swim.ui;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,6 +32,8 @@ import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.slack.FakeSlackClient;
+import org.fisk.swim.slack.SlackPluginRegistry;
 import org.fisk.swim.ui.MailPanelView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -273,6 +276,27 @@ class CommandViewTest {
             assertTrue(window.getActiveView() instanceof MailPanelView);
         } finally {
             MailPluginRegistry.clear();
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void slackCommandOpensSlackWorkspace() throws Exception {
+        Path path = tempDir.resolve("slack-command.txt");
+        Files.writeString(path, "abc");
+
+        SwimRuntime.setHost(new RecordingHost());
+        SlackPluginRegistry.register(new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json")));
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "slack");
+
+            assertTrue(window.isShowingSlackWorkspace());
+            var split = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            assertTrue(split.getFirstView() instanceof SlackPanelView);
+        } finally {
+            SlackPluginRegistry.clear();
             SwimRuntime.clear();
         }
     }

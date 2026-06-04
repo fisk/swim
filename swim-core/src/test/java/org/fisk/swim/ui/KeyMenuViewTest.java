@@ -156,6 +156,13 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void defaultBodyIncludesSlackShortcut() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        assertTrue(view.bodyText().contains("slack s"));
+    }
+
+    @Test
     void defaultBodyIncludesProjectSearchShortcut() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
 

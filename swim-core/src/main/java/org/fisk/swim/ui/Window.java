@@ -41,6 +41,7 @@ public class Window implements Drawable {
         BUFFER,
         DIRECTORY,
         MAIL,
+        SLACK,
         PLUGIN,
         SHELL
     }
@@ -233,8 +234,34 @@ public class Window implements Drawable {
         return openMailWorkspace(client);
     }
 
+    public boolean showSlackWorkspace(org.fisk.swim.slack.SlackClient client) {
+        if (client == null) {
+            return false;
+        }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.SLACK) {
+            moveWorkspaceToFront(_currentWorkspace);
+            activateView(_workspaceView);
+            return true;
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.SLACK) {
+                return activateWorkspace(workspace);
+            }
+        }
+        return openSlackWorkspace(client);
+    }
+
     public boolean sendActiveMailCompose() {
         MailPanelView panel = findMailPanelView(_workspaceView);
+        if (panel == null || !panel.isComposeActive()) {
+            return false;
+        }
+        panel.triggerSend();
+        return true;
+    }
+
+    public boolean sendActiveSlackCompose() {
+        SlackPanelView panel = findSlackPanelView(_workspaceView);
         if (panel == null || !panel.isComposeActive()) {
             return false;
         }
@@ -588,6 +615,10 @@ public class Window implements Drawable {
 
     public boolean isShowingMailWorkspace() {
         return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL;
+    }
+
+    public boolean isShowingSlackWorkspace() {
+        return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.SLACK;
     }
 
     boolean usesFrameModeLines() {
@@ -1660,6 +1691,12 @@ public class Window implements Drawable {
         return activateWorkspace(workspace);
     }
 
+    private boolean openSlackWorkspace(org.fisk.swim.slack.SlackClient client) {
+        WorkspaceState workspace = createSlackWorkspace(client);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
     private WorkspaceState createMailWorkspace(org.fisk.swim.mail.MailClient client) {
         var workspace = new WorkspaceState();
         workspace._kind = WorkspaceKind.MAIL;
@@ -1670,6 +1707,26 @@ public class Window implements Drawable {
                 mailView, messageContext.getBufferView(), 0.48);
         workspace._workspaceView = split;
         workspace._activeView = mailView;
+        workspace._activeBufferView = messageContext.getBufferView();
+        workspace._bufferContext = messageContext;
+        workspace._bufferContextsByView = new IdentityHashMap<>();
+        workspace._bufferContextsByView.put(messageContext.getBufferView(), messageContext);
+        workspace._bufferViewCounts = new IdentityHashMap<>();
+        workspace._bufferViewCounts.put(messageContext, 1);
+        initializeBufferWorkspaceModes(workspace);
+        return workspace;
+    }
+
+    private WorkspaceState createSlackWorkspace(org.fisk.swim.slack.SlackClient client) {
+        var workspace = new WorkspaceState();
+        workspace._kind = WorkspaceKind.SLACK;
+        BufferContext messageContext = createSlackMessageContext(Rect.create(0, 0, 0, 0));
+        SlackPanelView slackView = new SlackPanelView(Rect.create(0, 0, 0, 0), client);
+        slackView.attachMessageBuffer(messageContext);
+        var split = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.VERTICAL,
+                slackView, messageContext.getBufferView(), 0.45);
+        workspace._workspaceView = split;
+        workspace._activeView = slackView;
         workspace._activeBufferView = messageContext.getBufferView();
         workspace._bufferContext = messageContext;
         workspace._bufferContextsByView = new IdentityHashMap<>();
@@ -1811,8 +1868,14 @@ public class Window implements Drawable {
         if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL) {
             return WorkspaceKind.MAIL;
         }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.SLACK) {
+            return WorkspaceKind.SLACK;
+        }
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
+        }
+        if (_workspaceView instanceof SlackPanelView) {
+            return WorkspaceKind.SLACK;
         }
         if (_workspaceView instanceof ShellPanelView) {
             return WorkspaceKind.SHELL;
@@ -1898,6 +1961,7 @@ public class Window implements Drawable {
         return switch (workspace._kind) {
         case DIRECTORY -> workspace._workspaceView instanceof DirectoryBrowserView browser ? browser.getTitle() : "directory";
         case MAIL -> "mail";
+        case SLACK -> "slack";
         case SHELL -> workspace._workspaceView instanceof ShellPanelView shellPanelView ? shellPanelView.getTitle() : "shell";
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
@@ -1947,6 +2011,13 @@ public class Window implements Drawable {
         return context;
     }
 
+    private static BufferContext createSlackMessageContext(Rect bounds) {
+        var context = new BufferContext(bounds, null);
+        context.getBuffer().setReadOnly(true);
+        context.getTextLayout().calculate();
+        return context;
+    }
+
     private static MailPanelView findMailPanelView(View view) {
         if (view instanceof MailPanelView mailPanelView) {
             return mailPanelView;
@@ -1955,6 +2026,20 @@ public class Window implements Drawable {
             for (var leaf : splitView.leafViews()) {
                 if (leaf instanceof MailPanelView mailPanelView) {
                     return mailPanelView;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static SlackPanelView findSlackPanelView(View view) {
+        if (view instanceof SlackPanelView slackPanelView) {
+            return slackPanelView;
+        }
+        if (view instanceof SplitView splitView) {
+            for (var leaf : splitView.leafViews()) {
+                if (leaf instanceof SlackPanelView slackPanelView) {
+                    return slackPanelView;
                 }
             }
         }
