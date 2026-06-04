@@ -1086,14 +1086,14 @@ public class Window implements Drawable {
 
     private BufferView splitActiveBuffer(SplitView.Orientation orientation) {
         ensureLayoutState();
-        var currentBufferView = getEditableBufferView();
-        var bufferContext = getBufferContextFor(currentBufferView);
-        if (currentBufferView == null || bufferContext == null) {
+        var currentView = getActiveView();
+        if (currentView == null) {
             return null;
         }
-        var nextBufferView = new BufferView(Rect.create(0, 0, 0, 0), bufferContext);
-        registerBufferView(bufferContext, nextBufferView);
-        if (!splitView(currentBufferView, nextBufferView, orientation, 0.5)) {
+        var nextBufferContext = createSplitBufferContext();
+        var nextBufferView = nextBufferContext.getBufferView();
+        registerBufferView(nextBufferContext, nextBufferView);
+        if (!splitView(currentView, nextBufferView, orientation, 0.5)) {
             unregisterBufferView(nextBufferView);
             return null;
         }
@@ -1321,6 +1321,42 @@ public class Window implements Drawable {
             return null;
         }
         return _bufferContextsByView.get(bufferView);
+    }
+
+    private BufferContext createSplitBufferContext() {
+        ensureLayoutState();
+        var source = firstBufferContext();
+        if (source == null) {
+            return new BufferContext(Rect.create(0, 0, 0, 0), null);
+        }
+        return copyBufferContext(source);
+    }
+
+    private BufferContext firstBufferContext() {
+        var firstBufferView = findFirstBufferView();
+        if (firstBufferView != null) {
+            return getBufferContextFor(firstBufferView);
+        }
+        return _bufferContext;
+    }
+
+    private static BufferContext copyBufferContext(BufferContext source) {
+        var sourceBuffer = source.getBuffer();
+        var copy = new BufferContext(Rect.create(0, 0, 0, 0), sourceBuffer.getPath());
+        var copyBuffer = copy.getBuffer();
+        copyBuffer.setReadOnly(false);
+        if (copyBuffer.getLength() > 0) {
+            copyBuffer.rawRemove(0, copyBuffer.getLength());
+        }
+        String sourceText = sourceBuffer.getString();
+        if (!sourceText.isEmpty()) {
+            copyBuffer.rawInsert(0, sourceText);
+        }
+        copyBuffer.getCursor().setPosition(Math.min(sourceBuffer.getCursor().getPosition(), copyBuffer.getLength()));
+        copyBuffer.setReadOnly(sourceBuffer.isReadOnly());
+        copy.getTextLayout().calculate();
+        copy.getBufferView().adaptViewToCursor();
+        return copy;
     }
 
     private BufferView getEditableBufferView() {

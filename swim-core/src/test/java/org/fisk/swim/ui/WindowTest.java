@@ -3,6 +3,7 @@ package org.fisk.swim.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -671,6 +672,53 @@ class WindowTest {
             assertTrue(window.switchToRecentWindow(2));
 
             assertEquals(2, leafViews(window).size());
+        }
+    }
+
+    @Test
+    void splittingActivePanelSplitsThatFrameAndAddsABufferView() throws Exception {
+        Path file = writeFile("panel-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalBuffer = window.getBufferContext().getBufferView();
+            var panel = new TextPanelView(Rect.create(0, 0, 0, 0), "Info", "details");
+            assertTrue(window.showPanel(panel));
+            assertSame(panel, window.getActiveView());
+
+            var splitBuffer = window.splitActiveBufferVertically();
+
+            assertInstanceOf(BufferView.class, splitBuffer);
+            assertSame(splitBuffer, window.getActiveView());
+            assertEquals(3, leafViews(window).size());
+            assertTrue(leafViews(window).contains(originalBuffer));
+            assertTrue(leafViews(window).contains(panel));
+            assertTrue(leafViews(window).contains(splitBuffer));
+        }
+    }
+
+    @Test
+    void splittingBufferCreatesIndependentBufferState() throws Exception {
+        Path file = writeFile("independent-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalView = window.getBufferContext().getBufferView();
+            var originalContext = window.getBufferContext();
+            originalContext.getBuffer().getCursor().setPosition(1);
+
+            var splitView = window.splitActiveBufferHorizontally();
+
+            assertInstanceOf(BufferView.class, splitView);
+            var splitContext = window.getBufferContext();
+            assertNotSame(originalContext, splitContext);
+            assertEquals(originalContext.getBuffer().getString(), splitContext.getBuffer().getString());
+
+            splitContext.getBuffer().getCursor().setPosition(5);
+
+            assertEquals(1, originalContext.getBuffer().getCursor().getPosition());
+            assertEquals(5, splitContext.getBuffer().getCursor().getPosition());
+            assertNotSame(originalView, splitView);
         }
     }
 

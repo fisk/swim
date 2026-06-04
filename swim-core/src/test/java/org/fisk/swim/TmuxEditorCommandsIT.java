@@ -117,4 +117,74 @@ class TmuxEditorCommandsIT {
         }
     }
 
+    @Test
+    @Timeout(45)
+    void installedLauncherBinarySupportsColonSplitAndPaneFocusInTmux() throws Exception {
+        Path first = tempDir.resolve("cmd-split-first.txt");
+        Path second = tempDir.resolve("cmd-split-second.txt");
+        Files.writeString(first, "one\n");
+        Files.writeString(second, "two\n");
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, first.getFileName().toString())) {
+            session.waitForText("one", STARTUP_TIMEOUT);
+
+            session.runCommand("split");
+            session.runCommand("e cmd-split-second.txt");
+            session.waitForText("two", UI_TIMEOUT);
+
+            session.sendLiteral("i");
+            session.sendLiteral("B");
+            session.sendEscape();
+            session.runCommand("w");
+
+            session.runCommand("focus up");
+            session.waitForText("one", UI_TIMEOUT);
+            session.sendLiteral("i");
+            session.sendLiteral("A");
+            session.sendEscape();
+            session.runCommand("w");
+
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        org.junit.jupiter.api.Assertions.assertEquals("Aone\n", Files.readString(first));
+        org.junit.jupiter.api.Assertions.assertEquals("Btwo\n", Files.readString(second));
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinarySupportsColonVsplitAndPaneFocusInTmux() throws Exception {
+        Path first = tempDir.resolve("cmd-vsplit-first.txt");
+        Path second = tempDir.resolve("cmd-vsplit-second.txt");
+        Files.writeString(first, "left\n");
+        Files.writeString(second, "right\n");
+
+        try (var session = InstalledSwimDriver.start(tempDir, tempDir, first.getFileName().toString())) {
+            session.waitForText("left", STARTUP_TIMEOUT);
+
+            session.runCommand("vsplit");
+            session.runCommand("e cmd-vsplit-second.txt");
+            session.waitForText("right", UI_TIMEOUT);
+
+            session.sendLiteral("i");
+            session.sendLiteral("R");
+            session.sendEscape();
+            session.runCommand("w");
+
+            session.runCommand("focus left");
+            session.waitForText("left", UI_TIMEOUT);
+            session.sendLiteral("i");
+            session.sendLiteral("L");
+            session.sendEscape();
+            session.runCommand("w");
+
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        org.junit.jupiter.api.Assertions.assertEquals("Lleft\n", Files.readString(first));
+        org.junit.jupiter.api.Assertions.assertEquals("Rright\n", Files.readString(second));
+    }
+
 }
