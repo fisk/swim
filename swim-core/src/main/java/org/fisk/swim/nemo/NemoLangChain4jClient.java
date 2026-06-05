@@ -54,9 +54,9 @@ final class NemoLangChain4jClient {
     }
 
     NemoClient.ResponseResult request(NemoClient.Configuration configuration, BufferContext context,
-            List<NemoClient.ChatTurn> turns) throws IOException, InterruptedException {
+            List<NemoClient.ChatTurn> turns, NemoClient.ToolExecutionSession executionSession) throws IOException, InterruptedException {
         if (isOpenAiCompatible(configuration)) {
-            return requestOpenAiCompatible(configuration, context, turns);
+            return requestOpenAiCompatible(configuration, context, turns, executionSession);
         }
         PathInfo pathInfo = resolvePathInfo(configuration, context);
         List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, pathInfo.workspaceRoot(), configuration);
@@ -82,7 +82,7 @@ final class NemoLangChain4jClient {
                             toolCall.id(),
                             toolCall.name(),
                             parseArguments(toolCall.arguments()));
-                    String output = NemoClient.executeToolSafely(configuration, context, call);
+                    String output = NemoClient.executeToolSafely(configuration, context, call, executionSession);
                     toolTraces.add(NemoClient.toolTrace(call, output));
                     messages.add(new ToolExecutionResultMessage(toolCall.id(), toolCall.name(), output));
                 }
@@ -104,7 +104,8 @@ final class NemoLangChain4jClient {
     private NemoClient.ResponseResult requestOpenAiCompatible(
             NemoClient.Configuration configuration,
             BufferContext context,
-            List<NemoClient.ChatTurn> turns) throws IOException, InterruptedException {
+            List<NemoClient.ChatTurn> turns,
+            NemoClient.ToolExecutionSession executionSession) throws IOException, InterruptedException {
         PathInfo pathInfo = resolvePathInfo(configuration, context);
         List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, pathInfo.workspaceRoot(), configuration);
         List<JsonObject> messages = new ArrayList<>();
@@ -126,7 +127,7 @@ final class NemoLangChain4jClient {
                             toolCall.get("id").getAsString(),
                             function.get("name").getAsString(),
                             parseArguments(function.get("arguments").getAsString()));
-                    String output = NemoClient.executeToolSafely(configuration, context, call);
+                    String output = NemoClient.executeToolSafely(configuration, context, call, executionSession);
                     toolTraces.add(NemoClient.toolTrace(call, output));
                     messages.add(toolResultMessage(
                             toolCall.get("id").getAsString(),
@@ -285,7 +286,7 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "run_command")) {
             tools.add(tool("run_command",
-                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables.",
+                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables. Nemo applies an OS filesystem-write sandbox outside full-access mode when available.",
                     JsonObjectSchema.builder()
                             .addStringProperty("command", "Shell command to execute.")
                             .addStringProperty("cwd", "Optional working directory relative to the workspace root.")

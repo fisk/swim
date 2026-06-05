@@ -137,6 +137,46 @@ class NemoChatIT {
     }
 
     @Test
+    @Timeout(20)
+    void approvesRestrictedCommandAndPersistsExactRule() throws Exception {
+        var requestCount = new AtomicInteger();
+        String arguments = "{\"command\":\"printf ok; touch approved.txt\"}";
+        var server = startServer(requestCount, List.of(
+                toolCallResponse("call_1", "run_command", arguments),
+                textResponse("First approved"),
+                toolCallResponse("call_2", "run_command", arguments),
+                textResponse("Second approved")));
+        try {
+            writeApprovalConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Run the restricted command");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "Approval required:");
+                submit(panel, ":approve approval-1 always");
+                waitForLine(panel, "nemo> First approved");
+                assertTrue(Files.exists(tempDir.resolve("approved.txt")));
+
+                submit(panel, "Run it again");
+                waitForLine(panel, "nemo> Second approved");
+
+                long approvalPrompts = displayLines(panel).stream()
+                        .filter(line -> line.contains("Approval required:"))
+                        .count();
+                assertEquals(1, approvalPrompts);
+                assertTrue(Files.readString(tempDir.resolve(".swim/nemo/approvals.json")).contains("run_command"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @Timeout(15)
     void defaultOpenAiCompatibleRequestsOmitStrictAndParallelFlags() throws Exception {
         var requestCount = new AtomicInteger();
@@ -849,6 +889,10 @@ class NemoChatIT {
     }
 
     private static JsonObject functionCallResponse() {
+        return toolCallResponse("call_1", "list_files", "{\"path\":\".\",\"max_results\":5}");
+    }
+
+    private static JsonObject toolCallResponse(String callId, String toolName, String arguments) {
         JsonObject response = new JsonObject();
         response.addProperty("id", "chatcmpl-tool");
         response.addProperty("object", "chat.completion");
@@ -862,11 +906,11 @@ class NemoChatIT {
         message.add("content", com.google.gson.JsonNull.INSTANCE);
         JsonArray toolCalls = new JsonArray();
         JsonObject toolCall = new JsonObject();
-        toolCall.addProperty("id", "call_1");
+        toolCall.addProperty("id", callId);
         toolCall.addProperty("type", "function");
         JsonObject function = new JsonObject();
-        function.addProperty("name", "list_files");
-        function.addProperty("arguments", "{\"path\":\".\",\"max_results\":5}");
+        function.addProperty("name", toolName);
+        function.addProperty("arguments", arguments);
         toolCall.add("function", function);
         toolCalls.add(toolCall);
         message.add("tool_calls", toolCalls);
@@ -1034,6 +1078,26 @@ class NemoChatIT {
                 "tool.read_file=true",
                 "tool.search_files=true",
                 "tool.run_command=false",
+                "tool.write_file=true",
+                "tool.web_search=false"));
+    }
+
+    private void writeApprovalConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=openai-compatible",
+                "api_key=test-token",
+                "model=gpt-5.4",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "tool.permission_mode=workspace-write",
+                "tool.command_policy=restricted",
+                "tool.approval_policy=on-escalation",
+                "tool.os_sandbox=disabled",
+                "tool.list_files=true",
+                "tool.read_file=true",
+                "tool.search_files=true",
+                "tool.run_command=true",
                 "tool.write_file=true",
                 "tool.web_search=false"));
     }

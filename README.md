@@ -525,6 +525,8 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
     "runCommand": true,
     "commandPolicy": "restricted",
     "permissionMode": "workspace_write",
+    "osSandbox": "auto",
+    "approvalPolicy": "on_escalation",
     "writeFile": true,
     "applyPatch": true,
     "gitStatus": true,
@@ -538,17 +540,63 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
 }
 ```
 
-The config loader also accepts the older properties format and still migrates `~/.swim/nemo.conf` into the Nemo directory on first use.
+The config loader also accepts the older properties format and still migrates `~/.swim/nemo.conf` into the Nemo directory on first use. Property names use the same structure, for example `tool.permission_mode=workspace_write`, `tool.os_sandbox=auto`, and `tool.approval_policy=on_escalation`.
 
 Nemo now runs through langchain4j, so OpenAI-compatible vendors can be selected with `provider`, `baseUrl`, custom headers, query parameters, and custom request parameters.
+
+### Context And Guidance
 
 When `contextWindowTokens` is set, Nemo budgets the prompt before sending it. If the full prompt would exceed the configured window, it preserves the current request and recent turns, compacts older conversation into bounded notes, truncates oversized skill instructions, and excerpts large files around the cursor.
 
 Nemo includes applicable workspace guidance from `AGENTS.override.md` or `AGENTS.md`, walking from the workspace root to the current file directory. `AGENTS.override.md` wins over `AGENTS.md` in the same directory. Existing `SKILLS.md` files in those directories are also included for compatibility.
 
-`runCommand` uses `commandPolicy: "restricted"` by default, which blocks shell control operators and high-risk executables while still allowing simple workspace inspection and build commands. Set it to `"trusted"` only when you intentionally want raw shell behavior.
+Tool transcript entries such as `tool> list_files: path=.` are shown in chat history and persisted with the session, but are excluded from future model prompts so tool chatter does not pollute the conversation context.
 
-Nemo also supports `permissionMode`: `"read_only"` advertises and allows only inspection tools, `"workspace_write"` allows workspace edits and restricted commands, and `"full_access"` lifts Nemo's restricted command policy for `runCommand`. File tools still resolve through the workspace root; `full_access` is for trusted sessions where shell commands may do more.
+### Tool Permissions
+
+`permissionMode` controls the tool surface and runtime enforcement:
+
+| Mode | Behavior |
+| --- | --- |
+| `read_only` | Advertises and allows inspection tools only. Blocks `run_command`, `write_file`, `apply_patch`, `git_add`, and `git_commit`. |
+| `workspace_write` | Allows workspace-scoped file edits and shell-backed git/apply helpers. `runCommand` still obeys `commandPolicy` and OS sandbox settings. |
+| `full_access` | Bypasses Nemo's restricted command policy and OS sandbox for `runCommand`. Use only for trusted sessions. File tools still resolve paths through the workspace root. |
+
+`runCommand` uses `commandPolicy: "restricted"` by default. Restricted mode blocks shell control operators such as `;`, pipes, redirects, command substitution, and high-risk executables such as `rm`, `sudo`, `curl`, `ssh`, and `rsync`. Set `commandPolicy` to `"trusted"` only when you intentionally want raw shell behavior.
+
+`:permissions` shows the active session's permission mode, command policy, OS sandbox backend, and approval policy. `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change the active session until the session is rebound from config.
+
+### OS Sandboxing
+
+Shell-backed tools run through an OS filesystem sandbox outside full-access mode when one is available:
+
+| Platform | Backend |
+| --- | --- |
+| macOS | `/usr/bin/sandbox-exec` |
+| Linux | `bwrap` / Bubblewrap, when installed and usable |
+| Windows or unsupported Unix | no backend; `osSandbox=required` fails closed |
+
+The sandbox allows reads, denies host filesystem writes by default, allows `/dev/null`, and in `workspace_write` mode allows writes under the workspace root. In `read_only`, mutating tools are already blocked; git inspection commands run with `--no-optional-locks`.
+
+`osSandbox` controls fallback behavior:
+
+| Setting | Behavior |
+| --- | --- |
+| `auto` | Use the OS sandbox when available. If no backend is usable, ask for approval before running the shell command unsandboxed. |
+| `required` | Fail closed when no supported OS sandbox backend is available or usable. |
+| `disabled` | Run shell-backed tools without the OS sandbox. |
+
+### Approvals
+
+`approvalPolicy` controls when Nemo pauses a worker and asks before running a tool action:
+
+| Setting | Behavior |
+| --- | --- |
+| `on_escalation` | Default. Ask when a restricted command would otherwise be blocked, or when `osSandbox=auto` would have to run unsandboxed. |
+| `on_request` | Ask before every mutating or shell action: `run_command`, `write_file`, `apply_patch`, `git_add`, and `git_commit`. |
+| `never` | Do not prompt. Block escalations that require approval. |
+
+Approvals appear as `approval>` messages in the Nemo chat pane. While the worker is paused, use `:approve <id>` to run once, `:approve <id> always` to save an exact workspace-scoped rule, or `:deny <id>` to deny. Saved approval rules live in `~/.swim/nemo/approvals.json`; they are exact matches for the workspace, tool, and action signature. Use `:approvals` to list pending and saved approvals, and `:unapprove <rule-id|all>` to remove saved rules for the current workspace.
 
 Inside the Nemo chat pane:
 
@@ -558,6 +606,7 @@ Inside the Nemo chat pane:
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session
+- `:approve`, `:deny`, `:approvals`, and `:unapprove` manage pending and saved tool approvals
 - `:new [title]` creates a session
 - `:switch <session-id>` changes sessions
 - `:rename <title>` renames the current session

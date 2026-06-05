@@ -56,19 +56,34 @@ public class NemoClient {
     private static final int _defaultCommandTimeoutSeconds = 20;
     private static final String _defaultCommandPolicy = "restricted";
     private static final String _defaultPermissionMode = "workspace_write";
+    private static final String _defaultOsSandbox = "auto";
+    private static final String _defaultApprovalPolicy = "on_escalation";
+    private static final String _sandboxAvailabilityOverrideProperty = "swim.nemo.os_sandbox_available";
     private static final int _defaultTimeoutSeconds = 60;
     private static final int _defaultMaxRetries = 2;
     private static final int _defaultSkillsMaxFiles = 8;
     private static final int _defaultSkillsMaxChars = 12_000;
     private static final NemoClient _instance = new NemoClient();
 
+    private enum OsSandboxBackend {
+        NONE,
+        MACOS_SANDBOX_EXEC,
+        LINUX_BUBBLEWRAP
+    }
+
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
     private final HttpClient _httpClient = HttpClient.newHttpClient();
+    private static final AtomicReference<OsSandboxBackend> _osSandboxBackend = new AtomicReference<>();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
+    private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
+    private final List<ApprovalRule> _approvalRules = new ArrayList<>();
     private boolean _sessionsLoaded;
+    private boolean _approvalsLoaded;
     private String _activeSessionId;
     private long _nextSessionNumber = 1;
+    private long _nextApprovalNumber = 1;
+    private long _nextApprovalRuleNumber = 1;
 
     private NemoClient() {
     }
@@ -81,11 +96,17 @@ public class NemoClient {
         for (var conversation : _conversations.values()) {
             stopWorker(conversation);
         }
+        resetMacOsSandboxAvailabilityForTests();
         _conversations.clear();
         _workspaceSessionIds.clear();
+        _pendingApprovals.clear();
+        _approvalRules.clear();
         _sessionsLoaded = false;
+        _approvalsLoaded = false;
         _activeSessionId = null;
         _nextSessionNumber = 1;
+        _nextApprovalNumber = 1;
+        _nextApprovalRuleNumber = 1;
     }
 
     record ChatTurn(String speaker, String text, boolean includeInPrompt) {
@@ -103,6 +124,45 @@ public class NemoClient {
     record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
         ResponseResult(String text, Integer contextUsagePercent) {
             this(text, contextUsagePercent, List.of());
+        }
+    }
+
+    record ToolApprovalRequest(String toolName, String reason, String summary, String signature, boolean persistable) {
+    }
+
+    record ApprovalResult(boolean approved, boolean persisted) {
+    }
+
+    interface ToolExecutionSession {
+        ApprovalResult requestApproval(Path workspaceRoot, ToolApprovalRequest request) throws InterruptedException;
+    }
+
+    private record ApprovalRule(String id, String workspaceRoot, String toolName, String signature, long createdAtMillis) {
+    }
+
+    private static final class PendingApproval {
+        private final String _id;
+        private final String _workspaceRoot;
+        private final String _conversationId;
+        private final long _requestId;
+        private final ToolApprovalRequest _request;
+        private final CountDownLatch _latch = new CountDownLatch(1);
+        private boolean _approved;
+        private boolean _persist;
+
+        private PendingApproval(String id, String workspaceRoot, String conversationId, long requestId,
+                ToolApprovalRequest request) {
+            _id = id;
+            _workspaceRoot = workspaceRoot;
+            _conversationId = conversationId;
+            _requestId = requestId;
+            _request = request;
+        }
+
+        private void resolve(boolean approved, boolean persist) {
+            _approved = approved;
+            _persist = persist;
+            _latch.countDown();
         }
     }
 
@@ -129,6 +189,21 @@ public class NemoClient {
             _workspaceRoot = workspaceRoot;
             _createdAtMillis = createdAtMillis;
             _updatedAtMillis = updatedAtMillis;
+        }
+    }
+
+    private final class ConversationToolExecutionSession implements ToolExecutionSession {
+        private final Conversation _conversation;
+        private final long _requestId;
+
+        private ConversationToolExecutionSession(Conversation conversation, long requestId) {
+            _conversation = conversation;
+            _requestId = requestId;
+        }
+
+        @Override
+        public ApprovalResult requestApproval(Path workspaceRoot, ToolApprovalRequest request) throws InterruptedException {
+            return requestToolApproval(_conversation, _requestId, workspaceRoot, request);
         }
     }
 
@@ -177,6 +252,8 @@ public class NemoClient {
         private final boolean _toolGitCommit;
         private final String _toolCommandPolicy;
         private final String _toolPermissionMode;
+        private final String _toolOsSandbox;
+        private final String _toolApprovalPolicy;
         private final boolean _skillsEnabled;
         private final int _skillsMaxFiles;
         private final int _skillsMaxChars;
@@ -266,6 +343,8 @@ public class NemoClient {
             _toolGitCommit = builder._toolGitCommit;
             _toolCommandPolicy = builder._toolCommandPolicy;
             _toolPermissionMode = builder._toolPermissionMode;
+            _toolOsSandbox = builder._toolOsSandbox;
+            _toolApprovalPolicy = builder._toolApprovalPolicy;
             _skillsEnabled = builder._skillsEnabled;
             _skillsMaxFiles = builder._skillsMaxFiles;
             _skillsMaxChars = builder._skillsMaxChars;
@@ -323,6 +402,8 @@ public class NemoClient {
             private boolean _toolGitCommit = true;
             private String _toolCommandPolicy = _defaultCommandPolicy;
             private String _toolPermissionMode = _defaultPermissionMode;
+            private String _toolOsSandbox = _defaultOsSandbox;
+            private String _toolApprovalPolicy = _defaultApprovalPolicy;
             private boolean _skillsEnabled = true;
             private int _skillsMaxFiles = _defaultSkillsMaxFiles;
             private int _skillsMaxChars = _defaultSkillsMaxChars;
@@ -372,6 +453,8 @@ public class NemoClient {
                 _toolGitCommit = source._toolGitCommit;
                 _toolCommandPolicy = source._toolCommandPolicy;
                 _toolPermissionMode = source._toolPermissionMode;
+                _toolOsSandbox = source._toolOsSandbox;
+                _toolApprovalPolicy = source._toolApprovalPolicy;
                 _skillsEnabled = source._skillsEnabled;
                 _skillsMaxFiles = source._skillsMaxFiles;
                 _skillsMaxChars = source._skillsMaxChars;
@@ -559,6 +642,16 @@ public class NemoClient {
                 return this;
             }
 
+            Builder toolOsSandbox(String toolOsSandbox) {
+                _toolOsSandbox = normalizeToolOsSandbox(toolOsSandbox);
+                return this;
+            }
+
+            Builder toolApprovalPolicy(String toolApprovalPolicy) {
+                _toolApprovalPolicy = normalizeToolApprovalPolicy(toolApprovalPolicy);
+                return this;
+            }
+
             Builder skillsEnabled(boolean skillsEnabled) {
                 _skillsEnabled = skillsEnabled;
                 return this;
@@ -654,6 +747,8 @@ public class NemoClient {
         boolean toolGitCommit() { return _toolGitCommit; }
         String toolCommandPolicy() { return _toolCommandPolicy; }
         String toolPermissionMode() { return _toolPermissionMode; }
+        String toolOsSandbox() { return _toolOsSandbox; }
+        String toolApprovalPolicy() { return _toolApprovalPolicy; }
         boolean skillsEnabled() { return _skillsEnabled; }
         int skillsMaxFiles() { return _skillsMaxFiles; }
         int skillsMaxChars() { return _skillsMaxChars; }
@@ -681,6 +776,28 @@ public class NemoClient {
             return switch (normalized) {
             case "read_only", "workspace_write", "full_access" -> normalized;
             default -> _defaultPermissionMode;
+            };
+        }
+
+        static String normalizeToolOsSandbox(String toolOsSandbox) {
+            if (toolOsSandbox == null || toolOsSandbox.isBlank()) {
+                return _defaultOsSandbox;
+            }
+            String normalized = toolOsSandbox.trim().toLowerCase().replace('-', '_');
+            return switch (normalized) {
+            case "auto", "required", "disabled" -> normalized;
+            default -> _defaultOsSandbox;
+            };
+        }
+
+        static String normalizeToolApprovalPolicy(String toolApprovalPolicy) {
+            if (toolApprovalPolicy == null || toolApprovalPolicy.isBlank()) {
+                return _defaultApprovalPolicy;
+            }
+            String normalized = toolApprovalPolicy.trim().toLowerCase().replace('-', '_');
+            return switch (normalized) {
+            case "never", "on_request", "on_escalation" -> normalized;
+            default -> _defaultApprovalPolicy;
             };
         }
 
@@ -725,6 +842,10 @@ public class NemoClient {
 
     static Path getStatePath() {
         return getConfigDirectory().resolve("sessions.json");
+    }
+
+    static Path getApprovalsPath() {
+        return getConfigDirectory().resolve("approvals.json");
     }
 
     static String buildInput(BufferContext context, String question) {
@@ -856,6 +977,8 @@ public class NemoClient {
                 .toolGitCommit(booleanProperty(properties, "tool.git_commit", true))
                 .toolCommandPolicy(property(properties, "tool.command_policy"))
                 .toolPermissionMode(property(properties, "tool.permission_mode"))
+                .toolOsSandbox(property(properties, "tool.os_sandbox"))
+                .toolApprovalPolicy(property(properties, "tool.approval_policy"))
                 .skillsEnabled(booleanProperty(properties, "skills.enabled", true))
                 .skillsMaxFiles(intProperty(properties, "skills.max_files", _defaultSkillsMaxFiles))
                 .skillsMaxChars(intProperty(properties, "skills.max_chars", _defaultSkillsMaxChars))
@@ -914,6 +1037,8 @@ public class NemoClient {
                 .toolGitCommit(booleanMember(tools, true, "gitCommit", "git_commit"))
                 .toolCommandPolicy(firstNonBlank(stringMember(tools, "commandPolicy"), stringMember(tools, "command_policy")))
                 .toolPermissionMode(firstNonBlank(stringMember(tools, "permissionMode"), stringMember(tools, "permission_mode")))
+                .toolOsSandbox(firstNonBlank(stringMember(tools, "osSandbox"), stringMember(tools, "os_sandbox")))
+                .toolApprovalPolicy(firstNonBlank(stringMember(tools, "approvalPolicy"), stringMember(tools, "approval_policy")))
                 .skillsEnabled(booleanMember(skills, true, "enabled"))
                 .skillsMaxFiles(firstNonNull(integerMember(skills, "maxFiles", "max_files"), _defaultSkillsMaxFiles))
                 .skillsMaxChars(firstNonNull(integerMember(skills, "maxChars", "max_chars"), _defaultSkillsMaxChars))
@@ -1163,11 +1288,12 @@ public class NemoClient {
         return rawName.toLowerCase().replace('_', '-');
     }
 
-    private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
+    private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         if (usesResponsesApi(configuration)) {
-            return requestResponses(configuration, context, turns);
+            return requestResponses(configuration, context, turns, executionSession);
         }
-        return _langChain4jClient.request(configuration, context, turns);
+        return _langChain4jClient.request(configuration, context, turns, executionSession);
     }
 
     private static boolean usesResponsesApi(Configuration configuration) {
@@ -1181,7 +1307,8 @@ public class NemoClient {
         return "chatgpt".equals(configuration.provider());
     }
 
-    private ResponseResult requestResponses(Configuration configuration, BufferContext context, List<ChatTurn> turns)
+    private ResponseResult requestResponses(Configuration configuration, BufferContext context, List<ChatTurn> turns,
+            ToolExecutionSession executionSession)
             throws IOException, InterruptedException {
         Path workspaceRoot = resolveWorkspaceRoot(configuration, context);
         List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, workspaceRoot, configuration);
@@ -1206,7 +1333,7 @@ public class NemoClient {
             JsonObject responseBody = parseResponsesBody(response.body());
             JsonArray toolOutputs = new JsonArray();
             for (ToolCall call : extractToolCalls(responseBody)) {
-                String output = executeToolSafely(configuration, context, call);
+                String output = executeToolSafely(configuration, context, call, executionSession);
                 toolTraces.add(toolTrace(call, output));
                 JsonObject toolOutput = new JsonObject();
                 toolOutput.addProperty("type", "function_call_output");
@@ -1283,8 +1410,13 @@ public class NemoClient {
 
     static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call)
             throws InterruptedException {
+        return executeToolSafely(configuration, context, call, null);
+    }
+
+    static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws InterruptedException {
         try {
-            return executeTool(configuration, context, call);
+            return executeTool(configuration, context, call, executionSession);
         } catch (IOException e) {
             _log.warn("Nemo tool {} failed", call.name(), e);
             return formatToolError(call, e);
@@ -1476,7 +1608,7 @@ public class NemoClient {
         }
         if (configuration.toolRunCommand() && isToolAllowedByPermission(configuration, "run_command")) {
             tools.add(functionTool("run_command",
-                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables.",
+                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables. Nemo applies an OS filesystem-write sandbox outside full-access mode when available.",
                     schema(List.of(
                             property("command", stringSchema("Shell command to execute.")),
                             property("cwd", stringSchema("Optional working directory relative to the workspace root."))),
@@ -1582,24 +1714,74 @@ public class NemoClient {
     }
 
     static String executeTool(Configuration configuration, BufferContext context, ToolCall call) throws IOException, InterruptedException {
+        return executeTool(configuration, context, call, null);
+    }
+
+    static String executeTool(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         String permissionBlock = permissionBlock(configuration, call.name());
         if (permissionBlock != null) {
             return permissionBlock;
+        }
+        String approvalBlock = requestActionApprovalIfNeeded(configuration, context, call, executionSession);
+        if (approvalBlock != null) {
+            return approvalBlock;
         }
         return switch (call.name()) {
         case "web_search" -> webSearch(call.arguments());
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
-        case "run_command" -> runCommand(configuration, context, call.arguments());
+        case "run_command" -> runCommand(configuration, context, call.arguments(), executionSession);
         case "write_file" -> writeFile(configuration, context, call.arguments());
-        case "apply_patch" -> applyPatch(configuration, context, call.arguments());
+        case "apply_patch" -> applyPatch(configuration, context, call.arguments(), executionSession);
         case "git_status" -> gitStatus(configuration, context, call.arguments());
         case "git_diff" -> gitDiff(configuration, context, call.arguments());
-        case "git_add" -> gitAdd(configuration, context, call.arguments());
-        case "git_commit" -> gitCommit(configuration, context, call.arguments());
+        case "git_add" -> gitAdd(configuration, context, call.arguments(), executionSession);
+        case "git_commit" -> gitCommit(configuration, context, call.arguments(), executionSession);
         default -> "Unknown tool: " + call.name();
         };
+    }
+
+    private static String requestActionApprovalIfNeeded(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        if (!"on_request".equals(configuration.toolApprovalPolicy()) || !requiresActionApproval(call.name())) {
+            return null;
+        }
+        if (executionSession == null) {
+            return "Tool " + call.name() + " blocked by Nemo approval: approval policy requires user approval.";
+        }
+        Path root = resolveWorkspaceRoot(configuration, context);
+        var request = new ToolApprovalRequest(
+                call.name(),
+                "tool request",
+                actionApprovalSummary(call),
+                "request:" + call.name() + ":" + actionApprovalSignature(call),
+                true);
+        ApprovalResult approval = executionSession.requestApproval(root, request);
+        return approval.approved()
+                ? null
+                : "Tool " + call.name() + " blocked by Nemo approval: user denied the request.";
+    }
+
+    private static boolean requiresActionApproval(String toolName) {
+        return List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName);
+    }
+
+    private static String actionApprovalSummary(ToolCall call) {
+        return switch (call.name()) {
+        case "run_command" -> "run command: " + stringArgument(call.arguments(), "command", "");
+        case "write_file" -> "write " + stringArgument(call.arguments(), "content", "").length()
+                + " chars to " + stringArgument(call.arguments(), "path", "");
+        case "apply_patch" -> "apply patch (" + stringArgument(call.arguments(), "patch", "").length() + " chars)";
+        case "git_add" -> "stage changes: " + gitAddSummary(call.arguments());
+        case "git_commit" -> "commit changes: " + stringArgument(call.arguments(), "message", "");
+        default -> call.name();
+        };
+    }
+
+    private static String actionApprovalSignature(ToolCall call) {
+        return call.name() + ":" + compactArgumentValue(call.arguments());
     }
 
     static boolean isToolAllowedByPermission(Configuration configuration, String toolName) {
@@ -1755,42 +1937,53 @@ public class NemoClient {
         return truncateOutput(configuration, String.join("\n", matches));
     }
 
-    private static String runCommand(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+    private static String runCommand(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String rawCwd = stringArgument(arguments, "cwd", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
         String policyBlock = commandPolicyBlock(configuration, command);
         if (policyBlock != null) {
-            return "Tool run_command blocked by Nemo policy: " + policyBlock;
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    root,
+                    new ToolApprovalRequest(
+                            "run_command",
+                            "command policy escalation",
+                            "run blocked command: " + command + "\nReason: " + policyBlock,
+                            "policy:run_command:" + cwd.toAbsolutePath().normalize() + ":" + command + ":" + policyBlock,
+                            true),
+                    "Tool run_command blocked by Nemo policy: " + policyBlock);
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
         }
         String mavenHint = mavenAlsoMakeHint(command);
         if (mavenHint != null) {
             return mavenHint;
         }
 
-        var process = new ProcessBuilder("zsh", "-lc", command)
-                .directory(cwd.toFile())
-                .redirectErrorStream(false)
-                .start();
-        try {
-            if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-                return "exit_code: timeout\nstdout:\n\nstderr:\ncommand exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds";
-            }
-        } catch (InterruptedException e) {
-            process.destroyForcibly();
-            throw e;
-        }
+        return runShellCommand(configuration, root, cwd, command, executionSession);
+    }
 
-        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-        return truncateOutput(configuration, String.join("\n",
-                "exit_code: " + process.exitValue(),
-                "stdout:",
-                stdout,
-                "stderr:",
-                stderr));
+    private static String requestEscalationApprovalIfNeeded(Configuration configuration,
+            ToolExecutionSession executionSession, Path workspaceRoot, ToolApprovalRequest request, String deniedMessage)
+            throws InterruptedException {
+        if (!approvalPolicyAllowsEscalationPrompt(configuration)) {
+            return deniedMessage;
+        }
+        if (executionSession == null) {
+            return deniedMessage + " Approval is required but no approval session is active.";
+        }
+        ApprovalResult approval = executionSession.requestApproval(workspaceRoot, request);
+        return approval.approved() ? null : deniedMessage;
+    }
+
+    private static boolean approvalPolicyAllowsEscalationPrompt(Configuration configuration) {
+        return "on_escalation".equals(configuration.toolApprovalPolicy())
+                || "on_request".equals(configuration.toolApprovalPolicy());
     }
 
     private static String commandPolicyBlock(Configuration configuration, String command) {
@@ -1895,7 +2088,8 @@ public class NemoClient {
         return truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
     }
 
-    private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+    private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String patch = stringArgument(arguments, "patch", "");
         if (patch.isBlank()) {
@@ -1904,7 +2098,9 @@ public class NemoClient {
         Path marker = Files.createTempFile(root, "nemo-patch-", ".diff");
         Files.writeString(marker, patch, StandardCharsets.UTF_8);
         try {
-            return runShellCommand(configuration, root, "git apply --whitespace=nowarn " + shellQuote(root.relativize(marker).toString()));
+            return runShellCommand(configuration, root, root,
+                    "git apply --whitespace=nowarn " + shellQuote(root.relativize(marker).toString()),
+                    executionSession);
         } finally {
             Files.deleteIfExists(marker);
         }
@@ -1914,26 +2110,27 @@ public class NemoClient {
         Path root = resolveWorkspaceRoot(configuration, context);
         String rawPath = stringArgument(arguments, "path", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
-        return runShellCommand(configuration, cwd, "git status --short --branch");
+        return runShellCommand(configuration, root, cwd, "git --no-optional-locks status --short --branch", null);
     }
 
     private static String gitDiff(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String rawPath = stringArgument(arguments, "path", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
-        return runShellCommand(configuration, cwd, "git diff -- " + shellQuote("."));
+        return runShellCommand(configuration, root, cwd, "git --no-optional-locks diff -- " + shellQuote("."), null);
     }
 
-    private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+    private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         var paths = gitAddPathspecs(root, arguments);
         if (paths.isEmpty()) {
-            return runShellCommand(configuration, root, "git add -- .");
+            return runShellCommand(configuration, root, root, "git add -- .", executionSession);
         }
         String joinedPathspecs = paths.stream()
                 .map(NemoClient::shellQuote)
                 .collect(Collectors.joining(" "));
-        return runShellCommand(configuration, root, "git add -- " + joinedPathspecs);
+        return runShellCommand(configuration, root, root, "git add -- " + joinedPathspecs, executionSession);
     }
 
     private static List<String> gitAddPathspecs(Path root, JsonObject arguments) throws IOException {
@@ -1961,20 +2158,32 @@ public class NemoClient {
         return root.equals(path) ? "." : root.relativize(path).toString();
     }
 
-    private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
+    private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String message = stringArgument(arguments, "message", "");
         if (message.isBlank()) {
             throw new IOException("message is required");
         }
-        return runShellCommand(configuration, root, "git commit -m " + shellQuote(message));
+        return runShellCommand(configuration, root, root, "git commit -m " + shellQuote(message), executionSession);
     }
 
-    private static String runShellCommand(Configuration configuration, Path cwd, String command) throws IOException, InterruptedException {
-        var process = new ProcessBuilder("zsh", "-lc", command)
+    private static String runShellCommand(Configuration configuration, Path workspaceRoot, Path cwd, String command,
+            ToolExecutionSession executionSession)
+            throws IOException, InterruptedException {
+        String sandboxBlock = osSandboxBlock(configuration, workspaceRoot, command, executionSession);
+        if (sandboxBlock != null) {
+            return sandboxBlock;
+        }
+
+        ShellInvocation invocation = shellInvocation(configuration, workspaceRoot, cwd, command);
+        var processBuilder = new ProcessBuilder(invocation.command())
                 .directory(cwd.toFile())
-                .redirectErrorStream(false)
-                .start();
+                .redirectErrorStream(false);
+        if ("read_only".equals(configuration.toolPermissionMode())) {
+            processBuilder.environment().put("GIT_OPTIONAL_LOCKS", "0");
+        }
+        var process = processBuilder.start();
         try {
             if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)) {
                 process.destroyForcibly();
@@ -1993,6 +2202,235 @@ public class NemoClient {
                 stdout,
                 "stderr:",
                 stderr));
+    }
+
+    private record ShellInvocation(List<String> command) {
+    }
+
+    private static ShellInvocation shellInvocation(Configuration configuration, Path workspaceRoot, Path cwd, String command)
+            throws IOException {
+        if ("full_access".equals(configuration.toolPermissionMode()) || "disabled".equals(configuration.toolOsSandbox())) {
+            return new ShellInvocation(List.of("zsh", "-lc", command));
+        }
+        OsSandboxBackend backend = osSandboxBackend();
+        return switch (backend) {
+        case MACOS_SANDBOX_EXEC -> {
+            String profile = macOsSandboxProfile(configuration, workspaceRoot);
+            yield new ShellInvocation(List.of("/usr/bin/sandbox-exec", "-p", profile, "zsh", "-lc", command));
+        }
+        case LINUX_BUBBLEWRAP -> new ShellInvocation(linuxBubblewrapCommand(configuration, workspaceRoot, cwd, command));
+        case NONE -> new ShellInvocation(List.of("zsh", "-lc", command));
+        };
+    }
+
+    private static String osSandboxBlock(Configuration configuration, Path workspaceRoot, String command,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        if ("full_access".equals(configuration.toolPermissionMode()) || "disabled".equals(configuration.toolOsSandbox())) {
+            return null;
+        }
+        OsSandboxBackend backend = osSandboxBackend();
+        if ("required".equals(configuration.toolOsSandbox()) && backend == OsSandboxBackend.NONE) {
+            return String.join("\n",
+                    "exit_code: sandbox_unavailable",
+                    "stdout:",
+                    "",
+                    "stderr:",
+                    "Nemo OS sandbox is required, but no supported OS sandbox backend is available or usable.");
+        }
+        if ("auto".equals(configuration.toolOsSandbox()) && backend == OsSandboxBackend.NONE && executionSession != null) {
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    workspaceRoot,
+                    new ToolApprovalRequest(
+                            "run_command",
+                            "OS sandbox unavailable",
+                            "run without an OS filesystem sandbox: " + command,
+                            "sandbox-unavailable:" + workspaceRoot.toAbsolutePath().normalize() + ":" + command,
+                            true),
+                    String.join("\n",
+                            "exit_code: sandbox_unavailable",
+                            "stdout:",
+                            "",
+                            "stderr:",
+                            "Nemo OS sandbox is unavailable and the unsandboxed command was not approved."));
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
+        }
+        return null;
+    }
+
+    static boolean isMacOsSandboxAvailable() {
+        return osSandboxBackend() == OsSandboxBackend.MACOS_SANDBOX_EXEC;
+    }
+
+    static String osSandboxBackendName() {
+        return osSandboxBackend().name().toLowerCase();
+    }
+
+    private static OsSandboxBackend osSandboxBackend() {
+        String override = System.getProperty(_sandboxAvailabilityOverrideProperty);
+        if (override != null && !override.isBlank()) {
+            if (!Boolean.parseBoolean(override.trim())) {
+                return OsSandboxBackend.NONE;
+            }
+        }
+        OsSandboxBackend cached = _osSandboxBackend.get();
+        if (cached != null) {
+            return cached;
+        }
+        OsSandboxBackend backend = detectOsSandboxBackend();
+        _osSandboxBackend.compareAndSet(null, backend);
+        return _osSandboxBackend.get();
+    }
+
+    private static OsSandboxBackend detectOsSandboxBackend() {
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        if (osName.contains("mac") && probeMacOsSandbox()) {
+            return OsSandboxBackend.MACOS_SANDBOX_EXEC;
+        }
+        if (osName.contains("linux") && probeLinuxBubblewrap()) {
+            return OsSandboxBackend.LINUX_BUBBLEWRAP;
+        }
+        return OsSandboxBackend.NONE;
+    }
+
+    private static boolean probeMacOsSandbox() {
+        Path sandboxExec = Path.of("/usr/bin/sandbox-exec");
+        if (!Files.isExecutable(sandboxExec)) {
+            return false;
+        }
+        try {
+            var process = new ProcessBuilder(sandboxExec.toString(), "-p", "(version 1)\n(allow default)", "/usr/bin/true")
+                    .redirectErrorStream(true)
+                    .start();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static boolean probeLinuxBubblewrap() {
+        Path bwrap = findExecutable("bwrap");
+        if (bwrap == null) {
+            return false;
+        }
+        try {
+            var process = new ProcessBuilder(
+                    bwrap.toString(),
+                    "--ro-bind", "/", "/",
+                    "/usr/bin/true")
+                    .redirectErrorStream(true)
+                    .start();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static List<String> linuxBubblewrapCommand(Configuration configuration, Path workspaceRoot, Path cwd, String command)
+            throws IOException {
+        Path bwrap = findExecutable("bwrap");
+        if (bwrap == null) {
+            return List.of("zsh", "-lc", command);
+        }
+        var invocation = new ArrayList<String>();
+        invocation.add(bwrap.toString());
+        invocation.add("--die-with-parent");
+        invocation.add("--ro-bind");
+        invocation.add("/");
+        invocation.add("/");
+        invocation.add("--dev-bind");
+        invocation.add("/dev");
+        invocation.add("/dev");
+        invocation.add("--proc");
+        invocation.add("/proc");
+        invocation.add("--tmpfs");
+        invocation.add("/tmp");
+        if ("workspace_write".equals(configuration.toolPermissionMode())) {
+            for (Path root : sandboxWritableRoots(workspaceRoot)) {
+                invocation.add("--bind");
+                invocation.add(root.toString());
+                invocation.add(root.toString());
+            }
+        }
+        invocation.add("--chdir");
+        invocation.add(cwd.toAbsolutePath().normalize().toString());
+        invocation.add("zsh");
+        invocation.add("-lc");
+        invocation.add(command);
+        return invocation;
+    }
+
+    private static Path findExecutable(String name) {
+        String path = System.getenv("PATH");
+        if (path == null || path.isBlank()) {
+            return null;
+        }
+        for (String directory : path.split(File.pathSeparator)) {
+            if (directory.isBlank()) {
+                continue;
+            }
+            Path candidate = Path.of(directory, name);
+            if (Files.isExecutable(candidate)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    static void resetMacOsSandboxAvailabilityForTests() {
+        _osSandboxBackend.set(null);
+    }
+
+    static String macOsSandboxProfile(Configuration configuration, Path workspaceRoot) throws IOException {
+        var lines = new ArrayList<String>();
+        lines.add("(version 1)");
+        lines.add("(allow default)");
+        lines.add("(deny file-write*)");
+        lines.add("(allow file-write* (literal \"/dev/null\"))");
+        if ("workspace_write".equals(configuration.toolPermissionMode())) {
+            for (Path root : sandboxWritableRoots(workspaceRoot)) {
+                lines.add("(allow file-write* (subpath " + sandboxString(root.toString()) + "))");
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private static List<Path> sandboxWritableRoots(Path workspaceRoot) throws IOException {
+        Path normalized = workspaceRoot.toAbsolutePath().normalize();
+        var roots = new ArrayList<Path>();
+        roots.add(normalized);
+        try {
+            Path real = normalized.toRealPath();
+            if (!real.equals(normalized)) {
+                roots.add(real);
+            }
+        } catch (IOException e) {
+            if (!Files.exists(normalized)) {
+                throw e;
+            }
+        }
+        return roots;
+    }
+
+    private static String sandboxString(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private static String shellQuote(String value) {
@@ -2421,6 +2859,170 @@ public class NemoClient {
         }
     }
 
+    private synchronized void ensureApprovalsLoaded() {
+        if (_approvalsLoaded) {
+            return;
+        }
+        _approvalsLoaded = true;
+        _approvalRules.clear();
+        _nextApprovalRuleNumber = 1;
+
+        Path approvalsPath = getApprovalsPath();
+        if (!Files.isRegularFile(approvalsPath)) {
+            return;
+        }
+
+        try {
+            JsonObject root = parseJsonObject(Files.readString(approvalsPath, StandardCharsets.UTF_8));
+            if (root.has("next_rule_number")) {
+                _nextApprovalRuleNumber = Math.max(1L, root.get("next_rule_number").getAsLong());
+            }
+            JsonArray rules = root.getAsJsonArray("rules");
+            long highestRuleNumber = 0;
+            if (rules != null) {
+                for (JsonElement element : rules) {
+                    JsonObject rule = element.getAsJsonObject();
+                    String id = rule.get("id").getAsString();
+                    _approvalRules.add(new ApprovalRule(
+                            id,
+                            rule.get("workspace_root").getAsString(),
+                            rule.get("tool_name").getAsString(),
+                            rule.get("signature").getAsString(),
+                            rule.has("created_at_millis")
+                                    ? rule.get("created_at_millis").getAsLong()
+                                    : System.currentTimeMillis()));
+                    highestRuleNumber = Math.max(highestRuleNumber, approvalRuleNumber(id));
+                }
+            }
+            _nextApprovalRuleNumber = Math.max(_nextApprovalRuleNumber, highestRuleNumber + 1);
+        } catch (Exception e) {
+            _log.error("Unable to load Nemo approvals from {}", approvalsPath, e);
+            _approvalRules.clear();
+            _nextApprovalRuleNumber = 1;
+        }
+    }
+
+    private synchronized void persistApprovals() {
+        var root = new JsonObject();
+        root.addProperty("next_rule_number", _nextApprovalRuleNumber);
+        var rules = new JsonArray();
+        for (ApprovalRule rule : _approvalRules) {
+            var object = new JsonObject();
+            object.addProperty("id", rule.id());
+            object.addProperty("workspace_root", rule.workspaceRoot());
+            object.addProperty("tool_name", rule.toolName());
+            object.addProperty("signature", rule.signature());
+            object.addProperty("created_at_millis", rule.createdAtMillis());
+            rules.add(object);
+        }
+        root.add("rules", rules);
+
+        Path approvalsPath = getApprovalsPath();
+        try {
+            Files.createDirectories(approvalsPath.getParent());
+            Path tempPath = Files.createTempFile(approvalsPath.getParent(), "approvals-", ".json.tmp");
+            Files.writeString(tempPath, _gson.toJson(root), StandardCharsets.UTF_8);
+            try {
+                Files.move(tempPath, approvalsPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                Files.move(tempPath, approvalsPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            _log.error("Unable to persist Nemo approvals to {}", approvalsPath, e);
+        }
+    }
+
+    private static long approvalRuleNumber(String id) {
+        int separator = id.lastIndexOf('-');
+        if (separator < 0 || separator + 1 >= id.length()) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(id.substring(separator + 1));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private ApprovalResult requestToolApproval(Conversation conversation, long requestId, Path workspaceRoot,
+            ToolApprovalRequest request) throws InterruptedException {
+        String normalizedRoot = workspaceRoot.toAbsolutePath().normalize().toString();
+        PendingApproval pending;
+        synchronized (this) {
+            ensureApprovalsLoaded();
+            if (hasApprovalRuleLocked(normalizedRoot, request)) {
+                return new ApprovalResult(true, true);
+            }
+            if (conversation._activeRequestId != requestId || !conversation._pending) {
+                return new ApprovalResult(false, false);
+            }
+            String id = "approval-" + _nextApprovalNumber++;
+            pending = new PendingApproval(id, normalizedRoot, conversation._id, requestId, request);
+            _pendingApprovals.put(id, pending);
+        }
+
+        appendApprovalPrompt(conversation, pending);
+        try {
+            pending._latch.await();
+        } finally {
+            synchronized (this) {
+                _pendingApprovals.remove(pending._id);
+            }
+        }
+
+        if (pending._approved && pending._persist && request.persistable()) {
+            addApprovalRule(normalizedRoot, request);
+        }
+        return new ApprovalResult(pending._approved, pending._persist);
+    }
+
+    private synchronized boolean hasApprovalRuleLocked(String workspaceRoot, ToolApprovalRequest request) {
+        for (ApprovalRule rule : _approvalRules) {
+            if (rule.workspaceRoot().equals(workspaceRoot)
+                    && rule.toolName().equals(request.toolName())
+                    && rule.signature().equals(request.signature())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private synchronized void addApprovalRule(String workspaceRoot, ToolApprovalRequest request) {
+        ensureApprovalsLoaded();
+        if (hasApprovalRuleLocked(workspaceRoot, request)) {
+            return;
+        }
+        _approvalRules.add(new ApprovalRule(
+                "rule-" + _nextApprovalRuleNumber++,
+                workspaceRoot,
+                request.toolName(),
+                request.signature(),
+                System.currentTimeMillis()));
+        persistApprovals();
+    }
+
+    private void appendApprovalPrompt(Conversation conversation, PendingApproval pending) {
+        Runnable append = () -> appendTurn(conversation, new ChatTurn("approval", formatApprovalPrompt(pending), false));
+        EventThread eventThread = EventThread.getInstance();
+        if (eventThread.isAlive() && Thread.currentThread() != eventThread) {
+            eventThread.enqueue(new RunnableEvent(append));
+        } else {
+            append.run();
+        }
+    }
+
+    private static String formatApprovalPrompt(PendingApproval pending) {
+        var lines = new ArrayList<String>();
+        lines.add("Approval required: " + pending._request.reason());
+        lines.add("id: " + pending._id);
+        lines.add("tool: " + pending._request.toolName());
+        lines.add("workspace: " + pending._workspaceRoot);
+        lines.add(pending._request.summary());
+        lines.add("Use :approve " + pending._id + " to run once, :approve " + pending._id
+                + " always to persist this exact approval, or :deny " + pending._id + ".");
+        return String.join("\n", lines);
+    }
+
     private static long sessionNumber(String sessionId) {
         int separator = sessionId.lastIndexOf('-');
         if (separator < 0 || separator + 1 >= sessionId.length()) {
@@ -2603,9 +3205,10 @@ public class NemoClient {
         var promptTurns = new ArrayList<>(conversation._turns);
         var requestConfiguration = conversation._configuration;
         var requestContext = conversation._context;
+        var executionSession = new ConversationToolExecutionSession(conversation, requestId);
         var worker = new Thread(() -> {
             try {
-                ResponseResult response = request(requestConfiguration, requestContext, promptTurns);
+                ResponseResult response = request(requestConfiguration, requestContext, promptTurns, executionSession);
                 EventThread.getInstance().enqueue(
                         new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
             } catch (InterruptedException e) {
@@ -2631,6 +3234,10 @@ public class NemoClient {
             new org.fisk.swim.ui.CommandView.CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
             new org.fisk.swim.ui.CommandView.CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
             new org.fisk.swim.ui.CommandView.CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("unapprove", List.of(), "<rule-id|all>", "remove saved Nemo approval rules"),
             new org.fisk.swim.ui.CommandView.CommandSpec("help", List.of(), "", "list Nemo chat commands"),
             new org.fisk.swim.ui.CommandView.CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
 
@@ -2673,9 +3280,21 @@ public class NemoClient {
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
+        case ":approve":
+            handleApproveCommand(conversation, argument);
+            return;
+        case ":deny":
+            handleDenyCommand(conversation, argument);
+            return;
+        case ":approvals":
+            appendAssistantNote(conversation, formatApprovals(conversation));
+            return;
+        case ":unapprove":
+            handleUnapproveCommand(conversation, argument);
+            return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :help, :q");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :approve <id> [always], :deny <id>, :approvals, :unapprove <rule-id|all>, :help, :q");
             return;
         case ":q":
         case ":quit":
@@ -2711,6 +3330,8 @@ public class NemoClient {
         lines.add("Permissions:");
         lines.add("- mode: " + displayPermissionMode(configuration.toolPermissionMode()));
         lines.add("- command policy: " + effectiveCommandPolicy(configuration));
+        lines.add("- OS sandbox: " + formatOsSandbox(configuration));
+        lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-'));
         lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit");
         return String.join("\n", lines);
     }
@@ -2724,6 +3345,141 @@ public class NemoClient {
             return "trusted (full-access)";
         }
         return configuration.toolCommandPolicy();
+    }
+
+    private static String formatOsSandbox(Configuration configuration) {
+        if ("full_access".equals(configuration.toolPermissionMode())) {
+            return configuration.toolOsSandbox() + " (bypassed by full-access)";
+        }
+        if ("disabled".equals(configuration.toolOsSandbox())) {
+            return "disabled";
+        }
+        OsSandboxBackend backend = osSandboxBackend();
+        return configuration.toolOsSandbox() + " (" + backend.name().toLowerCase().replace('_', '-') + ")";
+    }
+
+    private void handleApproveCommand(Conversation conversation, String argument) {
+        String[] parts = argument.split("\\s+");
+        String approvalId = parts.length == 0 ? "" : parts[0].trim();
+        boolean persist = parts.length > 1 && "always".equalsIgnoreCase(parts[1]);
+        if (approvalId.isBlank()) {
+            approvalId = singlePendingApprovalId(conversation);
+        }
+        if (approvalId.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :approve <approval-id> [always]");
+            return;
+        }
+        PendingApproval pending = resolveApproval(conversation, approvalId, true, persist);
+        if (pending == null) {
+            appendAssistantNote(conversation, "Unknown approval: " + approvalId);
+            return;
+        }
+        appendTurn(conversation, new ChatTurn("approval",
+                "Approved " + pending._id + (persist && pending._request.persistable() ? " and saved exact rule." : "."),
+                false));
+    }
+
+    private void handleDenyCommand(Conversation conversation, String argument) {
+        String approvalId = argument.trim();
+        if (approvalId.isBlank()) {
+            approvalId = singlePendingApprovalId(conversation);
+        }
+        if (approvalId.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :deny <approval-id>");
+            return;
+        }
+        PendingApproval pending = resolveApproval(conversation, approvalId, false, false);
+        if (pending == null) {
+            appendAssistantNote(conversation, "Unknown approval: " + approvalId);
+            return;
+        }
+        appendTurn(conversation, new ChatTurn("approval", "Denied " + pending._id + ".", false));
+    }
+
+    private synchronized PendingApproval resolveApproval(Conversation conversation, String approvalId, boolean approved,
+            boolean persist) {
+        PendingApproval pending = _pendingApprovals.get(approvalId);
+        if (pending == null || !pending._conversationId.equals(conversation._id)) {
+            return null;
+        }
+        pending.resolve(approved, persist && pending._request.persistable());
+        _pendingApprovals.remove(approvalId);
+        return pending;
+    }
+
+    private synchronized String singlePendingApprovalId(Conversation conversation) {
+        String match = "";
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (!pending._conversationId.equals(conversation._id)) {
+                continue;
+            }
+            if (!match.isBlank()) {
+                return "";
+            }
+            match = pending._id;
+        }
+        return match;
+    }
+
+    private synchronized String formatApprovals(Conversation conversation) {
+        ensureApprovalsLoaded();
+        String workspaceRoot = conversation._workspaceRoot.toAbsolutePath().normalize().toString();
+        var lines = new ArrayList<String>();
+        lines.add("Approvals:");
+        boolean anyPending = false;
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (!pending._conversationId.equals(conversation._id)) {
+                continue;
+            }
+            if (!anyPending) {
+                lines.add("Pending:");
+                anyPending = true;
+            }
+            lines.add("- " + pending._id + " | " + pending._request.toolName() + " | " + pending._request.reason());
+        }
+        boolean anySaved = false;
+        for (ApprovalRule rule : _approvalRules) {
+            if (!rule.workspaceRoot().equals(workspaceRoot)) {
+                continue;
+            }
+            if (!anySaved) {
+                lines.add("Saved:");
+                anySaved = true;
+            }
+            lines.add("- " + rule.id() + " | " + rule.toolName());
+        }
+        if (!anyPending && !anySaved) {
+            lines.add("(none)");
+        }
+        return String.join("\n", lines);
+    }
+
+    private void handleUnapproveCommand(Conversation conversation, String argument) {
+        String target = argument.trim();
+        if (target.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :unapprove <rule-id|all>");
+            return;
+        }
+        int removed = removeApprovalRules(conversation._workspaceRoot, target);
+        appendAssistantNote(conversation, removed == 0
+                ? "No saved approval matched " + target + "."
+                : "Removed " + removed + " approval rule" + (removed == 1 ? "." : "s."));
+    }
+
+    private synchronized int removeApprovalRules(Path workspaceRoot, String target) {
+        ensureApprovalsLoaded();
+        String normalizedRoot = workspaceRoot.toAbsolutePath().normalize().toString();
+        int before = _approvalRules.size();
+        if ("all".equalsIgnoreCase(target)) {
+            _approvalRules.removeIf(rule -> rule.workspaceRoot().equals(normalizedRoot));
+        } else {
+            _approvalRules.removeIf(rule -> rule.workspaceRoot().equals(normalizedRoot) && rule.id().equals(target));
+        }
+        int removed = before - _approvalRules.size();
+        if (removed > 0) {
+            persistApprovals();
+        }
+        return removed;
     }
 
     private void handleAbortCommand(Conversation conversation, String argument) {

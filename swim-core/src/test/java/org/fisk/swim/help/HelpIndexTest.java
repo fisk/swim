@@ -30,6 +30,10 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  g w<char> jumps to visible word starts and shows hints when needed."));
         assertTrue(rendered.contains("  g c<char> jumps to visible matching characters and shows hints when needed."));
         assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
+        assertTrue(rendered.contains("Nemo"));
+        assertTrue(rendered.contains("  :permissions shows permission mode, command policy, OS sandbox backend, and approval policy."));
+        assertTrue(rendered.contains("  :approve <id>, :approve <id> always, :deny <id>, :approvals, and :unapprove manage tool approvals."));
+        assertTrue(rendered.contains("  osSandbox auto uses sandbox-exec on macOS or bwrap on Linux, required fails closed, and disabled runs unsandboxed."));
     }
 
     @Test

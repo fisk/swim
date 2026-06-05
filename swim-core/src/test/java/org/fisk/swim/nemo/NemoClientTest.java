@@ -13,6 +13,7 @@ import java.util.Map;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -183,6 +184,8 @@ class NemoClientTest {
                 "tool.run_command=false",
                 "tool.command_policy=trusted",
                 "tool.permission_mode=read-only",
+                "tool.os_sandbox=required",
+                "tool.approval_policy=on-request",
                 "tool.write_file=false",
                 "tool.git_add=false",
                 "tool.git_commit=false",
@@ -201,6 +204,8 @@ class NemoClientTest {
         assertTrue(configuration.toolWebSearch());
         assertEquals("trusted", configuration.toolCommandPolicy());
         assertEquals("read_only", configuration.toolPermissionMode());
+        assertEquals("required", configuration.toolOsSandbox());
+        assertEquals("on_request", configuration.toolApprovalPolicy());
         assertEquals(42, configuration.toolMaxResults());
         assertTrue(!configuration.toolRunCommand());
         assertTrue(!configuration.toolWriteFile());
@@ -268,7 +273,9 @@ class NemoClientTest {
                   "tools": {
                     "runCommand": false,
                     "commandPolicy": "trusted",
-                    "permissionMode": "full-access"
+                    "permissionMode": "full-access",
+                    "osSandbox": "disabled",
+                    "approvalPolicy": "never"
                   }
                 }
                 """);
@@ -289,6 +296,8 @@ class NemoClientTest {
         assertFalse(configuration.toolRunCommand());
         assertEquals("trusted", configuration.toolCommandPolicy());
         assertEquals("full_access", configuration.toolPermissionMode());
+        assertEquals("disabled", configuration.toolOsSandbox());
+        assertEquals("never", configuration.toolApprovalPolicy());
     }
 
     @Test
@@ -502,6 +511,22 @@ class NemoClientTest {
     }
 
     @Test
+    void macOsSandboxProfileAllowsOnlyWorkspaceWrites() throws Exception {
+        Path project = tempDir.resolve("workspace-profile");
+        Files.createDirectories(project);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String profile = NemoClient.macOsSandboxProfile(configuration, project);
+
+        assertTrue(profile.contains("(deny file-write*)"));
+        assertTrue(profile.contains("(allow file-write* (literal \"/dev/null\"))"));
+        assertTrue(profile.contains(project.toAbsolutePath().normalize().toString()));
+        assertFalse(profile.contains(tempDir.resolve("outside").toString()));
+    }
+
+    @Test
     void executesReadListAndSearchToolsInsideWorkspace() throws Exception {
         Path project = tempDir.resolve("project");
         Path file = project.resolve("src/Main.txt");
@@ -678,6 +703,62 @@ class NemoClientTest {
 
         assertTrue(output.contains("exit_code: 0"));
         assertTrue(Files.exists(owned));
+    }
+
+    @Test
+    void requiredOsSandboxBlocksWhenUnavailable() throws Exception {
+        String originalOverride = System.getProperty("swim.nemo.os_sandbox_available");
+        System.setProperty("swim.nemo.os_sandbox_available", "false");
+        NemoClient.resetMacOsSandboxAvailabilityForTests();
+        try {
+            Path project = tempDir.resolve("workspace-required-sandbox");
+            Files.createDirectories(project);
+            Path file = project.resolve("note.txt");
+            Files.writeString(file, "hello\n");
+            var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+            var configuration = NemoClient.Configuration.builder()
+                    .workspaceRoot(project)
+                    .toolOsSandbox("required")
+                    .build();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("sandbox-required", "run_command", json(Map.of("command", "printf ok"))));
+
+            assertTrue(output.contains("exit_code: sandbox_unavailable"));
+            assertFalse(output.contains("ok"));
+        } finally {
+            if (originalOverride == null) {
+                System.clearProperty("swim.nemo.os_sandbox_available");
+            } else {
+                System.setProperty("swim.nemo.os_sandbox_available", originalOverride);
+            }
+            NemoClient.resetMacOsSandboxAvailabilityForTests();
+        }
+    }
+
+    @Test
+    void workspaceWriteOsSandboxDeniesWritesOutsideWorkspaceWhenAvailable() throws Exception {
+        Assumptions.assumeTrue(NemoClient.isMacOsSandboxAvailable(), "macOS sandbox-exec unavailable");
+        Path project = tempDir.resolve("workspace-sandbox");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path allowed = project.resolve("allowed.txt");
+        Path outside = tempDir.resolve("outside.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("trusted")
+                .toolOsSandbox("required")
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("sandbox", "run_command", json(Map.of(
+                        "command", "touch allowed.txt; touch " + shellQuoteForTest(outside)))));
+
+        assertTrue(Files.exists(allowed));
+        assertFalse(Files.exists(outside));
+        assertTrue(output.contains("Operation not permitted") || output.contains("exit_code: 1"));
     }
 
     @Test
@@ -1126,5 +1207,9 @@ class NemoClientTest {
             throw new IOException(output);
         }
         return output;
+    }
+
+    private static String shellQuoteForTest(Path path) {
+        return "'" + path.toString().replace("'", "'\"'\"'") + "'";
     }
 }

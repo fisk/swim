@@ -303,7 +303,13 @@ Nemo commands:
 - `:new [title]`
 - `:switch <session-id>`
 - `:rename <title>`
+- `:reset [session-id]`
 - `:delete [session-id]`
+- `:permissions [read-only|workspace-write|full-access]`
+- `:approve <approval-id> [always]`
+- `:deny <approval-id>`
+- `:approvals`
+- `:unapprove <rule-id|all>`
 - `:help`
 - `:q`, `:quit`
 
@@ -311,6 +317,10 @@ Passive Nemo behaviors:
 
 - Pending/thinking timer
 - Session persistence
+- Tool transcript entries
+- Tool permission mode enforcement
+- OS sandbox backend selection
+- Approval prompts and saved approval rules
 - Command menu completions while typing `:`
 - Worker lifecycle / abort
 
