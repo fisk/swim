@@ -1875,11 +1875,12 @@ public class NemoClient {
                     if (turns != null) {
                         for (JsonElement turnElement : turns) {
                             JsonObject turnObject = turnElement.getAsJsonObject();
-                            conversation._turns.add(new ChatTurn(
+                            ChatTurn turn = new ChatTurn(
                                     turnObject.get("speaker").getAsString(),
                                     turnObject.get("text").getAsString(),
                                     !turnObject.has("include_in_prompt")
-                                            || turnObject.get("include_in_prompt").getAsBoolean()));
+                                            || turnObject.get("include_in_prompt").getAsBoolean());
+                            conversation._turns.add(turn);
                         }
                     }
                     _conversations.put(conversation._id, conversation);
@@ -2477,11 +2478,17 @@ public class NemoClient {
         conversation._contextUsagePercent = null;
         conversation._activeRequestId = 0;
         conversation._worker = null;
-        appendAssistantNote(conversation, response);
+        conversation._updatedAtMillis = System.currentTimeMillis();
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.appendMessage("nemo", response);
+        } else {
+            showMessage(response);
+        }
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
             conversation._panelView.setContextUsagePercent(null);
         }
+        persistSessions();
     }
 
     private void showMessage(String message) {
