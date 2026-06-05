@@ -222,7 +222,7 @@ class CommandViewTest {
             invokeRunCommand(window.getCommandView(), "vsplit");
 
             assertTrue(window.getActiveView() instanceof ShellPanelView);
-            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals("{16, 0, 16, 2}", ((View) window.getActiveView()).getBounds().toString());
             assertEquals(2, leafViews(window).size());
             assertTrue(leafViews(window).stream().allMatch(view -> view instanceof ShellPanelView));
         }

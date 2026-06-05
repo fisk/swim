@@ -245,7 +245,7 @@ public class TextLayout {
         _logicalLineAtPosition = new TreeMap<>();
         Line line = new Line(0, 0, null, false);
         _logicalLines.add(line);
-        _logicalLineAtPosition.put(0, line);
+        _logicalLineAtPosition.putIfAbsent(0, line);
         int x = 0;
         int y = 0;
         int position = 0;
@@ -277,7 +277,7 @@ public class TextLayout {
                     line.setNext(next);
                     line = next;
                     _logicalLines.add(line);
-                    _logicalLineAtPosition.put(position, line);
+                    _logicalLineAtPosition.putIfAbsent(position, line);
                     x = 0;
                 }
                 continue;
@@ -289,7 +289,7 @@ public class TextLayout {
                 line.setNext(next);
                 line = next;
                 _logicalLines.add(line);
-                _logicalLineAtPosition.put(position + 1, line);
+                _logicalLineAtPosition.putIfAbsent(position + 1, line);
                 x = 0;
                 position++;
                 continue;
@@ -299,7 +299,7 @@ public class TextLayout {
                 line.setNext(next);
                 line = next;
                 _logicalLines.add(line);
-                _logicalLineAtPosition.put(position, line);
+                _logicalLineAtPosition.putIfAbsent(position, line);
                 x = 0;
             }
             line.getGlyphs().add(new Glyph(x++, y, position, character));
