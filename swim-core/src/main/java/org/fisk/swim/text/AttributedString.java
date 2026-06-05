@@ -21,6 +21,14 @@ public class AttributedString {
             _foregroundColour = foregroundColour;
             _backgroundColour = backgroundColour;
         }
+
+        public TextColor foregroundColour() {
+            return _foregroundColour;
+        }
+
+        public TextColor backgroundColour() {
+            return _backgroundColour;
+        }
     }
 
     public static class AttributedStringFragment {

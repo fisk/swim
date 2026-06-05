@@ -95,6 +95,12 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("g n", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); });
         _rootResponder.addEventResponder("g N", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); });
         _rootResponder.addEventResponder("g C", window::clearAdditionalCursors);
+        _rootResponder.addEventResponder("g ]", () -> { window.navigateDiagnostic(true, false); });
+        _rootResponder.addEventResponder("g [", () -> { window.navigateDiagnostic(false, false); });
+        _rootResponder.addEventResponder("g }", () -> { window.navigateDiagnostic(true, true); });
+        _rootResponder.addEventResponder("g {", () -> { window.navigateDiagnostic(false, true); });
+        _rootResponder.addEventResponder("g x", () -> { window.showDiagnosticsForCurrentLine(true); });
+        _rootResponder.addEventResponder("g a", () -> { window.showCodeActionsForCurrentLine(); });
         _rootResponder.addEventResponder(prefixCharacterResponder("@", (ignored, register) -> {
             if (register == '@') {
                 window.playLastMacro(1);

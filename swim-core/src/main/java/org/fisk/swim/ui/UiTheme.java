@@ -25,6 +25,8 @@ final class UiTheme {
     static final TextColor ACCENT_GREEN = color("#7ee787");
     static final TextColor ACCENT_RED = color("#ff7b72");
     static final TextColor ACCENT_ORANGE = color("#ff9e64");
+    static final TextColor DIAGNOSTIC_ERROR_BACKGROUND = color("#4a2020");
+    static final TextColor DIAGNOSTIC_WARNING_BACKGROUND = color("#4a3f1a");
 
     static final TextColor PANEL_SELECTION_BACKGROUND = color("#20405a");
     static final TextColor PANEL_SELECTION_FOREGROUND = color("#f8fbff");

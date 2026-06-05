@@ -15,6 +15,8 @@ import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.lsp.DiagnosticCounts;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
@@ -175,6 +177,7 @@ public class ModeLineView extends View {
         String mode = frameModeName(view, active);
         String name = frameName(view);
         String line = frameLine(view);
+        DiagnosticCounts counts = frameDiagnosticCounts(view);
         if (mode != null && !mode.isBlank()) {
             TextColor modeColour = UiTheme.modeColor(mode);
             UiTheme.appendSegment(str, mode, UiTheme.TEXT_ON_ACCENT, modeColour);
@@ -184,6 +187,7 @@ public class ModeLineView extends View {
             UiTheme.appendSegment(str, name, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
             UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT, trailingBackground);
         }
+        appendDiagnosticCounts(str, counts, trailingBackground);
         if (line != null && !line.isBlank()) {
             str.append(" " + Powerline.SYMBOL_LN + " " + line + " ", UiTheme.TEXT_MUTED, trailingBackground);
         }
@@ -193,6 +197,17 @@ public class ModeLineView extends View {
     private AttributedString getRightString() {
         var str = new AttributedString();
         TextColor currentBackground = _backgroundColour;
+        DiagnosticCounts counts = projectDiagnosticCounts();
+        if (counts.errors() > 0) {
+            UiTheme.appendLeftSeparator(str, UiTheme.ACCENT_RED, currentBackground);
+            UiTheme.appendSegment(str, "E " + counts.errors(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_RED);
+            currentBackground = UiTheme.ACCENT_RED;
+        }
+        if (counts.warnings() > 0) {
+            UiTheme.appendLeftSeparator(str, UiTheme.ACCENT_GOLD, currentBackground);
+            UiTheme.appendSegment(str, "W " + counts.warnings(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
+            currentBackground = UiTheme.ACCENT_GOLD;
+        }
         int unreadCount = MailStatusService.getInstance().currentStatus().unreadCount();
         if (unreadCount > 0) {
             UiTheme.appendLeftSeparator(str, UiTheme.ACCENT_GREEN, currentBackground);
@@ -250,6 +265,35 @@ public class ModeLineView extends View {
             return "NORMAL";
         }
         return null;
+    }
+
+    private static DiagnosticCounts frameDiagnosticCounts(View view) {
+        if (view instanceof BufferView bufferView) {
+            return DiagnosticService.getInstance().countsForBuffer(bufferView.getBufferContext().getBuffer().getPath());
+        }
+        return DiagnosticCounts.EMPTY;
+    }
+
+    private DiagnosticCounts projectDiagnosticCounts() {
+        Path path = null;
+        if (Window.getInstance() != null && Window.getInstance().getBufferContext() != null) {
+            path = Window.getInstance().getBufferContext().getBuffer().getPath();
+        }
+        return DiagnosticService.getInstance().countsForProject(path);
+    }
+
+    private static void appendDiagnosticCounts(AttributedString str, DiagnosticCounts counts, TextColor trailingBackground) {
+        if (counts == null || counts.isEmpty()) {
+            return;
+        }
+        if (counts.errors() > 0) {
+            UiTheme.appendSegment(str, "E " + counts.errors(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_RED);
+            UiTheme.appendRightSeparator(str, UiTheme.ACCENT_RED, counts.warnings() > 0 ? UiTheme.ACCENT_GOLD : trailingBackground);
+        }
+        if (counts.warnings() > 0) {
+            UiTheme.appendSegment(str, "W " + counts.warnings(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
+            UiTheme.appendRightSeparator(str, UiTheme.ACCENT_GOLD, trailingBackground);
+        }
     }
 
     static String frameName(View view) {

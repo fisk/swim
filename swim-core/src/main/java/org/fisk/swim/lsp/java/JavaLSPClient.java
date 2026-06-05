@@ -93,6 +93,10 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.lsp.DiagnosticAction;
+import org.fisk.swim.lsp.DiagnosticActionProvider;
+import org.fisk.swim.lsp.DiagnosticEntry;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
@@ -107,9 +111,10 @@ import org.slf4j.Logger;
 import com.google.gson.Gson;
 import com.googlecode.lanterna.TextColor;
 
-public class JavaLSPClient extends Thread implements LanguageMode {
+public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticActionProvider {
     private static final Logger _log = LogFactory.createLog();
     private static final Gson _gson = new Gson();
+    private static final String DIAGNOSTIC_PROVIDER_ID = "java-lsp";
     static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
     static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
     static final TextColor SEMANTIC_PARAMETER = TextColor.Factory.fromString("#ffb86c");
@@ -520,6 +525,12 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             @Override
             public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
                 _log.info("publishDiagnostics called");
+                DiagnosticService.getInstance().publish(
+                        DIAGNOSTIC_PROVIDER_ID,
+                        diagnostics.getUri(),
+                        pathForUri(diagnostics.getUri()),
+                        diagnostics.getDiagnostics());
+                refreshDiagnosticsUi();
             }
 
             @Override
@@ -810,6 +821,7 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         _capabilities = null;
         _providerDescription = "";
         clearSemanticTokensCache();
+        DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER_ID);
         cancelCompletion();
         cancelDefinitionMenu();
         cancelSnippet();
@@ -856,16 +868,15 @@ public class JavaLSPClient extends Thread implements LanguageMode {
         }
     }
 
-    private List<Either<Command, CodeAction>> getCodeActions(BufferContext bufferContext) {
+    private List<Either<Command, CodeAction>> requestCodeActions(
+            BufferContext bufferContext,
+            Range range,
+            List<Diagnostic> diagnostics) {
         if (!_enabled || _server == null) {
             return List.of();
         }
         try {
             _log.info("Get code actions");
-            var lineCount = bufferContext.getTextLayout().getPhysicalLineCount();
-            var line = bufferContext.getTextLayout().getLastPhysicalLine();
-            var range = new Range(new Position(0, 0), new Position(lineCount - 1, line.getGlyphs().size()));
-            var diagnostics = new ArrayList<Diagnostic>();
             var context = new CodeActionContext(diagnostics);
             var params = new CodeActionParams(bufferContext.getBuffer().getTextDocumentID(), range, context);
             _log.info("Code action: " + params);
@@ -874,6 +885,13 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             _log.error("Error getting code actions: ", e);
             throw new RuntimeException("Error getting code actions: ", e);
         }
+    }
+
+    private List<Either<Command, CodeAction>> getCodeActions(BufferContext bufferContext) {
+        var lineCount = bufferContext.getTextLayout().getPhysicalLineCount();
+        var line = bufferContext.getTextLayout().getLastPhysicalLine();
+        var range = new Range(new Position(0, 0), new Position(lineCount - 1, line.getGlyphs().size()));
+        return requestCodeActions(bufferContext, range, new ArrayList<>());
     }
 
     private boolean supportsCompletion() {
@@ -1752,7 +1770,18 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             }
             break;
         default:
-            _log.info("Ignoring unsupported command: " + command);
+            try {
+                if (_server != null && _server.getWorkspaceService() != null) {
+                    var params = new ExecuteCommandParams();
+                    params.setCommand(command.getCommand());
+                    params.setArguments(command.getArguments());
+                    _server.getWorkspaceService().executeCommand(params).join();
+                } else {
+                    _log.info("Ignoring unsupported command: " + command);
+                }
+            } catch (Exception e) {
+                _log.debug("Executing code-action command failed", e);
+            }
             break;
         }
     }
@@ -1867,11 +1896,13 @@ public class JavaLSPClient extends Thread implements LanguageMode {
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        DiagnosticService.getInstance().clear(DIAGNOSTIC_PROVIDER_ID, bufferContext.getBuffer().getURI().toString());
         cancelCompletion();
         _log.info("didClose");
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         _server.getTextDocumentService().didClose(params);
+        refreshDiagnosticsUi();
     }
 
     @Override
@@ -2182,6 +2213,98 @@ public class JavaLSPClient extends Thread implements LanguageMode {
                 "java",
                 bufferContext.getBuffer().getVersionedTextDocumentID().getVersion(),
                 bufferContext.getBuffer().getString());
+    }
+
+    @Override
+    public List<DiagnosticAction> diagnosticActions(
+            BufferContext bufferContext,
+            int logicalLine,
+            List<DiagnosticEntry> lineDiagnostics) {
+        if (!_enabled || _server == null || bufferContext == null) {
+            return List.of();
+        }
+        var range = logicalLineRange(bufferContext, logicalLine);
+        if (range == null) {
+            return List.of();
+        }
+        var diagnostics = new ArrayList<Diagnostic>();
+        for (var entry : lineDiagnostics) {
+            diagnostics.add(entry.diagnostic());
+        }
+        var actions = requestCodeActions(bufferContext, range, diagnostics);
+        if (actions.isEmpty()) {
+            return List.of();
+        }
+        var deduped = new LinkedHashMap<String, DiagnosticAction>();
+        for (var either : actions) {
+            if (either.isLeft()) {
+                var command = either.getLeft();
+                deduped.putIfAbsent(command.getTitle(),
+                        new DiagnosticAction(command.getTitle(), command.getCommand(),
+                                () -> applyCommand(bufferContext, command)));
+            } else {
+                var action = either.getRight();
+                deduped.putIfAbsent(action.getTitle(),
+                        new DiagnosticAction(action.getTitle(), action.getKind(),
+                                () -> {
+                                    applyWorkspaceEdit(bufferContext, action.getEdit());
+                                    applyCommand(bufferContext, action.getCommand());
+                                }));
+            }
+        }
+        return List.copyOf(deduped.values());
+    }
+
+    private static Range logicalLineRange(BufferContext bufferContext, int logicalLine) {
+        if (logicalLine < 0) {
+            return null;
+        }
+        String text = bufferContext.getBuffer().getString();
+        int line = 0;
+        int index = 0;
+        int lineStart = 0;
+        while (index < text.length() && line < logicalLine) {
+            if (text.charAt(index++) == '\n') {
+                line++;
+                lineStart = index;
+            }
+        }
+        if (line != logicalLine) {
+            if (logicalLine == 0) {
+                lineStart = 0;
+            } else {
+                return null;
+            }
+        }
+        int lineEnd = lineStart;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n') {
+            lineEnd++;
+        }
+        return new Range(new Position(logicalLine, 0), new Position(logicalLine, Math.max(0, lineEnd - lineStart)));
+    }
+
+    private static Path pathForUri(String uri) {
+        if (uri == null || uri.isBlank()) {
+            return null;
+        }
+        try {
+            return Paths.get(URI.create(uri)).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void refreshDiagnosticsUi() {
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            var window = Window.getInstance();
+            if (window == null) {
+                return;
+            }
+            if (window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+            window.refreshChromeState();
+        }));
     }
 
     private static Path resolveOracleExtensionPath() {

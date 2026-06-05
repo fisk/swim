@@ -20,12 +20,15 @@ import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ModeLineViewTest {
+    private static final String DIAGNOSTIC_PROVIDER = "mode-line-test";
+
     @TempDir
     Path tempDir;
 
@@ -201,6 +204,43 @@ class ModeLineViewTest {
             assertTrue(right.contains("NORMAL"));
             assertTrue(right.contains("frame-left.txt"));
             assertTrue(right.contains("3: 1, 3"));
+        }
+    }
+
+    @Test
+    void modeLineShowsBufferAndProjectDiagnosticCounts() throws Exception {
+        Path project = tempDir.resolve("diag-project");
+        Path first = project.resolve("src/Main.java");
+        Path second = project.resolve("src/Other.java");
+        Files.createDirectories(first.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(first, "class Main {}\n");
+        Files.writeString(second, "class Other {}\n");
+
+        var firstDiagnostic = new org.eclipse.lsp4j.Diagnostic();
+        firstDiagnostic.setRange(new org.eclipse.lsp4j.Range(
+                new org.eclipse.lsp4j.Position(0, 0),
+                new org.eclipse.lsp4j.Position(0, 1)));
+        firstDiagnostic.setSeverity(org.eclipse.lsp4j.DiagnosticSeverity.Warning);
+        firstDiagnostic.setMessage("warn");
+        var secondDiagnostic = new org.eclipse.lsp4j.Diagnostic();
+        secondDiagnostic.setRange(new org.eclipse.lsp4j.Range(
+                new org.eclipse.lsp4j.Position(0, 0),
+                new org.eclipse.lsp4j.Position(0, 1)));
+        secondDiagnostic.setSeverity(org.eclipse.lsp4j.DiagnosticSeverity.Error);
+        secondDiagnostic.setMessage("error");
+        DiagnosticService.getInstance().publish(DIAGNOSTIC_PROVIDER, first.toUri().toString(), first, List.of(firstDiagnostic));
+        DiagnosticService.getInstance().publish(DIAGNOSTIC_PROVIDER, second.toUri().toString(), second, List.of(secondDiagnostic));
+
+        try (var harness = HeadlessWindowHarness.create(first, 80, 8)) {
+            AttributedString left = invoke(harness.getWindow().getModeLineView(), "getLeftString", AttributedString.class);
+            AttributedString right = invoke(harness.getWindow().getModeLineView(), "getRightString", AttributedString.class);
+
+            assertTrue(left.toString().contains("W 1"));
+            assertTrue(right.toString().contains("E 1"));
+            assertTrue(right.toString().contains("W 1"));
+        } finally {
+            DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER);
         }
     }
 

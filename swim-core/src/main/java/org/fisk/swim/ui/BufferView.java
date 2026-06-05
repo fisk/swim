@@ -1,7 +1,13 @@
 package org.fisk.swim.ui;
 
 import com.googlecode.lanterna.TextColor;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
+import org.eclipse.lsp4j.DiagnosticSeverity;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
@@ -28,6 +34,18 @@ public class BufferView extends View {
 
     BufferContext getBufferContext() {
         return _bufferContext;
+    }
+
+    @Override
+    public Response processEvent(KeyStrokes events) {
+        if (events.remaining() == 1 && events.current() instanceof MouseAction mouseAction) {
+            handleMouseAction(mouseAction);
+            return Response.NO;
+        }
+        if (Window.getInstance() != null) {
+            Window.getInstance().hideHoverDiagnostics();
+        }
+        return super.processEvent(events);
     }
 
     @Override
@@ -67,6 +85,7 @@ public class BufferView extends View {
             } else {
                 character = AttributedString.create(glyph.getCharacter(), UiTheme.TEXT_MUTED, _backgroundColour);
             }
+            character = applyDiagnosticBackground(glyph, character);
             character = mode.decorate(glyph, character);
             var point = Point.create(rect.getPoint().getX() + glyph.getX(), rect.getPoint().getY() + glyph.getY() - _startLine);
             character.drawAt(point, textGraphics);
@@ -117,5 +136,65 @@ public class BufferView extends View {
         _startLine++;
         adaptCursorToView();
         setNeedsRedraw();
+    }
+
+    private AttributedString applyDiagnosticBackground(org.fisk.swim.text.TextLayout.Glyph glyph, AttributedString character) {
+        if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
+            return character;
+        }
+        int logicalLine = _bufferContext.getTextLayout().getLogicalLineAt(glyph.getPosition()).getY();
+        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, logicalLine);
+        TextColor background = null;
+        if (DiagnosticSeverity.Error.equals(severity)) {
+            background = UiTheme.DIAGNOSTIC_ERROR_BACKGROUND;
+        } else if (DiagnosticSeverity.Warning.equals(severity)) {
+            background = UiTheme.DIAGNOSTIC_WARNING_BACKGROUND;
+        }
+        if (background == null) {
+            return character;
+        }
+        var attributes = character.getFragments().get(0).getAttributes();
+        return AttributedString.create(character.toString(), attributes.foregroundColour(), background);
+    }
+
+    private void handleMouseAction(MouseAction action) {
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        if (action.getActionType() != MouseActionType.MOVE
+                && action.getActionType() != MouseActionType.DRAG
+                && action.getActionType() != MouseActionType.CLICK_DOWN) {
+            return;
+        }
+        Point origin = absoluteOrigin();
+        int localX = action.getPosition().getColumn() - origin.getX();
+        int localY = action.getPosition().getRow() - origin.getY();
+        if (localX < 0 || localY < 0
+                || localX >= getBounds().getSize().getWidth()
+                || localY >= getBounds().getSize().getHeight()) {
+            window.hideHoverDiagnostics();
+            return;
+        }
+        int physicalLine = localY + _startLine;
+        if (physicalLine < 0 || physicalLine >= _bufferContext.getTextLayout().getPhysicalLineCount()) {
+            window.hideHoverDiagnostics();
+            return;
+        }
+        int index = _bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(physicalLine, 0);
+        int logicalLine = _bufferContext.getTextLayout().getLogicalLineAt(index).getY();
+        window.updateHoveredDiagnostics(_bufferContext,
+                logicalLine,
+                Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 }

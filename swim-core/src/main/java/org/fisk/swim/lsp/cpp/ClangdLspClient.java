@@ -9,6 +9,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,6 +21,10 @@ import java.util.regex.Pattern;
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
 import org.eclipse.lsp4j.ApplyWorkspaceEditResponse;
 import org.eclipse.lsp4j.ClientCapabilities;
+import org.eclipse.lsp4j.CodeAction;
+import org.eclipse.lsp4j.CodeActionContext;
+import org.eclipse.lsp4j.CodeActionParams;
+import org.eclipse.lsp4j.Command;
 import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionList;
@@ -31,6 +36,8 @@ import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
+import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.ExecuteCommandParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InsertReplaceEdit;
 import org.eclipse.lsp4j.Location;
@@ -53,6 +60,7 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
+import org.eclipse.lsp4j.TextDocumentEdit;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.TokenFormat;
@@ -67,6 +75,10 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.lsp.DiagnosticAction;
+import org.fisk.swim.lsp.DiagnosticActionProvider;
+import org.fisk.swim.lsp.DiagnosticEntry;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.java.JavaDefinitionMenuSession;
 import org.fisk.swim.lsp.java.JavaCompletionSession;
@@ -82,8 +94,9 @@ import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TextColor;
 
-public class ClangdLspClient implements LanguageMode {
+public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     private static final Logger _log = LogFactory.createLog();
+    private static final String DIAGNOSTIC_PROVIDER_ID = "clangd-lsp";
 
     static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
     static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
@@ -220,6 +233,7 @@ public class ClangdLspClient implements LanguageMode {
 
     public void shutdown() {
         clearSemanticTokensCache();
+        DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER_ID);
         _enabled = false;
         if (_shutdownHook != null) {
             try {
@@ -318,9 +332,11 @@ public class ClangdLspClient implements LanguageMode {
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        DiagnosticService.getInstance().clear(DIAGNOSTIC_PROVIDER_ID, bufferContext.getBuffer().getURI().toString());
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         _server.getTextDocumentService().didClose(params);
+        refreshDiagnosticsUi();
     }
 
     @Override
@@ -520,6 +536,88 @@ public class ClangdLspClient implements LanguageMode {
         } catch (Exception e) {
             _log.debug("clangd reference lookup failed", e);
         }
+    }
+
+    private List<Either<Command, CodeAction>> requestCodeActions(
+            BufferContext bufferContext,
+            Range range,
+            List<Diagnostic> diagnostics) {
+        if (!_enabled || _server == null) {
+            return List.of();
+        }
+        try {
+            var context = new CodeActionContext(diagnostics);
+            var params = new CodeActionParams(bufferContext.getBuffer().getTextDocumentID(), range, context);
+            return _server.getTextDocumentService().codeAction(params).join();
+        } catch (Exception e) {
+            _log.debug("clangd code action request failed", e);
+            return List.of();
+        }
+    }
+
+    @Override
+    public List<DiagnosticAction> diagnosticActions(
+            BufferContext bufferContext,
+            int logicalLine,
+            List<DiagnosticEntry> lineDiagnostics) {
+        var range = logicalLineRange(bufferContext, logicalLine);
+        if (range == null) {
+            return List.of();
+        }
+        var diagnostics = new ArrayList<Diagnostic>();
+        for (var entry : lineDiagnostics) {
+            diagnostics.add(entry.diagnostic());
+        }
+        var response = requestCodeActions(bufferContext, range, diagnostics);
+        if (response.isEmpty()) {
+            return List.of();
+        }
+        var deduped = new LinkedHashMap<String, DiagnosticAction>();
+        for (var either : response) {
+            if (either.isLeft()) {
+                var command = either.getLeft();
+                deduped.putIfAbsent(command.getTitle(),
+                        new DiagnosticAction(command.getTitle(), command.getCommand(),
+                                () -> applyCommand(bufferContext, command)));
+            } else {
+                var action = either.getRight();
+                deduped.putIfAbsent(action.getTitle(),
+                        new DiagnosticAction(action.getTitle(), action.getKind(),
+                                () -> {
+                                    applyWorkspaceEdit(bufferContext, action.getEdit());
+                                    applyCommand(bufferContext, action.getCommand());
+                                }));
+            }
+        }
+        return List.copyOf(deduped.values());
+    }
+
+    private static Range logicalLineRange(BufferContext bufferContext, int logicalLine) {
+        if (bufferContext == null || logicalLine < 0) {
+            return null;
+        }
+        String text = bufferContext.getBuffer().getString();
+        int line = 0;
+        int index = 0;
+        int lineStart = 0;
+        while (index < text.length() && line < logicalLine) {
+            if (text.charAt(index++) == '\n') {
+                line++;
+                lineStart = index;
+            }
+        }
+        if (line != logicalLine) {
+            if (logicalLine == 0) {
+                lineStart = 0;
+            } else {
+                return null;
+            }
+        }
+        int lineEnd = lineStart;
+        while (lineEnd < text.length() && text.charAt(lineEnd) != '\n') {
+            lineEnd++;
+        }
+        return new Range(new Position(logicalLine, 0), new Position(logicalLine, Math.max(0, lineEnd - lineStart)));
     }
 
     public boolean cancelDefinitionMenu() {
@@ -741,6 +839,98 @@ public class ClangdLspClient implements LanguageMode {
             }
         } catch (Exception e) {
             _log.debug("Jump to clangd location failed", e);
+        }
+    }
+
+    private static final class IndexedEdit {
+        private final int _start;
+        private final int _end;
+        private final String _newText;
+
+        private IndexedEdit(int start, int end, String newText) {
+            _start = start;
+            _end = end;
+            _newText = newText;
+        }
+    }
+
+    private static boolean uriMatches(URI expectedUri, String candidateUri) {
+        try {
+            var candidate = new URI(candidateUri);
+            if ("file".equalsIgnoreCase(expectedUri.getScheme()) && "file".equalsIgnoreCase(candidate.getScheme())) {
+                return Paths.get(expectedUri).equals(Paths.get(candidate));
+            }
+            return expectedUri.equals(candidate);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void applyIndexedEdits(BufferContext context, List<IndexedEdit> edits) {
+        var buffer = context.getBuffer();
+        for (var edit : edits) {
+            buffer.remove(edit._start, edit._end);
+            buffer.insert(edit._start, edit._newText.replace("\t", "    "));
+        }
+        if (!edits.isEmpty()) {
+            buffer.getUndoLog().commit();
+        }
+    }
+
+    private static void applyWorkspaceEdit(BufferContext context, WorkspaceEdit workspaceEdit) {
+        if (context == null || workspaceEdit == null) {
+            return;
+        }
+        var edits = new ArrayList<IndexedEdit>();
+        var currentUri = context.getBuffer().getURI();
+        if (workspaceEdit.getChanges() != null) {
+            for (var change : workspaceEdit.getChanges().entrySet()) {
+                if (!uriMatches(currentUri, change.getKey())) {
+                    continue;
+                }
+                for (var edit : change.getValue()) {
+                    edits.add(new IndexedEdit(
+                            getIndex(context, edit.getRange().getStart()),
+                            getIndex(context, edit.getRange().getEnd()),
+                            edit.getNewText()));
+                }
+            }
+        }
+        if (workspaceEdit.getDocumentChanges() != null) {
+            for (var change : workspaceEdit.getDocumentChanges()) {
+                if (!change.isLeft()) {
+                    continue;
+                }
+                TextDocumentEdit documentEdit = change.getLeft();
+                if (!uriMatches(currentUri, documentEdit.getTextDocument().getUri())) {
+                    continue;
+                }
+                for (var edit : documentEdit.getEdits()) {
+                    edits.add(new IndexedEdit(
+                            getIndex(context, edit.getRange().getStart()),
+                            getIndex(context, edit.getRange().getEnd()),
+                            edit.getNewText()));
+                }
+            }
+        }
+        edits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
+                .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
+        applyIndexedEdits(context, edits);
+    }
+
+    private void applyCommand(BufferContext bufferContext, Command command) {
+        if (command == null) {
+            return;
+        }
+        try {
+            if (_server != null && _server.getWorkspaceService() != null) {
+                var params = new ExecuteCommandParams();
+                params.setCommand(command.getCommand());
+                params.setArguments(command.getArguments());
+                _server.getWorkspaceService().executeCommand(params).join();
+            }
+        } catch (Exception e) {
+            _log.debug("Executing clangd code-action command failed", e);
         }
     }
 
@@ -1105,6 +1295,12 @@ public class ClangdLspClient implements LanguageMode {
             @Override
             public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
                 _log.debug("clangd diagnostics: {}", diagnostics.getDiagnostics());
+                DiagnosticService.getInstance().publish(
+                        DIAGNOSTIC_PROVIDER_ID,
+                        diagnostics.getUri(),
+                        pathForUri(diagnostics.getUri()),
+                        diagnostics.getDiagnostics());
+                refreshDiagnosticsUi();
             }
 
             @Override
@@ -1373,6 +1569,30 @@ public class ClangdLspClient implements LanguageMode {
         while (matcher.find()) {
             str.format(matcher.start(), matcher.end(), color, TextColor.ANSI.DEFAULT);
         }
+    }
+
+    private static Path pathForUri(String uri) {
+        if (uri == null || uri.isBlank()) {
+            return null;
+        }
+        try {
+            return Paths.get(URI.create(uri)).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void refreshDiagnosticsUi() {
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            var window = Window.getInstance();
+            if (window == null) {
+                return;
+            }
+            if (window.getRootView() != null) {
+                window.getRootView().setNeedsRedraw();
+            }
+            window.refreshChromeState();
+        }));
     }
 
     private static String languageId(Path path) {

@@ -49,6 +49,8 @@ public class HelpIndex {
                 "Ctrl-o and Tab move backward and forward through the jump list.",
                 "g m<char> sets a mark, and '<char> or `<char> jumps back to it.",
                 "g n and g N add another cursor for the current word, and g C clears extra cursors.",
+                "g ] and g [ jump to the next or previous project diagnostic.",
+                "g } and g { jump to the next or previous project error.",
                 "g w<char> jumps to visible word starts and shows hints when needed.",
                 "g c<char> jumps to visible matching characters and shows hints when needed.",
                 "f<char> and F<char> find the next or previous matching character.",
@@ -107,6 +109,13 @@ public class HelpIndex {
                 ":reload loads the latest built SWIM core.",
                 ":rebuild and :upgrade rebuild and reload SWIM.",
                 ":q quits the editor.");
+        addSection(items, "Diagnostics",
+                "Errors are highlighted with a red line background and warnings with yellow.",
+                "The frame mode line shows buffer-local error and warning counts.",
+                "The global mode line shows project-wide error and warning counts on the right.",
+                "g x opens diagnostics for the current line.",
+                "Moving the mouse over a faulty line opens a diagnostic popup.",
+                "g a opens code actions for the current line, and Enter applies the selected fix.");
         addSection(items, "Pane shortcuts",
                 "Ctrl-w s splits below and Ctrl-w v splits to the right.",
                 "Ctrl-w h/j/k/l moves focus left, down, up, or right.",
@@ -130,6 +139,7 @@ public class HelpIndex {
                 "Space e a generates accessors.",
                 "Space e s generates toString().",
                 "Space e l shows code lens information.",
+                "Java diagnostics feed the shared g x / g a / g ] diagnostics workflow.",
                 "Insert mode shows a completion popup for Java suggestions and snippets.");
         return new ArrayList<ListItem>(items);
     }

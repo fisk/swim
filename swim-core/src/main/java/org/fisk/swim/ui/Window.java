@@ -26,6 +26,9 @@ import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectSearch;
+import org.fisk.swim.lsp.DiagnosticActionProvider;
+import org.fisk.swim.lsp.DiagnosticEntry;
+import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mode.InputMode;
@@ -111,6 +114,9 @@ public class Window implements Drawable {
     private CommandView _commandView;
     private CommandMenuView _commandMenuView;
     private MailNotificationView _mailNotificationView;
+    private DiagnosticPopupView _diagnosticPopupView;
+    private CodeActionPopupView _codeActionPopupView;
+    private boolean _hoverDiagnosticsVisible;
     private Size _size;
     private BufferContext _bufferContext;
     private IdentityHashMap<BufferView, BufferContext> _bufferContextsByView;
@@ -203,6 +209,7 @@ public class Window implements Drawable {
     }
 
     public boolean setBufferPath(Path path) {
+        hideTransientDiagnostics();
         if (path != null && path.toFile().isDirectory()) {
             return showDirectoryBrowser(path);
         }
@@ -566,6 +573,9 @@ public class Window implements Drawable {
         ensureLayoutState();
         if (view == null) {
             return;
+        }
+        if (view != _activeView) {
+            hideTransientDiagnostics();
         }
         View previousActiveView = _activeView;
         if (previousActiveView instanceof ShellPanelView previousShell && previousActiveView != view) {
@@ -1665,6 +1675,12 @@ public class Window implements Drawable {
         if (responder instanceof JavaDefinitionPopupView) {
             return KeyMenuView.FocusContext.LIST_PANEL;
         }
+        if (responder instanceof DiagnosticPopupView) {
+            return KeyMenuView.FocusContext.LIST_PANEL;
+        }
+        if (responder instanceof CodeActionPopupView) {
+            return KeyMenuView.FocusContext.LIST_PANEL;
+        }
         if (responder instanceof ProjectSearchPanelView) {
             return KeyMenuView.FocusContext.SEARCH_PANEL;
         }
@@ -1703,6 +1719,12 @@ public class Window implements Drawable {
             return listView.getTitle();
         }
         if (responder instanceof JavaDefinitionPopupView popupView) {
+            return popupView.getTitle();
+        }
+        if (responder instanceof DiagnosticPopupView popupView) {
+            return popupView.getTitle();
+        }
+        if (responder instanceof CodeActionPopupView popupView) {
             return popupView.getTitle();
         }
         if (responder instanceof ProjectSearchPanelView searchPanelView) {
@@ -1868,11 +1890,172 @@ public class Window implements Drawable {
         }
     }
 
+    public boolean showDiagnosticsForCurrentLine(boolean takeFocus) {
+        var context = getBufferContext();
+        if (context == null || _rootView == null) {
+            return false;
+        }
+        int logicalLine = context.getBuffer().getCursor().getLogicalLine().getY();
+        var diagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, logicalLine);
+        if (diagnostics.isEmpty()) {
+            hideDiagnosticPopup();
+            if (takeFocus && _commandView != null) {
+                _commandView.setMessage("No diagnostics on current line");
+            }
+            return false;
+        }
+        showDiagnosticPopup(diagnostics, currentCursorAnchor(), takeFocus, false);
+        return true;
+    }
+
+    public void updateHoveredDiagnostics(BufferContext context, int logicalLine, Point anchor) {
+        if (context == null || _rootView == null || context != getBufferContext()) {
+            hideHoverDiagnostics();
+            return;
+        }
+        var diagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, logicalLine);
+        if (diagnostics.isEmpty()) {
+            hideHoverDiagnostics();
+            return;
+        }
+        showDiagnosticPopup(diagnostics, anchor, false, true);
+    }
+
+    public void hideHoverDiagnostics() {
+        if (_hoverDiagnosticsVisible) {
+            hideDiagnosticPopup();
+        }
+    }
+
+    public boolean showCodeActionsForCurrentLine() {
+        var context = getBufferContext();
+        if (context == null || _rootView == null) {
+            return false;
+        }
+        int logicalLine = context.getBuffer().getCursor().getLogicalLine().getY();
+        var lineDiagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, logicalLine);
+        if (!(context.getBuffer().getLanguageMode() instanceof DiagnosticActionProvider provider)) {
+            if (_commandView != null) {
+                _commandView.setMessage("No code actions for this buffer");
+            }
+            return false;
+        }
+        var actions = provider.diagnosticActions(context, logicalLine, lineDiagnostics);
+        if (actions.isEmpty()) {
+            if (_commandView != null) {
+                _commandView.setMessage("No code actions on current line");
+            }
+            hideCodeActionPopup();
+            return false;
+        }
+        hideDiagnosticPopup();
+        if (_codeActionPopupView == null || _codeActionPopupView.getParent() == null) {
+            _codeActionPopupView = new CodeActionPopupView(Rect.create(0, 0, 0, 0));
+            _codeActionPopupView.setOnClose(this::hideCodeActionPopup);
+            _rootView.addSubview(_codeActionPopupView);
+        }
+        _codeActionPopupView.configure(actions, currentCursorAnchor(), "Code Actions");
+        _rootView.setFirstResponder(_codeActionPopupView);
+        refreshChromeState();
+        _rootView.setNeedsRedraw();
+        return true;
+    }
+
+    public boolean navigateDiagnostic(boolean forward, boolean errorsOnly) {
+        var context = getBufferContext();
+        if (context == null) {
+            return false;
+        }
+        Path path = context.getBuffer().getPath();
+        if (path == null) {
+            return false;
+        }
+        var cursor = context.getBuffer().getCursor();
+        var target = DiagnosticService.getInstance().findNext(
+                path,
+                cursor.getLogicalLine().getY(),
+                cursor.getX(),
+                forward,
+                errorsOnly);
+        if (target == null || target.path() == null) {
+            if (_commandView != null) {
+                _commandView.setMessage(errorsOnly ? "No project errors" : "No project diagnostics");
+            }
+            return false;
+        }
+        return performJump(() -> openBufferLocation(
+                target.path(),
+                target.startLine() + 1,
+                target.startCharacter() + 1));
+    }
+
+    public void hideDiagnosticPopup() {
+        _hoverDiagnosticsVisible = false;
+        if (_diagnosticPopupView != null) {
+            _diagnosticPopupView.removeFromParent();
+            _diagnosticPopupView = null;
+        }
+        if (_rootView != null) {
+            if (_activeView != null && _rootView.getFirstResponder() instanceof DiagnosticPopupView) {
+                _rootView.setFirstResponder(_activeView);
+            }
+            _rootView.setNeedsRedraw();
+        }
+        refreshChromeState();
+    }
+
+    public void hideCodeActionPopup() {
+        if (_codeActionPopupView != null) {
+            _codeActionPopupView.removeFromParent();
+            _codeActionPopupView = null;
+        }
+        if (_rootView != null) {
+            if (_activeView != null && _rootView.getFirstResponder() instanceof CodeActionPopupView) {
+                _rootView.setFirstResponder(_activeView);
+            }
+            _rootView.setNeedsRedraw();
+        }
+        refreshChromeState();
+    }
+
     public boolean openBufferLocation(Path path, int lineNumber, int columnNumber) {
         if (!setBufferPath(path)) {
             return false;
         }
         return revealBufferLocation(getBufferContext(), lineNumber, columnNumber);
+    }
+
+    private void showDiagnosticPopup(List<DiagnosticEntry> diagnostics, Point anchor, boolean takeFocus, boolean hover) {
+        if (_rootView == null) {
+            return;
+        }
+        hideCodeActionPopup();
+        if (_diagnosticPopupView == null || _diagnosticPopupView.getParent() == null) {
+            _diagnosticPopupView = new DiagnosticPopupView(Rect.create(0, 0, 0, 0));
+            _diagnosticPopupView.setOnClose(this::hideDiagnosticPopup);
+            _diagnosticPopupView.setOnActions(this::showCodeActionsForCurrentLine);
+            _rootView.addSubview(_diagnosticPopupView);
+        }
+        _hoverDiagnosticsVisible = hover;
+        _diagnosticPopupView.configure(diagnostics, anchor, hover ? "Line Diagnostics" : "Diagnostics", takeFocus);
+        if (takeFocus) {
+            _rootView.setFirstResponder(_diagnosticPopupView);
+            refreshChromeState();
+        }
+        _rootView.setNeedsRedraw();
+    }
+
+    private Point currentCursorAnchor() {
+        var cursor = getBufferContext() == null ? null : getBufferContext().getBuffer().getCursor();
+        if (cursor == null) {
+            return Point.create(0, 0);
+        }
+        return Point.create(cursor.getXOnScreen(), cursor.getYOnScreen());
+    }
+
+    private void hideTransientDiagnostics() {
+        hideDiagnosticPopup();
+        hideCodeActionPopup();
     }
 
     private void setupSplashScreen() {
