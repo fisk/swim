@@ -306,8 +306,7 @@ Nemo commands:
 - `:reset [session-id]`
 - `:delete [session-id]`
 - `:permissions [read-only|workspace-write|full-access]`
-- `:approve <approval-id> [always]`
-- `:deny <approval-id>`
+- pending approval dropdown options for approve once, approve always, and deny
 - `:approvals`
 - `:unapprove <rule-id|all>`
 - `:help`

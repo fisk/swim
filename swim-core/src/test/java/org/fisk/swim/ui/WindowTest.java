@@ -988,6 +988,23 @@ class WindowTest {
     }
 
     @Test
+    void chatPanelStaysBelowCommandPopupLayer() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("chat-popup-layer.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+
+            window.showPanel(chat);
+
+            var subviews = rootSubviews(window);
+            int chatIndex = subviews.indexOf(chat);
+            int commandMenuIndex = subviews.indexOf(window.getCommandMenuView());
+
+            assertTrue(chatIndex >= 0);
+            assertTrue(commandMenuIndex > chatIndex);
+        }
+    }
+
+    @Test
     void nestedSplitCursorStaysOffSeparatorRow() throws Exception {
         var installedTerminal = TerminalContextTestSupport.install(80, 16);
         Path file = writeFile("nested-cursor.txt", "alpha\nbeta\n");

@@ -226,6 +226,66 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void chatCommandMenuCanNavigateAndCompleteSelectedCommand() {
+        var changed = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {}, ignored -> {},
+                changed::set,
+                text -> CommandView.CommandMenuState.forCommandText(text, 0,
+                        List.of(new CommandView.CommandSpec("approve", List.of(), "approval-1",
+                                "approve once", "approve approval-1", true, "Approve once"),
+                                new CommandView.CommandSpec("deny", List.of(), "approval-1",
+                                        "deny", "deny approval-1", true, "Deny"))));
+
+        dispatch(view, new KeyStroke(':', false, false));
+        assertEquals("Approve once", view.getCommandMenuState().selectedMatch().displayLabel());
+
+        dispatch(view, new KeyStroke(KeyType.ArrowDown));
+        assertEquals("Deny", view.getCommandMenuState().selectedMatch().displayLabel());
+
+        dispatch(view, new KeyStroke(KeyType.Tab));
+        assertEquals(":deny approval-1", view.getInputText());
+        assertEquals(view.getInputText().length(), view.getCursorOffset());
+        assertEquals(":deny approval-1", changed.get());
+    }
+
+    @Test
+    void enterSubmitsSelectedCompleteCommandMenuAction() {
+        var command = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {}, command::set, ignored -> {},
+                text -> CommandView.CommandMenuState.forCommandText(text, 0,
+                        List.of(new CommandView.CommandSpec("approve", List.of(), "approval-1",
+                                "approve once", "approve approval-1", true, "Approve once"),
+                                new CommandView.CommandSpec("deny", List.of(), "approval-1",
+                                        "deny", "deny approval-1", true, "Deny"))));
+
+        dispatch(view, new KeyStroke(':', false, false));
+        dispatch(view, new KeyStroke(KeyType.ArrowDown));
+        dispatch(view, new KeyStroke(KeyType.Enter));
+
+        assertEquals(":deny approval-1", command.get());
+        assertEquals("", view.getInputText());
+    }
+
+    @Test
+    void openCommandInputIfEmptyShowsCommandMenuWithoutReplacingTypedText() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {}, ignored -> {}, ignored -> {},
+                text -> CommandView.CommandMenuState.forCommandText(text, 0,
+                        List.of(new CommandView.CommandSpec("approve", List.of(), "approval-1",
+                                "approve once", "approve approval-1", true, "Approve once")),
+                        "approval options"));
+
+        assertTrue(view.openCommandInputIfEmpty());
+        assertEquals(":", view.getInputText());
+        assertTrue(view.getCommandMenuState().visible());
+        assertEquals("approval options", view.getCommandMenuState().title());
+        assertEquals("approve", view.getCommandMenuState().selectedMatch().primaryName());
+
+        dispatch(view, new KeyStroke('x', false, false));
+        assertFalse(view.openCommandInputIfEmpty());
+        assertEquals(":x", view.getInputText());
+    }
+
+    @Test
     void formatsThinkingTextWithElapsedTimeAndAbortHint() {
         assertEquals("*thinking* (2 minutes, 5 seconds, type :abort to stop)",
                 ChatPanelView.formatThinkingText(125));

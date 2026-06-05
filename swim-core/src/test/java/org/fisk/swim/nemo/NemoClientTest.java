@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
@@ -48,6 +50,37 @@ class NemoClientTest {
 
         assertTrue(prompt.contains("me> First"));
         assertTrue(prompt.contains("nemo> Second"));
+    }
+
+    @Test
+    void buildInputDescribesPersistentWorkspaceWritesWhenEnabled() throws IOException {
+        Path file = tempDir.resolve("Writable.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "Please edit this file")),
+                NemoClient.Configuration.builder().build(),
+                List.of());
+
+        assertTrue(prompt.contains("permission mode: workspace-write"));
+        assertTrue(prompt.contains("successful edits are saved to disk and persist across Nemo/editor runs"));
+    }
+
+    @Test
+    void buildInputDescribesReadOnlyPermissionWhenMutationsAreDisabled() throws IOException {
+        Path file = tempDir.resolve("ReadOnly.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "Please edit this file")),
+                NemoClient.Configuration.builder().toolPermissionMode("read-only").build(),
+                List.of());
+
+        assertTrue(prompt.contains("permission mode: read-only"));
+        assertTrue(prompt.contains("mutating tools are disabled"));
+        assertFalse(prompt.contains("successful edits are saved to disk and persist across Nemo/editor runs"));
     }
 
     @Test
@@ -511,6 +544,15 @@ class NemoClientTest {
     }
 
     @Test
+    void buildToolsDescribeWorkspaceWritesAsPersistent() {
+        var tools = NemoClient.buildTools(NemoClient.Configuration.builder().build());
+        String descriptions = tools.toString();
+
+        assertTrue(descriptions.contains("Successful writes are saved to disk and persist across Nemo/editor runs"));
+        assertTrue(descriptions.contains("Successful patches are saved to disk and persist across Nemo/editor runs"));
+    }
+
+    @Test
     void macOsSandboxProfileAllowsOnlyWorkspaceWrites() throws Exception {
         Path project = tempDir.resolve("workspace-profile");
         Files.createDirectories(project);
@@ -759,6 +801,40 @@ class NemoClientTest {
         assertTrue(Files.exists(allowed));
         assertFalse(Files.exists(outside));
         assertTrue(output.contains("Operation not permitted") || output.contains("exit_code: 1"));
+    }
+
+    @Test
+    void workspaceWriteOsSandboxDenialCanEscalateWithApproval() throws Exception {
+        Assumptions.assumeTrue(NemoClient.isMacOsSandboxAvailable(), "macOS sandbox-exec unavailable");
+        Path project = tempDir.resolve("workspace-sandbox-approval");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path outside = tempDir.resolve("outside-approved.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("trusted")
+                .toolOsSandbox("auto")
+                .toolApprovalPolicy("on-escalation")
+                .build();
+        var approvalCount = new AtomicInteger();
+        var approvalReason = new AtomicReference<String>();
+        NemoClient.ToolExecutionSession approvalSession = (workspaceRoot, request) -> {
+            approvalCount.incrementAndGet();
+            approvalReason.set(request.reason());
+            return new NemoClient.ApprovalResult(true, false);
+        };
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("sandbox-approval", "run_command", json(Map.of(
+                        "command", "touch " + shellQuoteForTest(outside)))),
+                approvalSession);
+
+        assertEquals(1, approvalCount.get());
+        assertEquals("OS sandbox blocked filesystem write", approvalReason.get());
+        assertTrue(Files.exists(outside));
+        assertTrue(output.contains("exit_code: 0"));
     }
 
     @Test

@@ -23,8 +23,9 @@ final class NemoPromptBuilder {
         int promptBudget = promptBudgetChars(configuration);
         String path = String.valueOf(buffer.getPath());
 
+        String capabilities = capabilitiesSection(configuration);
         String fullSkills = skillsSection(skills);
-        String fullPrompt = assemblePrompt(configuration.systemPrompt(), fullSkills, fullTranscript,
+        String fullPrompt = assemblePrompt(configuration.systemPrompt(), capabilities, fullSkills, fullTranscript,
                 path, "File contents", fullFile);
         if (promptBudget == Integer.MAX_VALUE) {
             return fullPrompt;
@@ -41,9 +42,11 @@ final class NemoPromptBuilder {
             List<NemoClient.ChatTurn> turns, NemoClient.Configuration configuration, List<NemoSkillDocument> skills,
             int promptBudget) {
         String systemPrompt = configuration.systemPrompt();
+        String capabilities = capabilitiesSection(configuration);
         String conversationHeader = "\n\nConversation:\n";
         String fileHeader = "\n\nCurrent file:\n" + path + "\n\nFile contents (budgeted around cursor):\n";
-        int variableBudget = Math.max(0, promptBudget - systemPrompt.length() - conversationHeader.length() - fileHeader.length());
+        int variableBudget = Math.max(0,
+                promptBudget - systemPrompt.length() - capabilities.length() - conversationHeader.length() - fileHeader.length());
 
         int skillBudget = skills.isEmpty() ? 0
                 : Math.min(Math.min(variableBudget / 5, MAX_BUDGETED_SKILL_CHARS), skillsSection(skills).length());
@@ -62,13 +65,13 @@ final class NemoPromptBuilder {
                     Math.max(0, variableBudget - compactTranscript.length()));
         }
 
-        String result = systemPrompt + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
+        String result = systemPrompt + capabilities + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
         if (result.length() <= promptBudget) {
             return result;
         }
         int overflow = result.length() - promptBudget;
         fileContents = fitFileAroundCursor(fullFile, cursorPosition, Math.max(0, fileContents.length() - overflow));
-        return systemPrompt + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
+        return systemPrompt + capabilities + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
     }
 
     private static int promptBudgetChars(NemoClient.Configuration configuration) {
@@ -90,9 +93,10 @@ final class NemoPromptBuilder {
         return Math.min(contextWindowTokens - 1, Math.max(minimumReserve, contextWindowTokens / 10));
     }
 
-    private static String assemblePrompt(String systemPrompt, String skills, String transcript, String path,
+    private static String assemblePrompt(String systemPrompt, String capabilities, String skills, String transcript, String path,
             String fileLabel, String fileContents) {
         return systemPrompt
+                + capabilities
                 + skills
                 + "\n\nConversation:\n"
                 + transcript
@@ -102,6 +106,32 @@ final class NemoPromptBuilder {
                 + fileLabel
                 + ":\n"
                 + fileContents;
+    }
+
+    private static String capabilitiesSection(NemoClient.Configuration configuration) {
+        var lines = new ArrayList<String>();
+        lines.add("\n\nNemo runtime capabilities:");
+        lines.add("- permission mode: " + configuration.toolPermissionMode().replace('_', '-'));
+        if ("read_only".equals(configuration.toolPermissionMode())) {
+            lines.add("- mutating tools are disabled; inspect files and explain the change needed.");
+        } else {
+            var writeTools = new ArrayList<String>();
+            if (configuration.toolWriteFile()) {
+                writeTools.add("write_file");
+            }
+            if (configuration.toolApplyPatch()) {
+                writeTools.add("apply_patch");
+            }
+            if (writeTools.isEmpty()) {
+                lines.add("- file-writing tools are disabled by configuration.");
+            } else {
+                lines.add("- " + String.join(" and ", writeTools)
+                        + " make real workspace file edits; successful edits are saved to disk and persist across Nemo/editor runs.");
+            }
+        }
+        lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-')
+                + "; approval prompts pause tool execution but do not remove tool capability.");
+        return String.join("\n", lines);
     }
 
     private static String skillsSection(List<NemoSkillDocument> skills) {

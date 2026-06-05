@@ -156,7 +156,23 @@ class NemoChatIT {
                 NemoClient.getInstance().run(window.getBufferContext(), "Run the restricted command");
                 var panel = waitForPanel(window);
                 waitForLine(panel, "Approval required:");
-                submit(panel, ":approve approval-1 always");
+                waitForLine(panel, "Approval options open in the menu.");
+                assertEquals("approval options", panel.getCommandMenuState().title());
+                assertEquals(List.of("Approve once", "Approve always", "Deny"),
+                        panel.getCommandMenuState().matches().stream()
+                                .map(org.fisk.swim.ui.CommandView.CommandSpec::displayLabel)
+                                .toList());
+                assertTrue(panel.getCommandMenuState().matches().stream()
+                        .anyMatch(spec -> spec.primaryName().equals("approve")
+                                && spec.arguments().equals("approval-1")
+                                && spec.replacementText().equals("approve approval-1")));
+                assertTrue(panel.getCommandMenuState().matches().stream()
+                        .anyMatch(spec -> spec.primaryName().equals("approve")
+                                && spec.arguments().equals("approval-1 always")
+                                && spec.replacementText().equals("approve approval-1 always")));
+                dispatch(panel, new KeyStroke(KeyType.ArrowDown));
+                assertEquals("approval-1 always", panel.getCommandMenuState().selectedMatch().arguments());
+                dispatch(panel, new KeyStroke(KeyType.Enter));
                 waitForLine(panel, "nemo> First approved");
                 assertTrue(Files.exists(tempDir.resolve("approved.txt")));
 
@@ -1229,11 +1245,16 @@ class NemoChatIT {
 
     private static void submit(ChatPanelView panel, String text) {
         for (char character : text.toCharArray()) {
-            panel.processEvent(new org.fisk.swim.event.KeyStrokes(List.of(new KeyStroke(character, false, false))));
+            dispatch(panel, new KeyStroke(character, false, false));
+        }
+        dispatch(panel, new KeyStroke(KeyType.Enter));
+    }
+
+    private static void dispatch(ChatPanelView panel, KeyStroke keyStroke) {
+        var response = panel.processEvent(new org.fisk.swim.event.KeyStrokes(List.of(keyStroke)));
+        if (response == org.fisk.swim.event.Response.YES) {
             panel.respond();
         }
-        panel.processEvent(new org.fisk.swim.event.KeyStrokes(List.of(new KeyStroke(KeyType.Enter))));
-        panel.respond();
     }
 
     private Path writeFile(String name, String text) throws IOException {

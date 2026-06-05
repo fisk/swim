@@ -870,9 +870,15 @@ public class CommandView extends View {
             String arguments,
             String description,
             String replacementText,
-            boolean replaceEntireInput) {
+            boolean replaceEntireInput,
+            String displayLabel) {
         public CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
-            this(primaryName, aliases, arguments, description, primaryName, false);
+            this(primaryName, aliases, arguments, description, primaryName, false, "");
+        }
+
+        public CommandSpec(String primaryName, List<String> aliases, String arguments, String description,
+                String replacementText, boolean replaceEntireInput) {
+            this(primaryName, aliases, arguments, description, replacementText, replaceEntireInput, "");
         }
 
         static CommandSpec lastCommand(String command) {
@@ -925,6 +931,9 @@ public class CommandView extends View {
         }
 
         String label() {
+            if (displayLabel != null && !displayLabel.isBlank()) {
+                return displayLabel;
+            }
             return ":" + primaryName + (arguments.isBlank() ? "" : " " + arguments);
         }
 
@@ -936,7 +945,12 @@ public class CommandView extends View {
         }
     }
 
-    public static record CommandMenuState(boolean visible, String prefix, List<CommandSpec> matches, int selection) {
+    public static record CommandMenuState(boolean visible, String prefix, List<CommandSpec> matches, int selection,
+            String title) {
+        public CommandMenuState(boolean visible, String prefix, List<CommandSpec> matches, int selection) {
+            this(visible, prefix, matches, selection, "command matches");
+        }
+
         public static CommandMenuState hidden() {
             return new CommandMenuState(false, "", List.of(), 0);
         }
@@ -950,10 +964,15 @@ public class CommandView extends View {
         }
 
         public static CommandMenuState forCommandText(String text, int selection, List<CommandSpec> commandSpecs) {
+            return forCommandText(text, selection, commandSpecs, "command matches");
+        }
+
+        public static CommandMenuState forCommandText(String text, int selection, List<CommandSpec> commandSpecs,
+                String title) {
             String prefix = commandPrefix(text == null ? "" : text);
             var matches = List.copyOf(matchingCommandSpecs(prefix, commandSpecs));
             int normalizedSelection = matches.isEmpty() ? 0 : Math.max(0, Math.min(selection, matches.size() - 1));
-            return new CommandMenuState(true, prefix, matches, normalizedSelection);
+            return new CommandMenuState(true, prefix, matches, normalizedSelection, title);
         }
 
         public CommandSpec selectedMatch() {

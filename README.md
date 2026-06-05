@@ -582,7 +582,7 @@ The sandbox allows reads, denies host filesystem writes by default, allows `/dev
 
 | Setting | Behavior |
 | --- | --- |
-| `auto` | Use the OS sandbox when available. If no backend is usable, ask for approval before running the shell command unsandboxed. |
+| `auto` | Use the OS sandbox when available. If no backend is usable, or if the sandbox blocks a filesystem write, ask for approval before running the shell command unsandboxed. |
 | `required` | Fail closed when no supported OS sandbox backend is available or usable. |
 | `disabled` | Run shell-backed tools without the OS sandbox. |
 
@@ -596,17 +596,17 @@ The sandbox allows reads, denies host filesystem writes by default, allows `/dev
 | `on_request` | Ask before every mutating or shell action: `run_command`, `write_file`, `apply_patch`, `git_add`, and `git_commit`. |
 | `never` | Do not prompt. Block escalations that require approval. |
 
-Approvals appear as `approval>` messages in the Nemo chat pane. While the worker is paused, use `:approve <id>` to run once, `:approve <id> always` to save an exact workspace-scoped rule, or `:deny <id>` to deny. Saved approval rules live in `~/.swim/nemo/approvals.json`; they are exact matches for the workspace, tool, and action signature. Use `:approvals` to list pending and saved approvals, and `:unapprove <rule-id|all>` to remove saved rules for the current workspace.
+Approvals appear as `approval>` messages in the Nemo chat pane. While the worker is paused, Nemo opens the approval menu automatically when the input is empty; use arrows and `Enter` to choose approve once, approve always, or deny. Type `:` if you closed or replaced the menu. The typed commands still work as a fallback: `:approve <id>` runs once, `:approve <id> always` saves an exact workspace-scoped rule, and `:deny <id>` denies the request. Saved approval rules live in `~/.swim/nemo/approvals.json`; they are exact matches for the workspace, tool, and action signature. Use `:approvals` to list pending and saved approvals, and `:unapprove <rule-id|all>` to remove saved rules for the current workspace.
 
 Inside the Nemo chat pane:
 
 - the live input prompt is `!`, but sent chat messages appear in history as `me>`
 - type normally and press `Enter` to send
-- type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands like `:sessions`, `:workers`, and `:switch`
+- type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands and pending approval options
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session
-- `:approve`, `:deny`, `:approvals`, and `:unapprove` manage pending and saved tool approvals
+- pending approval prompts add approve-once, approve-always, and deny options to the `:` menu; `:approvals` and `:unapprove` manage pending and saved rules
 - `:new [title]` creates a session
 - `:switch <session-id>` changes sessions
 - `:rename <title>` renames the current session

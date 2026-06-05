@@ -46,6 +46,7 @@ public class ChatPanelView extends View {
     private int _cursorOffset;
     private int _inputScrollLine;
     private int _startLine;
+    private int _commandSelection;
     private boolean _pending;
     private long _pendingStartedAtMillis;
     private Integer _contextUsagePercent;
@@ -181,11 +182,29 @@ public class ChatPanelView extends View {
         if (!text.startsWith(":")) {
             return CommandView.CommandMenuState.hidden();
         }
-        return _commandMenuStateProvider.apply(text.substring(1));
+        var state = _commandMenuStateProvider.apply(text.substring(1));
+        if (state == null || !state.visible()) {
+            return CommandView.CommandMenuState.hidden();
+        }
+        int selection = state.matches().isEmpty()
+                ? 0
+                : Math.max(0, Math.min(_commandSelection, state.matches().size() - 1));
+        return new CommandView.CommandMenuState(state.visible(), state.prefix(), state.matches(), selection, state.title());
     }
 
     public boolean isCommandInputActive() {
         return _input.toString().startsWith(":");
+    }
+
+    public boolean openCommandInputIfEmpty() {
+        if (_input.length() > 0) {
+            return false;
+        }
+        _input.append(':');
+        _cursorOffset = _input.length();
+        _inputScrollLine = 0;
+        notifyCommandInputChanged();
+        return true;
     }
 
     static String formatThinkingText(long elapsedSeconds) {
@@ -278,8 +297,104 @@ public class ChatPanelView extends View {
     }
 
     private void notifyCommandInputChanged() {
+        resetCommandSelection();
         _onCommandInputChanged.accept(_input.toString());
         refreshChrome();
+    }
+
+    private boolean hasCommandMenuMatches() {
+        if (!isCommandInputActive()) {
+            return false;
+        }
+        var state = getCommandMenuState();
+        return state.visible() && !state.matches().isEmpty();
+    }
+
+    private void moveCommandSelection(int delta) {
+        var state = getCommandMenuState();
+        if (state.matches().isEmpty()) {
+            return;
+        }
+        _commandSelection = Math.floorMod(_commandSelection + delta, state.matches().size());
+        refreshChrome();
+    }
+
+    private void completeSelectedCommand() {
+        var state = getCommandMenuState();
+        var spec = state.selectedMatch();
+        if (spec == null) {
+            return;
+        }
+        applyCommandSpec(spec);
+        resetCommandSelection();
+        ensureInputVisible();
+        _onCommandInputChanged.accept(_input.toString());
+        refreshChrome();
+    }
+
+    private boolean canSubmitSelectedCommand() {
+        if (!hasCommandMenuMatches()) {
+            return false;
+        }
+        var spec = getCommandMenuState().selectedMatch();
+        return spec != null && (spec.replaceEntireInput() || !spec.expectsArgument());
+    }
+
+    private void submitSelectedCommand() {
+        var state = getCommandMenuState();
+        var spec = state.selectedMatch();
+        if (spec == null) {
+            return;
+        }
+        applyCommandSpec(spec);
+        String command = _input.toString().trim();
+        if (!command.isBlank()) {
+            _onCommand.accept(command);
+        }
+        _input.setLength(0);
+        _cursorOffset = 0;
+        _inputScrollLine = 0;
+        resetCommandSelection();
+        _onCommandInputChanged.accept(_input.toString());
+        refreshChrome();
+    }
+
+    private void applyCommandSpec(CommandView.CommandSpec spec) {
+        if (!isCommandInputActive()) {
+            return;
+        }
+        if (spec.replaceEntireInput()) {
+            replaceCommandInput(spec.replacement());
+            return;
+        }
+
+        String current = _input.substring(1);
+        int tokenStart = 0;
+        while (tokenStart < current.length() && Character.isWhitespace(current.charAt(tokenStart))) {
+            tokenStart++;
+        }
+        int tokenEnd = tokenStart;
+        while (tokenEnd < current.length() && !Character.isWhitespace(current.charAt(tokenEnd))) {
+            tokenEnd++;
+        }
+        String before = current.substring(0, tokenStart);
+        String after = current.substring(tokenEnd);
+        boolean hasArguments = !after.isBlank();
+        String replacement = spec.replacement();
+        if (!hasArguments && spec.expectsArgument()) {
+            replacement += " ";
+        }
+        replaceCommandInput(before + replacement + after);
+    }
+
+    private void replaceCommandInput(String commandText) {
+        _input.setLength(0);
+        _input.append(':').append(commandText == null ? "" : commandText);
+        _cursorOffset = _input.length();
+    }
+
+    private void resetCommandSelection() {
+        _commandSelection = 0;
     }
 
     List<String> inputLines() {
@@ -361,10 +476,30 @@ public class ChatPanelView extends View {
             _responseAction = this::close;
             return Response.YES;
         case ArrowDown:
+            if (hasCommandMenuMatches()) {
+                _responseAction = () -> moveCommandSelection(1);
+                return Response.YES;
+            }
             _responseAction = () -> scrollDown(1);
             return Response.YES;
         case ArrowUp:
+            if (hasCommandMenuMatches()) {
+                _responseAction = () -> moveCommandSelection(-1);
+                return Response.YES;
+            }
             _responseAction = () -> scrollUp(1);
+            return Response.YES;
+        case ReverseTab:
+            if (!hasCommandMenuMatches()) {
+                return Response.NO;
+            }
+            _responseAction = () -> moveCommandSelection(-1);
+            return Response.YES;
+        case Tab:
+            if (!hasCommandMenuMatches()) {
+                return Response.NO;
+            }
+            _responseAction = this::completeSelectedCommand;
             return Response.YES;
         case ArrowLeft:
             if (_cursorOffset == 0) {
@@ -414,6 +549,10 @@ public class ChatPanelView extends View {
                     ensureInputVisible();
                     notifyCommandInputChanged();
                 };
+                return Response.YES;
+            }
+            if (canSubmitSelectedCommand()) {
+                _responseAction = this::submitSelectedCommand;
                 return Response.YES;
             }
             String message = _input.toString().trim();

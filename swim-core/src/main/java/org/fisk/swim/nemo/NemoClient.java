@@ -29,6 +29,8 @@ import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.ChatPanelView;
+import org.fisk.swim.ui.CommandView.CommandMenuState;
+import org.fisk.swim.ui.CommandView.CommandSpec;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -365,6 +367,12 @@ public class NemoClient {
         Configuration withToolPermissionMode(String toolPermissionMode) {
             return new Builder(this)
                     .toolPermissionMode(toolPermissionMode)
+                    .build();
+        }
+
+        Configuration withToolOsSandbox(String toolOsSandbox) {
+            return new Builder(this)
+                    .toolOsSandbox(toolOsSandbox)
                     .build();
         }
 
@@ -1616,7 +1624,7 @@ public class NemoClient {
         }
         if (configuration.toolWriteFile() && isToolAllowedByPermission(configuration, "write_file")) {
             tools.add(functionTool("write_file",
-                    "Create or overwrite a file in the workspace. Use this to apply code changes after reading the file you want to edit.",
+                    "Create or overwrite a real file in the workspace. Successful writes are saved to disk and persist across Nemo/editor runs. Use this to apply code changes after reading the file you want to edit.",
                     schema(List.of(
                             property("path", stringSchema("Path relative to the workspace root.")),
                             property("content", stringSchema("Full file contents to write."))),
@@ -1624,7 +1632,7 @@ public class NemoClient {
         }
         if (configuration.toolApplyPatch() && isToolAllowedByPermission(configuration, "apply_patch")) {
             tools.add(functionTool("apply_patch",
-                    "Apply a targeted unified diff patch inside the workspace. Prefer this for small edits instead of rewriting whole files.",
+                    "Apply a targeted unified diff patch inside the workspace. Successful patches are saved to disk and persist across Nemo/editor runs. Prefer this for small edits instead of rewriting whole files.",
                     schema(List.of(
                             property("patch", stringSchema("Unified diff patch text to apply."))),
                             List.of("patch"))));
@@ -2176,6 +2184,32 @@ public class NemoClient {
             return sandboxBlock;
         }
 
+        ShellResult result = runShellProcess(configuration, workspaceRoot, cwd, command);
+        if (shouldRequestSandboxDenialApproval(configuration, result, executionSession)) {
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    workspaceRoot,
+                    new ToolApprovalRequest(
+                            "run_command",
+                            "OS sandbox blocked filesystem write",
+                            "rerun without the OS filesystem sandbox after this sandbox denial: " + command
+                                    + "\nStderr: " + oneLine(result.stderr()),
+                            "sandbox-denied:" + workspaceRoot.toAbsolutePath().normalize() + ":" + command
+                                    + ":" + compactRawBody(result.stderr()),
+                            true),
+                    result.format(configuration));
+            if (approvalBlock == null) {
+                result = runShellProcess(configuration.withToolOsSandbox("disabled"), workspaceRoot, cwd, command);
+            } else {
+                return approvalBlock;
+            }
+        }
+        return result.format(configuration);
+    }
+
+    private static ShellResult runShellProcess(Configuration configuration, Path workspaceRoot, Path cwd, String command)
+            throws IOException, InterruptedException {
         ShellInvocation invocation = shellInvocation(configuration, workspaceRoot, cwd, command);
         var processBuilder = new ProcessBuilder(invocation.command())
                 .directory(cwd.toFile())
@@ -2187,7 +2221,8 @@ public class NemoClient {
         try {
             if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                return "exit_code: timeout\nstdout:\n\nstderr:\ncommand exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds";
+                return new ShellResult("timeout", "", "command exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds",
+                        invocation.sandboxed());
             }
         } catch (InterruptedException e) {
             process.destroyForcibly();
@@ -2196,31 +2231,56 @@ public class NemoClient {
 
         String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
-        return truncateOutput(configuration, String.join("\n",
-                "exit_code: " + process.exitValue(),
-                "stdout:",
-                stdout,
-                "stderr:",
-                stderr));
+        return new ShellResult(String.valueOf(process.exitValue()), stdout, stderr, invocation.sandboxed());
     }
 
-    private record ShellInvocation(List<String> command) {
+    private record ShellInvocation(List<String> command, boolean sandboxed) {
+    }
+
+    private record ShellResult(String exitCode, String stdout, String stderr, boolean sandboxed) {
+        private String format(Configuration configuration) {
+            return truncateOutput(configuration, String.join("\n",
+                    "exit_code: " + exitCode,
+                    "stdout:",
+                    stdout,
+                    "stderr:",
+                    stderr));
+        }
     }
 
     private static ShellInvocation shellInvocation(Configuration configuration, Path workspaceRoot, Path cwd, String command)
             throws IOException {
         if ("full_access".equals(configuration.toolPermissionMode()) || "disabled".equals(configuration.toolOsSandbox())) {
-            return new ShellInvocation(List.of("zsh", "-lc", command));
+            return new ShellInvocation(List.of("zsh", "-lc", command), false);
         }
         OsSandboxBackend backend = osSandboxBackend();
         return switch (backend) {
         case MACOS_SANDBOX_EXEC -> {
             String profile = macOsSandboxProfile(configuration, workspaceRoot);
-            yield new ShellInvocation(List.of("/usr/bin/sandbox-exec", "-p", profile, "zsh", "-lc", command));
+            yield new ShellInvocation(List.of("/usr/bin/sandbox-exec", "-p", profile, "zsh", "-lc", command), true);
         }
-        case LINUX_BUBBLEWRAP -> new ShellInvocation(linuxBubblewrapCommand(configuration, workspaceRoot, cwd, command));
-        case NONE -> new ShellInvocation(List.of("zsh", "-lc", command));
+        case LINUX_BUBBLEWRAP -> new ShellInvocation(linuxBubblewrapCommand(configuration, workspaceRoot, cwd, command), true);
+        case NONE -> new ShellInvocation(List.of("zsh", "-lc", command), false);
         };
+    }
+
+    private static boolean shouldRequestSandboxDenialApproval(Configuration configuration, ShellResult result,
+            ToolExecutionSession executionSession) {
+        return executionSession != null
+                && result.sandboxed()
+                && !"required".equals(configuration.toolOsSandbox())
+                && !"0".equals(result.exitCode())
+                && isSandboxWriteDenial(result.stderr());
+    }
+
+    private static boolean isSandboxWriteDenial(String stderr) {
+        if (stderr == null || stderr.isBlank()) {
+            return false;
+        }
+        String lower = stderr.toLowerCase();
+        return lower.contains("operation not permitted")
+                || lower.contains("sandbox")
+                || lower.contains("read-only file system");
     }
 
     private static String osSandboxBlock(Configuration configuration, Path workspaceRoot, String command,
@@ -3002,12 +3062,21 @@ public class NemoClient {
     }
 
     private void appendApprovalPrompt(Conversation conversation, PendingApproval pending) {
-        Runnable append = () -> appendTurn(conversation, new ChatTurn("approval", formatApprovalPrompt(pending), false));
+        Runnable append = () -> {
+            appendTurn(conversation, new ChatTurn("approval", formatApprovalPrompt(pending), false));
+            openApprovalMenuIfVisible(conversation);
+        };
         EventThread eventThread = EventThread.getInstance();
         if (eventThread.isAlive() && Thread.currentThread() != eventThread) {
             eventThread.enqueue(new RunnableEvent(append));
         } else {
             append.run();
+        }
+    }
+
+    private static void openApprovalMenuIfVisible(Conversation conversation) {
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.openCommandInputIfEmpty();
         }
     }
 
@@ -3018,8 +3087,8 @@ public class NemoClient {
         lines.add("tool: " + pending._request.toolName());
         lines.add("workspace: " + pending._workspaceRoot);
         lines.add(pending._request.summary());
-        lines.add("Use :approve " + pending._id + " to run once, :approve " + pending._id
-                + " always to persist this exact approval, or :deny " + pending._id + ".");
+        String options = pending._request.persistable() ? "approve once, approve always, or deny" : "approve once or deny";
+        lines.add("Approval options open in the menu. Use arrows and Enter to choose " + options + ".");
         return String.join("\n", lines);
     }
 
@@ -3134,7 +3203,7 @@ public class NemoClient {
                 message -> submit(conversation, message),
                 command -> handleCommand(conversation, command),
                 ignored -> {},
-                NemoClient::nemoCommandMenuState);
+                text -> nemoCommandMenuState(conversation, text));
     }
 
     private void replayConversationIntoVisiblePanel(Conversation conversation) {
@@ -3224,25 +3293,64 @@ public class NemoClient {
         worker.start();
     }
 
-    private static final List<org.fisk.swim.ui.CommandView.CommandSpec> NEMO_COMMAND_SPECS = List.of(
-            new org.fisk.swim.ui.CommandView.CommandSpec("abort", List.of(), "[session-id|all]", "stop the current or selected worker"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("sessions", List.of(), "", "list Nemo sessions for this workspace"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("workers", List.of(), "", "list active Nemo workers"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("new", List.of(), "[title]", "create a new Nemo session"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("switch", List.of(), "<session-id>", "switch to another Nemo session"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("rename", List.of(), "<title>", "rename the current Nemo session"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("unapprove", List.of(), "<rule-id|all>", "remove saved Nemo approval rules"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("help", List.of(), "", "list Nemo chat commands"),
-            new org.fisk.swim.ui.CommandView.CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
+    private static final List<CommandSpec> NEMO_COMMAND_SPECS = List.of(
+            new CommandSpec("abort", List.of(), "[session-id|all]", "stop the current or selected worker"),
+            new CommandSpec("sessions", List.of(), "", "list Nemo sessions for this workspace"),
+            new CommandSpec("workers", List.of(), "", "list active Nemo workers"),
+            new CommandSpec("new", List.of(), "[title]", "create a new Nemo session"),
+            new CommandSpec("switch", List.of(), "<session-id>", "switch to another Nemo session"),
+            new CommandSpec("rename", List.of(), "<title>", "rename the current Nemo session"),
+            new CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
+            new CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
+            new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
+            new CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
+            new CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
+            new CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
+            new CommandSpec("unapprove", List.of(), "<rule-id|all>", "remove saved Nemo approval rules"),
+            new CommandSpec("help", List.of(), "", "list Nemo chat commands"),
+            new CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
 
-    private static org.fisk.swim.ui.CommandView.CommandMenuState nemoCommandMenuState(String text) {
-        return org.fisk.swim.ui.CommandView.CommandMenuState.forCommandText(text, 0, NEMO_COMMAND_SPECS);
+    private CommandMenuState nemoCommandMenuState(Conversation conversation, String text) {
+        var approvalSpecs = pendingApprovalCommandSpecs(conversation);
+        if (!approvalSpecs.isEmpty()) {
+            return CommandMenuState.forCommandText(text, 0, approvalSpecs, "approval options");
+        }
+        return CommandMenuState.forCommandText(text, 0, NEMO_COMMAND_SPECS);
+    }
+
+    private synchronized List<CommandSpec> pendingApprovalCommandSpecs(Conversation conversation) {
+        var specs = new ArrayList<CommandSpec>();
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (!pending._conversationId.equals(conversation._id)) {
+                continue;
+            }
+            String approveOnce = "approve " + pending._id;
+            specs.add(new CommandSpec("approve", List.of(), pending._id,
+                    approvalMenuDetail("Allow this request once", pending), approveOnce, true, "Approve once"));
+            if (pending._request.persistable()) {
+                String approveAlways = approveOnce + " always";
+                specs.add(new CommandSpec("approve", List.of(), pending._id + " always",
+                        approvalMenuDetail("Save an exact approval rule", pending), approveAlways, true,
+                        "Approve always"));
+            }
+            String deny = "deny " + pending._id;
+            specs.add(new CommandSpec("deny", List.of(), pending._id,
+                    approvalMenuDetail("Do not run this request", pending), deny, true, "Deny"));
+        }
+        return specs;
+    }
+
+    private static String approvalMenuDetail(String action, PendingApproval pending) {
+        String summary = oneLine(pending._request.summary());
+        String detail = action + ": " + pending._request.toolName();
+        return summary.isBlank() ? detail : detail + " - " + summary;
+    }
+
+    private static String oneLine(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        return text.replace('\n', ' ').replaceAll("\\s+", " ").trim();
     }
 
     private synchronized void handleCommand(Conversation conversation, String command) {
@@ -3294,7 +3402,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :approve <id> [always], :deny <id>, :approvals, :unapprove <rule-id|all>, :help, :q");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q");
             return;
         case ":q":
         case ":quit":

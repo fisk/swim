@@ -296,7 +296,7 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolWriteFile() && NemoClient.isToolAllowedByPermission(configuration, "write_file")) {
             tools.add(tool("write_file",
-                    "Create or overwrite a file in the workspace using full file contents.",
+                    "Create or overwrite a real file in the workspace using full file contents. Successful writes are saved to disk and persist across Nemo/editor runs.",
                     JsonObjectSchema.builder()
                             .addStringProperty("path", "Path relative to the workspace root.")
                             .addStringProperty("content", "Full file contents to write.")
@@ -306,7 +306,7 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolApplyPatch() && NemoClient.isToolAllowedByPermission(configuration, "apply_patch")) {
             tools.add(tool("apply_patch",
-                    "Apply a targeted unified diff patch inside the workspace.",
+                    "Apply a targeted unified diff patch inside the workspace. Successful patches are saved to disk and persist across Nemo/editor runs.",
                     JsonObjectSchema.builder()
                             .addStringProperty("patch", "Unified diff patch text to apply.")
                             .required(List.of("patch"))

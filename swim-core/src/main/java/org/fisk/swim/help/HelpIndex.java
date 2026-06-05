@@ -115,9 +115,11 @@ public class HelpIndex {
                 ":sessions, :workers, :new, :switch, :rename, :reset, :delete, and :abort manage sessions and workers.",
                 ":permissions shows permission mode, command policy, OS sandbox backend, and approval policy.",
                 ":permissions read-only, :permissions workspace-write, and :permissions full-access change the active session.",
-                ":approve <id>, :approve <id> always, :deny <id>, :approvals, and :unapprove manage tool approvals.",
+                "When approval is required, Nemo opens approval options; use arrows and Enter to choose approve once, approve always, or deny.",
+                ":approvals and :unapprove manage pending and saved tool approvals.",
                 "permissionMode can be read_only, workspace_write, or full_access.",
-                "osSandbox auto uses sandbox-exec on macOS or bwrap on Linux, required fails closed, and disabled runs unsandboxed.",
+                "osSandbox auto uses sandbox-exec on macOS or bwrap on Linux and asks before rerunning after sandbox write denials.",
+                "osSandbox required fails closed when sandboxing is unavailable; disabled runs unsandboxed.",
                 "approvalPolicy can be on_escalation, on_request, or never.",
                 "Nemo loads AGENTS.override.md or AGENTS.md from root to current file directory; SKILLS.md still works too.",
                 "Nemo stores sessions in ~/.swim/nemo/sessions.json and saved approvals in ~/.swim/nemo/approvals.json.");

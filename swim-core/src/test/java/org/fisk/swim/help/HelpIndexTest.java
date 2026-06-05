@@ -32,8 +32,10 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
         assertTrue(rendered.contains("Nemo"));
         assertTrue(rendered.contains("  :permissions shows permission mode, command policy, OS sandbox backend, and approval policy."));
-        assertTrue(rendered.contains("  :approve <id>, :approve <id> always, :deny <id>, :approvals, and :unapprove manage tool approvals."));
-        assertTrue(rendered.contains("  osSandbox auto uses sandbox-exec on macOS or bwrap on Linux, required fails closed, and disabled runs unsandboxed."));
+        assertTrue(rendered.contains("  When approval is required, Nemo opens approval options; use arrows and Enter to choose approve once, approve always, or deny."));
+        assertTrue(rendered.contains("  :approvals and :unapprove manage pending and saved tool approvals."));
+        assertTrue(rendered.contains("  osSandbox auto uses sandbox-exec on macOS or bwrap on Linux and asks before rerunning after sandbox write denials."));
+        assertTrue(rendered.contains("  osSandbox required fails closed when sandboxing is unavailable; disabled runs unsandboxed."));
     }
 
     @Test

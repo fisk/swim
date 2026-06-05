@@ -75,9 +75,10 @@ public class CommandMenuView extends View {
     }
 
     private AttributedString headerLine() {
+        String menuTitle = _state.title() == null || _state.title().isBlank() ? "command matches" : _state.title();
         String title = _state.matches().isEmpty()
-                ? " command matches 0"
-                : " command matches " + (_state.selection() + 1) + "/" + _state.matches().size();
+                ? " " + menuTitle + " 0"
+                : " " + menuTitle + " " + (_state.selection() + 1) + "/" + _state.matches().size();
         if (!_state.prefix().isBlank()) {
             title += "  for " + _state.prefix();
         }
