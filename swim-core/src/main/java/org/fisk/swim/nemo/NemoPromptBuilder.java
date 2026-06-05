@@ -109,7 +109,7 @@ final class NemoPromptBuilder {
             return "";
         }
         var result = new StringBuilder();
-        result.append("\n\nApplicable SKILLS.md instructions:");
+        result.append("\n\nApplicable workspace instructions:");
         for (var skill : skills) {
             result.append("\n\n--- ").append(skill.relativePath()).append(" ---\n");
             result.append(skill.content());
@@ -127,7 +127,7 @@ final class NemoPromptBuilder {
         }
 
         var result = new StringBuilder();
-        result.append("\n\nApplicable SKILLS.md instructions (budgeted):");
+        result.append("\n\nApplicable workspace instructions (budgeted):");
         for (int i = 0; i < skills.size(); ++i) {
             var skill = skills.get(i);
             String header = "\n\n--- " + skill.relativePath() + " ---\n";

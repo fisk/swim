@@ -66,6 +66,7 @@ class NemoChatIT {
 
                 var transcript = displayLines(panel);
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("me> Which files are not committed?")));
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("tool> list_files: path=.")));
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("nemo> Tool-assisted answer")));
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("me> And what file am I in?")));
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("nemo> Follow-up answer")));
@@ -155,6 +156,39 @@ class NemoChatIT {
                 String body = requestBody.get();
                 assertFalse(body.contains("strict_tools"));
                 assertFalse(body.contains("parallel_tool_calls"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void readOnlyPermissionOmitsMutatingToolsFromOpenAiCompatibleRequest() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<String>("");
+        var server = startServer(requestCount, requestBody, List.of(textResponse("Hello")));
+        try {
+            writeReadOnlyConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Inspect this workspace");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Hello");
+
+                String body = requestBody.get();
+                assertTrue(body.contains("list_files"));
+                assertTrue(body.contains("read_file"));
+                assertFalse(body.contains("run_command"));
+                assertFalse(body.contains("write_file"));
+                assertFalse(body.contains("apply_patch"));
+                assertFalse(body.contains("git_add"));
+                assertFalse(body.contains("git_commit"));
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -293,6 +327,65 @@ class NemoChatIT {
                     assertTrue(List.of(restoredSession1Answer, restoredSession2Answer).contains("First answer"));
                     assertTrue(List.of(restoredSession1Answer, restoredSession2Answer).contains("Second answer"));
                 }
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void toolTranscriptEntriesPersistButAreExcludedFromPrompt() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<>("");
+        var server = startServer(requestCount, requestBody, List.of(textResponse("Follow-up answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            Path configDir = tempDir.resolve(".swim");
+            Files.createDirectories(configDir.resolve("nemo"));
+            Files.writeString(configDir.resolve("nemo/sessions.json"),
+                    """
+                            {
+                              "next_session_number": 2,
+                              "active_session_id": "session-1",
+                              "workspace_sessions": {
+                                "%s": "session-1"
+                              },
+                              "sessions": [
+                                {
+                                  "id": "session-1",
+                                  "title": "Session 1",
+                                  "workspace_root": "%s",
+                                  "created_at_millis": 1,
+                                  "updated_at_millis": 2,
+                                  "turns": [
+                                    { "speaker": "me", "text": "Earlier question", "include_in_prompt": true },
+                                    { "speaker": "tool", "text": "list_files: path=.", "include_in_prompt": false },
+                                    { "speaker": "nemo", "text": "Earlier answer", "include_in_prompt": true }
+                                  ]
+                                }
+                              ]
+                            }
+                            """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
+            Path file = writeFile("chat.txt", "class Demo {}\n");
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Follow up");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "tool> list_files: path=.");
+                waitForLine(panel, "nemo> Follow-up answer");
+
+                String body = requestBody.get();
+                assertTrue(body.contains("Earlier question"));
+                assertTrue(body.contains("Earlier answer"));
+                assertTrue(body.contains("Follow up"));
+                assertFalse(body.contains("list_files: path=."));
+                assertFalse(body.contains("tool>"));
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -573,6 +666,36 @@ class NemoChatIT {
                 submit(panel, ":sessions");
                 waitForLine(panel, "Sessions:");
                 assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void permissionsCommandShowsAndChangesSessionPermissionMode() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), "");
+        Path file = writeFile("permissions.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":permissions");
+                waitForLine(panel, "mode: workspace-write");
+
+                submit(panel, ":permissions read-only");
+                waitForLine(panel, "mode: read-only");
+
+                submit(panel, ":permissions unsupported");
+                waitForLine(panel, "Usage: :permissions read-only|workspace-write|full-access");
             }
         } finally {
             System.setProperty("user.home", originalUserHome);
@@ -912,6 +1035,28 @@ class NemoChatIT {
                 "tool.search_files=true",
                 "tool.run_command=false",
                 "tool.write_file=true",
+                "tool.web_search=false"));
+    }
+
+    private void writeReadOnlyConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=openai-compatible",
+                "api_key=test-token",
+                "model=gpt-5.4",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "tool.permission_mode=read-only",
+                "tool.list_files=true",
+                "tool.read_file=true",
+                "tool.search_files=true",
+                "tool.run_command=true",
+                "tool.write_file=true",
+                "tool.apply_patch=true",
+                "tool.git_status=true",
+                "tool.git_diff=true",
+                "tool.git_add=true",
+                "tool.git_commit=true",
                 "tool.web_search=false"));
     }
 

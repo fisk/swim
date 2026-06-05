@@ -20,20 +20,15 @@ final class NemoSkillLoader {
             return List.of();
         }
 
+        Path normalizedRoot = workspaceRoot.toAbsolutePath().normalize();
+        var directories = applicableDirectories(context, normalizedRoot);
         var candidates = new LinkedHashSet<Path>();
-        candidates.add(workspaceRoot.resolve("SKILLS.md"));
-
-        Path bufferPath = context.getBuffer().getPath();
-        if (bufferPath != null) {
-            Path normalizedPath = bufferPath.toAbsolutePath().normalize();
-            Path currentDirectory = Files.isDirectory(normalizedPath) ? normalizedPath : normalizedPath.getParent();
-            while (currentDirectory != null && currentDirectory.startsWith(workspaceRoot)) {
-                candidates.add(currentDirectory.resolve("SKILLS.md"));
-                if (currentDirectory.equals(workspaceRoot)) {
-                    break;
-                }
-                currentDirectory = currentDirectory.getParent();
-            }
+        for (Path directory : directories) {
+            Path override = directory.resolve("AGENTS.override.md");
+            candidates.add(Files.isRegularFile(override) ? override : directory.resolve("AGENTS.md"));
+        }
+        for (Path directory : directories) {
+            candidates.add(directory.resolve("SKILLS.md"));
         }
 
         var skillDocuments = new ArrayList<NemoSkillDocument>();
@@ -47,11 +42,38 @@ final class NemoSkillLoader {
                     content = content.substring(0, configuration.skillsMaxChars())
                             + "\n...[truncated]";
                 }
-                String relativePath = workspaceRoot.relativize(skillPath).toString();
+                String relativePath = normalizedRoot.relativize(skillPath).toString();
                 skillDocuments.add(new NemoSkillDocument(relativePath.isBlank() ? "SKILLS.md" : relativePath, content));
             } catch (IOException ignored) {
             }
         }
         return skillDocuments;
+    }
+
+    private static List<Path> applicableDirectories(BufferContext context, Path workspaceRoot) {
+        var directories = new ArrayList<Path>();
+        Path bufferPath = context.getBuffer().getPath();
+        Path currentDirectory = workspaceRoot;
+        if (bufferPath != null) {
+            Path normalizedPath = bufferPath.toAbsolutePath().normalize();
+            currentDirectory = Files.isDirectory(normalizedPath) ? normalizedPath : normalizedPath.getParent();
+        }
+        if (currentDirectory == null || !currentDirectory.startsWith(workspaceRoot)) {
+            directories.add(workspaceRoot);
+            return directories;
+        }
+
+        var reversed = new ArrayList<Path>();
+        while (currentDirectory != null && currentDirectory.startsWith(workspaceRoot)) {
+            reversed.add(currentDirectory);
+            if (currentDirectory.equals(workspaceRoot)) {
+                break;
+            }
+            currentDirectory = currentDirectory.getParent();
+        }
+        for (int i = reversed.size() - 1; i >= 0; --i) {
+            directories.add(reversed.get(i));
+        }
+        return directories;
     }
 }

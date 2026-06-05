@@ -523,6 +523,8 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
     "readFile": true,
     "searchFiles": true,
     "runCommand": true,
+    "commandPolicy": "restricted",
+    "permissionMode": "workspace_write",
     "writeFile": true,
     "applyPatch": true,
     "gitStatus": true,
@@ -542,7 +544,11 @@ Nemo now runs through langchain4j, so OpenAI-compatible vendors can be selected 
 
 When `contextWindowTokens` is set, Nemo budgets the prompt before sending it. If the full prompt would exceed the configured window, it preserves the current request and recent turns, compacts older conversation into bounded notes, truncates oversized skill instructions, and excerpts large files around the cursor.
 
-If you place `SKILLS.md` files in the workspace root or in directories above the current file, Nemo will include the applicable skill instructions in its prompt.
+Nemo includes applicable workspace guidance from `AGENTS.override.md` or `AGENTS.md`, walking from the workspace root to the current file directory. `AGENTS.override.md` wins over `AGENTS.md` in the same directory. Existing `SKILLS.md` files in those directories are also included for compatibility.
+
+`runCommand` uses `commandPolicy: "restricted"` by default, which blocks shell control operators and high-risk executables while still allowing simple workspace inspection and build commands. Set it to `"trusted"` only when you intentionally want raw shell behavior.
+
+Nemo also supports `permissionMode`: `"read_only"` advertises and allows only inspection tools, `"workspace_write"` allows workspace edits and restricted commands, and `"full_access"` lifts Nemo's restricted command policy for `runCommand`. File tools still resolve through the workspace root; `full_access` is for trusted sessions where shell commands may do more.
 
 Inside the Nemo chat pane:
 
@@ -551,6 +557,7 @@ Inside the Nemo chat pane:
 - type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands like `:sessions`, `:workers`, and `:switch`
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
+- `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session
 - `:new [title]` creates a session
 - `:switch <session-id>` changes sessions
 - `:rename <title>` renames the current session

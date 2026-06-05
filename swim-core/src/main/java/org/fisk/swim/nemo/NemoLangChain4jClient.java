@@ -66,6 +66,7 @@ final class NemoLangChain4jClient {
         ChatModel chatModel = createModel(configuration);
         List<ToolSpecification> tools = buildToolSpecifications(configuration);
         TokenUsage cumulativeUsage = null;
+        var toolTraces = new ArrayList<NemoClient.ToolTrace>();
         while (true) {
             ChatResponse response = chatModel.chat(ChatRequest.builder()
                     .messages(messages)
@@ -77,10 +78,12 @@ final class NemoLangChain4jClient {
             if (aiMessage.hasToolExecutionRequests()) {
                 messages.add(aiMessage);
                 for (ToolExecutionRequest toolCall : aiMessage.toolExecutionRequests()) {
-                    String output = NemoClient.executeToolSafely(configuration, context, new NemoClient.ToolCall(
+                    var call = new NemoClient.ToolCall(
                             toolCall.id(),
                             toolCall.name(),
-                            parseArguments(toolCall.arguments())));
+                            parseArguments(toolCall.arguments()));
+                    String output = NemoClient.executeToolSafely(configuration, context, call);
+                    toolTraces.add(NemoClient.toolTrace(call, output));
                     messages.add(new ToolExecutionResultMessage(toolCall.id(), toolCall.name(), output));
                 }
                 continue;
@@ -93,7 +96,8 @@ final class NemoLangChain4jClient {
             if (text == null || text.isBlank()) {
                 text = "Nemo returned no text.";
             }
-            return new NemoClient.ResponseResult(text, contextUsagePercent(configuration, cumulativeUsage));
+            return new NemoClient.ResponseResult(text, contextUsagePercent(configuration, cumulativeUsage),
+                    List.copyOf(toolTraces));
         }
     }
 
@@ -107,6 +111,7 @@ final class NemoLangChain4jClient {
         messages.add(userMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
         List<ToolSpecification> tools = buildToolSpecifications(configuration);
         Integer promptTokens = null;
+        var toolTraces = new ArrayList<NemoClient.ToolTrace>();
         while (true) {
             CompletionResponse response = invokeChatCompletions(configuration, messages, tools);
             promptTokens = response.promptTokens() != null ? response.promptTokens() : promptTokens;
@@ -117,10 +122,12 @@ final class NemoLangChain4jClient {
                 for (JsonElement element : toolCalls) {
                     JsonObject toolCall = element.getAsJsonObject();
                     JsonObject function = toolCall.getAsJsonObject("function");
-                    String output = NemoClient.executeToolSafely(configuration, context, new NemoClient.ToolCall(
+                    var call = new NemoClient.ToolCall(
                             toolCall.get("id").getAsString(),
                             function.get("name").getAsString(),
-                            parseArguments(function.get("arguments").getAsString())));
+                            parseArguments(function.get("arguments").getAsString()));
+                    String output = NemoClient.executeToolSafely(configuration, context, call);
+                    toolTraces.add(NemoClient.toolTrace(call, output));
                     messages.add(toolResultMessage(
                             toolCall.get("id").getAsString(),
                             function.get("name").getAsString(),
@@ -133,7 +140,8 @@ final class NemoLangChain4jClient {
             if (text == null || text.isBlank()) {
                 text = "Nemo returned no text.";
             }
-            return new NemoClient.ResponseResult(text, contextUsagePercent(configuration, promptTokens));
+            return new NemoClient.ResponseResult(text, contextUsagePercent(configuration, promptTokens),
+                    List.copyOf(toolTraces));
         }
     }
 
@@ -275,9 +283,9 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolRunCommand()) {
+        if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "run_command")) {
             tools.add(tool("run_command",
-                    "Run a shell command in the workspace and return exit code, stdout, and stderr.",
+                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables.",
                     JsonObjectSchema.builder()
                             .addStringProperty("command", "Shell command to execute.")
                             .addStringProperty("cwd", "Optional working directory relative to the workspace root.")
@@ -285,7 +293,7 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolWriteFile()) {
+        if (configuration.toolWriteFile() && NemoClient.isToolAllowedByPermission(configuration, "write_file")) {
             tools.add(tool("write_file",
                     "Create or overwrite a file in the workspace using full file contents.",
                     JsonObjectSchema.builder()
@@ -295,7 +303,7 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolApplyPatch()) {
+        if (configuration.toolApplyPatch() && NemoClient.isToolAllowedByPermission(configuration, "apply_patch")) {
             tools.add(tool("apply_patch",
                     "Apply a targeted unified diff patch inside the workspace.",
                     JsonObjectSchema.builder()
@@ -320,7 +328,7 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolGitAdd()) {
+        if (configuration.toolGitAdd() && NemoClient.isToolAllowedByPermission(configuration, "git_add")) {
             tools.add(tool("git_add",
                     "Stage files in git. Use this before git_commit when the user asks you to commit changes.",
                     JsonObjectSchema.builder()
@@ -332,7 +340,7 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolGitCommit()) {
+        if (configuration.toolGitCommit() && NemoClient.isToolAllowedByPermission(configuration, "git_commit")) {
             tools.add(tool("git_commit",
                     "Create a git commit from the staged changes.",
                     JsonObjectSchema.builder()

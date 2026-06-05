@@ -54,6 +54,8 @@ public class NemoClient {
     private static final int _defaultMaxResults = 200;
     private static final int _defaultMaxOutputChars = 12_000;
     private static final int _defaultCommandTimeoutSeconds = 20;
+    private static final String _defaultCommandPolicy = "restricted";
+    private static final String _defaultPermissionMode = "workspace_write";
     private static final int _defaultTimeoutSeconds = 60;
     private static final int _defaultMaxRetries = 2;
     private static final int _defaultSkillsMaxFiles = 8;
@@ -95,7 +97,13 @@ public class NemoClient {
     record ToolCall(String callId, String name, JsonObject arguments) {
     }
 
-    record ResponseResult(String text, Integer contextUsagePercent) {
+    record ToolTrace(String text) {
+    }
+
+    record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
+        ResponseResult(String text, Integer contextUsagePercent) {
+            this(text, contextUsagePercent, List.of());
+        }
     }
 
     private static final class Conversation {
@@ -167,6 +175,8 @@ public class NemoClient {
         private final boolean _toolGitDiff;
         private final boolean _toolGitAdd;
         private final boolean _toolGitCommit;
+        private final String _toolCommandPolicy;
+        private final String _toolPermissionMode;
         private final boolean _skillsEnabled;
         private final int _skillsMaxFiles;
         private final int _skillsMaxChars;
@@ -254,6 +264,8 @@ public class NemoClient {
             _toolGitDiff = builder._toolGitDiff;
             _toolGitAdd = builder._toolGitAdd;
             _toolGitCommit = builder._toolGitCommit;
+            _toolCommandPolicy = builder._toolCommandPolicy;
+            _toolPermissionMode = builder._toolPermissionMode;
             _skillsEnabled = builder._skillsEnabled;
             _skillsMaxFiles = builder._skillsMaxFiles;
             _skillsMaxChars = builder._skillsMaxChars;
@@ -269,6 +281,12 @@ public class NemoClient {
 
         static Builder builder() {
             return new Builder();
+        }
+
+        Configuration withToolPermissionMode(String toolPermissionMode) {
+            return new Builder(this)
+                    .toolPermissionMode(toolPermissionMode)
+                    .build();
         }
 
         static final class Builder {
@@ -303,6 +321,8 @@ public class NemoClient {
             private boolean _toolGitDiff = true;
             private boolean _toolGitAdd = true;
             private boolean _toolGitCommit = true;
+            private String _toolCommandPolicy = _defaultCommandPolicy;
+            private String _toolPermissionMode = _defaultPermissionMode;
             private boolean _skillsEnabled = true;
             private int _skillsMaxFiles = _defaultSkillsMaxFiles;
             private int _skillsMaxChars = _defaultSkillsMaxChars;
@@ -314,6 +334,56 @@ public class NemoClient {
             private int _toolMaxResults = _defaultMaxResults;
             private int _toolMaxOutputChars = _defaultMaxOutputChars;
             private int _toolCommandTimeoutSeconds = _defaultCommandTimeoutSeconds;
+
+            Builder() {
+            }
+
+            Builder(Configuration source) {
+                _provider = source._provider;
+                _apiKey = source._apiKey;
+                _model = source._model;
+                _baseUrl = source._baseUrl;
+                _organization = source._organization;
+                _project = source._project;
+                _headers = new LinkedHashMap<>(source._headers);
+                _queryParameters = new LinkedHashMap<>(source._queryParameters);
+                _customParameters = new LinkedHashMap<>(source._customParameters);
+                _workspaceRoot = source._workspaceRoot;
+                _systemPrompt = source._systemPrompt;
+                _contextWindowTokens = source._contextWindowTokens;
+                _maxOutputTokens = source._maxOutputTokens;
+                _temperature = source._temperature;
+                _topP = source._topP;
+                _reasoningEffort = source._reasoningEffort;
+                _timeoutSeconds = source._timeoutSeconds;
+                _maxRetries = source._maxRetries;
+                _logRequests = source._logRequests;
+                _logResponses = source._logResponses;
+                _toolWebSearch = source._toolWebSearch;
+                _toolListFiles = source._toolListFiles;
+                _toolReadFile = source._toolReadFile;
+                _toolSearchFiles = source._toolSearchFiles;
+                _toolRunCommand = source._toolRunCommand;
+                _toolWriteFile = source._toolWriteFile;
+                _toolApplyPatch = source._toolApplyPatch;
+                _toolGitStatus = source._toolGitStatus;
+                _toolGitDiff = source._toolGitDiff;
+                _toolGitAdd = source._toolGitAdd;
+                _toolGitCommit = source._toolGitCommit;
+                _toolCommandPolicy = source._toolCommandPolicy;
+                _toolPermissionMode = source._toolPermissionMode;
+                _skillsEnabled = source._skillsEnabled;
+                _skillsMaxFiles = source._skillsMaxFiles;
+                _skillsMaxChars = source._skillsMaxChars;
+                _strictTools = source._strictTools;
+                _parallelToolCalls = source._parallelToolCalls;
+                _returnThinking = source._returnThinking;
+                _sendThinking = source._sendThinking;
+                _thinkingFieldName = source._thinkingFieldName;
+                _toolMaxResults = source._toolMaxResults;
+                _toolMaxOutputChars = source._toolMaxOutputChars;
+                _toolCommandTimeoutSeconds = source._toolCommandTimeoutSeconds;
+            }
 
             Builder provider(String provider) {
                 _provider = provider == null || provider.isBlank() ? _defaultProvider : provider.trim().toLowerCase();
@@ -476,6 +546,19 @@ public class NemoClient {
                 return this;
             }
 
+            Builder toolCommandPolicy(String toolCommandPolicy) {
+                if (toolCommandPolicy != null && !toolCommandPolicy.isBlank()) {
+                    String normalized = toolCommandPolicy.trim().toLowerCase();
+                    _toolCommandPolicy = "trusted".equals(normalized) ? "trusted" : _defaultCommandPolicy;
+                }
+                return this;
+            }
+
+            Builder toolPermissionMode(String toolPermissionMode) {
+                _toolPermissionMode = normalizeToolPermissionMode(toolPermissionMode);
+                return this;
+            }
+
             Builder skillsEnabled(boolean skillsEnabled) {
                 _skillsEnabled = skillsEnabled;
                 return this;
@@ -569,6 +652,8 @@ public class NemoClient {
         boolean toolGitDiff() { return _toolGitDiff; }
         boolean toolGitAdd() { return _toolGitAdd; }
         boolean toolGitCommit() { return _toolGitCommit; }
+        String toolCommandPolicy() { return _toolCommandPolicy; }
+        String toolPermissionMode() { return _toolPermissionMode; }
         boolean skillsEnabled() { return _skillsEnabled; }
         int skillsMaxFiles() { return _skillsMaxFiles; }
         int skillsMaxChars() { return _skillsMaxChars; }
@@ -587,6 +672,17 @@ public class NemoClient {
                     || "openai-responses".equals(_provider);
         }
         URI responsesUri() { return buildResponsesUri("", _baseUrl); }
+
+        static String normalizeToolPermissionMode(String toolPermissionMode) {
+            if (toolPermissionMode == null || toolPermissionMode.isBlank()) {
+                return _defaultPermissionMode;
+            }
+            String normalized = toolPermissionMode.trim().toLowerCase().replace('-', '_');
+            return switch (normalized) {
+            case "read_only", "workspace_write", "full_access" -> normalized;
+            default -> _defaultPermissionMode;
+            };
+        }
 
         private static String responsesBaseToChatBase(URI responsesUri) {
             String raw = responsesUri.toString();
@@ -758,6 +854,8 @@ public class NemoClient {
                 .toolGitDiff(booleanProperty(properties, "tool.git_diff", true))
                 .toolGitAdd(booleanProperty(properties, "tool.git_add", true))
                 .toolGitCommit(booleanProperty(properties, "tool.git_commit", true))
+                .toolCommandPolicy(property(properties, "tool.command_policy"))
+                .toolPermissionMode(property(properties, "tool.permission_mode"))
                 .skillsEnabled(booleanProperty(properties, "skills.enabled", true))
                 .skillsMaxFiles(intProperty(properties, "skills.max_files", _defaultSkillsMaxFiles))
                 .skillsMaxChars(intProperty(properties, "skills.max_chars", _defaultSkillsMaxChars))
@@ -814,6 +912,8 @@ public class NemoClient {
                 .toolGitDiff(booleanMember(tools, true, "gitDiff", "git_diff"))
                 .toolGitAdd(booleanMember(tools, true, "gitAdd", "git_add"))
                 .toolGitCommit(booleanMember(tools, true, "gitCommit", "git_commit"))
+                .toolCommandPolicy(firstNonBlank(stringMember(tools, "commandPolicy"), stringMember(tools, "command_policy")))
+                .toolPermissionMode(firstNonBlank(stringMember(tools, "permissionMode"), stringMember(tools, "permission_mode")))
                 .skillsEnabled(booleanMember(skills, true, "enabled"))
                 .skillsMaxFiles(firstNonNull(integerMember(skills, "maxFiles", "max_files"), _defaultSkillsMaxFiles))
                 .skillsMaxChars(firstNonNull(integerMember(skills, "maxChars", "max_chars"), _defaultSkillsMaxChars))
@@ -1087,6 +1187,7 @@ public class NemoClient {
         List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, workspaceRoot, configuration);
         JsonArray inputHistory = new JsonArray();
         inputHistory.add(createUserInputMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
+        var toolTraces = new ArrayList<ToolTrace>();
 
         while (true) {
             JsonObject request = buildResponsesRequest(configuration, inputHistory);
@@ -1105,14 +1206,17 @@ public class NemoClient {
             JsonObject responseBody = parseResponsesBody(response.body());
             JsonArray toolOutputs = new JsonArray();
             for (ToolCall call : extractToolCalls(responseBody)) {
+                String output = executeToolSafely(configuration, context, call);
+                toolTraces.add(toolTrace(call, output));
                 JsonObject toolOutput = new JsonObject();
                 toolOutput.addProperty("type", "function_call_output");
                 toolOutput.addProperty("call_id", call.callId());
-                toolOutput.addProperty("output", executeToolSafely(configuration, context, call));
+                toolOutput.addProperty("output", output);
                 toolOutputs.add(toolOutput);
             }
             if (toolOutputs.isEmpty()) {
-                return new ResponseResult(extractOutputText(responseBody.toString()), extractContextUsagePercent(responseBody));
+                return new ResponseResult(extractOutputText(responseBody.toString()), extractContextUsagePercent(responseBody),
+                        List.copyOf(toolTraces));
             }
             appendToolRound(inputHistory, responseBody, toolOutputs);
         }
@@ -1185,6 +1289,99 @@ public class NemoClient {
             _log.warn("Nemo tool {} failed", call.name(), e);
             return formatToolError(call, e);
         }
+    }
+
+    static ToolTrace toolTrace(ToolCall call, String output) {
+        String detail = switch (call.name()) {
+        case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
+        case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
+        case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
+        case "run_command" -> withOutputStatus(argumentSummary(call.arguments(), "command", "cwd"), output);
+        case "write_file" -> writeFileSummary(call.arguments());
+        case "apply_patch" -> "patch=" + stringArgument(call.arguments(), "patch", "").length() + " chars";
+        case "git_status", "git_diff" -> argumentSummary(call.arguments(), "path");
+        case "git_add" -> gitAddSummary(call.arguments());
+        case "git_commit" -> argumentSummary(call.arguments(), "message");
+        default -> argumentSummary(call.arguments());
+        };
+        return detail.isBlank()
+                ? new ToolTrace(call.name())
+                : new ToolTrace(call.name() + ": " + detail);
+    }
+
+    private static String withOutputStatus(String detail, String output) {
+        String status = firstOutputLine(output);
+        if (status.isBlank()) {
+            return detail;
+        }
+        return detail.isBlank() ? status : detail + " -> " + status;
+    }
+
+    private static String firstOutputLine(String output) {
+        if (output == null || output.isBlank()) {
+            return "";
+        }
+        int newline = output.indexOf('\n');
+        return newline < 0 ? output.strip() : output.substring(0, newline).strip();
+    }
+
+    private static String writeFileSummary(JsonObject arguments) {
+        String path = stringArgument(arguments, "path", "");
+        int chars = stringArgument(arguments, "content", "").length();
+        return joinSummary(List.of(
+                path.isBlank() ? "" : "path=" + path,
+                "content=" + chars + " chars"));
+    }
+
+    private static String gitAddSummary(JsonObject arguments) {
+        if (arguments.has("paths") && arguments.get("paths").isJsonArray()) {
+            var values = new ArrayList<String>();
+            for (JsonElement element : arguments.getAsJsonArray("paths")) {
+                if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                    values.add(element.getAsString());
+                }
+            }
+            if (!values.isEmpty()) {
+                return "paths=" + String.join(",", values);
+            }
+        }
+        return argumentSummary(arguments, "path");
+    }
+
+    private static String argumentSummary(JsonObject arguments, String... names) {
+        var parts = new ArrayList<String>();
+        if (names.length == 0) {
+            for (var entry : arguments.entrySet()) {
+                parts.add(entry.getKey() + "=" + compactArgumentValue(entry.getValue()));
+            }
+            return joinSummary(parts);
+        }
+        for (String name : names) {
+            if (arguments.has(name)) {
+                parts.add(name + "=" + compactArgumentValue(arguments.get(name)));
+            }
+        }
+        return joinSummary(parts);
+    }
+
+    private static String compactArgumentValue(JsonElement value) {
+        if (value == null || value.isJsonNull()) {
+            return "null";
+        }
+        String text;
+        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
+            text = value.getAsString();
+        } else {
+            text = value.toString();
+        }
+        text = text.replaceAll("\\s+", " ").trim();
+        return text.length() <= 160 ? text : text.substring(0, 157) + "...";
+    }
+
+    private static String joinSummary(List<String> parts) {
+        return parts.stream()
+                .filter(part -> part != null && !part.isBlank())
+                .collect(Collectors.joining(", "));
     }
 
     private static String formatToolError(ToolCall call, IOException error) {
@@ -1277,15 +1474,15 @@ public class NemoClient {
                             property("max_results", integerSchema("Maximum number of matches to return."))),
                             List.of("query"))));
         }
-        if (configuration.toolRunCommand()) {
+        if (configuration.toolRunCommand() && isToolAllowedByPermission(configuration, "run_command")) {
             tools.add(functionTool("run_command",
-                    "Run a shell command in the workspace and return exit code, stdout, and stderr.",
+                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables.",
                     schema(List.of(
                             property("command", stringSchema("Shell command to execute.")),
                             property("cwd", stringSchema("Optional working directory relative to the workspace root."))),
                             List.of("command"))));
         }
-        if (configuration.toolWriteFile()) {
+        if (configuration.toolWriteFile() && isToolAllowedByPermission(configuration, "write_file")) {
             tools.add(functionTool("write_file",
                     "Create or overwrite a file in the workspace. Use this to apply code changes after reading the file you want to edit.",
                     schema(List.of(
@@ -1293,7 +1490,7 @@ public class NemoClient {
                             property("content", stringSchema("Full file contents to write."))),
                             List.of("path", "content"))));
         }
-        if (configuration.toolApplyPatch()) {
+        if (configuration.toolApplyPatch() && isToolAllowedByPermission(configuration, "apply_patch")) {
             tools.add(functionTool("apply_patch",
                     "Apply a targeted unified diff patch inside the workspace. Prefer this for small edits instead of rewriting whole files.",
                     schema(List.of(
@@ -1313,14 +1510,14 @@ public class NemoClient {
                             property("path", stringSchema("Optional path relative to the workspace root."))),
                             List.of())));
         }
-        if (configuration.toolGitAdd()) {
+        if (configuration.toolGitAdd() && isToolAllowedByPermission(configuration, "git_add")) {
             tools.add(functionTool("git_add",
                     "Stage files in git. Use this before git_commit when the user asks you to commit changes.",
                     schema(List.of(
                             property("path", stringSchema("Optional file or directory path relative to the workspace root. Defaults to the whole workspace."))),
                             List.of())));
         }
-        if (configuration.toolGitCommit()) {
+        if (configuration.toolGitCommit() && isToolAllowedByPermission(configuration, "git_commit")) {
             tools.add(functionTool("git_commit",
                     "Create a git commit from the staged changes.",
                     schema(List.of(
@@ -1385,6 +1582,10 @@ public class NemoClient {
     }
 
     static String executeTool(Configuration configuration, BufferContext context, ToolCall call) throws IOException, InterruptedException {
+        String permissionBlock = permissionBlock(configuration, call.name());
+        if (permissionBlock != null) {
+            return permissionBlock;
+        }
         return switch (call.name()) {
         case "web_search" -> webSearch(call.arguments());
         case "list_files" -> listFiles(configuration, context, call.arguments());
@@ -1399,6 +1600,21 @@ public class NemoClient {
         case "git_commit" -> gitCommit(configuration, context, call.arguments());
         default -> "Unknown tool: " + call.name();
         };
+    }
+
+    static boolean isToolAllowedByPermission(Configuration configuration, String toolName) {
+        return permissionBlock(configuration, toolName) == null;
+    }
+
+    private static String permissionBlock(Configuration configuration, String toolName) {
+        if (!"read_only".equals(configuration.toolPermissionMode())) {
+            return null;
+        }
+        if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName)) {
+            return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
+                    + "Use :permissions workspace-write to allow workspace changes.";
+        }
+        return null;
     }
 
     static Path resolveWorkspaceRoot(Configuration configuration, BufferContext context) {
@@ -1544,6 +1760,10 @@ public class NemoClient {
         String rawCwd = stringArgument(arguments, "cwd", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
+        String policyBlock = commandPolicyBlock(configuration, command);
+        if (policyBlock != null) {
+            return "Tool run_command blocked by Nemo policy: " + policyBlock;
+        }
         String mavenHint = mavenAlsoMakeHint(command);
         if (mavenHint != null) {
             return mavenHint;
@@ -1571,6 +1791,63 @@ public class NemoClient {
                 stdout,
                 "stderr:",
                 stderr));
+    }
+
+    private static String commandPolicyBlock(Configuration configuration, String command) {
+        if ("trusted".equals(configuration.toolCommandPolicy()) || "full_access".equals(configuration.toolPermissionMode())) {
+            return null;
+        }
+        if (command == null || command.isBlank()) {
+            return "command is empty";
+        }
+        String trimmed = command.trim();
+        String disallowedSyntax = disallowedShellSyntax(trimmed);
+        if (disallowedSyntax != null) {
+            return "restricted mode does not allow shell " + disallowedSyntax;
+        }
+
+        String executable = firstShellWord(trimmed);
+        if (executable.isBlank()) {
+            return "command is empty";
+        }
+        if (executable.startsWith("/") || executable.startsWith("~")) {
+            return "restricted mode does not allow absolute executable paths";
+        }
+        if (List.of("cd", "sudo", "su", "rm", "chmod", "chown", "curl", "wget", "ssh", "scp", "rsync")
+                .contains(executable)) {
+            return "restricted mode does not allow " + executable;
+        }
+        return null;
+    }
+
+    private static String disallowedShellSyntax(String command) {
+        if (command.contains("\n") || command.contains("\r")) {
+            return "newlines";
+        }
+        for (String token : List.of("&&", "||", "$(", "`", "<(", ">(")) {
+            if (command.contains(token)) {
+                return token;
+            }
+        }
+        for (int i = 0; i < command.length(); ++i) {
+            char c = command.charAt(i);
+            if (c == ';' || c == '|' || c == '>' || c == '<') {
+                return Character.toString(c);
+            }
+        }
+        return null;
+    }
+
+    private static String firstShellWord(String command) {
+        var word = new StringBuilder();
+        for (int i = 0; i < command.length(); ++i) {
+            char c = command.charAt(i);
+            if (Character.isWhitespace(c)) {
+                break;
+            }
+            word.append(c);
+        }
+        return word.toString();
     }
 
     static String mavenAlsoMakeHint(String command) {
@@ -2324,11 +2601,13 @@ public class NemoClient {
         }
 
         var promptTurns = new ArrayList<>(conversation._turns);
+        var requestConfiguration = conversation._configuration;
+        var requestContext = conversation._context;
         var worker = new Thread(() -> {
             try {
-                ResponseResult response = request(conversation._configuration, conversation._context, promptTurns);
+                ResponseResult response = request(requestConfiguration, requestContext, promptTurns);
                 EventThread.getInstance().enqueue(
-                        new RunnableEvent(() -> handleResponse(conversation, requestId, response.text(), response.contextUsagePercent())));
+                        new RunnableEvent(() -> handleResponse(conversation, requestId, response)));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (Exception e) {
@@ -2351,6 +2630,7 @@ public class NemoClient {
             new org.fisk.swim.ui.CommandView.CommandSpec("rename", List.of(), "<title>", "rename the current Nemo session"),
             new org.fisk.swim.ui.CommandView.CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
             new org.fisk.swim.ui.CommandView.CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
             new org.fisk.swim.ui.CommandView.CommandSpec("help", List.of(), "", "list Nemo chat commands"),
             new org.fisk.swim.ui.CommandView.CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
 
@@ -2390,9 +2670,12 @@ public class NemoClient {
         case ":delete":
             handleDeleteCommand(conversation, argument);
             return;
+        case ":permissions":
+            handlePermissionsCommand(conversation, argument);
+            return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :help, :q");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :help, :q");
             return;
         case ":q":
         case ":quit":
@@ -2404,6 +2687,43 @@ public class NemoClient {
         default:
             appendAssistantNote(conversation, "Unknown command: " + trimmed);
         }
+    }
+
+    private void handlePermissionsCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            appendAssistantNote(conversation, formatPermissions(conversation._configuration));
+            return;
+        }
+
+        String mode = Configuration.normalizeToolPermissionMode(argument);
+        String requested = argument.trim().toLowerCase().replace('_', '-');
+        if (!displayPermissionMode(mode).equals(requested)) {
+            appendAssistantNote(conversation, "Usage: :permissions read-only|workspace-write|full-access");
+            return;
+        }
+
+        conversation._configuration = conversation._configuration.withToolPermissionMode(mode);
+        appendAssistantNote(conversation, formatPermissions(conversation._configuration));
+    }
+
+    private static String formatPermissions(Configuration configuration) {
+        var lines = new ArrayList<String>();
+        lines.add("Permissions:");
+        lines.add("- mode: " + displayPermissionMode(configuration.toolPermissionMode()));
+        lines.add("- command policy: " + effectiveCommandPolicy(configuration));
+        lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit");
+        return String.join("\n", lines);
+    }
+
+    private static String displayPermissionMode(String mode) {
+        return mode.replace('_', '-');
+    }
+
+    private static String effectiveCommandPolicy(Configuration configuration) {
+        if ("full_access".equals(configuration.toolPermissionMode())) {
+            return "trusted (full-access)";
+        }
+        return configuration.toolCommandPolicy();
     }
 
     private void handleAbortCommand(Conversation conversation, String argument) {
@@ -2643,19 +2963,22 @@ public class NemoClient {
         }
     }
 
-    private synchronized void handleResponse(Conversation conversation, long requestId, String response, Integer contextUsagePercent) {
+    private synchronized void handleResponse(Conversation conversation, long requestId, ResponseResult response) {
         if (conversation._activeRequestId != requestId) {
             return;
         }
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
-        conversation._contextUsagePercent = contextUsagePercent;
+        conversation._contextUsagePercent = response.contextUsagePercent();
         conversation._activeRequestId = 0;
         conversation._worker = null;
-        appendTurn(conversation, new ChatTurn("nemo", response));
+        for (ToolTrace trace : response.toolTraces()) {
+            appendTurn(conversation, new ChatTurn("tool", trace.text(), false));
+        }
+        appendTurn(conversation, new ChatTurn("nemo", response.text()));
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
-            conversation._panelView.setContextUsagePercent(contextUsagePercent);
+            conversation._panelView.setContextUsagePercent(response.contextUsagePercent());
         }
     }
 

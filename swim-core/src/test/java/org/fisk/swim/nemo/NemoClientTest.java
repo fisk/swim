@@ -135,7 +135,7 @@ class NemoClientTest {
                 List.of(new NemoSkillDocument("SKILLS.md", "skill-start\n" + "s".repeat(5_000) + "\nskill-end")));
 
         assertTrue(prompt.length() <= promptBudgetChars(700));
-        assertTrue(prompt.contains("Applicable SKILLS.md instructions (budgeted):"));
+        assertTrue(prompt.contains("Applicable workspace instructions (budgeted):"));
         assertTrue(prompt.contains("skill-start"));
         assertFalse(prompt.contains("skill-end"));
         assertTrue(prompt.contains("me> current request must survive"));
@@ -181,6 +181,8 @@ class NemoClientTest {
                 "header.client=swim",
                 "tool.web_search=true",
                 "tool.run_command=false",
+                "tool.command_policy=trusted",
+                "tool.permission_mode=read-only",
                 "tool.write_file=false",
                 "tool.git_add=false",
                 "tool.git_commit=false",
@@ -197,6 +199,8 @@ class NemoClientTest {
         assertEquals("xhigh", configuration.reasoningEffort());
         assertEquals("swim", configuration.headers().get("client"));
         assertTrue(configuration.toolWebSearch());
+        assertEquals("trusted", configuration.toolCommandPolicy());
+        assertEquals("read_only", configuration.toolPermissionMode());
         assertEquals(42, configuration.toolMaxResults());
         assertTrue(!configuration.toolRunCommand());
         assertTrue(!configuration.toolWriteFile());
@@ -262,7 +266,9 @@ class NemoClientTest {
                     "maxChars": 512
                   },
                   "tools": {
-                    "runCommand": false
+                    "runCommand": false,
+                    "commandPolicy": "trusted",
+                    "permissionMode": "full-access"
                   }
                 }
                 """);
@@ -281,6 +287,8 @@ class NemoClientTest {
         assertEquals(3, configuration.skillsMaxFiles());
         assertEquals(512, configuration.skillsMaxChars());
         assertFalse(configuration.toolRunCommand());
+        assertEquals("trusted", configuration.toolCommandPolicy());
+        assertEquals("full_access", configuration.toolPermissionMode());
     }
 
     @Test
@@ -304,11 +312,55 @@ class NemoClientTest {
                 configuration,
                 skills);
 
-        assertTrue(prompt.contains("Applicable SKILLS.md instructions"));
+        assertTrue(prompt.contains("Applicable workspace instructions"));
         assertTrue(prompt.contains("--- SKILLS.md ---"));
         assertTrue(prompt.contains("Root skill"));
         assertTrue(prompt.contains("--- src/SKILLS.md ---"));
         assertTrue(prompt.contains("Nested skill"));
+    }
+
+    @Test
+    void loadGuidanceIncludesRootAndNestedAgentsInOrder() throws IOException {
+        Path project = tempDir.resolve("project");
+        Path src = project.resolve("src");
+        Files.createDirectories(src);
+        Files.writeString(project.resolve("AGENTS.md"), "Root agents");
+        Files.writeString(src.resolve("AGENTS.md"), "Nested agents");
+        Path file = src.resolve("Demo.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .skillsEnabled(true)
+                .workspaceRoot(project)
+                .build();
+
+        var guidance = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
+
+        assertEquals(List.of("AGENTS.md", "src/AGENTS.md"),
+                guidance.stream().map(NemoSkillDocument::relativePath).toList());
+        assertEquals("Root agents", guidance.get(0).content());
+        assertEquals("Nested agents", guidance.get(1).content());
+    }
+
+    @Test
+    void loadGuidancePrefersAgentsOverrideOverAgents() throws IOException {
+        Path project = tempDir.resolve("project");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("AGENTS.md"), "Base agents");
+        Files.writeString(project.resolve("AGENTS.override.md"), "Override agents");
+        Path file = project.resolve("Demo.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .skillsEnabled(true)
+                .workspaceRoot(project)
+                .build();
+
+        var guidance = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
+
+        assertEquals(List.of("AGENTS.override.md"),
+                guidance.stream().map(NemoSkillDocument::relativePath).toList());
+        assertEquals("Override agents", guidance.get(0).content());
     }
 
     @Test
@@ -422,6 +474,34 @@ class NemoClientTest {
     }
 
     @Test
+    void buildToolsOmitsMutatingToolsInReadOnlyMode() {
+        var configuration = NemoClient.Configuration.builder()
+                .toolWebSearch(true)
+                .toolPermissionMode("read-only")
+                .build();
+
+        var tools = NemoClient.buildTools(configuration);
+        var names = new java.util.ArrayList<String>();
+        for (var tool : tools) {
+            var object = tool.getAsJsonObject();
+            if (object.has("name")) {
+                names.add(object.get("name").getAsString());
+            }
+        }
+
+        assertTrue(names.contains("list_files"));
+        assertTrue(names.contains("read_file"));
+        assertTrue(names.contains("search_files"));
+        assertTrue(names.contains("git_status"));
+        assertTrue(names.contains("git_diff"));
+        assertFalse(names.contains("run_command"));
+        assertFalse(names.contains("write_file"));
+        assertFalse(names.contains("apply_patch"));
+        assertFalse(names.contains("git_add"));
+        assertFalse(names.contains("git_commit"));
+    }
+
+    @Test
     void executesReadListAndSearchToolsInsideWorkspace() throws Exception {
         Path project = tempDir.resolve("project");
         Path file = project.resolve("src/Main.txt");
@@ -495,6 +575,109 @@ class NemoClientTest {
 
         assertTrue(output.contains("exit_code: 0"));
         assertTrue(output.contains("ok"));
+    }
+
+    @Test
+    void runCommandBlocksShellControlOperatorsByDefault() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path owned = project.resolve("owned.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
+
+        assertTrue(output.contains("blocked by Nemo policy"));
+        assertFalse(Files.exists(owned));
+    }
+
+    @Test
+    void runCommandBlocksDangerousExecutablesByDefault() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked", "run_command", json(Map.of("command", "rm note.txt"))));
+
+        assertTrue(output.contains("blocked by Nemo policy"));
+        assertTrue(Files.exists(file));
+    }
+
+    @Test
+    void runCommandTrustedPolicyPreservesRawShellBehavior() throws Exception {
+        Path project = tempDir.resolve("workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path owned = project.resolve("owned.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("trusted")
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("trusted", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
+
+        assertTrue(output.contains("exit_code: 0"));
+        assertTrue(Files.exists(owned));
+    }
+
+    @Test
+    void readOnlyPermissionBlocksMutatingTools() throws Exception {
+        Path project = tempDir.resolve("workspace-read-only");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path owned = project.resolve("owned.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .build();
+
+        String shellOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-shell", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
+        String writeOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-write", "write_file", json(Map.of(
+                        "path", "note.txt",
+                        "content", "changed\n"))));
+
+        assertTrue(shellOutput.contains("blocked by Nemo permissions"));
+        assertTrue(writeOutput.contains("blocked by Nemo permissions"));
+        assertEquals("hello\n", Files.readString(file));
+        assertFalse(Files.exists(owned));
+    }
+
+    @Test
+    void fullAccessPermissionBypassesRestrictedCommandPolicy() throws Exception {
+        Path project = tempDir.resolve("workspace-full-access");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path owned = project.resolve("owned.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("full-access")
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("full-access", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
+
+        assertTrue(output.contains("exit_code: 0"));
+        assertTrue(Files.exists(owned));
     }
 
     @Test
