@@ -25,7 +25,8 @@ class TmuxEditorNemoIT {
         SwimHomeFixture home = SwimHomeFixture.create(tempDir);
         home.writeNemoConfig("""
                 {
-                  "api_key": ""
+                  "provider": "openai",
+                  "apiKey": ""
                 }
                 """);
 
@@ -58,6 +59,10 @@ class TmuxEditorNemoIT {
             session.waitForText("Sessions:", UI_TIMEOUT);
             session.waitForText("Renamed", UI_TIMEOUT);
 
+            session.sendLiteral(":reset");
+            session.sendEnter();
+            session.waitForText("Reset session-", UI_TIMEOUT);
+
             session.sendLiteral(":switch");
             session.sendEnter();
             session.waitForText("Usage: :switch <session-id>", UI_TIMEOUT);
@@ -83,7 +88,8 @@ class TmuxEditorNemoIT {
         SwimHomeFixture home = SwimHomeFixture.create(tempDir);
         home.writeNemoConfig("""
                 {
-                  "api_key": ""
+                  "provider": "openai",
+                  "apiKey": ""
                 }
                 """);
 
@@ -111,7 +117,8 @@ class TmuxEditorNemoIT {
         SwimHomeFixture home = SwimHomeFixture.create(tempDir);
         home.writeNemoConfig("""
                 {
-                  "api_key": ""
+                  "provider": "openai",
+                  "apiKey": ""
                 }
                 """);
 
@@ -137,7 +144,8 @@ class TmuxEditorNemoIT {
         SwimHomeFixture home = SwimHomeFixture.create(tempDir);
         home.writeNemoConfig("""
                 {
-                  "api_key": ""
+                  "provider": "openai",
+                  "apiKey": ""
                 }
                 """);
 

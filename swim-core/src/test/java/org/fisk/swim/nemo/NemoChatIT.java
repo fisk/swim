@@ -333,6 +333,43 @@ class NemoChatIT {
         }
     }
 
+    @Test
+    @Timeout(15)
+    void resetClearsCurrentSessionWithoutDeletingIt() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                {
+                  "provider": "openai",
+                  "apiKey": ""
+                }
+                """);
+        Path file = writeFile("reset.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, "hello nemo");
+                waitForLine(panel, "Set api_key in");
+
+                submit(panel, ":reset");
+                waitForNoLine(panel, "hello nemo");
+                waitForNoLine(panel, "Set api_key in");
+
+                submit(panel, ":sessions");
+                waitForLine(panel, "Sessions:");
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
     private HttpServer startServer(AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
         return startServer(requestCount, 0, responses);
     }
@@ -340,7 +377,7 @@ class NemoChatIT {
     private HttpServer startServer(AtomicInteger requestCount, long responseDelayMillis, List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.setExecutor(Executors.newCachedThreadPool());
-        server.createContext("/responses", exchange -> handleResponse(exchange, requestCount, responseDelayMillis, responses));
+        server.createContext("/chat/completions", exchange -> handleResponse(exchange, requestCount, responseDelayMillis, responses));
         server.start();
         return server;
     }
@@ -367,43 +404,81 @@ class NemoChatIT {
 
     private static JsonObject functionCallResponse() {
         JsonObject response = new JsonObject();
-        JsonArray output = new JsonArray();
-        JsonObject call = new JsonObject();
-        call.addProperty("type", "function_call");
-        call.addProperty("call_id", "call_1");
-        call.addProperty("name", "list_files");
-        call.addProperty("arguments", "{\"path\":\".\",\"max_results\":5}");
-        output.add(call);
-        response.add("output", output);
+        response.addProperty("id", "chatcmpl-tool");
+        response.addProperty("object", "chat.completion");
+        response.addProperty("created", 1);
+        response.addProperty("model", "gpt-5.4");
+        JsonArray choices = new JsonArray();
+        JsonObject choice = new JsonObject();
+        choice.addProperty("index", 0);
+        JsonObject message = new JsonObject();
+        message.addProperty("role", "assistant");
+        message.add("content", com.google.gson.JsonNull.INSTANCE);
+        JsonArray toolCalls = new JsonArray();
+        JsonObject toolCall = new JsonObject();
+        toolCall.addProperty("id", "call_1");
+        toolCall.addProperty("type", "function");
+        JsonObject function = new JsonObject();
+        function.addProperty("name", "list_files");
+        function.addProperty("arguments", "{\"path\":\".\",\"max_results\":5}");
+        toolCall.add("function", function);
+        toolCalls.add(toolCall);
+        message.add("tool_calls", toolCalls);
+        choice.add("message", message);
+        choice.addProperty("finish_reason", "tool_calls");
+        choices.add(choice);
+        response.add("choices", choices);
+        response.add("usage", usage(5000, 100));
         return response;
     }
 
     private static JsonObject writeFileResponse(String path, String content) {
         JsonObject response = new JsonObject();
-        JsonArray output = new JsonArray();
-        JsonObject call = new JsonObject();
-        call.addProperty("type", "function_call");
-        call.addProperty("call_id", "call_write");
-        call.addProperty("name", "write_file");
-        call.addProperty("arguments", "{\"path\":\"" + path + "\",\"content\":\"" + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}");
-        output.add(call);
-        response.add("output", output);
+        response.addProperty("id", "chatcmpl-write");
+        response.addProperty("object", "chat.completion");
+        response.addProperty("created", 1);
+        response.addProperty("model", "gpt-5.4");
+        JsonArray choices = new JsonArray();
+        JsonObject choice = new JsonObject();
+        choice.addProperty("index", 0);
+        JsonObject message = new JsonObject();
+        message.addProperty("role", "assistant");
+        message.add("content", com.google.gson.JsonNull.INSTANCE);
+        JsonArray toolCalls = new JsonArray();
+        JsonObject toolCall = new JsonObject();
+        toolCall.addProperty("id", "call_write");
+        toolCall.addProperty("type", "function");
+        JsonObject function = new JsonObject();
+        function.addProperty("name", "write_file");
+        function.addProperty("arguments", "{\"path\":\"" + path + "\",\"content\":\"" + content.replace("\n", "\\n").replace("\"", "\\\"") + "\"}");
+        toolCall.add("function", function);
+        toolCalls.add(toolCall);
+        message.add("tool_calls", toolCalls);
+        choice.add("message", message);
+        choice.addProperty("finish_reason", "tool_calls");
+        choices.add(choice);
+        response.add("choices", choices);
+        response.add("usage", usage(5000, 100));
         return response;
     }
 
     private static JsonObject textResponse(String text) {
         JsonObject response = new JsonObject();
-        JsonArray output = new JsonArray();
+        response.addProperty("id", "chatcmpl-text");
+        response.addProperty("object", "chat.completion");
+        response.addProperty("created", 1);
+        response.addProperty("model", "gpt-5.4");
+        JsonArray choices = new JsonArray();
+        JsonObject choice = new JsonObject();
+        choice.addProperty("index", 0);
         JsonObject message = new JsonObject();
-        message.addProperty("type", "message");
-        JsonArray content = new JsonArray();
-        JsonObject outputText = new JsonObject();
-        outputText.addProperty("type", "output_text");
-        outputText.addProperty("text", text);
-        content.add(outputText);
-        message.add("content", content);
-        output.add(message);
-        response.add("output", output);
+        message.addProperty("role", "assistant");
+        message.addProperty("content", text);
+        choice.add("message", message);
+        choice.addProperty("finish_reason", "stop");
+        choices.add(choice);
+        response.add("choices", choices);
+        response.add("usage", usage(5000, 100));
         return response;
     }
 
@@ -411,15 +486,24 @@ class NemoChatIT {
         Path configDir = tempDir.resolve(".swim");
         Files.createDirectories(configDir.resolve("nemo"));
         Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=openai-compatible",
                 "api_key=test-token",
                 "model=gpt-5.4",
-                "responses_url=http://127.0.0.1:" + server.getAddress().getPort() + "/responses",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
                 "tool.list_files=true",
                 "tool.read_file=true",
                 "tool.search_files=true",
                 "tool.run_command=false",
                 "tool.write_file=true",
                 "tool.web_search=false"));
+    }
+
+    private static JsonObject usage(int promptTokens, int completionTokens) {
+        JsonObject usage = new JsonObject();
+        usage.addProperty("prompt_tokens", promptTokens);
+        usage.addProperty("completion_tokens", completionTokens);
+        usage.addProperty("total_tokens", promptTokens + completionTokens);
+        return usage;
     }
 
     private String switchToTempUserHome() {
@@ -451,6 +535,18 @@ class NemoChatIT {
             Thread.sleep(50);
         }
         throw new AssertionError("Timed out waiting for line: " + expected + "\nCurrent lines: " + displayLines(panel));
+    }
+
+    private void waitForNoLine(ChatPanelView panel, String unwanted) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            List<String> lines = displayLines(panel);
+            if (lines.stream().noneMatch(line -> line.contains(unwanted))) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for line to disappear: " + unwanted + "\nCurrent lines: " + displayLines(panel));
     }
 
     private void waitForThinking(ChatPanelView panel) throws Exception {

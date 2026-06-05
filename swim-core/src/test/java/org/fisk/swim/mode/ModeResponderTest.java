@@ -53,7 +53,7 @@ class ModeResponderTest {
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('^'));
             assertEquals(0, cursor.getPosition());
 
-            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('!'));
             assertTrue(window.isShowingPanel());
             assertTrue(HeadlessWindowHarness.getField(window, "_panelView") instanceof ChatPanelView);
 

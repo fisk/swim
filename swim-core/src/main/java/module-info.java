@@ -1,4 +1,7 @@
 module org.fisk.swim.core {
+    requires langchain4j.core;
+    requires langchain4j.http.client.jdk;
+    requires langchain4j.open.ai;
     requires com.google.gson;
     requires com.googlecode.lanterna;
     requires static java.compiler;

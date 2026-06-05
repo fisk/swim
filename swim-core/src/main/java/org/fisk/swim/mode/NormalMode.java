@@ -320,9 +320,6 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("N", () -> {
             window.getCommandView().searchPrevious();
         });
-        _rootResponder.addEventResponder("<ESC>", () -> {
-            NemoClient.getInstance().run(window.getBufferContext(), "");
-        });
     }
 
     private void announceIfUnmoved(boolean changed, String message) {

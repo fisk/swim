@@ -63,7 +63,7 @@ public final class SwimHomeFixture {
     }
 
     public Path writeNemoConfig(String text) throws IOException {
-        Path path = _swimHome.resolve("nemo.conf");
+        Path path = nemoHome().resolve("nemo.conf");
         Files.writeString(path, text);
         return path;
     }

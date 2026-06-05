@@ -144,6 +144,28 @@ class NormalModeTest {
     }
 
     @Test
+    void escapeDoesNotStartNemoChat() throws Exception {
+        Path path = tempDir.resolve("escape-does-not-open-nemo.txt");
+        Files.writeString(path, "abc");
+
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        Files.createDirectories(tempDir.resolve(".swim/nemo"));
+        Files.writeString(tempDir.resolve(".swim/nemo/nemo.conf"), "");
+        resetNemoClientForTests();
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.escape());
+
+            assertTrue(window.getPanelView() == null);
+        } finally {
+            resetNemoClientForTests();
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void greaterThanStartsShellPanel() throws Exception {
         Path path = tempDir.resolve("greater-than-opens-shell.txt");
         Files.writeString(path, "abc");

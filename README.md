@@ -79,7 +79,6 @@ Normal mode uses familiar Vim-style keys:
 | `g n` / `g N` / `g C` | Add next/previous multicursor / clear extras |
 | `Ctrl-o` / `Tab` | Jump backward / forward |
 | `t` | Tree view plugin |
-| `Esc` | Start Nemo / open Nemo chat |
 
 ## Discoverability
 
@@ -94,7 +93,7 @@ SWIM now exposes more of the editor while you work:
 - Typing `:` opens a command popup with matching commands for the current prefix.
 - The command popup uses the full window width and can grow taller when longer descriptions need more room.
 - `Up` and `Down` move through command matches, and `Tab` completes the selected command.
-- Typing `!` or `Esc` opens the Nemo chat pane.
+- Typing `!` opens the Nemo chat pane.
 - Typing `>` opens or reuses a shell panel using your configured `$SHELL` (for example `zsh`).
 - `w <number> Enter` switches to one of the recent fullscreen windows shown in the header.
 
@@ -488,30 +487,47 @@ If your plugin provides UI, register a `SwimPanel` from `load(...)` using the `S
 
 SWIM includes a built-in AI assistant for the current workspace.
 
-Open Nemo from normal mode with `!` or `Esc`.
+Open Nemo from normal mode with `!`.
 
 Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
 
-```properties
-api_key=your_api_key_here
-model=gpt-5.4
-base_url=https://api.openai.com/v1
-
-tool.web_search=false
-tool.list_files=true
-tool.read_file=true
-tool.search_files=true
-tool.run_command=true
-tool.write_file=true
-tool.apply_patch=true
-tool.git_status=true
-tool.git_diff=true
-tool.git_add=true
-tool.git_commit=true
-tool.max_results=200
-tool.max_output_chars=12000
-tool.command_timeout_seconds=20
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5.4",
+  "apiKeyEnv": "SWIM_NEMO_API_KEY",
+  "baseUrl": "https://api.openai.com/v1",
+  "contextWindowTokens": 200000,
+  "timeoutSeconds": 60,
+  "maxRetries": 2,
+  "skills": {
+    "enabled": true,
+    "maxFiles": 8,
+    "maxChars": 12000
+  },
+  "tools": {
+    "listFiles": true,
+    "readFile": true,
+    "searchFiles": true,
+    "runCommand": true,
+    "writeFile": true,
+    "applyPatch": true,
+    "gitStatus": true,
+    "gitDiff": true,
+    "gitAdd": true,
+    "gitCommit": true,
+    "maxResults": 200,
+    "maxOutputChars": 12000,
+    "commandTimeoutSeconds": 20
+  }
+}
 ```
+
+The config loader also accepts the older properties format and still migrates `~/.swim/nemo.conf` into the Nemo directory on first use.
+
+Nemo now runs through langchain4j, so OpenAI-compatible vendors can be selected with `provider`, `baseUrl`, custom headers, query parameters, and custom request parameters.
+
+If you place `SKILLS.md` files in the workspace root or in directories above the current file, Nemo will include the applicable skill instructions in its prompt.
 
 Inside the Nemo chat pane:
 
@@ -523,6 +539,7 @@ Inside the Nemo chat pane:
 - `:new [title]` creates a session
 - `:switch <session-id>` changes sessions
 - `:rename <title>` renames the current session
+- `:reset [session-id]` clears a session without deleting it
 - `:delete [session-id]` deletes a session
 - `:abort [session-id|all]` stops running work
 - `:help` lists chat commands

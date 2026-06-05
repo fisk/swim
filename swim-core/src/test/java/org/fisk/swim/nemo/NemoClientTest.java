@@ -158,6 +158,79 @@ class NemoClientTest {
     }
 
     @Test
+    void loadsConfigurationFromJsonFileWithLangchainSettings() throws IOException {
+        Path config = tempDir.resolve("nemo.conf");
+        Files.writeString(config, """
+                {
+                  "provider": "openai-compatible",
+                  "model": "gpt-5.4-mini",
+                  "apiKey": "token",
+                  "baseUrl": "https://example.invalid/openai/v1",
+                  "headers": {
+                    "X-Test": "swim"
+                  },
+                  "queryParameters": {
+                    "api-version": "2026-01-01"
+                  },
+                  "customParameters": {
+                    "reasoning": "medium"
+                  },
+                  "contextWindowTokens": 65536,
+                  "skills": {
+                    "enabled": true,
+                    "maxFiles": 3,
+                    "maxChars": 512
+                  },
+                  "tools": {
+                    "runCommand": false
+                  }
+                }
+                """);
+
+        var configuration = NemoClient.loadConfiguration(config);
+
+        assertEquals("openai-compatible", configuration.provider());
+        assertEquals("gpt-5.4-mini", configuration.model());
+        assertEquals("token", configuration.apiKey());
+        assertEquals("https://example.invalid/openai/v1", configuration.baseUrl());
+        assertEquals("swim", configuration.headers().get("X-Test"));
+        assertEquals("2026-01-01", configuration.queryParameters().get("api-version"));
+        assertEquals("medium", configuration.customParameters().get("reasoning"));
+        assertEquals(65536, configuration.contextWindowTokens());
+        assertEquals(3, configuration.skillsMaxFiles());
+        assertEquals(512, configuration.skillsMaxChars());
+        assertFalse(configuration.toolRunCommand());
+    }
+
+    @Test
+    void buildInputIncludesApplicableSkillsFiles() throws IOException {
+        Path project = tempDir.resolve("project");
+        Path src = project.resolve("src");
+        Files.createDirectories(src);
+        Files.writeString(project.resolve("SKILLS.md"), "Root skill");
+        Files.writeString(src.resolve("SKILLS.md"), "Nested skill");
+        Path file = src.resolve("Demo.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .skillsEnabled(true)
+                .workspaceRoot(project)
+                .build();
+
+        var skills = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "Explain")),
+                configuration,
+                skills);
+
+        assertTrue(prompt.contains("Applicable SKILLS.md instructions"));
+        assertTrue(prompt.contains("--- SKILLS.md ---"));
+        assertTrue(prompt.contains("Root skill"));
+        assertTrue(prompt.contains("--- src/SKILLS.md ---"));
+        assertTrue(prompt.contains("Nested skill"));
+    }
+
+    @Test
     void explicitResponsesUrlWinsOverBaseUrl() {
         assertEquals("https://example.invalid/custom/responses",
                 NemoClient.buildResponsesUri("https://example.invalid/custom/responses", "https://ignored.invalid").toString());

@@ -2,11 +2,7 @@ package org.fisk.swim.nemo;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,12 +40,23 @@ public class NemoClient {
     private static final Gson _gson = new Gson();
     private static final String _defaultModel = "gpt-4.1";
     private static final String _defaultBaseUrl = "https://api.openai.com/v1";
+    private static final String _defaultProvider = "openai";
+    private static final String _defaultSystemPrompt = String.join("\n",
+            "You are Nemo, an AI assistant inside the SWIM text editor.",
+            "Answer concisely and take action when the user asks for a fix or change.",
+            "Use the current file first, but work across the workspace when the task requires it.",
+            "Avoid unnecessary questions. Make reasonable decisions unless the intent is genuinely ambiguous.",
+            "When applicable, follow instructions from relevant SKILLS.md files in the workspace.");
     private static final int _defaultMaxResults = 200;
     private static final int _defaultMaxOutputChars = 12_000;
     private static final int _defaultCommandTimeoutSeconds = 20;
+    private static final int _defaultTimeoutSeconds = 60;
+    private static final int _defaultMaxRetries = 2;
+    private static final int _defaultSkillsMaxFiles = 8;
+    private static final int _defaultSkillsMaxChars = 12_000;
     private static final NemoClient _instance = new NemoClient();
 
-    private final HttpClient _httpClient = HttpClient.newHttpClient();
+    private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private boolean _sessionsLoaded;
@@ -123,26 +130,470 @@ public class NemoClient {
         }
     }
 
-    record Configuration(
-            String apiKey,
-            String model,
-            URI responsesUri,
-            Map<String, String> headers,
-            Path workspaceRoot,
-            boolean toolWebSearch,
-            boolean toolListFiles,
-            boolean toolReadFile,
-            boolean toolSearchFiles,
-            boolean toolRunCommand,
-            boolean toolWriteFile,
-            boolean toolApplyPatch,
-            boolean toolGitStatus,
-            boolean toolGitDiff,
-            boolean toolGitAdd,
-            boolean toolGitCommit,
-            int toolMaxResults,
-            int toolMaxOutputChars,
-            int toolCommandTimeoutSeconds) {
+    static final class Configuration {
+        private final String _provider;
+        private final String _apiKey;
+        private final String _model;
+        private final String _baseUrl;
+        private final String _organization;
+        private final String _project;
+        private final Map<String, String> _headers;
+        private final Map<String, String> _queryParameters;
+        private final Map<String, Object> _customParameters;
+        private final Path _workspaceRoot;
+        private final String _systemPrompt;
+        private final Integer _contextWindowTokens;
+        private final Integer _maxOutputTokens;
+        private final Double _temperature;
+        private final Double _topP;
+        private final int _timeoutSeconds;
+        private final int _maxRetries;
+        private final boolean _logRequests;
+        private final boolean _logResponses;
+        private final boolean _toolWebSearch;
+        private final boolean _toolListFiles;
+        private final boolean _toolReadFile;
+        private final boolean _toolSearchFiles;
+        private final boolean _toolRunCommand;
+        private final boolean _toolWriteFile;
+        private final boolean _toolApplyPatch;
+        private final boolean _toolGitStatus;
+        private final boolean _toolGitDiff;
+        private final boolean _toolGitAdd;
+        private final boolean _toolGitCommit;
+        private final boolean _skillsEnabled;
+        private final int _skillsMaxFiles;
+        private final int _skillsMaxChars;
+        private final boolean _strictTools;
+        private final boolean _parallelToolCalls;
+        private final boolean _returnThinking;
+        private final boolean _sendThinking;
+        private final String _thinkingFieldName;
+        private final int _toolMaxResults;
+        private final int _toolMaxOutputChars;
+        private final int _toolCommandTimeoutSeconds;
+
+        Configuration(
+                String apiKey,
+                String model,
+                URI responsesUri,
+                Map<String, String> headers,
+                Path workspaceRoot,
+                boolean toolWebSearch,
+                boolean toolListFiles,
+                boolean toolReadFile,
+                boolean toolSearchFiles,
+                boolean toolRunCommand,
+                boolean toolWriteFile,
+                boolean toolApplyPatch,
+                boolean toolGitStatus,
+                boolean toolGitDiff,
+                boolean toolGitAdd,
+                boolean toolGitCommit,
+                int toolMaxResults,
+                int toolMaxOutputChars,
+                int toolCommandTimeoutSeconds) {
+            this(builder()
+                    .provider("openai-compatible")
+                    .apiKey(apiKey)
+                    .model(model)
+                    .baseUrl(responsesUri == null ? _defaultBaseUrl : responsesBaseToChatBase(responsesUri))
+                    .headers(stripReservedHeaders(headers))
+                    .workspaceRoot(workspaceRoot)
+                    .toolWebSearch(toolWebSearch)
+                    .toolListFiles(toolListFiles)
+                    .toolReadFile(toolReadFile)
+                    .toolSearchFiles(toolSearchFiles)
+                    .toolRunCommand(toolRunCommand)
+                    .toolWriteFile(toolWriteFile)
+                    .toolApplyPatch(toolApplyPatch)
+                    .toolGitStatus(toolGitStatus)
+                    .toolGitDiff(toolGitDiff)
+                    .toolGitAdd(toolGitAdd)
+                    .toolGitCommit(toolGitCommit)
+                    .toolMaxResults(toolMaxResults)
+                    .toolMaxOutputChars(toolMaxOutputChars)
+                    .toolCommandTimeoutSeconds(toolCommandTimeoutSeconds));
+        }
+
+        private Configuration(Builder builder) {
+            _provider = builder._provider;
+            _apiKey = builder._apiKey;
+            _model = builder._model;
+            _baseUrl = builder._baseUrl;
+            _organization = builder._organization;
+            _project = builder._project;
+            _headers = Map.copyOf(builder._headers);
+            _queryParameters = Map.copyOf(builder._queryParameters);
+            _customParameters = Map.copyOf(builder._customParameters);
+            _workspaceRoot = builder._workspaceRoot;
+            _systemPrompt = builder._systemPrompt;
+            _contextWindowTokens = builder._contextWindowTokens;
+            _maxOutputTokens = builder._maxOutputTokens;
+            _temperature = builder._temperature;
+            _topP = builder._topP;
+            _timeoutSeconds = builder._timeoutSeconds;
+            _maxRetries = builder._maxRetries;
+            _logRequests = builder._logRequests;
+            _logResponses = builder._logResponses;
+            _toolWebSearch = builder._toolWebSearch;
+            _toolListFiles = builder._toolListFiles;
+            _toolReadFile = builder._toolReadFile;
+            _toolSearchFiles = builder._toolSearchFiles;
+            _toolRunCommand = builder._toolRunCommand;
+            _toolWriteFile = builder._toolWriteFile;
+            _toolApplyPatch = builder._toolApplyPatch;
+            _toolGitStatus = builder._toolGitStatus;
+            _toolGitDiff = builder._toolGitDiff;
+            _toolGitAdd = builder._toolGitAdd;
+            _toolGitCommit = builder._toolGitCommit;
+            _skillsEnabled = builder._skillsEnabled;
+            _skillsMaxFiles = builder._skillsMaxFiles;
+            _skillsMaxChars = builder._skillsMaxChars;
+            _strictTools = builder._strictTools;
+            _parallelToolCalls = builder._parallelToolCalls;
+            _returnThinking = builder._returnThinking;
+            _sendThinking = builder._sendThinking;
+            _thinkingFieldName = builder._thinkingFieldName;
+            _toolMaxResults = builder._toolMaxResults;
+            _toolMaxOutputChars = builder._toolMaxOutputChars;
+            _toolCommandTimeoutSeconds = builder._toolCommandTimeoutSeconds;
+        }
+
+        static Builder builder() {
+            return new Builder();
+        }
+
+        static final class Builder {
+            private String _provider = _defaultProvider;
+            private String _apiKey = "";
+            private String _model = _defaultModel;
+            private String _baseUrl = _defaultBaseUrl;
+            private String _organization = "";
+            private String _project = "";
+            private Map<String, String> _headers = new LinkedHashMap<>();
+            private Map<String, String> _queryParameters = new LinkedHashMap<>();
+            private Map<String, Object> _customParameters = new LinkedHashMap<>();
+            private Path _workspaceRoot;
+            private String _systemPrompt = _defaultSystemPrompt;
+            private Integer _contextWindowTokens;
+            private Integer _maxOutputTokens;
+            private Double _temperature;
+            private Double _topP;
+            private int _timeoutSeconds = _defaultTimeoutSeconds;
+            private int _maxRetries = _defaultMaxRetries;
+            private boolean _logRequests;
+            private boolean _logResponses;
+            private boolean _toolWebSearch;
+            private boolean _toolListFiles = true;
+            private boolean _toolReadFile = true;
+            private boolean _toolSearchFiles = true;
+            private boolean _toolRunCommand = true;
+            private boolean _toolWriteFile = true;
+            private boolean _toolApplyPatch = true;
+            private boolean _toolGitStatus = true;
+            private boolean _toolGitDiff = true;
+            private boolean _toolGitAdd = true;
+            private boolean _toolGitCommit = true;
+            private boolean _skillsEnabled = true;
+            private int _skillsMaxFiles = _defaultSkillsMaxFiles;
+            private int _skillsMaxChars = _defaultSkillsMaxChars;
+            private boolean _strictTools;
+            private boolean _parallelToolCalls;
+            private boolean _returnThinking;
+            private boolean _sendThinking;
+            private String _thinkingFieldName = "reasoning_content";
+            private int _toolMaxResults = _defaultMaxResults;
+            private int _toolMaxOutputChars = _defaultMaxOutputChars;
+            private int _toolCommandTimeoutSeconds = _defaultCommandTimeoutSeconds;
+
+            Builder provider(String provider) {
+                _provider = provider == null || provider.isBlank() ? _defaultProvider : provider.trim().toLowerCase();
+                return this;
+            }
+
+            Builder apiKey(String apiKey) {
+                _apiKey = apiKey == null ? "" : apiKey.trim();
+                return this;
+            }
+
+            Builder model(String model) {
+                if (model != null && !model.isBlank()) {
+                    _model = model.trim();
+                }
+                return this;
+            }
+
+            Builder baseUrl(String baseUrl) {
+                if (baseUrl != null && !baseUrl.isBlank()) {
+                    _baseUrl = baseUrl.trim();
+                }
+                return this;
+            }
+
+            Builder organization(String organization) {
+                _organization = organization == null ? "" : organization.trim();
+                return this;
+            }
+
+            Builder project(String project) {
+                _project = project == null ? "" : project.trim();
+                return this;
+            }
+
+            Builder headers(Map<String, String> headers) {
+                _headers = new LinkedHashMap<>(headers);
+                return this;
+            }
+
+            Builder queryParameters(Map<String, String> queryParameters) {
+                _queryParameters = new LinkedHashMap<>(queryParameters);
+                return this;
+            }
+
+            Builder customParameters(Map<String, Object> customParameters) {
+                _customParameters = new LinkedHashMap<>(customParameters);
+                return this;
+            }
+
+            Builder workspaceRoot(Path workspaceRoot) {
+                _workspaceRoot = workspaceRoot;
+                return this;
+            }
+
+            Builder systemPrompt(String systemPrompt) {
+                if (systemPrompt != null && !systemPrompt.isBlank()) {
+                    _systemPrompt = systemPrompt.trim();
+                }
+                return this;
+            }
+
+            Builder contextWindowTokens(Integer contextWindowTokens) {
+                _contextWindowTokens = contextWindowTokens;
+                return this;
+            }
+
+            Builder maxOutputTokens(Integer maxOutputTokens) {
+                _maxOutputTokens = maxOutputTokens;
+                return this;
+            }
+
+            Builder temperature(Double temperature) {
+                _temperature = temperature;
+                return this;
+            }
+
+            Builder topP(Double topP) {
+                _topP = topP;
+                return this;
+            }
+
+            Builder timeoutSeconds(int timeoutSeconds) {
+                _timeoutSeconds = timeoutSeconds;
+                return this;
+            }
+
+            Builder maxRetries(int maxRetries) {
+                _maxRetries = maxRetries;
+                return this;
+            }
+
+            Builder logRequests(boolean logRequests) {
+                _logRequests = logRequests;
+                return this;
+            }
+
+            Builder logResponses(boolean logResponses) {
+                _logResponses = logResponses;
+                return this;
+            }
+
+            Builder toolWebSearch(boolean toolWebSearch) {
+                _toolWebSearch = toolWebSearch;
+                return this;
+            }
+
+            Builder toolListFiles(boolean toolListFiles) {
+                _toolListFiles = toolListFiles;
+                return this;
+            }
+
+            Builder toolReadFile(boolean toolReadFile) {
+                _toolReadFile = toolReadFile;
+                return this;
+            }
+
+            Builder toolSearchFiles(boolean toolSearchFiles) {
+                _toolSearchFiles = toolSearchFiles;
+                return this;
+            }
+
+            Builder toolRunCommand(boolean toolRunCommand) {
+                _toolRunCommand = toolRunCommand;
+                return this;
+            }
+
+            Builder toolWriteFile(boolean toolWriteFile) {
+                _toolWriteFile = toolWriteFile;
+                return this;
+            }
+
+            Builder toolApplyPatch(boolean toolApplyPatch) {
+                _toolApplyPatch = toolApplyPatch;
+                return this;
+            }
+
+            Builder toolGitStatus(boolean toolGitStatus) {
+                _toolGitStatus = toolGitStatus;
+                return this;
+            }
+
+            Builder toolGitDiff(boolean toolGitDiff) {
+                _toolGitDiff = toolGitDiff;
+                return this;
+            }
+
+            Builder toolGitAdd(boolean toolGitAdd) {
+                _toolGitAdd = toolGitAdd;
+                return this;
+            }
+
+            Builder toolGitCommit(boolean toolGitCommit) {
+                _toolGitCommit = toolGitCommit;
+                return this;
+            }
+
+            Builder skillsEnabled(boolean skillsEnabled) {
+                _skillsEnabled = skillsEnabled;
+                return this;
+            }
+
+            Builder skillsMaxFiles(int skillsMaxFiles) {
+                _skillsMaxFiles = skillsMaxFiles;
+                return this;
+            }
+
+            Builder skillsMaxChars(int skillsMaxChars) {
+                _skillsMaxChars = skillsMaxChars;
+                return this;
+            }
+
+            Builder strictTools(boolean strictTools) {
+                _strictTools = strictTools;
+                return this;
+            }
+
+            Builder parallelToolCalls(boolean parallelToolCalls) {
+                _parallelToolCalls = parallelToolCalls;
+                return this;
+            }
+
+            Builder returnThinking(boolean returnThinking) {
+                _returnThinking = returnThinking;
+                return this;
+            }
+
+            Builder sendThinking(boolean sendThinking) {
+                _sendThinking = sendThinking;
+                return this;
+            }
+
+            Builder thinkingFieldName(String thinkingFieldName) {
+                if (thinkingFieldName != null && !thinkingFieldName.isBlank()) {
+                    _thinkingFieldName = thinkingFieldName.trim();
+                }
+                return this;
+            }
+
+            Builder toolMaxResults(int toolMaxResults) {
+                _toolMaxResults = toolMaxResults;
+                return this;
+            }
+
+            Builder toolMaxOutputChars(int toolMaxOutputChars) {
+                _toolMaxOutputChars = toolMaxOutputChars;
+                return this;
+            }
+
+            Builder toolCommandTimeoutSeconds(int toolCommandTimeoutSeconds) {
+                _toolCommandTimeoutSeconds = toolCommandTimeoutSeconds;
+                return this;
+            }
+
+            Configuration build() {
+                return new Configuration(this);
+            }
+        }
+
+        String provider() { return _provider; }
+        String apiKey() { return _apiKey; }
+        String model() { return _model; }
+        String baseUrl() { return _baseUrl; }
+        String organization() { return _organization; }
+        String project() { return _project; }
+        Map<String, String> headers() { return _headers; }
+        Map<String, String> queryParameters() { return _queryParameters; }
+        Map<String, Object> customParameters() { return _customParameters; }
+        Path workspaceRoot() { return _workspaceRoot; }
+        String systemPrompt() { return _systemPrompt; }
+        Integer contextWindowTokens() { return _contextWindowTokens; }
+        Integer maxOutputTokens() { return _maxOutputTokens; }
+        Double temperature() { return _temperature; }
+        Double topP() { return _topP; }
+        int timeoutSeconds() { return _timeoutSeconds; }
+        int maxRetries() { return _maxRetries; }
+        boolean logRequests() { return _logRequests; }
+        boolean logResponses() { return _logResponses; }
+        boolean toolWebSearch() { return _toolWebSearch; }
+        boolean toolListFiles() { return _toolListFiles; }
+        boolean toolReadFile() { return _toolReadFile; }
+        boolean toolSearchFiles() { return _toolSearchFiles; }
+        boolean toolRunCommand() { return _toolRunCommand; }
+        boolean toolWriteFile() { return _toolWriteFile; }
+        boolean toolApplyPatch() { return _toolApplyPatch; }
+        boolean toolGitStatus() { return _toolGitStatus; }
+        boolean toolGitDiff() { return _toolGitDiff; }
+        boolean toolGitAdd() { return _toolGitAdd; }
+        boolean toolGitCommit() { return _toolGitCommit; }
+        boolean skillsEnabled() { return _skillsEnabled; }
+        int skillsMaxFiles() { return _skillsMaxFiles; }
+        int skillsMaxChars() { return _skillsMaxChars; }
+        boolean strictTools() { return _strictTools; }
+        boolean parallelToolCalls() { return _parallelToolCalls; }
+        boolean returnThinking() { return _returnThinking; }
+        boolean sendThinking() { return _sendThinking; }
+        String thinkingFieldName() { return _thinkingFieldName; }
+        int toolMaxResults() { return _toolMaxResults; }
+        int toolMaxOutputChars() { return _toolMaxOutputChars; }
+        int toolCommandTimeoutSeconds() { return _toolCommandTimeoutSeconds; }
+        boolean requiresApiKey() { return "openai".equals(_provider); }
+        URI responsesUri() { return buildResponsesUri("", _baseUrl); }
+
+        private static String responsesBaseToChatBase(URI responsesUri) {
+            String raw = responsesUri.toString();
+            if (raw.endsWith("/responses")) {
+                return raw.substring(0, raw.length() - "/responses".length());
+            }
+            return raw;
+        }
+
+        private static Map<String, String> stripReservedHeaders(Map<String, String> headers) {
+            var copy = new LinkedHashMap<String, String>();
+            if (headers == null) {
+                return copy;
+            }
+            for (var entry : headers.entrySet()) {
+                String key = entry.getKey();
+                if ("Authorization".equalsIgnoreCase(key)
+                        || "Content-Type".equalsIgnoreCase(key)
+                        || "OpenAI-Organization".equalsIgnoreCase(key)
+                        || "OpenAI-Project".equalsIgnoreCase(key)) {
+                    continue;
+                }
+                copy.put(key, entry.getValue());
+            }
+            return copy;
+        }
     }
 
     static Path getConfigDirectory() {
@@ -166,103 +617,27 @@ public class NemoClient {
     }
 
     static String buildInput(BufferContext context, List<ChatTurn> turns) {
-        var buffer = context.getBuffer();
-        var transcript = new StringBuilder();
-        for (var turn : turns) {
-            if (!turn.includeInPrompt()) {
-                continue;
-            }
-            if (!transcript.isEmpty()) {
-                transcript.append("\n\n");
-            }
-            transcript.append(turn.speaker()).append("> ").append(turn.text());
-        }
-        return String.join("\n",
-                "You are Nemo, an AI assistant inside the SWIM text editor.",
-                "Answer concisely and take action when the user asks for a fix or change.",
-                "Use the current file first, but work across the workspace when the task requires it.",
-                "Avoid unnecessary questions. Make reasonable decisions unless the intent is genuinely ambiguous.",
-                "",
-                "Conversation:",
-                transcript.toString(),
-                "",
-                "Current file:",
-                buffer.getPath().toString(),
-                "",
-                "File contents:",
-                buffer.getString());
+        return NemoPromptBuilder.buildInput(context, turns, Configuration.builder().build(), List.of());
     }
 
     static Configuration loadConfiguration(Path configPath) {
         configPath = migrateLegacyConfigIfNeeded(configPath);
-        var properties = new Properties();
-        if (Files.isRegularFile(configPath)) {
-            try (InputStream input = Files.newInputStream(configPath)) {
-                properties.load(input);
-            } catch (IOException e) {
-                throw new RuntimeException("Unable to read Nemo config " + configPath, e);
+        if (!Files.isRegularFile(configPath)) {
+            return Configuration.builder().build();
+        }
+
+        try {
+            String raw = Files.readString(configPath, StandardCharsets.UTF_8);
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty()) {
+                return Configuration.builder().build();
             }
+            return trimmed.startsWith("{")
+                    ? loadJsonConfiguration(trimmed)
+                    : loadPropertiesConfiguration(raw);
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to read Nemo config " + configPath, e);
         }
-
-        String apiKey = property(properties, "api_key");
-        String model = property(properties, "model");
-        if (model.equals("")) {
-            model = _defaultModel;
-        }
-
-        URI responsesUri = buildResponsesUri(
-                property(properties, "responses_url"),
-                property(properties, "base_url"));
-
-        var headers = new LinkedHashMap<String, String>();
-        if (!apiKey.equals("")) {
-            headers.put("Authorization", "Bearer " + apiKey);
-        }
-        headers.put("Content-Type", "application/json");
-
-        String organization = property(properties, "organization");
-        if (!organization.equals("")) {
-            headers.put("OpenAI-Organization", organization);
-        }
-
-        String project = property(properties, "project");
-        if (!project.equals("")) {
-            headers.put("OpenAI-Project", project);
-        }
-
-        for (String name : properties.stringPropertyNames()) {
-            if (!name.startsWith("header.")) {
-                continue;
-            }
-            String value = property(properties, name);
-            if (value.equals("")) {
-                continue;
-            }
-            headers.put(name.substring("header.".length()), value);
-        }
-
-        String workspaceRoot = property(properties, "workspace_root");
-
-        return new Configuration(
-                apiKey,
-                model,
-                responsesUri,
-                headers,
-                workspaceRoot.equals("") ? null : Path.of(workspaceRoot).toAbsolutePath().normalize(),
-                booleanProperty(properties, "tool.web_search", false),
-                booleanProperty(properties, "tool.list_files", true),
-                booleanProperty(properties, "tool.read_file", true),
-                booleanProperty(properties, "tool.search_files", true),
-                booleanProperty(properties, "tool.run_command", true),
-                booleanProperty(properties, "tool.write_file", true),
-                booleanProperty(properties, "tool.apply_patch", true),
-                booleanProperty(properties, "tool.git_status", true),
-                booleanProperty(properties, "tool.git_diff", true),
-                booleanProperty(properties, "tool.git_add", true),
-                booleanProperty(properties, "tool.git_commit", true),
-                intProperty(properties, "tool.max_results", _defaultMaxResults),
-                intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars),
-                intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
     }
 
     private static Path migrateLegacyConfigIfNeeded(Path configPath) {
@@ -311,6 +686,342 @@ public class NemoClient {
         }
     }
 
+    private static Configuration loadPropertiesConfiguration(String raw) throws IOException {
+        var properties = new Properties();
+        try (var input = new java.io.ByteArrayInputStream(raw.getBytes(StandardCharsets.UTF_8))) {
+            properties.load(input);
+        }
+        String apiKey = resolveSecret(
+                property(properties, "api_key"),
+                property(properties, "api_key_env"),
+                property(properties, "api_key_command"));
+        var headers = propertiesWithPrefix(properties, "header.");
+        if (!apiKey.isBlank()) {
+            headers.put("Authorization", "Bearer " + apiKey);
+        }
+        headers.put("Content-Type", "application/json");
+        String organization = property(properties, "organization");
+        if (!organization.isBlank()) {
+            headers.put("OpenAI-Organization", organization);
+        }
+        String project = property(properties, "project");
+        if (!project.isBlank()) {
+            headers.put("OpenAI-Project", project);
+        }
+        var builder = Configuration.builder()
+                .provider(property(properties, "provider"))
+                .apiKey(apiKey)
+                .model(property(properties, "model"))
+                .baseUrl(firstNonBlank(
+                        property(properties, "base_url"),
+                        baseUrlFromResponsesUrl(property(properties, "responses_url"))))
+                .organization(organization)
+                .project(project)
+                .workspaceRoot(pathOrNull(property(properties, "workspace_root")))
+                .systemPrompt(property(properties, "system_prompt"))
+                .contextWindowTokens(nullableIntegerProperty(properties, "context_window_tokens"))
+                .maxOutputTokens(nullableIntegerProperty(properties, "max_output_tokens"))
+                .temperature(nullableDoubleProperty(properties, "temperature"))
+                .topP(nullableDoubleProperty(properties, "top_p"))
+                .timeoutSeconds(intProperty(properties, "timeout_seconds", _defaultTimeoutSeconds))
+                .maxRetries(intProperty(properties, "max_retries", _defaultMaxRetries))
+                .logRequests(booleanProperty(properties, "log_requests", false))
+                .logResponses(booleanProperty(properties, "log_responses", false))
+                .toolWebSearch(booleanProperty(properties, "tool.web_search", false))
+                .toolListFiles(booleanProperty(properties, "tool.list_files", true))
+                .toolReadFile(booleanProperty(properties, "tool.read_file", true))
+                .toolSearchFiles(booleanProperty(properties, "tool.search_files", true))
+                .toolRunCommand(booleanProperty(properties, "tool.run_command", true))
+                .toolWriteFile(booleanProperty(properties, "tool.write_file", true))
+                .toolApplyPatch(booleanProperty(properties, "tool.apply_patch", true))
+                .toolGitStatus(booleanProperty(properties, "tool.git_status", true))
+                .toolGitDiff(booleanProperty(properties, "tool.git_diff", true))
+                .toolGitAdd(booleanProperty(properties, "tool.git_add", true))
+                .toolGitCommit(booleanProperty(properties, "tool.git_commit", true))
+                .skillsEnabled(booleanProperty(properties, "skills.enabled", true))
+                .skillsMaxFiles(intProperty(properties, "skills.max_files", _defaultSkillsMaxFiles))
+                .skillsMaxChars(intProperty(properties, "skills.max_chars", _defaultSkillsMaxChars))
+                .strictTools(booleanProperty(properties, "strict_tools", false))
+                .parallelToolCalls(booleanProperty(properties, "parallel_tool_calls", false))
+                .returnThinking(booleanProperty(properties, "return_thinking", false))
+                .sendThinking(booleanProperty(properties, "send_thinking", false))
+                .thinkingFieldName(property(properties, "thinking_field_name"))
+                .toolMaxResults(intProperty(properties, "tool.max_results", _defaultMaxResults))
+                .toolMaxOutputChars(intProperty(properties, "tool.max_output_chars", _defaultMaxOutputChars))
+                .toolCommandTimeoutSeconds(intProperty(properties, "tool.command_timeout_seconds", _defaultCommandTimeoutSeconds));
+        builder.headers(headers);
+        builder.queryParameters(propertiesWithPrefix(properties, "query."));
+        builder.customParameters(objectPropertiesWithPrefix(properties, "param."));
+        return builder.build();
+    }
+
+    private static Configuration loadJsonConfiguration(String raw) throws IOException {
+        JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
+        JsonObject tools = objectMember(root, "tools");
+        JsonObject skills = objectMember(root, "skills");
+        var builder = Configuration.builder()
+                .provider(firstNonBlank(stringMember(root, "provider"), stringMember(root, "vendor")))
+                .apiKey(resolveSecret(
+                        firstNonBlank(stringMember(root, "apiKey"), stringMember(root, "api_key")),
+                        firstNonBlank(stringMember(root, "apiKeyEnv"), stringMember(root, "api_key_env")),
+                        firstNonBlank(stringMember(root, "apiKeyCommand"), stringMember(root, "api_key_command"))))
+                .model(stringMember(root, "model"))
+                .baseUrl(firstNonBlank(
+                        stringMember(root, "baseUrl"),
+                        stringMember(root, "base_url"),
+                        baseUrlFromResponsesUrl(firstNonBlank(stringMember(root, "responsesUrl"), stringMember(root, "responses_url")))))
+                .organization(stringMember(root, "organization"))
+                .project(stringMember(root, "project"))
+                .workspaceRoot(pathOrNull(firstNonBlank(stringMember(root, "workspaceRoot"), stringMember(root, "workspace_root"))))
+                .systemPrompt(firstNonBlank(stringMember(root, "systemPrompt"), stringMember(root, "system_prompt")))
+                .contextWindowTokens(integerMember(root, "contextWindowTokens", "context_window_tokens"))
+                .maxOutputTokens(integerMember(root, "maxOutputTokens", "max_output_tokens"))
+                .temperature(doubleMember(root, "temperature"))
+                .topP(doubleMember(root, "topP", "top_p"))
+                .timeoutSeconds(firstNonNull(integerMember(root, "timeoutSeconds", "timeout_seconds"), _defaultTimeoutSeconds))
+                .maxRetries(firstNonNull(integerMember(root, "maxRetries", "max_retries"), _defaultMaxRetries))
+                .logRequests(booleanMember(root, false, "logRequests", "log_requests"))
+                .logResponses(booleanMember(root, false, "logResponses", "log_responses"))
+                .toolWebSearch(booleanMember(tools, false, "webSearch", "web_search"))
+                .toolListFiles(booleanMember(tools, true, "listFiles", "list_files"))
+                .toolReadFile(booleanMember(tools, true, "readFile", "read_file"))
+                .toolSearchFiles(booleanMember(tools, true, "searchFiles", "search_files"))
+                .toolRunCommand(booleanMember(tools, true, "runCommand", "run_command"))
+                .toolWriteFile(booleanMember(tools, true, "writeFile", "write_file"))
+                .toolApplyPatch(booleanMember(tools, true, "applyPatch", "apply_patch"))
+                .toolGitStatus(booleanMember(tools, true, "gitStatus", "git_status"))
+                .toolGitDiff(booleanMember(tools, true, "gitDiff", "git_diff"))
+                .toolGitAdd(booleanMember(tools, true, "gitAdd", "git_add"))
+                .toolGitCommit(booleanMember(tools, true, "gitCommit", "git_commit"))
+                .skillsEnabled(booleanMember(skills, true, "enabled"))
+                .skillsMaxFiles(firstNonNull(integerMember(skills, "maxFiles", "max_files"), _defaultSkillsMaxFiles))
+                .skillsMaxChars(firstNonNull(integerMember(skills, "maxChars", "max_chars"), _defaultSkillsMaxChars))
+                .strictTools(booleanMember(root, false, "strictTools", "strict_tools"))
+                .parallelToolCalls(booleanMember(root, false, "parallelToolCalls", "parallel_tool_calls"))
+                .returnThinking(booleanMember(root, false, "returnThinking", "return_thinking"))
+                .sendThinking(booleanMember(root, false, "sendThinking", "send_thinking"))
+                .thinkingFieldName(firstNonBlank(stringMember(root, "thinkingFieldName"), stringMember(root, "thinking_field_name")))
+                .toolMaxResults(firstNonNull(integerMember(tools, "maxResults", "max_results"), _defaultMaxResults))
+                .toolMaxOutputChars(firstNonNull(integerMember(tools, "maxOutputChars", "max_output_chars"), _defaultMaxOutputChars))
+                .toolCommandTimeoutSeconds(firstNonNull(integerMember(tools, "commandTimeoutSeconds", "command_timeout_seconds"),
+                        _defaultCommandTimeoutSeconds));
+        builder.headers(stringMapMember(root, "headers"));
+        builder.queryParameters(stringMapMember(root, "queryParameters", "query_parameters"));
+        builder.customParameters(objectMapMember(root, "customParameters", "custom_parameters"));
+        return builder.build();
+    }
+
+    private static String resolveSecret(String inlineValue, String envName, String command) throws IOException {
+        String value = firstNonBlank(inlineValue, envValue(envName));
+        if (!value.isBlank()) {
+            return value;
+        }
+        if (command == null || command.isBlank()) {
+            return "";
+        }
+        var process = new ProcessBuilder("zsh", "-lc", command)
+                .redirectErrorStream(true)
+                .start();
+        try {
+            if (!process.waitFor(10, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                throw new IOException("Timed out running api_key_command");
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while running api_key_command", e);
+        }
+        return new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+    }
+
+    private static String envValue(String envName) {
+        if (envName == null || envName.isBlank()) {
+            return "";
+        }
+        return System.getenv().getOrDefault(envName.trim(), "");
+    }
+
+    private static Integer nullableIntegerProperty(Properties properties, String key) {
+        String value = property(properties, key);
+        if (value.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Double nullableDoubleProperty(Properties properties, String key) {
+        String value = property(properties, key);
+        if (value.isBlank()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Path pathOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return Path.of(value).toAbsolutePath().normalize();
+    }
+
+    private static Map<String, String> propertiesWithPrefix(Properties properties, String prefix) {
+        var values = new LinkedHashMap<String, String>();
+        for (String name : properties.stringPropertyNames()) {
+            if (!name.startsWith(prefix)) {
+                continue;
+            }
+            String value = property(properties, name);
+            if (!value.isBlank()) {
+                values.put(name.substring(prefix.length()), value);
+            }
+        }
+        return values;
+    }
+
+    private static Map<String, Object> objectPropertiesWithPrefix(Properties properties, String prefix) {
+        var values = new LinkedHashMap<String, Object>();
+        for (String name : properties.stringPropertyNames()) {
+            if (!name.startsWith(prefix)) {
+                continue;
+            }
+            String value = property(properties, name);
+            if (!value.isBlank()) {
+                values.put(name.substring(prefix.length()), value);
+            }
+        }
+        return values;
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static String baseUrlFromResponsesUrl(String responsesUrl) {
+        if (responsesUrl == null || responsesUrl.isBlank()) {
+            return "";
+        }
+        return Configuration.responsesBaseToChatBase(URI.create(responsesUrl));
+    }
+
+    private static <T> T firstNonNull(T value, T fallback) {
+        return value != null ? value : fallback;
+    }
+
+    private static String stringMember(JsonObject object, String... names) {
+        if (object == null) {
+            return "";
+        }
+        for (String name : names) {
+            if (object.has(name) && object.get(name).isJsonPrimitive()) {
+                return object.get(name).getAsString().trim();
+            }
+        }
+        return "";
+    }
+
+    private static Integer integerMember(JsonObject object, String... names) {
+        if (object == null) {
+            return null;
+        }
+        for (String name : names) {
+            if (object.has(name) && object.get(name).isJsonPrimitive()) {
+                try {
+                    return object.get(name).getAsInt();
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private static Double doubleMember(JsonObject object, String... names) {
+        if (object == null) {
+            return null;
+        }
+        for (String name : names) {
+            if (object.has(name) && object.get(name).isJsonPrimitive()) {
+                try {
+                    return object.get(name).getAsDouble();
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean booleanMember(JsonObject object, boolean fallback, String... names) {
+        if (object == null) {
+            return fallback;
+        }
+        for (String name : names) {
+            if (object.has(name) && object.get(name).isJsonPrimitive()) {
+                try {
+                    return object.get(name).getAsBoolean();
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }
+        return fallback;
+    }
+
+    private static JsonObject objectMember(JsonObject object, String name) {
+        return object != null && object.has(name) && object.get(name).isJsonObject()
+                ? object.getAsJsonObject(name)
+                : null;
+    }
+
+    private static Map<String, String> stringMapMember(JsonObject object, String... names) {
+        var values = new LinkedHashMap<String, String>();
+        JsonObject member = null;
+        for (String name : names) {
+            member = objectMember(object, name);
+            if (member != null) {
+                break;
+            }
+        }
+        if (member == null) {
+            return values;
+        }
+        for (var entry : member.entrySet()) {
+            if (!entry.getValue().isJsonNull()) {
+                values.put(entry.getKey(), entry.getValue().getAsString());
+            }
+        }
+        return values;
+    }
+
+    private static Map<String, Object> objectMapMember(JsonObject object, String... names) {
+        var values = new LinkedHashMap<String, Object>();
+        JsonObject member = null;
+        for (String name : names) {
+            member = objectMember(object, name);
+            if (member != null) {
+                break;
+            }
+        }
+        if (member == null) {
+            return values;
+        }
+        for (var entry : member.entrySet()) {
+            values.put(entry.getKey(), _gson.fromJson(entry.getValue(), Object.class));
+        }
+        return values;
+    }
+
     static URI buildResponsesUri(String explicitResponsesUrl, String baseUrl) {
         if (!explicitResponsesUrl.equals("")) {
             return URI.create(explicitResponsesUrl);
@@ -331,57 +1042,8 @@ public class NemoClient {
         return rawName.toLowerCase().replace('_', '-');
     }
 
-    private JsonObject sendRequest(Configuration configuration, JsonObject payload) throws IOException, InterruptedException {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(configuration.responsesUri())
-                .POST(HttpRequest.BodyPublishers.ofString(_gson.toJson(payload), StandardCharsets.UTF_8));
-        for (var header : configuration.headers().entrySet()) {
-            builder.header(header.getKey(), header.getValue());
-        }
-        HttpRequest request = builder.build();
-
-        HttpResponse<String> response = _httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() / 100 != 2) {
-            throw new IOException(extractErrorMessage(response.body(), response.statusCode()));
-        }
-        return parseJsonObject(response.body());
-    }
-
     private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
-        JsonArray inputHistory = new JsonArray();
-        inputHistory.add(createUserInputMessage(buildInput(context, turns)));
-
-        while (true) {
-            JsonObject payload = new JsonObject();
-            payload.addProperty("model", configuration.model());
-            payload.addProperty("instructions",
-                    "You are Nemo, a concise coding assistant inside the SWIM text editor. "
-                            + "Default to direct action for coding tasks: inspect, edit, verify, and then summarize. "
-                            + "Use tools when they help you answer accurately or modify workspace files. "
-                            + "When the user asks for a commit, inspect the repo state, stage only the relevant files, "
-                            + "and create a concise commit message yourself unless the user already provided one. "
-                            + "Avoid unnecessary questions unless the request is ambiguous or unrelated changes would force a risky commit.");
-            payload.add("input", inputHistory);
-            var tools = buildTools(configuration);
-            if (tools.size() > 0) {
-                payload.add("tools", tools);
-            }
-
-            JsonObject response = sendRequest(configuration, payload);
-            var toolCalls = extractToolCalls(response);
-            if (toolCalls.isEmpty()) {
-                return new ResponseResult(extractOutputText(response.toString()), extractContextUsagePercent(response));
-            }
-
-            JsonArray toolOutputs = new JsonArray();
-            for (var call : toolCalls) {
-                var output = new JsonObject();
-                output.addProperty("type", "function_call_output");
-                output.addProperty("call_id", call.callId());
-                output.addProperty("output", executeToolSafely(configuration, context, call));
-                toolOutputs.add(output);
-            }
-            appendToolRound(inputHistory, response, toolOutputs);
-        }
+        return _langChain4jClient.request(configuration, context, turns);
     }
 
     static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call)
@@ -593,6 +1255,7 @@ public class NemoClient {
 
     static String executeTool(Configuration configuration, BufferContext context, ToolCall call) throws IOException, InterruptedException {
         return switch (call.name()) {
+        case "web_search" -> webSearch(call.arguments());
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
@@ -607,7 +1270,7 @@ public class NemoClient {
         };
     }
 
-    private static Path resolveWorkspaceRoot(Configuration configuration, BufferContext context) {
+    static Path resolveWorkspaceRoot(Configuration configuration, BufferContext context) {
         if (configuration.workspaceRoot() != null) {
             return configuration.workspaceRoot();
         }
@@ -620,6 +1283,12 @@ public class NemoClient {
             return path.toAbsolutePath().getParent();
         }
         return Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+    }
+
+    private static String webSearch(JsonObject arguments) {
+        String query = stringArgument(arguments, "query", "");
+        return "Web search is not configured in this SWIM build for query: " + query
+                + ". Use workspace tools or configure an external OpenAI-compatible gateway.";
     }
 
     private static Path resolvePathInsideWorkspace(Path workspaceRoot, String rawPath) throws IOException {
@@ -1448,7 +2117,7 @@ public class NemoClient {
 
         appendTurn(conversation, new ChatTurn("me", question));
 
-        if (conversation._configuration.apiKey().isBlank()) {
+        if (conversation._configuration.requiresApiKey() && conversation._configuration.apiKey().isBlank()) {
             appendAssistantNote(conversation, "Set api_key in " + getConfigPath() + " to use :nemo");
             return;
         }
@@ -1489,6 +2158,7 @@ public class NemoClient {
             new org.fisk.swim.ui.CommandView.CommandSpec("new", List.of(), "[title]", "create a new Nemo session"),
             new org.fisk.swim.ui.CommandView.CommandSpec("switch", List.of(), "<session-id>", "switch to another Nemo session"),
             new org.fisk.swim.ui.CommandView.CommandSpec("rename", List.of(), "<title>", "rename the current Nemo session"),
+            new org.fisk.swim.ui.CommandView.CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
             new org.fisk.swim.ui.CommandView.CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
             new org.fisk.swim.ui.CommandView.CommandSpec("help", List.of(), "", "list Nemo chat commands"),
             new org.fisk.swim.ui.CommandView.CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
@@ -1523,12 +2193,15 @@ public class NemoClient {
         case ":rename":
             handleRenameCommand(conversation, argument);
             return;
+        case ":reset":
+            handleResetCommand(conversation, argument);
+            return;
         case ":delete":
             handleDeleteCommand(conversation, argument);
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :delete [session-id], :help, :q");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :help, :q");
             return;
         case ":q":
         case ":quit":
@@ -1618,6 +2291,27 @@ public class NemoClient {
             reopenConversationPanel(conversation);
         }
         appendAssistantNote(conversation, "Renamed " + conversation._id + " to " + conversation._title + ".");
+    }
+
+    private void handleResetCommand(Conversation conversation, String argument) {
+        Conversation target = argument.isBlank()
+                ? conversation
+                : findConversation(argument, conversation._workspaceRoot);
+        if (target == null) {
+            appendAssistantNote(conversation, "Unknown session: " + argument);
+            return;
+        }
+        stopWorker(target);
+        target._turns.clear();
+        target._contextUsagePercent = null;
+        target._updatedAtMillis = System.currentTimeMillis();
+        persistSessions();
+        if (isPanelVisible(target)) {
+            target._panelView.setMessages(List.of());
+            target._panelView.setPending(false);
+            target._panelView.setContextUsagePercent(null);
+        }
+        showMessage("Reset " + target._id + ".");
     }
 
     private void handleDeleteCommand(Conversation conversation, String argument) {
