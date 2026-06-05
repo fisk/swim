@@ -76,6 +76,9 @@ Normal mode uses familiar Vim-style keys:
 | `g m{char}` | Set mark |
 | `` `{char}` / `'{char}`` | Jump to mark |
 | `g w{char}` / `g c{char}` | Fancy jump to visible word starts / visible matching characters |
+| `g ]` / `g [` | Next / previous project diagnostic |
+| `g }` / `g {` | Next / previous project error |
+| `g x` / `g a` | Show diagnostics for the current line / show code actions |
 | `g n` / `g N` / `g C` | Add next/previous multicursor / clear extras |
 | `Ctrl-o` / `Tab` | Jump backward / forward |
 | `t` | Tree view plugin |
@@ -184,8 +187,17 @@ Editing additions:
   - `z a` toggles the fold at the cursor
   - `z c` closes the current fold
   - `z o` opens the current fold
-  - `z M` closes all folds
-  - `z R` opens all folds
+- `z M` closes all folds
+- `z R` opens all folds
+
+Diagnostics:
+
+- Lines with errors are marked with a red background and warnings with a yellow background.
+- The frame-local mode line shows buffer error/warning counts.
+- The global mode line shows project error/warning counts on the right.
+- `g x` opens a diagnostic popup for the current line.
+- Hovering a faulty line with the mouse opens the same popup without stealing focus.
+- `g a` opens a code-action menu for the current line and `Enter` applies the selected fix.
 
 ## Directory Browser
 
@@ -218,6 +230,7 @@ Java files use the embedded Oracle/NetBeans LSP provider through the separate `s
 Current Java features include:
 
 - semantic token coloring
+- line diagnostics with background highlights, popup details, project navigation, and code actions
 - embedded LSP startup from the bundled Oracle payload
 - insert-mode completion popup with Java completion items
 - snippet placeholder support for LSP snippet completions
@@ -243,6 +256,7 @@ C and C++ files (`.c`, `.h`, `.cpp`, `.hpp`) use the separate `swim-clangd-lsp` 
 - You can also mark a project boundary with a `.swim` file and point it at a compilation database with `compile_commands=<relative-or-absolute-path>`.
 - SWIM loads the plugin on demand when one of those file types is opened.
 - Insert mode uses the same completion popup style as Java mode.
+- Diagnostics share the same line highlights, mode-line counts, popup details, project navigation, and code-action menu.
 - Default indentation is 2 spaces for C and C++.
 
 Example `.swim` file:
