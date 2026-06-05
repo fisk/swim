@@ -253,7 +253,7 @@ public class TextLayout {
     }
 
     private void calculateLogicalLines() {
-        int width = Math.max(1, _bufferContext.getBufferView().getBounds().getSize().getWidth());
+        int width = _bufferContext.getBufferView().getTextWidth();
         var string = _bufferContext.getBuffer().getString();
         _logicalLines = new ArrayList<>();
         _logicalLineAtPosition = new TreeMap<>();
@@ -322,36 +322,45 @@ public class TextLayout {
     }
 
     private void calculatePhysicalLines() {
-        int width = Math.max(1, _bufferContext.getBufferView().getBounds().getSize().getWidth());
         var string = _bufferContext.getBuffer().getString();
-        var iter = new LayoutIterator(string, width);
-        while (iter.hasNext()) {
-            if (iter.isNewline()) {
-                iter.insertGlyph();
-                iter.newLine();
-            } else {
-                iter.insertGlyph();
-                iter.incX();
+        _physicalLines = new ArrayList<>();
+        _physicalLineAtPosition = new TreeMap<>();
+        Line line = new Line(0, 0, null, false);
+        _physicalLines.add(line);
+        _physicalLineAtPosition.put(0, line);
+        int x = 0;
+        int y = 0;
+        int position = 0;
+        while (position < string.length()) {
+            String character = string.substring(position, position + 1);
+            line.getGlyphs().add(new Glyph(x++, y, position, character));
+            if (character.equals("\n")) {
+                Line next = new Line(++y, position + 1, line, true);
+                line.setNext(next);
+                line = next;
+                _physicalLines.add(line);
+                _physicalLineAtPosition.put(position + 1, line);
+                x = 0;
             }
-            iter.next();
+            position++;
         }
-        _physicalLines = iter.getLines();
-        _physicalLineAtPosition = iter.getLineAtPosition();
     }
 
     public void calculate() {
-        calculateLogicalLines();
         calculatePhysicalLines();
+        calculateLogicalLines();
         _bufferContext.getBufferView().setNeedsRedraw();
     }
 
-    public Stream<Glyph> getGlyphs() {
+    public List<Line> getVisibleLogicalLines() {
         var bufferView = _bufferContext.getBufferView();
-        var rect = bufferView.getBounds();
-        var start = bufferView.getStartLine();
-        var end = Math.min(start + rect.getSize().getHeight(), _logicalLines.size());
-        var range = _logicalLines.subList(start, end);
-        return range.stream().map((line) -> line.getGlyphs()).flatMap((list) -> list.stream());
+        int start = bufferView.getStartLine();
+        int end = Math.min(start + bufferView.getViewportHeight(), _logicalLines.size());
+        return _logicalLines.subList(start, end);
+    }
+
+    public Stream<Glyph> getGlyphs() {
+        return getVisibleLogicalLines().stream().map((line) -> line.getGlyphs()).flatMap((list) -> list.stream());
     }
     
     public Range getGlyphRange() {

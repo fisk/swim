@@ -235,7 +235,7 @@ public class Cursor {
 
     private Point absoluteOrigin() {
         var view = _bufferContext.getBufferView();
-        int x = view.getBounds().getPoint().getX();
+        int x = view.getBounds().getPoint().getX() + view.getTextColumnStart();
         int y = view.getBounds().getPoint().getY();
         for (var parent = view.getParent(); parent != null; parent = parent.getParent()) {
             x += parent.getBounds().getPoint().getX();

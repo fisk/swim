@@ -1,6 +1,7 @@
 package org.fisk.swim.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.lsp.DiagnosticService;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.TextLayout;
@@ -70,9 +72,57 @@ class BufferViewTest {
             Method handle = BufferView.class.getDeclaredMethod("handleMouseAction", MouseAction.class);
             handle.setAccessible(true);
             handle.invoke(window.getBufferContext().getBufferView(),
-                    new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(1, 3)));
+                    new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(3, 3)));
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertEquals("Line Diagnostics", popup.getTitle());
+        }
+    }
+
+    @Test
+    void drawsLineNumbersAndLeavesWrappedContinuationGutterBlank() throws Exception {
+        Path path = tempDir.resolve("gutter.txt");
+        Files.writeString(path, "abcdefghijklmnop\nz");
+
+        var terminal = TerminalContextTestSupport.install(16, 10);
+        try (var harness = HeadlessWindowHarness.create(path, 16, 10)) {
+            var window = harness.getWindow();
+            window.update(true);
+
+            char[][] cells = renderCells(terminal.drawCalls(), 16, 10);
+            assertTrue(row(cells, 2).startsWith("1│abcdefghijklm"));
+            assertTrue(row(cells, 3).startsWith(" │nop"));
+            assertEquals('█', cells[2][15]);
+        }
+    }
+
+    @Test
+    void scrollbarThumbMovesWhenViewportScrolls() throws Exception {
+        Path path = tempDir.resolve("scrollbar.txt");
+        var builder = new StringBuilder();
+        for (int i = 1; i <= 60; i++) {
+            if (i > 1) {
+                builder.append('\n');
+            }
+            builder.append("line ").append(i);
+        }
+        Files.writeString(path, builder.toString());
+
+        var terminal = TerminalContextTestSupport.install(20, 10);
+        try (var harness = HeadlessWindowHarness.create(path, 20, 10)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+
+            window.update(true);
+            char[][] initial = renderCells(terminal.drawCalls(), 20, 10);
+            assertEquals('█', initial[2][19]);
+
+            view.scrollPageDown();
+            view.scrollPageDown();
+            view.scrollPageDown();
+            window.update(true);
+            char[][] scrolled = renderCells(terminal.drawCalls(), 20, 10);
+            assertEquals('│', scrolled[2][19]);
+            assertTrue(thumbRow(scrolled, 19, 2, 8) > 2);
         }
     }
 
@@ -83,5 +133,36 @@ class BufferViewTest {
         diagnostic.setSource("test");
         diagnostic.setMessage(message);
         return diagnostic;
+    }
+
+    private static char[][] renderCells(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int width, int height) {
+        char[][] cells = new char[height][width];
+        for (int y = 0; y < height; y++) {
+            java.util.Arrays.fill(cells[y], ' ');
+        }
+        for (var call : drawCalls) {
+            for (int index = 0; index < call.text().length(); index++) {
+                int x = call.x() + index;
+                int y = call.y();
+                if (y < 0 || y >= height || x < 0 || x >= width) {
+                    continue;
+                }
+                cells[y][x] = call.text().charAt(index);
+            }
+        }
+        return cells;
+    }
+
+    private static String row(char[][] cells, int row) {
+        return new String(cells[row]);
+    }
+
+    private static int thumbRow(char[][] cells, int column, int startRow, int endRowExclusive) {
+        for (int row = startRow; row < endRowExclusive; row++) {
+            if (cells[row][column] == '█') {
+                return row;
+            }
+        }
+        return -1;
     }
 }
