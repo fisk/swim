@@ -102,6 +102,7 @@ class NemoClientTest {
                 "model=gpt-5.4",
                 "project=proj_123",
                 "organization=org_456",
+                "reasoning_effort=xhigh",
                 "header.client=swim",
                 "tool.web_search=true",
                 "tool.run_command=false",
@@ -118,6 +119,7 @@ class NemoClientTest {
         assertEquals("Bearer token", configuration.headers().get("Authorization"));
         assertEquals("proj_123", configuration.headers().get("OpenAI-Project"));
         assertEquals("org_456", configuration.headers().get("OpenAI-Organization"));
+        assertEquals("xhigh", configuration.reasoningEffort());
         assertEquals("swim", configuration.headers().get("client"));
         assertTrue(configuration.toolWebSearch());
         assertEquals(42, configuration.toolMaxResults());
@@ -177,6 +179,7 @@ class NemoClientTest {
                   "customParameters": {
                     "reasoning": "medium"
                   },
+                  "reasoningEffort": "high",
                   "contextWindowTokens": 65536,
                   "skills": {
                     "enabled": true,
@@ -198,6 +201,7 @@ class NemoClientTest {
         assertEquals("swim", configuration.headers().get("X-Test"));
         assertEquals("2026-01-01", configuration.queryParameters().get("api-version"));
         assertEquals("medium", configuration.customParameters().get("reasoning"));
+        assertEquals("high", configuration.reasoningEffort());
         assertEquals(65536, configuration.contextWindowTokens());
         assertEquals(3, configuration.skillsMaxFiles());
         assertEquals(512, configuration.skillsMaxChars());

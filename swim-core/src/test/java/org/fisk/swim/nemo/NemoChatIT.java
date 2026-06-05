@@ -212,6 +212,8 @@ class NemoChatIT {
                 assertTrue(body.contains("\"instructions\""));
                 assertTrue(body.contains("\"store\":false"));
                 assertTrue(body.contains("\"stream\":true"));
+                JsonObject requestJson = JsonParser.parseString(body).getAsJsonObject();
+                assertEquals("xhigh", requestJson.getAsJsonObject("reasoning").get("effort").getAsString());
                 assertFalse(body.contains("max_output_tokens"));
                 assertEquals(1, requestCount.get());
             } finally {
@@ -921,6 +923,7 @@ class NemoChatIT {
                 "api_key=test-token",
                 "model=gpt-5.5",
                 "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "reasoning_effort=xhigh",
                 "tool.list_files=true",
                 "tool.read_file=true",
                 "tool.search_files=true",

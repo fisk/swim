@@ -151,6 +151,7 @@ public class NemoClient {
         private final Integer _maxOutputTokens;
         private final Double _temperature;
         private final Double _topP;
+        private final String _reasoningEffort;
         private final int _timeoutSeconds;
         private final int _maxRetries;
         private final boolean _logRequests;
@@ -237,6 +238,7 @@ public class NemoClient {
             _maxOutputTokens = builder._maxOutputTokens;
             _temperature = builder._temperature;
             _topP = builder._topP;
+            _reasoningEffort = builder._reasoningEffort;
             _timeoutSeconds = builder._timeoutSeconds;
             _maxRetries = builder._maxRetries;
             _logRequests = builder._logRequests;
@@ -285,6 +287,7 @@ public class NemoClient {
             private Integer _maxOutputTokens;
             private Double _temperature;
             private Double _topP;
+            private String _reasoningEffort = "";
             private int _timeoutSeconds = _defaultTimeoutSeconds;
             private int _maxRetries = _defaultMaxRetries;
             private boolean _logRequests;
@@ -390,6 +393,11 @@ public class NemoClient {
 
             Builder topP(Double topP) {
                 _topP = topP;
+                return this;
+            }
+
+            Builder reasoningEffort(String reasoningEffort) {
+                _reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
                 return this;
             }
 
@@ -545,6 +553,7 @@ public class NemoClient {
         Integer maxOutputTokens() { return _maxOutputTokens; }
         Double temperature() { return _temperature; }
         Double topP() { return _topP; }
+        String reasoningEffort() { return _reasoningEffort; }
         int timeoutSeconds() { return _timeoutSeconds; }
         int maxRetries() { return _maxRetries; }
         boolean logRequests() { return _logRequests; }
@@ -733,6 +742,7 @@ public class NemoClient {
                 .maxOutputTokens(nullableIntegerProperty(properties, "max_output_tokens"))
                 .temperature(nullableDoubleProperty(properties, "temperature"))
                 .topP(nullableDoubleProperty(properties, "top_p"))
+                .reasoningEffort(property(properties, "reasoning_effort"))
                 .timeoutSeconds(intProperty(properties, "timeout_seconds", _defaultTimeoutSeconds))
                 .maxRetries(intProperty(properties, "max_retries", _defaultMaxRetries))
                 .logRequests(booleanProperty(properties, "log_requests", false))
@@ -788,6 +798,7 @@ public class NemoClient {
                 .maxOutputTokens(integerMember(root, "maxOutputTokens", "max_output_tokens"))
                 .temperature(doubleMember(root, "temperature"))
                 .topP(doubleMember(root, "topP", "top_p"))
+                .reasoningEffort(firstNonBlank(stringMember(root, "reasoningEffort"), stringMember(root, "reasoning_effort")))
                 .timeoutSeconds(firstNonNull(integerMember(root, "timeoutSeconds", "timeout_seconds"), _defaultTimeoutSeconds))
                 .maxRetries(firstNonNull(integerMember(root, "maxRetries", "max_retries"), _defaultMaxRetries))
                 .logRequests(booleanMember(root, false, "logRequests", "log_requests"))
@@ -1126,6 +1137,11 @@ public class NemoClient {
         }
         if (configuration.maxOutputTokens() != null && !isChatGptResponsesProvider(configuration)) {
             request.addProperty("max_output_tokens", configuration.maxOutputTokens());
+        }
+        if (!configuration.reasoningEffort().isBlank()) {
+            JsonObject reasoning = new JsonObject();
+            reasoning.addProperty("effort", configuration.reasoningEffort());
+            request.add("reasoning", reasoning);
         }
         for (var entry : configuration.customParameters().entrySet()) {
             request.add(entry.getKey(), JsonParser.parseString(_gson.toJson(entry.getValue())));
