@@ -86,6 +86,24 @@ class NormalModeTest {
     }
 
     @Test
+    void gCClearsAdditionalCursors() throws Exception {
+        Path path = tempDir.resolve("multicursor-clear-prefix.txt");
+        Files.writeString(path, """
+                alpha
+                beta alpha
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('n'));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('C'));
+
+            assertEquals(1, window.getBufferContext().getBuffer().getCursors().size());
+        }
+    }
+
+    @Test
     void textObjectDeleteInsideParensWorks() throws Exception {
         Path path = tempDir.resolve("text-object.txt");
         Files.writeString(path, "call(alpha, beta)\n");
@@ -210,6 +228,21 @@ class NormalModeTest {
 
             Response response = window.getNormalMode()
                     .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('w'))));
+
+            assertEquals(Response.MAYBE, response);
+        }
+    }
+
+    @Test
+    void gcStartsFancyCharacterJumpPrefixHandling() throws Exception {
+        Path path = tempDir.resolve("fancy-char-jump.txt");
+        Files.writeString(path, "alpha beta gamma\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            Response response = window.getNormalMode()
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('c'))));
 
             assertEquals(Response.MAYBE, response);
         }

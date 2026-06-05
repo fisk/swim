@@ -27,7 +27,8 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  Ctrl-g c v opens a shell in a split to the right."));
         assertTrue(rendered.contains("  Ctrl-g c h opens a shell in a split below."));
         assertTrue(rendered.contains("  Press i to enter INSERT mode and type text."));
-        assertTrue(rendered.contains("  w<char> jumps to visible word starts and shows hints when needed."));
+        assertTrue(rendered.contains("  g w<char> jumps to visible word starts and shows hints when needed."));
+        assertTrue(rendered.contains("  g c<char> jumps to visible matching characters and shows hints when needed."));
         assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
     }
 

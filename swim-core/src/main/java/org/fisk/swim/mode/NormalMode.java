@@ -26,7 +26,8 @@ import org.fisk.swim.event.TextEventResponder;
 
 public class NormalMode extends Mode {
     private static final String TREE_VIEW_PLUGIN_ID = "swim-tree-view";
-    private FancyJumpResponder _fancyJump;
+    private FancyJumpResponder _fancyWordJump;
+    private FancyJumpResponder _fancyCharacterJump;
     
     public NormalMode(Window window) {
         super("NORMAL", window);
@@ -39,8 +40,10 @@ public class NormalMode extends Mode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         String leader = "<SPACE>";
-        _fancyJump = new FancyJumpResponder(bufferContext, "g w");
-        _rootResponder.addEventResponder(_fancyJump);
+        _fancyWordJump = new FancyJumpResponder(bufferContext, "g w");
+        _fancyCharacterJump = new FancyJumpResponder(bufferContext, "g c", FancyJumpResponder.TargetKind.CHARACTER);
+        _rootResponder.addEventResponder(_fancyWordJump);
+        _rootResponder.addEventResponder(_fancyCharacterJump);
         JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
         ClangdLspPluginSupport.installNormalModeBindings(this, window);
         _rootResponder.addEventResponder("i", () -> {
@@ -91,7 +94,7 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder(macroResponder(window));
         _rootResponder.addEventResponder("g n", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); });
         _rootResponder.addEventResponder("g N", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); });
-        _rootResponder.addEventResponder("g c", window::clearAdditionalCursors);
+        _rootResponder.addEventResponder("g C", window::clearAdditionalCursors);
         _rootResponder.addEventResponder(prefixCharacterResponder("@", (ignored, register) -> {
             if (register == '@') {
                 window.playLastMacro(1);
@@ -544,7 +547,8 @@ public class NormalMode extends Mode {
     
     @Override
     public AttributedString decorate(Glyph glyph, AttributedString character) {
-        character = _fancyJump.decorate(glyph, character);
+        character = _fancyWordJump.decorate(glyph, character);
+        character = _fancyCharacterJump.decorate(glyph, character);
         return character;
     }
 

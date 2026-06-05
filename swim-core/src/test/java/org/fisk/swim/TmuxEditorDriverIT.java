@@ -224,6 +224,7 @@ class TmuxEditorDriverIT {
         try (var session = startEditor(tempDir, file.getFileName().toString())) {
             session.waitForText("avocado", STARTUP_TIMEOUT);
 
+            session.sendLiteral("g");
             session.sendLiteral("w");
             session.sendLiteral("a");
             session.sendLiteral("b");
@@ -238,6 +239,28 @@ class TmuxEditorDriverIT {
                 pricot
                 avocado
                 """, Files.readString(file));
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryCanUseFancyCharacterJumpWithoutPressingEnterInTmux() throws Exception {
+        Path file = tempDir.resolve("fancy-char-jump.txt");
+        Files.writeString(file, "papaya\n");
+
+        try (var session = startEditor(tempDir, file.getFileName().toString())) {
+            session.waitForText("papaya", STARTUP_TIMEOUT);
+
+            session.sendLiteral("g");
+            session.sendLiteral("c");
+            session.sendLiteral("a");
+            session.sendLiteral("b");
+            session.sendLiteral("x");
+            session.runCommand("w");
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        assertEquals("papya\n", Files.readString(file));
     }
 
     private TmuxSession startEditor(Path workdir, String fileArgument) throws Exception {

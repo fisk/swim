@@ -2,6 +2,7 @@ package org.fisk.swim.event;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
 import java.util.stream.Collectors;
@@ -31,6 +32,26 @@ class FancyJumpResponderTest {
                 new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false))));
+
+        responder.respond();
+
+        assertEquals(6, context.bufferContext().getBuffer().getCursor().getPosition());
+    }
+
+    @Test
+    void leavesTrailingKeyForImmediateFollowUpAfterWordJumpSelection() throws IOException {
+        var context = EventTestSupport.createContext(tempDir, "apple apricot avocado");
+        var responder = new FancyJumpResponder(context.bufferContext(), "g w");
+        var keys = EventTestSupport.keys(
+                new KeyStroke('g', false, false),
+                new KeyStroke('w', false, false),
+                new KeyStroke('a', false, false),
+                new KeyStroke('b', false, false),
+                new KeyStroke('x', false, false));
+
+        assertEquals(Response.YES, responder.processEvent(keys));
+        assertFalse(keys.consumed());
+        assertEquals('x', keys.current().getCharacter());
 
         responder.respond();
 
@@ -96,6 +117,37 @@ class FancyJumpResponderTest {
                 new KeyStroke('g', false, false),
                 new KeyStroke('w', false, false),
                 new KeyStroke('b', false, false))));
+    }
+
+    @Test
+    void characterTargetsCanJumpToMidWordMatches() throws IOException {
+        var context = EventTestSupport.createContext(tempDir, "alpha beta");
+        var responder = new FancyJumpResponder(context.bufferContext(), "g c", FancyJumpResponder.TargetKind.CHARACTER);
+
+        assertEquals(Response.YES, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
+                new KeyStroke('c', false, false),
+                new KeyStroke('p', false, false))));
+
+        responder.respond();
+
+        assertEquals(2, context.bufferContext().getBuffer().getCursor().getPosition());
+    }
+
+    @Test
+    void characterTargetsUseHintsAcrossAllVisibleMatches() throws IOException {
+        var context = EventTestSupport.createContext(tempDir, "papaya");
+        var responder = new FancyJumpResponder(context.bufferContext(), "g c", FancyJumpResponder.TargetKind.CHARACTER);
+
+        assertEquals(Response.YES, responder.processEvent(EventTestSupport.keys(
+                new KeyStroke('g', false, false),
+                new KeyStroke('c', false, false),
+                new KeyStroke('a', false, false),
+                new KeyStroke('b', false, false))));
+
+        responder.respond();
+
+        assertEquals(3, context.bufferContext().getBuffer().getCursor().getPosition());
     }
 
     private static String decorateAt(EventTestSupport.TestContext context, FancyJumpResponder responder, int position) {

@@ -13,17 +13,28 @@ import com.googlecode.lanterna.input.KeyType;
 public class FancyJumpResponder implements EventResponder {
     private static final String HINT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+    public enum TargetKind {
+        WORD_START,
+        CHARACTER
+    }
+
     private final BufferContext _bufferContext;
     private final TextEventResponder _prefixResponder;
+    private final TargetKind _targetKind;
 
     private List<HintTarget> _activeTargets = List.of();
     private String _typedHint = "";
     private HintTarget _selectedTarget;
 
     public FancyJumpResponder(BufferContext bufferContext, String prefix) {
+        this(bufferContext, prefix, TargetKind.WORD_START);
+    }
+
+    public FancyJumpResponder(BufferContext bufferContext, String prefix, TargetKind targetKind) {
         _bufferContext = bufferContext;
         _prefixResponder = new TextEventResponder(prefix, () -> {
         });
+        _targetKind = targetKind;
     }
 
     private record HintTarget(int position, String label) {
@@ -121,9 +132,7 @@ public class FancyJumpResponder implements EventResponder {
     private List<HintTarget> findVisibleTargets(char searchCharacter) {
         var positions = new ArrayList<Integer>();
         _bufferContext.getTextLayout().getGlyphs().forEach(glyph -> {
-            if (glyph.getCharacter().length() == 1
-                    && glyph.getCharacter().charAt(0) == searchCharacter
-                    && isWordStart(glyph.getPosition())) {
+            if (matchesTarget(glyph, searchCharacter)) {
                 positions.add(glyph.getPosition());
             }
         });
@@ -134,6 +143,16 @@ public class FancyJumpResponder implements EventResponder {
             targets.add(new HintTarget(positions.get(i), encodeLabel(i, labelWidth)));
         }
         return targets;
+    }
+
+    private boolean matchesTarget(Glyph glyph, char searchCharacter) {
+        if (glyph.getCharacter().length() != 1 || glyph.getCharacter().charAt(0) != searchCharacter) {
+            return false;
+        }
+        return switch (_targetKind) {
+        case WORD_START -> isWordStart(glyph.getPosition());
+        case CHARACTER -> true;
+        };
     }
 
     private boolean isWordStart(int position) {

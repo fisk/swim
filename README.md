@@ -75,7 +75,8 @@ Normal mode uses familiar Vim-style keys:
 | `e` | Mail client |
 | `g m{char}` | Set mark |
 | `` `{char}` / `'{char}`` | Jump to mark |
-| `g n` / `g N` / `g c` | Add next/previous multicursor / clear extras |
+| `g w{char}` / `g c{char}` | Fancy jump to visible word starts / visible matching characters |
+| `g n` / `g N` / `g C` | Add next/previous multicursor / clear extras |
 | `Ctrl-o` / `Tab` | Jump backward / forward |
 | `t` | Tree view plugin |
 | `Esc` | Start Nemo / open Nemo chat |

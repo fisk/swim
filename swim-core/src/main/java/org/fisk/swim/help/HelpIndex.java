@@ -48,8 +48,9 @@ public class HelpIndex {
                 "gg jumps to the top of the buffer and G jumps to the end.",
                 "Ctrl-o and Tab move backward and forward through the jump list.",
                 "g m<char> sets a mark, and '<char> or `<char> jumps back to it.",
-                "g n and g N add another cursor for the current word.",
-                "w<char> jumps to visible word starts and shows hints when needed.",
+                "g n and g N add another cursor for the current word, and g C clears extra cursors.",
+                "g w<char> jumps to visible word starts and shows hints when needed.",
+                "g c<char> jumps to visible matching characters and shows hints when needed.",
                 "f<char> and F<char> find the next or previous matching character.",
                 "/ starts forward search, ? starts backward search, n/N repeat it.");
         addSection(items, "Editing",
