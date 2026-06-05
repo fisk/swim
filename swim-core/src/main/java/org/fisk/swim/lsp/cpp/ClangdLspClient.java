@@ -975,7 +975,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     @Override
     public TextDocumentItem getTextDocument(BufferContext bufferContext) {
         return new TextDocumentItem(
-                bufferContext.getBuffer().getPath().toUri().toString(),
+                bufferContext.getBuffer().getURI().toString(),
                 languageId(bufferContext.getBuffer().getPath()),
                 bufferContext.getBuffer().getVersionedTextDocumentID().getVersion(),
                 bufferContext.getBuffer().getString());

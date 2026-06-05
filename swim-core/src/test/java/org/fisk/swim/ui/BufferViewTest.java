@@ -130,7 +130,7 @@ class BufferViewTest {
             window.update(true);
 
             assertEquals(TextColor.ANSI.RED_BRIGHT, foregroundAt(terminal.drawCalls(), 0, 2));
-            assertEquals(TextColor.ANSI.YELLOW_BRIGHT, foregroundAt(terminal.drawCalls(), 0, 3));
+            assertEquals(UiTheme.DIAGNOSTIC_WARNING_FOREGROUND, foregroundAt(terminal.drawCalls(), 0, 3));
             assertEquals(UiTheme.TEXT_MUTED, foregroundAt(terminal.drawCalls(), 0, 4));
         }
     }

@@ -11,6 +11,8 @@ import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
+import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -60,6 +62,22 @@ class DiagnosticServiceTest {
         assertEquals(first, errorOnly.path());
         assertEquals(2, errorOnly.startLine());
         assertEquals(DiagnosticSeverity.Error, errorOnly.severity());
+    }
+
+    @Test
+    void diagnosticsForBufferMatchesEquivalentFileUrisByPath() throws Exception {
+        Path file = tempDir.resolve("uri-spelling.txt");
+        Files.writeString(file, "one\ntwo\n");
+        var context = new BufferContext(Rect.create(0, 0, 40, 8), file);
+
+        DiagnosticService.getInstance().publish(PROVIDER, file.toUri().toString(), file,
+                List.of(diagnostic(1, 0, DiagnosticSeverity.Warning, "path matched warning")));
+
+        assertEquals(1, DiagnosticService.getInstance().diagnosticsFor(context).size());
+        assertEquals(DiagnosticSeverity.Warning, DiagnosticService.getInstance().lineSeverity(context, 1));
+
+        DiagnosticService.getInstance().clear(PROVIDER, context.getBuffer().getURI().toString());
+        assertEquals(0, DiagnosticService.getInstance().diagnosticsFor(context).size());
     }
 
     private static Diagnostic diagnostic(int line, int character, DiagnosticSeverity severity, String message) {

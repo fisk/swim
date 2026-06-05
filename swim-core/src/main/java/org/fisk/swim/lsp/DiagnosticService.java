@@ -52,8 +52,13 @@ public final class DiagnosticService {
     }
 
     public void clear(String providerId, String uri) {
+        Path path = pathForUri(uri);
         synchronized (_lock) {
             _diagnosticsByKey.remove(key(providerId, uri));
+            if (path != null) {
+                _diagnosticsByKey.entrySet().removeIf(entry -> entry.getKey().startsWith(providerId + "\u0000")
+                        && entry.getValue().stream().anyMatch(diagnostic -> path.equals(diagnostic.path())));
+            }
         }
     }
 
@@ -68,11 +73,12 @@ public final class DiagnosticService {
             return List.of();
         }
         String uri = bufferContext.getBuffer().getURI().toString();
+        Path path = normalize(bufferContext.getBuffer().getPath());
         synchronized (_lock) {
             var result = new ArrayList<DiagnosticEntry>();
             for (var entries : _diagnosticsByKey.values()) {
                 for (var entry : entries) {
-                    if (uri.equals(entry.uri())) {
+                    if (uri.equals(entry.uri()) || path != null && path.equals(entry.path())) {
                         result.add(entry);
                     }
                 }
@@ -233,5 +239,16 @@ public final class DiagnosticService {
 
     private static Path normalize(Path path) {
         return path == null ? null : path.toAbsolutePath().normalize();
+    }
+
+    private static Path pathForUri(String uri) {
+        if (uri == null || uri.isBlank()) {
+            return null;
+        }
+        try {
+            return normalize(Path.of(java.net.URI.create(uri)));
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

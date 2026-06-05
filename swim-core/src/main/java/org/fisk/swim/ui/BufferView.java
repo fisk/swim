@@ -347,7 +347,7 @@ public class BufferView extends View {
             return TextColor.ANSI.RED_BRIGHT;
         }
         if (DiagnosticSeverity.Warning.equals(severity)) {
-            return TextColor.ANSI.YELLOW_BRIGHT;
+            return UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;
         }
         return currentPhysicalLine == physicalLine ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
     }

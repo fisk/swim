@@ -8,53 +8,54 @@ import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 
-final class UiTheme {
-    static final TextColor ROOT_BACKGROUND = color("#0b1117");
-    static final TextColor SURFACE_BACKGROUND = color("#111a23");
-    static final TextColor SURFACE_ELEVATED = color("#15202b");
-    static final TextColor SURFACE_ACCENT = color("#1b2a38");
-    static final TextColor SURFACE_MUTED = color("#101821");
+public final class UiTheme {
+    public static final TextColor ROOT_BACKGROUND = color("#0b1117");
+    public static final TextColor SURFACE_BACKGROUND = color("#111a23");
+    public static final TextColor SURFACE_ELEVATED = color("#15202b");
+    public static final TextColor SURFACE_ACCENT = color("#1b2a38");
+    public static final TextColor SURFACE_MUTED = color("#101821");
 
-    static final TextColor TEXT_PRIMARY = color("#dce6ef");
-    static final TextColor TEXT_MUTED = color("#8ca1b3");
-    static final TextColor TEXT_SUBTLE = color("#61788d");
-    static final TextColor TEXT_ON_ACCENT = color("#f7fbff");
+    public static final TextColor TEXT_PRIMARY = color("#dce6ef");
+    public static final TextColor TEXT_MUTED = color("#8ca1b3");
+    public static final TextColor TEXT_SUBTLE = color("#61788d");
+    public static final TextColor TEXT_ON_ACCENT = color("#f7fbff");
 
-    static final TextColor ACCENT_BLUE = color("#5ec4ff");
-    static final TextColor ACCENT_GOLD = color("#ffb454");
-    static final TextColor ACCENT_GREEN = color("#7ee787");
-    static final TextColor ACCENT_RED = color("#ff7b72");
-    static final TextColor ACCENT_ORANGE = color("#ff9e64");
-    static final TextColor DIAGNOSTIC_ERROR_BACKGROUND = color("#4a2020");
-    static final TextColor DIAGNOSTIC_WARNING_BACKGROUND = color("#4a3f1a");
+    public static final TextColor ACCENT_BLUE = color("#5ec4ff");
+    public static final TextColor ACCENT_GOLD = color("#ffb454");
+    public static final TextColor ACCENT_GREEN = color("#7ee787");
+    public static final TextColor ACCENT_RED = color("#ff7b72");
+    public static final TextColor ACCENT_ORANGE = color("#ff9e64");
+    public static final TextColor DIAGNOSTIC_ERROR_BACKGROUND = color("#4a2020");
+    public static final TextColor DIAGNOSTIC_WARNING_FOREGROUND = color("#ffe66d");
+    public static final TextColor DIAGNOSTIC_WARNING_BACKGROUND = color("#4a3f1a");
 
-    static final TextColor PANEL_SELECTION_BACKGROUND = color("#20405a");
-    static final TextColor PANEL_SELECTION_FOREGROUND = color("#f8fbff");
-    static final TextColor PANEL_SELECTION_ACCENT = color("#ffb454");
+    public static final TextColor PANEL_SELECTION_BACKGROUND = color("#20405a");
+    public static final TextColor PANEL_SELECTION_FOREGROUND = color("#f8fbff");
+    public static final TextColor PANEL_SELECTION_ACCENT = color("#ffb454");
 
-    static final TextColor MENU_BACKGROUND = color("#0d151d");
-    static final TextColor MENU_SECONDARY_BACKGROUND = color("#101b25");
-    static final TextColor MENU_SEGMENT_BACKGROUND = color("#15222d");
-    static final TextColor MENU_CONTEXT_BACKGROUND = color("#1d2d3a");
-    static final TextColor MENU_ACCENT = color("#5ec4ff");
-    static final TextColor MENU_CHAIN = color("#ffb454");
-    static final TextColor MENU_HINT = color("#7ee787");
+    public static final TextColor MENU_BACKGROUND = color("#0d151d");
+    public static final TextColor MENU_SECONDARY_BACKGROUND = color("#101b25");
+    public static final TextColor MENU_SEGMENT_BACKGROUND = color("#15222d");
+    public static final TextColor MENU_CONTEXT_BACKGROUND = color("#1d2d3a");
+    public static final TextColor MENU_ACCENT = color("#5ec4ff");
+    public static final TextColor MENU_CHAIN = color("#ffb454");
+    public static final TextColor MENU_HINT = color("#7ee787");
 
-    static final TextColor COMMAND_BACKGROUND = color("#0f1822");
-    static final TextColor COMMAND_INACTIVE_BACKGROUND = color("#0c131b");
-    static final TextColor COMMAND_PROMPT = color("#5ec4ff");
-    static final TextColor COMMAND_SEARCH = color("#ffb454");
-    static final TextColor COMMAND_ERROR = color("#ff7b72");
-    static final TextColor COMMAND_SUCCESS = color("#7ee787");
+    public static final TextColor COMMAND_BACKGROUND = color("#0f1822");
+    public static final TextColor COMMAND_INACTIVE_BACKGROUND = color("#0c131b");
+    public static final TextColor COMMAND_PROMPT = color("#5ec4ff");
+    public static final TextColor COMMAND_SEARCH = color("#ffb454");
+    public static final TextColor COMMAND_ERROR = color("#ff7b72");
+    public static final TextColor COMMAND_SUCCESS = color("#7ee787");
 
-    static final TextColor CHAT_ME = color("#ffb86b");
-    static final TextColor CHAT_NEMO = color("#7ee787");
+    public static final TextColor CHAT_ME = color("#ffb86b");
+    public static final TextColor CHAT_NEMO = color("#7ee787");
 
-    static final TextColor MODELINE_BACKGROUND = color("#091017");
-    static final TextColor MODELINE_FOREGROUND = color("#d2dce5");
-    static final TextColor MODE_NORMAL = color("#1d4e89");
-    static final TextColor MODE_INPUT = color("#8a4020");
-    static final TextColor MODE_VISUAL = color("#1f6f50");
+    public static final TextColor MODELINE_BACKGROUND = color("#091017");
+    public static final TextColor MODELINE_FOREGROUND = color("#d2dce5");
+    public static final TextColor MODE_NORMAL = color("#1d4e89");
+    public static final TextColor MODE_INPUT = color("#8a4020");
+    public static final TextColor MODE_VISUAL = color("#1f6f50");
 
     private UiTheme() {
     }

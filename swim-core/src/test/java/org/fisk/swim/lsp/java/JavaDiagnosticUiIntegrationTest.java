@@ -31,6 +31,7 @@ import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.CodeActionPopupView;
 import org.fisk.swim.ui.DiagnosticPopupView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +41,7 @@ import com.googlecode.lanterna.TextColor;
 
 class JavaDiagnosticUiIntegrationTest {
     private static final TextColor ERROR_COLOR = TextColor.ANSI.RED_BRIGHT;
-    private static final TextColor WARNING_COLOR = TextColor.ANSI.YELLOW_BRIGHT;
+    private static final TextColor WARNING_COLOR = UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;
 
     @TempDir
     Path tempDir;
