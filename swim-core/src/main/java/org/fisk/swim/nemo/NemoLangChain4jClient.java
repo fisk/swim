@@ -253,6 +253,45 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
+        if (configuration.toolDelegateTask()) {
+            tools.add(tool("delegate_task",
+                    "Start a focused workspace task in a separate Nemo sub-agent worker and return immediately with the new session id. Use this to split investigation, review, or implementation work that can run in parallel. The sub-agent inherits this session's tools, permissions, sandbox, and approval policy, but cannot delegate again.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("task", "Detailed work request for the sub-agent.")
+                            .addStringProperty("title", "Optional short label for the delegated task.")
+                            .addProperty("focus_paths", JsonArraySchema.builder()
+                                    .description("Optional workspace-relative paths the sub-agent should focus on.")
+                                    .items(JsonStringSchema.builder().description("Workspace-relative path.").build())
+                                    .build())
+                            .required(List.of("task"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("worker_status",
+                    "List delegated Nemo workers and sessions for this workspace, or inspect one session's running/idle status.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("session_id", "Optional session id or title to inspect.")
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("read_worker",
+                    "Read a delegated Nemo worker/session transcript without waiting for it to finish.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("session_id", "Session id or unique title to read.")
+                            .addIntegerProperty("max_turns", "Maximum transcript turns to include.")
+                            .addIntegerProperty("max_output_chars", "Maximum characters to return.")
+                            .required(List.of("session_id"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("join_worker",
+                    "Wait for a delegated Nemo worker/session to finish, bounded by timeout_seconds, then return its transcript.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("session_id", "Session id or unique title to join.")
+                            .addIntegerProperty("timeout_seconds", "Maximum seconds to wait.")
+                            .addIntegerProperty("max_turns", "Maximum transcript turns to include.")
+                            .addIntegerProperty("max_output_chars", "Maximum characters to return.")
+                            .required(List.of("session_id"))
+                            .additionalProperties(false)
+                            .build()));
+        }
         if (configuration.toolListFiles()) {
             tools.add(tool("list_files",
                     "List files in the workspace. Use this to inspect project structure.",

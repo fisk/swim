@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -72,6 +73,53 @@ class NemoChatIT {
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("nemo> Follow-up answer")));
                 assertFalse(transcript.stream().anyMatch(line -> line.contains("Nemo failed")));
                 assertTrue(requestCount.get() >= 3);
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void delegateTaskRunsSubAgentAndReturnsResultToParent() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startDelegationServer(requestCount);
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Delegate this inspection");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "tool> delegate_task: title=Docs");
+                waitForLine(panel, "nemo> Parent saw delegated start.");
+
+                var workerToolConfiguration = NemoClient.Configuration.builder()
+                        .workspaceRoot(tempDir)
+                        .build();
+                String status = NemoClient.executeTool(workerToolConfiguration, window.getBufferContext(),
+                        new NemoClient.ToolCall("status", "worker_status", json(Map.of())));
+                assertTrue(status.contains("session-2 | Docs | running"));
+
+                submit(panel, ":workers");
+                waitForLine(panel, "session-2 | Docs");
+
+                String joined = NemoClient.executeTool(workerToolConfiguration, window.getBufferContext(),
+                        new NemoClient.ToolCall("join", "join_worker", json(Map.of(
+                                "session_id", "session-2",
+                                "timeout_seconds", 5))));
+                assertTrue(joined.contains("Sub-agent completed."));
+
+                submit(panel, ":switch session-2");
+                panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Sub-agent completed.");
+
+                assertTrue(requestCount.get() >= 3);
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Nemo failed")));
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -805,6 +853,37 @@ class NemoChatIT {
         return server;
     }
 
+    private HttpServer startDelegationServer(AtomicInteger requestCount) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/chat/completions", exchange -> {
+            requestCount.incrementAndGet();
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String response;
+            if (body.contains("You are a Nemo sub-agent delegated")) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                response = sseTextResponse("Sub-agent completed.");
+            } else if (body.contains("Started sub-agent worker")) {
+                response = sseTextResponse("Parent saw delegated start.");
+            } else {
+                response = sseToolCallResponse("call_delegate", "delegate_task",
+                        "{\"title\":\"Docs\",\"task\":\"Inspect chat.txt and summarize it.\",\"focus_paths\":[\"chat.txt\"]}");
+            }
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(bytes);
+            }
+        });
+        server.start();
+        return server;
+    }
+
     private HttpServer startValidatingServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
             List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -1163,6 +1242,10 @@ class NemoChatIT {
         usage.addProperty("completion_tokens", completionTokens);
         usage.addProperty("total_tokens", promptTokens + completionTokens);
         return usage;
+    }
+
+    private static JsonObject json(Map<String, ?> values) {
+        return JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
     }
 
     private String switchToTempUserHome() {

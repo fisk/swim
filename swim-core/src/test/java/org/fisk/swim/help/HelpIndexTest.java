@@ -33,6 +33,8 @@ class HelpIndexTest {
         assertTrue(rendered.contains("Nemo"));
         assertTrue(rendered.contains("  Inside Nemo, press Enter to send; Shift-Enter, Ctrl-Enter, Alt-Enter, or Ctrl-J insert newlines."));
         assertTrue(rendered.contains("  Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf."));
+        assertTrue(rendered.contains("  Nemo's delegateTask tool starts focused work in parallel sub-agent workers with the same permissions."));
+        assertTrue(rendered.contains("  Nemo can inspect delegated work with worker_status/read_worker and wait with bounded join_worker."));
         assertTrue(rendered.contains("  :permissions shows permission mode, command policy, OS sandbox backend, and approval policy."));
         assertTrue(rendered.contains("  When approval is required, Nemo opens approval options; use arrows and Enter to choose approve once, approve always, or deny."));
         assertTrue(rendered.contains("  :approvals and :unapprove manage pending and saved tool approvals."));

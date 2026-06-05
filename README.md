@@ -520,6 +520,7 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
   },
   "tools": {
     "webSearch": true,
+    "delegateTask": true,
     "listFiles": true,
     "readFile": true,
     "searchFiles": true,
@@ -606,6 +607,8 @@ Inside the Nemo chat pane:
 - pasted multiline text stays in the draft, so exception traces can be edited before sending
 - type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands and pending approval options
 - `webSearch` is enabled by default; set it to `false` to hide Nemo's internet search tool
+- `delegateTask` is enabled by default; Nemo can use it to start focused work in parallel sub-agent workers that inherit the session's tools, permissions, sandbox, and approval policy
+- Nemo can use `worker_status`, `read_worker`, and bounded `join_worker` tool calls to inspect or collect delegated worker results
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session

@@ -69,6 +69,7 @@ public class NemoClient {
     private static final int _defaultSkillsMaxFiles = 8;
     private static final int _defaultSkillsMaxChars = 12_000;
     private static final boolean _defaultToolWebSearch = true;
+    private static final boolean _defaultToolDelegateTask = true;
     private static final int _defaultWebSearchMaxResults = 5;
     private static final int _maxWebSearchResults = 10;
     private static final Pattern _duckDuckGoResultLinkPattern = Pattern.compile(
@@ -137,6 +138,10 @@ public class NemoClient {
     }
 
     record WebSearchResult(String title, String url, String snippet) {
+    }
+
+    private record WorkerSnapshot(String id, String title, boolean pending, long elapsedSeconds,
+            Integer contextUsagePercent, List<ChatTurn> turns) {
     }
 
     private record DuckDuckGoResultAnchor(int start, int end, String href, String titleHtml) {
@@ -264,6 +269,7 @@ public class NemoClient {
         private final boolean _logRequests;
         private final boolean _logResponses;
         private final boolean _toolWebSearch;
+        private final boolean _toolDelegateTask;
         private final boolean _toolListFiles;
         private final boolean _toolReadFile;
         private final boolean _toolSearchFiles;
@@ -355,6 +361,7 @@ public class NemoClient {
             _logRequests = builder._logRequests;
             _logResponses = builder._logResponses;
             _toolWebSearch = builder._toolWebSearch;
+            _toolDelegateTask = builder._toolDelegateTask;
             _toolListFiles = builder._toolListFiles;
             _toolReadFile = builder._toolReadFile;
             _toolSearchFiles = builder._toolSearchFiles;
@@ -398,6 +405,12 @@ public class NemoClient {
                     .build();
         }
 
+        Configuration forSubAgent() {
+            return new Builder(this)
+                    .toolDelegateTask(false)
+                    .build();
+        }
+
         static final class Builder {
             private String _provider = _defaultProvider;
             private String _apiKey = "";
@@ -420,6 +433,7 @@ public class NemoClient {
             private boolean _logRequests;
             private boolean _logResponses;
             private boolean _toolWebSearch = _defaultToolWebSearch;
+            private boolean _toolDelegateTask = _defaultToolDelegateTask;
             private boolean _toolListFiles = true;
             private boolean _toolReadFile = true;
             private boolean _toolSearchFiles = true;
@@ -471,6 +485,7 @@ public class NemoClient {
                 _logRequests = source._logRequests;
                 _logResponses = source._logResponses;
                 _toolWebSearch = source._toolWebSearch;
+                _toolDelegateTask = source._toolDelegateTask;
                 _toolListFiles = source._toolListFiles;
                 _toolReadFile = source._toolReadFile;
                 _toolSearchFiles = source._toolSearchFiles;
@@ -606,6 +621,11 @@ public class NemoClient {
 
             Builder toolWebSearch(boolean toolWebSearch) {
                 _toolWebSearch = toolWebSearch;
+                return this;
+            }
+
+            Builder toolDelegateTask(boolean toolDelegateTask) {
+                _toolDelegateTask = toolDelegateTask;
                 return this;
             }
 
@@ -765,6 +785,7 @@ public class NemoClient {
         boolean logRequests() { return _logRequests; }
         boolean logResponses() { return _logResponses; }
         boolean toolWebSearch() { return _toolWebSearch; }
+        boolean toolDelegateTask() { return _toolDelegateTask; }
         boolean toolListFiles() { return _toolListFiles; }
         boolean toolReadFile() { return _toolReadFile; }
         boolean toolSearchFiles() { return _toolSearchFiles; }
@@ -995,6 +1016,7 @@ public class NemoClient {
                 .logRequests(booleanProperty(properties, "log_requests", false))
                 .logResponses(booleanProperty(properties, "log_responses", false))
                 .toolWebSearch(booleanProperty(properties, "tool.web_search", _defaultToolWebSearch))
+                .toolDelegateTask(booleanProperty(properties, "tool.delegate_task", _defaultToolDelegateTask))
                 .toolListFiles(booleanProperty(properties, "tool.list_files", true))
                 .toolReadFile(booleanProperty(properties, "tool.read_file", true))
                 .toolSearchFiles(booleanProperty(properties, "tool.search_files", true))
@@ -1055,6 +1077,7 @@ public class NemoClient {
                 .logRequests(booleanMember(root, false, "logRequests", "log_requests"))
                 .logResponses(booleanMember(root, false, "logResponses", "log_responses"))
                 .toolWebSearch(booleanMember(tools, _defaultToolWebSearch, "webSearch", "web_search"))
+                .toolDelegateTask(booleanMember(tools, _defaultToolDelegateTask, "delegateTask", "delegate_task"))
                 .toolListFiles(booleanMember(tools, true, "listFiles", "list_files"))
                 .toolReadFile(booleanMember(tools, true, "readFile", "read_file"))
                 .toolSearchFiles(booleanMember(tools, true, "searchFiles", "search_files"))
@@ -1455,6 +1478,10 @@ public class NemoClient {
 
     static ToolTrace toolTrace(ToolCall call, String output) {
         String detail = switch (call.name()) {
+        case "delegate_task" -> withOutputStatus(delegateTaskSummary(call.arguments()), output);
+        case "worker_status" -> argumentSummary(call.arguments(), "session_id");
+        case "read_worker" -> argumentSummary(call.arguments(), "session_id", "max_turns");
+        case "join_worker" -> withOutputStatus(argumentSummary(call.arguments(), "session_id", "timeout_seconds"), output);
         case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
         case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
         case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
@@ -1493,6 +1520,12 @@ public class NemoClient {
         return joinSummary(List.of(
                 path.isBlank() ? "" : "path=" + path,
                 "content=" + chars + " chars"));
+    }
+
+    private static String delegateTaskSummary(JsonObject arguments) {
+        return joinSummary(List.of(
+                argumentSummary(arguments, "title"),
+                "task=" + compactArgumentValue(arguments.get("task"))));
     }
 
     private static String gitAddSummary(JsonObject arguments) {
@@ -1610,6 +1643,34 @@ public class NemoClient {
             var tool = new JsonObject();
             tool.addProperty("type", "web_search");
             tools.add(tool);
+        }
+        if (configuration.toolDelegateTask()) {
+            tools.add(functionTool("delegate_task",
+                    "Start a focused workspace task in a separate Nemo sub-agent worker and return immediately with the new session id. Use this to split investigation, review, or implementation work that can run in parallel. The sub-agent inherits this session's tools, permissions, sandbox, and approval policy, but cannot delegate again.",
+                    schema(List.of(
+                            property("task", stringSchema("Detailed work request for the sub-agent.")),
+                            property("title", stringSchema("Optional short label for the delegated task.")),
+                            property("focus_paths", stringArraySchema("Optional workspace-relative paths the sub-agent should focus on."))),
+                            List.of("task"))));
+            tools.add(functionTool("worker_status",
+                    "List delegated Nemo workers and sessions for this workspace, or inspect one session's running/idle status.",
+                    schema(List.of(
+                            property("session_id", stringSchema("Optional session id or title to inspect."))))));
+            tools.add(functionTool("read_worker",
+                    "Read a delegated Nemo worker/session transcript without waiting for it to finish.",
+                    schema(List.of(
+                            property("session_id", stringSchema("Session id or unique title to read.")),
+                            property("max_turns", integerSchema("Maximum transcript turns to include.")),
+                            property("max_output_chars", integerSchema("Maximum characters to return."))),
+                            List.of("session_id"))));
+            tools.add(functionTool("join_worker",
+                    "Wait for a delegated Nemo worker/session to finish, bounded by timeout_seconds, then return its transcript.",
+                    schema(List.of(
+                            property("session_id", stringSchema("Session id or unique title to join.")),
+                            property("timeout_seconds", integerSchema("Maximum seconds to wait.")),
+                            property("max_turns", integerSchema("Maximum transcript turns to include.")),
+                            property("max_output_chars", integerSchema("Maximum characters to return."))),
+                            List.of("session_id"))));
         }
         if (configuration.toolListFiles()) {
             tools.add(functionTool("list_files",
@@ -1736,6 +1797,16 @@ public class NemoClient {
         return schema;
     }
 
+    private static JsonObject stringArraySchema(String description) {
+        var schema = new JsonObject();
+        schema.addProperty("type", "array");
+        schema.addProperty("description", description);
+        var items = new JsonObject();
+        items.addProperty("type", "string");
+        schema.add("items", items);
+        return schema;
+    }
+
     private static JsonObject integerSchema(String description) {
         var schema = new JsonObject();
         schema.addProperty("type", "integer");
@@ -1759,6 +1830,10 @@ public class NemoClient {
         }
         return switch (call.name()) {
         case "web_search" -> webSearch(call.arguments());
+        case "delegate_task" -> _instance.delegateTask(configuration, context, call.arguments());
+        case "worker_status" -> _instance.workerStatus(configuration, context, call.arguments());
+        case "read_worker" -> _instance.readWorker(configuration, context, call.arguments());
+        case "join_worker" -> _instance.joinWorker(configuration, context, call.arguments());
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
@@ -1876,6 +1951,160 @@ public class NemoClient {
         } catch (RuntimeException e) {
             return "Web search failed for query: " + query + " (" + e.getMessage() + ")";
         }
+    }
+
+    private String delegateTask(Configuration configuration, BufferContext context, JsonObject arguments) {
+        if (!configuration.toolDelegateTask()) {
+            return "Sub-agent delegation is disabled for this request.";
+        }
+        String task = stringArgument(arguments, "task", "").trim();
+        if (task.isBlank()) {
+            return "Sub-agent delegation failed: task is blank.";
+        }
+        String title = stringArgument(arguments, "title", "").trim();
+        var focusPaths = stringArrayArgument(arguments, "focus_paths");
+        Conversation worker = startDelegatedWorker(configuration, context, title, task, focusPaths);
+        return "Started sub-agent worker " + worker._id + " (" + worker._title + "). "
+                + "It is running in parallel. Use :workers to watch it or :switch " + worker._id + " to inspect it.";
+    }
+
+    private Conversation startDelegatedWorker(Configuration configuration, BufferContext context, String title,
+            String task, List<String> focusPaths) {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        Conversation worker;
+        synchronized (this) {
+            ensureSessionsLoaded();
+            worker = createConversation(workspaceRoot, delegatedTitle(title, task));
+            bindConversation(worker, context, configuration.forSubAgent());
+            persistSessions();
+        }
+        submit(worker, subAgentPrompt(title, task, focusPaths));
+        return worker;
+    }
+
+    private static String delegatedTitle(String title, String task) {
+        if (!title.isBlank()) {
+            return title;
+        }
+        String oneLineTask = oneLine(task);
+        if (oneLineTask.isBlank()) {
+            return "Delegated task";
+        }
+        return oneLineTask.length() <= 48 ? oneLineTask : oneLineTask.substring(0, 45) + "...";
+    }
+
+    private static String subAgentPrompt(String title, String task, List<String> focusPaths) {
+        var builder = new StringBuilder();
+        builder.append("You are a Nemo sub-agent delegated by another Nemo request.\n")
+                .append("Work independently on the task below using workspace tools as needed.\n")
+                .append("Do not ask the user questions. If blocked, report exactly what blocked you and what you checked.\n")
+                .append("Return a concise report with findings, changes made, tests run, and remaining risks.\n")
+                .append("Do not delegate further; sub-agent delegation is disabled inside this request.\n");
+        if (!title.isBlank()) {
+            builder.append("\nTitle: ").append(title).append("\n");
+        }
+        builder.append("\nTask:\n").append(task).append("\n");
+        if (!focusPaths.isEmpty()) {
+            builder.append("\nFocus paths:\n");
+            for (String path : focusPaths) {
+                builder.append("- ").append(path).append("\n");
+            }
+        }
+        return builder.toString();
+    }
+
+    private String workerStatus(Configuration configuration, BufferContext context, JsonObject arguments) {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String sessionId = stringArgument(arguments, "session_id", "").trim();
+        synchronized (this) {
+            ensureSessionsLoaded();
+            if (!sessionId.isBlank()) {
+                Conversation worker = findConversation(sessionId, workspaceRoot);
+                return worker == null
+                        ? "Unknown worker/session: " + sessionId
+                        : formatWorkerStatus(worker);
+            }
+            return formatSessions(workspaceRoot);
+        }
+    }
+
+    private String readWorker(Configuration configuration, BufferContext context, JsonObject arguments) {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String sessionId = stringArgument(arguments, "session_id", "").trim();
+        if (sessionId.isBlank()) {
+            return "Worker read failed: session_id is required.";
+        }
+        int maxTurns = Math.max(1, intArgument(arguments, "max_turns", 20));
+        int maxOutputChars = Math.max(1, intArgument(arguments, "max_output_chars", configuration.toolMaxOutputChars()));
+        WorkerSnapshot snapshot = workerSnapshot(workspaceRoot, sessionId);
+        if (snapshot == null) {
+            return "Unknown worker/session: " + sessionId;
+        }
+        return truncateText(formatWorkerSnapshot(snapshot, maxTurns), maxOutputChars);
+    }
+
+    private String joinWorker(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws InterruptedException {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String sessionId = stringArgument(arguments, "session_id", "").trim();
+        if (sessionId.isBlank()) {
+            return "Worker join failed: session_id is required.";
+        }
+        int timeoutSeconds = Math.max(0, Math.min(300, intArgument(arguments, "timeout_seconds", 30)));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (workerPending(workspaceRoot, sessionId) && System.nanoTime() < deadline) {
+            Thread.sleep(100);
+        }
+        return readWorker(configuration, context, arguments);
+    }
+
+    private synchronized WorkerSnapshot workerSnapshot(Path workspaceRoot, String sessionId) {
+        ensureSessionsLoaded();
+        Conversation worker = findConversation(sessionId, workspaceRoot);
+        if (worker == null) {
+            return null;
+        }
+        return new WorkerSnapshot(
+                worker._id,
+                worker._title,
+                worker._pending,
+                elapsedSeconds(worker),
+                worker._contextUsagePercent,
+                List.copyOf(worker._turns));
+    }
+
+    private synchronized boolean workerPending(Path workspaceRoot, String sessionId) {
+        ensureSessionsLoaded();
+        Conversation worker = findConversation(sessionId, workspaceRoot);
+        return worker != null && worker._pending;
+    }
+
+    private static String formatWorkerStatus(Conversation worker) {
+        String status = worker._pending ? "running " + elapsedSeconds(worker) + "s" : "idle";
+        return worker._id + " | " + worker._title + " | " + status + " | turns=" + worker._turns.size();
+    }
+
+    private static String formatWorkerSnapshot(WorkerSnapshot snapshot, int maxTurns) {
+        var lines = new ArrayList<String>();
+        String status = snapshot.pending() ? "running " + snapshot.elapsedSeconds() + "s" : "idle";
+        lines.add("Worker " + snapshot.id() + " | " + snapshot.title() + " | " + status);
+        if (snapshot.contextUsagePercent() != null) {
+            lines.add("context: " + snapshot.contextUsagePercent() + "%");
+        }
+        lines.add("Transcript:");
+        int start = Math.max(0, snapshot.turns().size() - maxTurns);
+        for (int i = start; i < snapshot.turns().size(); i++) {
+            ChatTurn turn = snapshot.turns().get(i);
+            lines.add(turn.speaker() + "> " + turn.text());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String truncateText(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) {
+            return text == null ? "" : text;
+        }
+        return text.substring(0, maxChars) + "...";
     }
 
     static List<WebSearchResult> parseDuckDuckGoResults(String html, int maxResults) {
@@ -2715,6 +2944,22 @@ public class NemoClient {
         return arguments.has(name) ? arguments.get(name).getAsInt() : fallback;
     }
 
+    private static List<String> stringArrayArgument(JsonObject arguments, String name) {
+        if (!arguments.has(name) || !arguments.get(name).isJsonArray()) {
+            return List.of();
+        }
+        var values = new ArrayList<String>();
+        for (var element : arguments.getAsJsonArray(name)) {
+            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
+                String value = element.getAsString().trim();
+                if (!value.isBlank()) {
+                    values.add(value);
+                }
+            }
+        }
+        return values;
+    }
+
     static String extractOutputText(String responseBody) {
         JsonObject root = parseJsonObject(responseBody);
         JsonArray output = root.getAsJsonArray("output");
@@ -3550,7 +3795,7 @@ public class NemoClient {
         case ":help":
             appendAssistantNote(conversation,
                     "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch tool is enabled by default unless disabled in nemo.conf.");
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Delegated workers can be inspected with worker_status/read_worker and joined with bounded join_worker.");
             return;
         case ":q":
         case ":quit":

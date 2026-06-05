@@ -65,6 +65,8 @@ class NemoClientTest {
 
         assertTrue(prompt.contains("permission mode: workspace-write"));
         assertTrue(prompt.contains("successful edits are saved to disk and persist across Nemo/editor runs"));
+        assertTrue(prompt.contains("delegate_task starts focused work in a separate Nemo sub-agent worker"));
+        assertTrue(prompt.contains("worker_status/read_worker to check sub-agent progress"));
     }
 
     @Test
@@ -247,22 +249,31 @@ class NemoClientTest {
     }
 
     @Test
-    void webSearchIsEnabledByDefaultAndCanBeDisabled() throws IOException {
+    void webSearchAndSubAgentDelegationAreEnabledByDefaultAndCanBeDisabled() throws IOException {
         assertTrue(NemoClient.Configuration.builder().build().toolWebSearch());
+        assertTrue(NemoClient.Configuration.builder().build().toolDelegateTask());
+        assertFalse(NemoClient.Configuration.builder().build().forSubAgent().toolDelegateTask());
 
         Path propertiesConfig = tempDir.resolve("nemo-disabled.properties");
-        Files.writeString(propertiesConfig, "tool.web_search=false\n");
-        assertFalse(NemoClient.loadConfiguration(propertiesConfig).toolWebSearch());
+        Files.writeString(propertiesConfig, String.join("\n",
+                "tool.web_search=false",
+                "tool.delegate_task=false"));
+        var propertiesConfiguration = NemoClient.loadConfiguration(propertiesConfig);
+        assertFalse(propertiesConfiguration.toolWebSearch());
+        assertFalse(propertiesConfiguration.toolDelegateTask());
 
         Path jsonConfig = tempDir.resolve("nemo-disabled.json");
         Files.writeString(jsonConfig, """
                 {
                   "tools": {
-                    "webSearch": false
+                    "webSearch": false,
+                    "delegateTask": false
                   }
                 }
                 """);
-        assertFalse(NemoClient.loadConfiguration(jsonConfig).toolWebSearch());
+        var jsonConfiguration = NemoClient.loadConfiguration(jsonConfig);
+        assertFalse(jsonConfiguration.toolWebSearch());
+        assertFalse(jsonConfiguration.toolDelegateTask());
     }
 
     @Test
@@ -530,8 +541,12 @@ class NemoClientTest {
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(11, tools.size());
+        assertEquals(15, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
+        assertEquals("delegate_task", tools.get(1).getAsJsonObject().get("name").getAsString());
+        assertEquals("worker_status", tools.get(2).getAsJsonObject().get("name").getAsString());
+        assertEquals("read_worker", tools.get(3).getAsJsonObject().get("name").getAsString());
+        assertEquals("join_worker", tools.get(4).getAsJsonObject().get("name").getAsString());
     }
 
     @Test
@@ -551,6 +566,10 @@ class NemoClientTest {
         }
 
         assertTrue(names.contains("list_files"));
+        assertTrue(names.contains("delegate_task"));
+        assertTrue(names.contains("worker_status"));
+        assertTrue(names.contains("read_worker"));
+        assertTrue(names.contains("join_worker"));
         assertTrue(names.contains("read_file"));
         assertTrue(names.contains("search_files"));
         assertTrue(names.contains("git_status"));
@@ -602,6 +621,23 @@ class NemoClientTest {
     @Test
     void webSearchRejectsBlankQueriesWithoutNetwork() {
         assertTrue(NemoClient.webSearch(json(Map.of("query", " "))).contains("query is blank"));
+    }
+
+    @Test
+    void delegateTaskRejectsBlankTaskWithoutNetwork() throws Exception {
+        Path project = tempDir.resolve("delegate-blank");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("delegate-blank", "delegate_task", json(Map.of("task", " "))));
+
+        assertTrue(output.contains("task is blank"));
     }
 
     @Test
