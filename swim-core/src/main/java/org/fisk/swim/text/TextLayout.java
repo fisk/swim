@@ -322,28 +322,21 @@ public class TextLayout {
     }
 
     private void calculatePhysicalLines() {
+        int width = Math.max(1, _bufferContext.getBufferView().getTextWidth());
         var string = _bufferContext.getBuffer().getString();
-        _physicalLines = new ArrayList<>();
-        _physicalLineAtPosition = new TreeMap<>();
-        Line line = new Line(0, 0, null, false);
-        _physicalLines.add(line);
-        _physicalLineAtPosition.put(0, line);
-        int x = 0;
-        int y = 0;
-        int position = 0;
-        while (position < string.length()) {
-            String character = string.substring(position, position + 1);
-            line.getGlyphs().add(new Glyph(x++, y, position, character));
-            if (character.equals("\n")) {
-                Line next = new Line(++y, position + 1, line, true);
-                line.setNext(next);
-                line = next;
-                _physicalLines.add(line);
-                _physicalLineAtPosition.put(position + 1, line);
-                x = 0;
+        var iter = new LayoutIterator(string, width);
+        while (iter.hasNext()) {
+            if (iter.isNewline()) {
+                iter.insertGlyph();
+                iter.newLine();
+            } else {
+                iter.insertGlyph();
+                iter.incX();
             }
-            position++;
+            iter.next();
         }
+        _physicalLines = iter.getLines();
+        _physicalLineAtPosition = iter.getLineAtPosition();
     }
 
     public void calculate() {

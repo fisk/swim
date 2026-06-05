@@ -15,6 +15,7 @@ import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 public class BufferView extends View {
+    private static final int MIN_DECORATED_WIDTH = 6;
     private static final String GUTTER_SEPARATOR = "│";
     private static final String SCROLLBAR_TRACK = "│";
     private static final String SCROLLBAR_THUMB = "█";
@@ -30,7 +31,7 @@ public class BufferView extends View {
         return getBounds().getSize().getHeight();
     }
 
-    int getTextColumnStart() {
+    public int getTextColumnStart() {
         return getLineNumberGutterWidth();
     }
 
@@ -179,8 +180,8 @@ public class BufferView extends View {
         if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
             return character;
         }
-        int logicalLine = _bufferContext.getTextLayout().getLogicalLineAt(glyph.getPosition()).getY();
-        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, logicalLine);
+        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(glyph.getPosition()).getY();
+        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, sourceLine);
         TextColor background = null;
         if (DiagnosticSeverity.Error.equals(severity)) {
             background = UiTheme.DIAGNOSTIC_ERROR_BACKGROUND;
@@ -216,15 +217,15 @@ public class BufferView extends View {
             window.hideHoverDiagnostics();
             return;
         }
-        int physicalLine = localY + _startLine;
-        if (physicalLine < 0 || physicalLine >= _bufferContext.getTextLayout().getPhysicalLineCount()) {
+        var visibleLines = _bufferContext.getTextLayout().getVisibleLogicalLines();
+        if (localY < 0 || localY >= visibleLines.size()) {
             window.hideHoverDiagnostics();
             return;
         }
-        int index = _bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(physicalLine, 0);
-        int logicalLine = _bufferContext.getTextLayout().getLogicalLineAt(index).getY();
+        var wrappedLine = visibleLines.get(localY);
+        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
         window.updateHoveredDiagnostics(_bufferContext,
-                logicalLine,
+                sourceLine,
                 Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
     }
 
@@ -243,11 +244,14 @@ public class BufferView extends View {
     }
 
     private int getScrollbarWidth() {
-        return getBounds().getSize().getWidth() >= 4 ? 1 : 0;
+        return decorationsEnabled() ? 1 : 0;
     }
 
     private int getLineNumberGutterWidth() {
         int totalWidth = getBounds().getSize().getWidth();
+        if (!decorationsEnabled()) {
+            return 0;
+        }
         int scrollbarWidth = getScrollbarWidth();
         int maxGutterWidth = Math.max(0, totalWidth - scrollbarWidth - 1);
         if (maxGutterWidth <= 0) {
@@ -279,7 +283,7 @@ public class BufferView extends View {
             var line = visibleLines.get(row);
             var physicalLine = textLayout.getPhysicalLineAt(line.getStartPosition());
             boolean firstSegment = line.getStartPosition() == physicalLine.getStartPosition();
-            TextColor foreground = currentPhysicalLine == physicalLine.getY() ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
+            TextColor foreground = lineNumberForeground(physicalLine.getY(), currentPhysicalLine);
             AttributedString gutter = createLineNumberString(firstSegment ? physicalLine.getY() + 1 : null, gutterWidth, foreground);
             gutter.drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + row), graphics);
         }
@@ -331,6 +335,21 @@ public class BufferView extends View {
 
     private static int digitCount(int value) {
         return Integer.toString(Math.max(1, value)).length();
+    }
+
+    private boolean decorationsEnabled() {
+        return getBounds().getSize().getWidth() >= MIN_DECORATED_WIDTH;
+    }
+
+    private TextColor lineNumberForeground(int physicalLine, int currentPhysicalLine) {
+        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, physicalLine);
+        if (DiagnosticSeverity.Error.equals(severity)) {
+            return TextColor.ANSI.RED_BRIGHT;
+        }
+        if (DiagnosticSeverity.Warning.equals(severity)) {
+            return TextColor.ANSI.YELLOW_BRIGHT;
+        }
+        return currentPhysicalLine == physicalLine ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
     }
 
     private static int countPhysicalLines(String text) {

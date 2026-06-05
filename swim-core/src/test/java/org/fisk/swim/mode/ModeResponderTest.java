@@ -165,7 +165,9 @@ class ModeResponderTest {
             int xIndex = buffer.getString().indexOf("x");
             var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(xIndex + 1);
             var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
-            int expectedColumn = bufferBounds.getPoint().getX() + (xIndex + 1) - line.getStartPosition();
+            int expectedColumn = bufferBounds.getPoint().getX()
+                    + window.getBufferContext().getBufferView().getTextColumnStart()
+                    + (xIndex + 1) - line.getStartPosition();
             int expectedRow = bufferBounds.getPoint().getY() + line.getY();
             var cursorPosition = installedTerminal.cursorPosition().get();
             assertEquals(expectedColumn, cursorPosition.getColumn());
@@ -210,7 +212,9 @@ class Demo {
             int xIndex = buffer.getString().indexOf("x");
             var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(xIndex + 1);
             var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
-            int expectedColumn = bufferBounds.getPoint().getX() + (xIndex + 1) - line.getStartPosition();
+            int expectedColumn = bufferBounds.getPoint().getX()
+                    + window.getBufferContext().getBufferView().getTextColumnStart()
+                    + (xIndex + 1) - line.getStartPosition();
             int expectedRow = bufferBounds.getPoint().getY() + line.getY();
             var cursorPosition = installedTerminal.cursorPosition().get();
             assertEquals(expectedColumn, cursorPosition.getColumn());
@@ -234,7 +238,9 @@ class Demo {
 
             var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(index);
             var bufferBounds = absoluteBounds(window.getBufferContext().getBufferView());
-            int expectedColumn = bufferBounds.getPoint().getX() + index - line.getStartPosition();
+            int expectedColumn = bufferBounds.getPoint().getX()
+                    + window.getBufferContext().getBufferView().getTextColumnStart()
+                    + index - line.getStartPosition();
             int expectedRow = bufferBounds.getPoint().getY() + line.getY();
             var cursorPosition = installedTerminal.cursorPosition().get();
             assertEquals(expectedColumn, cursorPosition.getColumn());

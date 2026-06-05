@@ -585,7 +585,9 @@ class JavaLSPClientTest {
             int classIndex = context.getBuffer().getString().indexOf("Demo");
             var line = context.getTextLayout().getPhysicalLineAt(classIndex);
             int charIndex = classIndex - line.getStartPosition();
-            int expectedX = context.getBufferView().getBounds().getPoint().getX() + charIndex;
+            int expectedX = context.getBufferView().getBounds().getPoint().getX()
+                    + context.getBufferView().getTextColumnStart()
+                    + charIndex;
             int expectedY = context.getBufferView().getBounds().getPoint().getY() + line.getY() - context.getBufferView().getStartLine();
 
             var classDraw = installedTerminal.drawCalls().stream()

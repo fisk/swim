@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -22,9 +23,11 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
+import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.CodeActionPopupView;
 import org.fisk.swim.ui.DiagnosticPopupView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
@@ -33,7 +36,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.googlecode.lanterna.TextColor;
+
 class JavaDiagnosticUiIntegrationTest {
+    private static final TextColor ERROR_COLOR = TextColor.ANSI.RED_BRIGHT;
+    private static final TextColor WARNING_COLOR = TextColor.ANSI.YELLOW_BRIGHT;
+
     @TempDir
     Path tempDir;
 
@@ -109,6 +117,36 @@ class JavaDiagnosticUiIntegrationTest {
         }
     }
 
+    @Test
+    void javaLspDiagnosticsColorLineNumbers() throws Exception {
+        Path project = tempDir.resolve("java-project-gutter");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                class Main {}
+                """);
+
+        var client = new TestJavaLspClient(new CodeActionLanguageServer());
+        JavaLSPClient.installInstance(client);
+        var terminal = TerminalContextTestSupport.install(20, 10);
+
+        try (var harness = HeadlessWindowHarness.create(file, 20, 10)) {
+            var window = harness.getWindow();
+            LanguageClient languageClient = client.createLanguageClient();
+            languageClient.publishDiagnostics(new PublishDiagnosticsParams(
+                    window.getBufferContext().getBuffer().getURI().toString(),
+                    List.of(
+                            diagnostic(0, 0, DiagnosticSeverity.Error, "Error line"),
+                            diagnostic(1, 0, DiagnosticSeverity.Warning, "Warning line"))));
+
+            window.update(true);
+            assertEquals(ERROR_COLOR, foregroundAt(terminal.drawCalls(), 0, 2));
+            assertEquals(WARNING_COLOR, foregroundAt(terminal.drawCalls(), 0, 3));
+        }
+    }
+
     private static Diagnostic diagnostic(int line, int character, DiagnosticSeverity severity, String message) {
         var diagnostic = new Diagnostic();
         diagnostic.setRange(new Range(new Position(line, character), new Position(line, character + 1)));
@@ -122,6 +160,19 @@ class JavaDiagnosticUiIntegrationTest {
         Field field = target.getClass().getSuperclass().getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    private static TextColor foregroundAt(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int x, int y) {
+        for (var call : drawCalls) {
+            if (call.y() != y) {
+                continue;
+            }
+            if (x < call.x() || x >= call.x() + call.text().length()) {
+                continue;
+            }
+            return call.foreground();
+        }
+        throw new AssertionError("No draw call at " + x + "," + y + " in " + Arrays.toString(drawCalls.toArray()));
     }
 
     private static final class TestJavaLspClient extends JavaLSPClient {

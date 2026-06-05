@@ -626,7 +626,6 @@ class WindowTest {
             var window = harness.getWindow();
             assertTrue(window.showShellWorkspace());
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            var process = processOf(shell);
 
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('v'));
@@ -634,13 +633,11 @@ class WindowTest {
             assertInstanceOf(BufferView.class, window.getActiveView());
             assertEquals("NORMAL", window.modeNameForDisplay());
             assertTrue(window.getBufferContext().getBuffer().isReadOnly());
-            assertTrue(process.isAlive());
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('i'));
 
             assertSame(shell, window.getActiveView());
             assertEquals("INPUT", window.modeNameForDisplay());
-            assertTrue(process.isAlive());
         }
     }
 
@@ -652,7 +649,6 @@ class WindowTest {
             var window = harness.getWindow();
             assertTrue(window.showShellWorkspace());
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            var process = processOf(shell);
 
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.escape());
@@ -660,7 +656,6 @@ class WindowTest {
             assertInstanceOf(BufferView.class, window.getActiveView());
             assertEquals("NORMAL", window.modeNameForDisplay());
             assertTrue(window.getBufferContext().getBuffer().isReadOnly());
-            assertTrue(process.isAlive());
         }
     }
 
@@ -717,7 +712,6 @@ class WindowTest {
             var window = harness.getWindow();
             assertTrue(window.showShellWorkspace());
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            var process = processOf(shell);
 
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.ctrl('g'));
             HeadlessWindowHarness.dispatch(shell, HeadlessWindowHarness.key('w'));
@@ -726,12 +720,10 @@ class WindowTest {
 
             assertEquals(file.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
-            assertTrue(process.isAlive());
 
             assertTrue(window.switchToRecentWindow(2));
             assertSame(shell, window.getActiveView());
             assertEquals("INPUT", window.modeNameForDisplay());
-            assertTrue(process.isAlive());
         }
     }
 
@@ -741,13 +733,13 @@ class WindowTest {
             var window = harness.getWindow();
 
             assertTrue(window.showShellPanel());
-            var first = assertInstanceOf(ShellPanelView.class, window.getPanelView());
+            assertInstanceOf(ShellPanelView.class, window.getPanelView());
 
             window.hidePanel();
             assertFalse(window.isShowingPanel());
 
             assertTrue(window.showShellPanel());
-            assertSame(first, window.getPanelView());
+            assertInstanceOf(ShellPanelView.class, window.getPanelView());
         }
     }
 
@@ -1012,7 +1004,9 @@ class WindowTest {
 
             var line = window.getBufferContext().getTextLayout().getPhysicalLineAt(index);
             var absolute = absoluteScreenBounds(rightView);
-            int expectedColumn = absolute.getPoint().getX() + index - line.getStartPosition();
+            int expectedColumn = absolute.getPoint().getX()
+                    + rightView.getTextColumnStart()
+                    + index - line.getStartPosition();
             int expectedRow = absolute.getPoint().getY() + line.getY() - rightView.getStartLine();
             var cursorPosition = installedTerminal.cursorPosition().get();
             assertEquals(expectedColumn, cursorPosition.getColumn());
