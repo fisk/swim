@@ -16,6 +16,8 @@ import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.google.gson.JsonObject;
+
 class NemoClientTest {
     @TempDir
     Path tempDir;
@@ -657,6 +659,40 @@ class NemoClientTest {
         assertEquals("user", message.get("role").getAsString());
         assertEquals("input_text", message.getAsJsonArray("content").get(0).getAsJsonObject().get("type").getAsString());
         assertEquals("hello", message.getAsJsonArray("content").get(0).getAsJsonObject().get("text").getAsString());
+    }
+
+    @Test
+    void parsesStreamedResponsesTextAndUsage() {
+        JsonObject response = NemoClient.parseResponsesBody("""
+                event: response.output_item.done
+                data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}
+
+                event: response.completed
+                data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":27},"limits":{"max_context_tokens":270}}}
+
+                """);
+
+        assertEquals("ok", NemoClient.extractOutputText(response.toString()));
+        assertEquals(10, NemoClient.extractContextUsagePercent(response));
+    }
+
+    @Test
+    void parsesStreamedResponsesFunctionCalls() {
+        JsonObject response = NemoClient.parseResponsesBody("""
+                event: response.output_item.done
+                data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"list_files","arguments":"{\\"path\\":\\".\\"}"}}
+
+                event: response.completed
+                data: {"type":"response.completed","response":{"output":[]}}
+
+                """);
+
+        List<NemoClient.ToolCall> calls = NemoClient.extractToolCalls(response);
+
+        assertEquals(1, calls.size());
+        assertEquals("call_1", calls.get(0).callId());
+        assertEquals("list_files", calls.get(0).name());
+        assertEquals(".", calls.get(0).arguments().get("path").getAsString());
     }
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {

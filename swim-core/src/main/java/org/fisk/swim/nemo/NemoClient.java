@@ -3,11 +3,15 @@ package org.fisk.swim.nemo;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -57,6 +61,7 @@ public class NemoClient {
     private static final NemoClient _instance = new NemoClient();
 
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
+    private final HttpClient _httpClient = HttpClient.newHttpClient();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private boolean _sessionsLoaded;
@@ -566,7 +571,12 @@ public class NemoClient {
         int toolMaxResults() { return _toolMaxResults; }
         int toolMaxOutputChars() { return _toolMaxOutputChars; }
         int toolCommandTimeoutSeconds() { return _toolCommandTimeoutSeconds; }
-        boolean requiresApiKey() { return "openai".equals(_provider); }
+        boolean requiresApiKey() {
+            return "openai".equals(_provider)
+                    || "chatgpt".equals(_provider)
+                    || "responses".equals(_provider)
+                    || "openai-responses".equals(_provider);
+        }
         URI responsesUri() { return buildResponsesUri("", _baseUrl); }
 
         private static String responsesBaseToChatBase(URI responsesUri) {
@@ -1043,7 +1053,112 @@ public class NemoClient {
     }
 
     private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns) throws IOException, InterruptedException {
+        if (usesResponsesApi(configuration)) {
+            return requestResponses(configuration, context, turns);
+        }
         return _langChain4jClient.request(configuration, context, turns);
+    }
+
+    private static boolean usesResponsesApi(Configuration configuration) {
+        String provider = configuration.provider();
+        return "chatgpt".equals(provider)
+                || "responses".equals(provider)
+                || "openai-responses".equals(provider);
+    }
+
+    private static boolean isChatGptResponsesProvider(Configuration configuration) {
+        return "chatgpt".equals(configuration.provider());
+    }
+
+    private ResponseResult requestResponses(Configuration configuration, BufferContext context, List<ChatTurn> turns)
+            throws IOException, InterruptedException {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context);
+        List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, workspaceRoot, configuration);
+        JsonArray inputHistory = new JsonArray();
+        inputHistory.add(createUserInputMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
+
+        while (true) {
+            JsonObject request = buildResponsesRequest(configuration, inputHistory);
+            HttpResponse<String> response = _httpClient.send(
+                    HttpRequest.newBuilder(configuration.responsesUri())
+                            .timeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                            .header("Content-Type", "application/json")
+                            .headers(responseHeaders(configuration))
+                            .POST(HttpRequest.BodyPublishers.ofString(request.toString(), StandardCharsets.UTF_8))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() >= 400) {
+                throw new IOException(extractErrorMessage(response.body(), response.statusCode()));
+            }
+
+            JsonObject responseBody = parseResponsesBody(response.body());
+            JsonArray toolOutputs = new JsonArray();
+            for (ToolCall call : extractToolCalls(responseBody)) {
+                JsonObject toolOutput = new JsonObject();
+                toolOutput.addProperty("type", "function_call_output");
+                toolOutput.addProperty("call_id", call.callId());
+                toolOutput.addProperty("output", executeToolSafely(configuration, context, call));
+                toolOutputs.add(toolOutput);
+            }
+            if (toolOutputs.isEmpty()) {
+                return new ResponseResult(extractOutputText(responseBody.toString()), extractContextUsagePercent(responseBody));
+            }
+            appendToolRound(inputHistory, responseBody, toolOutputs);
+        }
+    }
+
+    private static JsonObject buildResponsesRequest(Configuration configuration, JsonArray inputHistory) {
+        JsonObject request = new JsonObject();
+        request.addProperty("model", configuration.model());
+        request.addProperty("instructions", configuration.systemPrompt());
+        request.add("input", inputHistory.deepCopy());
+        JsonArray tools = buildTools(configuration);
+        if (!tools.isEmpty()) {
+            request.add("tools", tools);
+        }
+        request.addProperty("store", false);
+        request.addProperty("stream", true);
+        if (configuration.temperature() != null) {
+            request.addProperty("temperature", configuration.temperature());
+        }
+        if (configuration.topP() != null) {
+            request.addProperty("top_p", configuration.topP());
+        }
+        if (configuration.maxOutputTokens() != null && !isChatGptResponsesProvider(configuration)) {
+            request.addProperty("max_output_tokens", configuration.maxOutputTokens());
+        }
+        for (var entry : configuration.customParameters().entrySet()) {
+            request.add(entry.getKey(), JsonParser.parseString(_gson.toJson(entry.getValue())));
+        }
+        return request;
+    }
+
+    private static String[] responseHeaders(Configuration configuration) {
+        var headers = new ArrayList<String>();
+        if (!configuration.apiKey().isBlank()) {
+            headers.add("Authorization");
+            headers.add("Bearer " + configuration.apiKey());
+        }
+        if (!configuration.organization().isBlank()) {
+            headers.add("OpenAI-Organization");
+            headers.add(configuration.organization());
+        }
+        if (!configuration.project().isBlank()) {
+            headers.add("OpenAI-Project");
+            headers.add(configuration.project());
+        }
+        for (var entry : configuration.headers().entrySet()) {
+            String key = entry.getKey();
+            if ("Authorization".equalsIgnoreCase(key)
+                    || "Content-Type".equalsIgnoreCase(key)
+                    || "OpenAI-Organization".equalsIgnoreCase(key)
+                    || "OpenAI-Project".equalsIgnoreCase(key)) {
+                continue;
+            }
+            headers.add(key);
+            headers.add(entry.getValue());
+        }
+        return headers.toArray(String[]::new);
     }
 
     static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call)
@@ -1690,6 +1805,65 @@ public class NemoClient {
             return "Nemo returned no text.";
         }
         return builder.toString();
+    }
+
+    static JsonObject parseResponsesBody(String responseBody) {
+        String trimmed = responseBody == null ? "" : responseBody.stripLeading();
+        if (trimmed.startsWith("event:") || trimmed.startsWith("data:")) {
+            return parseResponsesSse(responseBody);
+        }
+        return parseJsonObject(responseBody);
+    }
+
+    private static JsonObject parseResponsesSse(String responseBody) {
+        JsonObject completed = null;
+        JsonArray output = new JsonArray();
+        StringBuilder data = new StringBuilder();
+        try (var reader = new java.io.BufferedReader(new java.io.StringReader(responseBody == null ? "" : responseBody))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    completed = processResponsesSsePayload(data, completed, output);
+                    data.setLength(0);
+                    continue;
+                }
+                if (!line.startsWith("data:")) {
+                    continue;
+                }
+                if (!data.isEmpty()) {
+                    data.append('\n');
+                }
+                data.append(line.substring("data:".length()).trim());
+            }
+            completed = processResponsesSsePayload(data, completed, output);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        JsonObject root = completed == null ? new JsonObject() : completed.deepCopy();
+        JsonArray existingOutput = root.getAsJsonArray("output");
+        if (existingOutput == null || existingOutput.isEmpty()) {
+            root.add("output", output);
+        }
+        return root;
+    }
+
+    private static JsonObject processResponsesSsePayload(StringBuilder data, JsonObject completed, JsonArray output) {
+        if (data.isEmpty()) {
+            return completed;
+        }
+        String payload = data.toString().trim();
+        if (payload.isEmpty() || "[DONE]".equals(payload)) {
+            return completed;
+        }
+        JsonObject event = JsonParser.parseString(payload).getAsJsonObject();
+        String type = event.has("type") && !event.get("type").isJsonNull() ? event.get("type").getAsString() : "";
+        if ("response.output_item.done".equals(type) && event.has("item")) {
+            output.add(event.getAsJsonObject("item").deepCopy());
+        }
+        if ("response.completed".equals(type) && event.has("response")) {
+            return event.getAsJsonObject("response").deepCopy();
+        }
+        return completed;
     }
 
     static Integer extractContextUsagePercent(JsonObject response) {

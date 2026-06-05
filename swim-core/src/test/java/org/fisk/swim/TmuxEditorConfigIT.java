@@ -1,11 +1,18 @@
 package org.fisk.swim;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 
+import org.fisk.swim.config.EditorConfigStore;
+import org.fisk.swim.config.EditorPaths;
+import org.fisk.swim.config.EditorSession;
+import org.fisk.swim.config.SessionLayoutNode;
+import org.fisk.swim.config.SessionWorkspace;
 import org.fisk.swim.testutil.InstalledSwimDriver;
 import org.fisk.swim.testutil.SwimHomeFixture;
 import org.junit.jupiter.api.Test;
@@ -49,33 +56,62 @@ class TmuxEditorConfigIT {
 
     @Test
     @Timeout(60)
-    void installedLauncherBinaryRestoresLastSessionWhenConfigured() throws Exception {
+    void installedLauncherBinaryOpensRequestedFileInsteadOfRestoringLastSession() throws Exception {
         Path first = tempDir.resolve("session-first.txt");
         Path secondFile = tempDir.resolve("session-second.txt");
+        Path requested = tempDir.resolve("session-requested.txt");
         Files.writeString(first, "restore first\n");
         Files.writeString(secondFile, "restore second\n");
+        Files.writeString(requested, "requested launch\n");
         var home = SwimHomeFixture.create(tempDir);
         Files.writeString(home.swimHome().resolve("config.json"), """
                 {
                   "restoreLastSession": true
                 }
                 """);
+        seedSplitSession(home, first, secondFile);
 
-        try (var firstSession = InstalledSwimDriver.startWithHome(home.home(), tempDir, first.getFileName().toString())) {
-            firstSession.waitForText("restore first", STARTUP_TIMEOUT);
-            firstSession.runCommand("vsplit");
-            firstSession.runCommand("e " + secondFile.getFileName());
-            firstSession.waitForText("restore second", UI_TIMEOUT);
-            firstSession.runCommand("q");
-            firstSession.waitForExit(Duration.ofSeconds(10));
-        }
-
-        try (var secondSession = InstalledSwimDriver.startWithHome(home.home(), tempDir)) {
-            secondSession.waitForText("restore first", STARTUP_TIMEOUT);
-            secondSession.waitForText("restore second", UI_TIMEOUT);
+        try (var secondSession = InstalledSwimDriver.startWithHome(home.home(), tempDir, requested.getFileName().toString())) {
+            secondSession.waitForText("requested launch", STARTUP_TIMEOUT);
             secondSession.runCommand("q");
             secondSession.waitForExit(Duration.ofSeconds(10));
         }
+
+        try (var scratchSession = InstalledSwimDriver.startWithHome(home.home(), tempDir)) {
+            scratchSession.waitForText("*scratch*", STARTUP_TIMEOUT);
+            String pane = scratchSession.capturePane();
+            assertFalse(pane.contains("restore first"), "Bare launch restored stale session:\n" + pane);
+            assertFalse(pane.contains("restore second"), "Bare launch restored stale session:\n" + pane);
+            scratchSession.runCommand("q");
+            scratchSession.waitForExit(Duration.ofSeconds(10));
+        }
+    }
+
+    private static void seedSplitSession(SwimHomeFixture home, Path first, Path second) {
+        String firstPath = savedPath(first);
+        String secondPath = savedPath(second);
+        EditorConfigStore.saveSession(
+                new EditorPaths(home.swimHome(),
+                        home.swimHome().resolve("config.json"),
+                        home.swimHome().resolve("session.json")),
+                new EditorSession(
+                        List.of(firstPath, secondPath),
+                        secondPath,
+                        List.of(new SessionWorkspace(
+                                "BUFFER",
+                                null,
+                                secondPath,
+                                new SessionLayoutNode(
+                                        "VERTICAL",
+                                        0.5,
+                                        new SessionLayoutNode(null, 0.0, null, null, firstPath),
+                                        new SessionLayoutNode(null, 0.0, null, null, secondPath),
+                                        null))),
+                        0));
+    }
+
+    private static String savedPath(Path path) {
+        return path.toAbsolutePath().normalize().toString();
     }
 
     @Test

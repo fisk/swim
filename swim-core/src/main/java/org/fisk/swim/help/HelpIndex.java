@@ -105,7 +105,8 @@ public class HelpIndex {
                 ":hshell opens a shell in a split below.",
                 ":w writes the current buffer to disk.",
                 "~/.swim/config.json can define normal-mode remaps, startup commands, and editor options.",
-                "~/.swim/session.json stores the last session, including buffer split layouts, when restoreLastSession is enabled.",
+                "Normal launches open the requested path or an empty scratch buffer.",
+                ":reload and :rebuild preserve the current buffers and split layout while the runtime restarts.",
                 ":reload loads the latest built SWIM core.",
                 ":rebuild and :upgrade rebuild and reload SWIM.",
                 ":q quits the editor.");

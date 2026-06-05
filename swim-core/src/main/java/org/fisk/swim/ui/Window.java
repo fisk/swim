@@ -160,7 +160,7 @@ public class Window implements Drawable {
         setupModes();
         initializeWorkspaceHistory();
         boolean restored = false;
-        if (restoreOnReload || _editorConfig.restoreLastSession()) {
+        if (restoreOnReload) {
             restored = restoreLastSession();
         }
         if (!restored && path != null && path.toFile().isDirectory()) {
@@ -1548,7 +1548,7 @@ public class Window implements Drawable {
 
     public void dispose() {
         ensureLayoutState();
-        if (_editorConfig != null && (_editorConfig.restoreLastSession() || Boolean.getBoolean("swim.session.restore_on_reload"))) {
+        if (_editorConfig != null && Boolean.getBoolean("swim.session.restore_on_reload")) {
             EditorConfigStore.saveSession(_editorPaths, createSession());
         }
         if (_bufferContextsByView != null) {

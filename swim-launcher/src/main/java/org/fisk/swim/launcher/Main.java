@@ -265,8 +265,11 @@ public class Main implements SwimHost {
     private void reload(Path path, String successMessage) {
         synchronized (_reloadLock) {
             _reloading = true;
+            boolean restoreSession = _plugins.currentApp() != null;
             String previousReloadFlag = System.getProperty(RELOAD_SESSION_PROPERTY);
-            System.setProperty(RELOAD_SESSION_PROPERTY, "true");
+            if (restoreSession) {
+                System.setProperty(RELOAD_SESSION_PROPERTY, "true");
+            }
             try {
                 Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
                 SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader(), beforeLoad);
@@ -274,10 +277,12 @@ public class Main implements SwimHost {
                     next.showMessage(successMessage);
                 }
             } finally {
-                if (previousReloadFlag == null) {
-                    System.clearProperty(RELOAD_SESSION_PROPERTY);
-                } else {
-                    System.setProperty(RELOAD_SESSION_PROPERTY, previousReloadFlag);
+                if (restoreSession) {
+                    if (previousReloadFlag == null) {
+                        System.clearProperty(RELOAD_SESSION_PROPERTY);
+                    } else {
+                        System.setProperty(RELOAD_SESSION_PROPERTY, previousReloadFlag);
+                    }
                 }
                 _reloading = false;
             }

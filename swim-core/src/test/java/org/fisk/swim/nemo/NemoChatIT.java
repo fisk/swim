@@ -192,6 +192,37 @@ class NemoChatIT {
     }
 
     @Test
+    @Timeout(15)
+    void chatGptProviderUsesResponsesEndpoint() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<String>("");
+        var server = startResponsesSseServer(requestCount, requestBody, List.of(responsesSseTextResponse("Native SSO answer")));
+        try {
+            writeResponsesConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Hi");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Native SSO answer");
+
+                String body = requestBody.get();
+                assertTrue(body.contains("\"instructions\""));
+                assertTrue(body.contains("\"store\":false"));
+                assertTrue(body.contains("\"stream\":true"));
+                assertFalse(body.contains("max_output_tokens"));
+                assertEquals(1, requestCount.get());
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @Timeout(20)
     void supportsMultipleSessionsWorkersAndHistoryPersistence() throws Exception {
         var requestCount = new AtomicInteger();
@@ -583,6 +614,16 @@ class NemoChatIT {
         return server;
     }
 
+    private HttpServer startResponsesSseServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<String> responses) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/responses",
+                exchange -> handleSseResponse(exchange, requestCount, requestBody, 0, responses));
+        server.start();
+        return server;
+    }
+
     private HttpServer startValidatingServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
             List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -749,6 +790,17 @@ class NemoChatIT {
                 chunkWithDelta(contentDelta(""), null, usage(5000, 100))));
     }
 
+    private static String responsesSseTextResponse(String text) {
+        return """
+                event: response.output_item.done
+                data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"%s"}]}}
+
+                event: response.completed
+                data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":100},"limits":{"max_context_tokens":1000}}}
+
+                """.formatted(text);
+    }
+
     private static String sseToolCallResponse(String toolCallId, String toolName, String arguments) {
         List<JsonObject> chunks = new java.util.ArrayList<>();
         chunks.add(chunkWithDelta(toolCallDelta(toolCallId, toolName, ""), null, null));
@@ -852,6 +904,22 @@ class NemoChatIT {
                 "provider=openai-compatible",
                 "api_key=test-token",
                 "model=gpt-5.4",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "tool.list_files=true",
+                "tool.read_file=true",
+                "tool.search_files=true",
+                "tool.run_command=false",
+                "tool.write_file=true",
+                "tool.web_search=false"));
+    }
+
+    private void writeResponsesConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=chatgpt",
+                "api_key=test-token",
+                "model=gpt-5.5",
                 "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
                 "tool.list_files=true",
                 "tool.read_file=true",

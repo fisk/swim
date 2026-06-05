@@ -328,6 +328,31 @@ class MainTest {
     }
 
     @Test
+    void initialLoadDoesNotSetReloadSessionProperty() throws Exception {
+        FakeApp next = new FakeApp();
+        FakePluginController plugins = new FakePluginController();
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
+            assertNull(System.getProperty(Main.RELOAD_SESSION_PROPERTY));
+            assertNull(beforeLoad);
+            next.start(path, host);
+            return next;
+        };
+        Main main = new Main(plugins, buildRoot -> {
+            throw new AssertionError("rebuild not expected");
+        }, (name, daemon, task) -> {
+            throw new AssertionError("tasks not expected");
+        }, () -> tempDir);
+        Path path = tempDir.resolve("project.txt");
+
+        invokePrivate(main, "reload", new Class<?>[] { Path.class, String.class }, path, "Loaded SWIM core");
+
+        assertEquals(path, next.startedPath);
+        assertEquals(List.of("Loaded SWIM core"), next.messages);
+        assertSame(next, main.getLoadedApp());
+        assertNull(System.getProperty(Main.RELOAD_SESSION_PROPERTY));
+    }
+
+    @Test
     void standardInputRefreshOnlyRunsWhenAnAppIsAlreadyLoaded() {
         FakePluginController plugins = new FakePluginController();
 

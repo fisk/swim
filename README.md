@@ -121,16 +121,15 @@ Current config surface:
   ],
   "options": {
     "indent.java.size": "2"
-  },
-  "restoreLastSession": true
+  }
 }
 ```
 
 - `normalModeRemaps` rewrites exact NORMAL-mode key sequences using SWIM key notation such as `Q`, `g g`, `<CTRL>-o`, and `<ESC>`.
 - `startupCommands` runs `:` commands during startup.
 - `options` sets editor options. Keys starting with `indent.` map onto indentation settings such as `indent.java.size`, `indent.c.string`, and `indent.default.size`.
-- `restoreLastSession` enables saving and restoring the last open buffer set through `~/.swim/session.json`.
-  It also restores buffer split topology for restored buffer workspaces.
+- Normal launches open the requested path, or an empty scratch buffer when no path is supplied.
+- `:reload` and `:rebuild` preserve the current buffer set and split topology through `~/.swim/session.json` while the runtime restarts.
 
 ## Windows, Panes, And Panels
 
