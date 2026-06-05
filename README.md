@@ -85,7 +85,10 @@ Normal mode uses familiar Vim-style keys:
 
 SWIM now exposes more of the editor while you work:
 
-- The two-line top menu shows normal-mode key chains and updates live as you type prefixes.
+- The top context bar is metadata-driven: visible key paths are grouped and documented instead of being rendered from one hard-coded sentence.
+- In NORMAL mode, the top bar expands into a small dropdown after the first prefix key and shows only matching continuations for that key path.
+- Visible keys are grouped into clusters such as navigation, editing, panes, shell, workspace, and code actions.
+- When a row or set of groups does not fit, the bar pages back and forth through the available options instead of truncating everything permanently.
 - The header also shows recent fullscreen windows in MRU order.
 - When the command line is active, the top menu switches to command-specific hints.
 - Typing `:` opens a command popup with matching commands for the current prefix.

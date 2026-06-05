@@ -1745,7 +1745,7 @@ public class Window implements Drawable {
         }
         _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
         var size = Size.create(terminalSize.getColumns(), terminalSize.getRows());
-        if (_size == null || !_size.equals(size)) {
+        if (_size == null || !_size.equals(size) || keyMenuNeedsRelayout(size)) {
             _log.debug("Relayout");
             applyLayout(size);
         } else {
@@ -2297,6 +2297,13 @@ public class Window implements Drawable {
         if (_mailNotificationView != null) {
             _mailNotificationView.syncBounds();
         }
+    }
+
+    private boolean keyMenuNeedsRelayout(Size size) {
+        if (_keyMenuView == null || size == null) {
+            return false;
+        }
+        return _keyMenuView.getBounds().getSize().getHeight() != _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
     }
 
     private void registerBufferView(BufferContext bufferContext, BufferView bufferView) {

@@ -96,7 +96,7 @@ public class HelpIndex {
                 ":close closes the active pane and :only keeps just the active pane.",
                 "While typing : commands, Up/Down browses matches and Tab completes them.",
                 ":nemo <question> asks Nemo about the current file and opens the persistent chat pane.",
-                "Inside Nemo, use :sessions, :workers, :new, and :switch to manage multiple chat sessions.",
+                "Inside Nemo, use :sessions, :workers, :new, :switch, and :reset to manage multiple chat sessions.",
                 ":shell opens a new shell workspace.",
                 ":slack opens the fullscreen Slack workspace.",
                 ":vshell opens a shell in a split to the right.",
@@ -119,7 +119,9 @@ public class HelpIndex {
                 "Ctrl-g c v opens a shell in a split to the right.",
                 "Ctrl-g c h opens a shell in a split below.");
         addSection(items, "Discoverability",
-                "The two-line top menu shows key chains in NORMAL mode.",
+                "The top context bar groups documented key paths in NORMAL mode.",
+                "After the first prefix key, it expands into a dropdown that shows matching continuations only.",
+                "When groups do not fit, the bar pages back and forth through them instead of dropping them completely.",
                 "It switches to contextual hints while the command line, lists, panels, or chat are active.",
                 "The command popup shows matching : commands as you type.");
         addSection(items, "Java shortcuts",

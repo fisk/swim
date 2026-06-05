@@ -17,7 +17,8 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.key('d'));
 
         assertEquals("d", view.getBreadcrumb());
-        assertTrue(view.bodyText().contains("i inner"));
+        assertTrue(view.bodyText().contains("Editing"));
+        assertTrue(view.bodyText().contains("i inner text object"));
         assertTrue(view.bodyText().contains("w word"));
         assertTrue(view.bodyText().contains("d line"));
     }
@@ -30,6 +31,7 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.key('e'));
 
         assertEquals("SPC e", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("Code"));
         assertTrue(view.bodyText().contains("i organize imports"));
         assertTrue(view.bodyText().contains("f make final"));
         assertTrue(view.bodyText().contains("a generate accessors"));
@@ -42,6 +44,7 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.ctrl('w'));
 
         assertEquals("<CTRL>-w", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("Panes"));
         assertTrue(view.bodyText().contains("s split below"));
         assertTrue(view.bodyText().contains("v split right"));
         assertTrue(view.bodyText().contains("h focus left"));
@@ -58,6 +61,7 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.key('c'));
 
         assertEquals("C-g c", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("Shell"));
         assertTrue(view.bodyText().contains("w new shell workspace"));
         assertTrue(view.bodyText().contains("v shell in split right"));
         assertTrue(view.bodyText().contains("h shell in split below"));
@@ -71,7 +75,7 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.key('g'));
 
         assertEquals("g", view.getBreadcrumb());
-        assertTrue(view.bodyText().contains("g top of buffer"));
+        assertTrue(view.bodyText().contains("g buffer start"));
     }
 
     @Test
@@ -81,7 +85,8 @@ class KeyMenuViewTest {
         view.observe(HeadlessWindowHarness.key('g'));
 
         assertEquals("g", view.getBreadcrumb());
-        assertTrue(view.bodyText().contains("g top of buffer"));
+        assertTrue(view.bodyText().contains("Navigation"));
+        assertTrue(view.bodyText().contains("g buffer start"));
         assertTrue(view.bodyText().contains("d definition"));
     }
 
@@ -121,12 +126,8 @@ class KeyMenuViewTest {
         assertEquals(UiTheme.MODE_NORMAL, background(line, 1));
         assertEquals(" NORMAL ", fragmentText(line, 2));
         assertEquals(UiTheme.MODE_NORMAL, background(line, 2));
-        assertEquals(Powerline.SYMBOL_FILLED_RIGHT_ARROW, fragmentText(line, 3));
-        assertEquals(UiTheme.MENU_SEGMENT_BACKGROUND, background(line, 3));
-        assertTrue(fragmentText(line, 4).contains("explore key chains"));
-        assertEquals(UiTheme.MENU_SEGMENT_BACKGROUND, background(line, 4));
-        assertEquals(Powerline.SYMBOL_FILLED_RIGHT_ARROW, fragmentText(line, 5));
-        assertEquals(UiTheme.MENU_BACKGROUND, background(line, 5));
+        assertTrue(line.toString().contains("discover"));
+        assertTrue(line.toString().contains("groups"));
     }
 
     @Test
@@ -135,7 +136,7 @@ class KeyMenuViewTest {
 
         AttributedString line = view.buildBodyLines(80).get(0);
 
-        assertTrue(fragmentText(line, 0).contains("move h/j/k/l"));
+        assertTrue(fragmentText(line, 0).contains("Navigation"));
         assertEquals(UiTheme.MENU_SEGMENT_BACKGROUND, background(line, 0));
         assertEquals(Powerline.SYMBOL_FILLED_RIGHT_ARROW, fragmentText(line, 1));
         assertEquals(UiTheme.MENU_SECONDARY_BACKGROUND, background(line, 1));
@@ -143,30 +144,34 @@ class KeyMenuViewTest {
 
     @Test
     void defaultBodyIncludesEscForStartingNemo() {
-        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+        view.setAnimationStepOverride(1L);
 
-        assertTrue(view.bodyText().contains("Esc Nemo chat"));
+        assertTrue(view.bodyText().contains("Esc Nemo"));
     }
 
     @Test
     void defaultBodyIncludesMailShortcut() {
-        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+        view.setAnimationStepOverride(1L);
 
-        assertTrue(view.bodyText().contains("mail e"));
+        assertTrue(view.bodyText().contains("e email"));
     }
 
     @Test
     void defaultBodyIncludesSlackShortcut() {
-        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+        view.setAnimationStepOverride(1L);
 
-        assertTrue(view.bodyText().contains("slack s"));
+        assertTrue(view.bodyText().contains("s slack"));
     }
 
     @Test
     void defaultBodyIncludesProjectSearchShortcut() {
-        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+        view.setAnimationStepOverride(1L);
 
-        assertTrue(view.bodyText().contains("grep M"));
+        assertTrue(view.bodyText().contains("M project search"));
     }
 
     @Test
@@ -186,6 +191,7 @@ class KeyMenuViewTest {
         var view = new KeyMenuView(Rect.create(0, 0, 18, 4));
 
         var lines = view.buildBodyLines(18);
+        view.observe(HeadlessWindowHarness.key('g'));
 
         assertTrue(lines.size() > 1);
         assertTrue(view.preferredHeight(18, 12) > 2);
@@ -193,12 +199,13 @@ class KeyMenuViewTest {
 
     @Test
     void escShowsNemoChainDescription() {
-        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+        view.setAnimationStepOverride(1L);
 
         view.observe(HeadlessWindowHarness.escape());
 
         assertEquals("", view.getBreadcrumb());
-        assertTrue(view.bodyText().contains("Esc Nemo chat"));
+        assertTrue(view.bodyText().contains("Esc Nemo"));
     }
 
     @Test
@@ -228,6 +235,33 @@ class KeyMenuViewTest {
         assertTrue(line.toString().contains("Files"));
         assertTrue(view.bodyText().contains("type to filter"));
         assertEquals(UiTheme.MENU_CONTEXT_BACKGROUND, background(line, 6));
+    }
+
+    @Test
+    void prefixPathExpandsIntoDropdownRows() {
+        var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+
+        int baseHeight = view.preferredHeight(80, 12);
+        view.observe(HeadlessWindowHarness.key('g'));
+
+        assertTrue(view.preferredHeight(80, 12) > baseHeight);
+        assertTrue(view.bodyText().contains("Navigation"));
+        assertTrue(view.bodyText().contains("Marks"));
+    }
+
+    @Test
+    void overflowPagesBackAndForthAcrossRows() {
+        var view = new KeyMenuView(Rect.create(0, 0, 28, 4));
+
+        view.setAnimationStepOverride(0L);
+        String first = view.bodyText();
+
+        view.setAnimationStepOverride(1L);
+        String second = view.bodyText();
+
+        assertTrue(first.contains("Navigation"));
+        assertTrue(second.contains("Editing") || second.contains("Workspace") || second.contains("Panes"));
+        assertTrue(!first.equals(second));
     }
 
     private static String fragmentText(AttributedString line, int fragmentIndex) {

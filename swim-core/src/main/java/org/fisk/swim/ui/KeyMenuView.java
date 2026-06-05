@@ -14,6 +14,8 @@ import com.googlecode.lanterna.input.KeyType;
 
 public class KeyMenuView extends View {
     private static final int MIN_HEIGHT = 2;
+    private static final int MAX_DISCOVERY_ROWS = 4;
+    private static final long PAGE_INTERVAL_MILLIS = 1800L;
     enum FocusContext {
         BUFFER,
         COMMAND,
@@ -39,6 +41,7 @@ public class KeyMenuView extends View {
     private String _commandText;
     private boolean _chatPending;
     private List<String> _recentWindows = List.of();
+    private Long _animationStepOverride;
 
     public KeyMenuView(Rect bounds) {
         super(bounds);
@@ -110,6 +113,11 @@ public class KeyMenuView extends View {
         setNeedsRedraw();
     }
 
+    void setAnimationStepOverride(Long animationStepOverride) {
+        _animationStepOverride = animationStepOverride;
+        setNeedsRedraw();
+    }
+
     public void resetChain() {
         _path.clear();
         _currentNode = ROOT;
@@ -137,6 +145,9 @@ public class KeyMenuView extends View {
     }
 
     AttributedString buildHeaderLine() {
+        int width = Math.max(1, getBounds().getSize().getWidth());
+        DiscoveryState discoveryState = discoveryState(width);
+
         var line = new AttributedString();
         TextColorTracker colors = new TextColorTracker(UiTheme.MENU_BACKGROUND);
 
@@ -145,10 +156,19 @@ public class KeyMenuView extends View {
         appendHeaderSegment(line, colors, _modeName, UiTheme.TEXT_ON_ACCENT, UiTheme.modeColor(_modeName));
         if (isDiscoverabilityActive()) {
             if (_path.isEmpty()) {
-                appendHeaderSegment(line, colors, "explore key chains", UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
+                appendHeaderSegment(line, colors, "discover", UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
             } else {
                 appendHeaderSegment(line, colors, "chain", UiTheme.TEXT_MUTED, UiTheme.MENU_SEGMENT_BACKGROUND);
-                appendHeaderSegment(line, colors, String.join(" ", _path), UiTheme.MENU_CHAIN, UiTheme.MENU_CONTEXT_BACKGROUND);
+                appendHeaderSegment(line, colors, String.join(" ", _path), UiTheme.MENU_CHAIN,
+                        UiTheme.MENU_CONTEXT_BACKGROUND);
+                if (_currentNode.summary() != null && !_currentNode.summary().isBlank()) {
+                    appendHeaderSegment(line, colors, _currentNode.summary(), UiTheme.TEXT_PRIMARY,
+                            UiTheme.MENU_SEGMENT_BACKGROUND);
+                }
+            }
+            if (discoveryState.pageLabel() != null) {
+                appendHeaderSegment(line, colors, discoveryState.pageLabel(), UiTheme.MENU_HINT,
+                        UiTheme.MENU_CONTEXT_BACKGROUND);
             }
         } else {
             appendHeaderSegment(line, colors, passiveHint(), UiTheme.TEXT_MUTED, UiTheme.MENU_SEGMENT_BACKGROUND);
@@ -165,24 +185,25 @@ public class KeyMenuView extends View {
     }
 
     String bodyText() {
+        int width = Math.max(1, getBounds().getSize().getWidth());
         if (!isDiscoverabilityActive()) {
             return passiveCommands();
         }
-        if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  slack s  •  macros q/@  •  repeat .  •  marks g m / ' / `  •  multicursor g n  •  folds z  •  jumps C-o Tab  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
-        }
-        return describeCurrentNode();
+        return String.join("  •  ", discoveryState(width).rows());
     }
 
     int preferredHeight(int width, int totalHeight) {
         if (width <= 0 || totalHeight <= 0) {
             return 0;
         }
-        if (width >= 24) {
-            return Math.min(MIN_HEIGHT, totalHeight);
-        }
         int maxMenuHeight = Math.max(1, totalHeight - 3);
-        int preferred = 1 + buildBodyLines(width).size();
+        if (isDiscoverabilityActive()) {
+            int bodyRows = _path.isEmpty()
+                    ? 1
+                    : Math.min(MAX_DISCOVERY_ROWS, Math.max(1, discoveryState(width).rows().size()));
+            return Math.max(1, Math.min(1 + bodyRows, maxMenuHeight));
+        }
+        int preferred = 1 + passiveBodyLines(width).size();
         return Math.max(1, Math.min(Math.max(MIN_HEIGHT, preferred), maxMenuHeight));
     }
 
@@ -204,15 +225,19 @@ public class KeyMenuView extends View {
     }
 
     List<AttributedString> buildBodyLines(int width) {
-        var wrapped = TextPanelView.wrapText(bodyText(), Math.max(1, width - 2));
-        if (wrapped.isEmpty()) {
-            wrapped = List.of("");
-        }
         var lines = new ArrayList<AttributedString>();
-        for (String wrappedLine : wrapped) {
+        for (String row : isDiscoverabilityActive() ? discoveryState(width).rows() : passiveBodyLines(width)) {
             var line = new AttributedString();
             TextColorTracker colors = new TextColorTracker(UiTheme.MENU_SECONDARY_BACKGROUND);
-            UiTheme.appendSegment(line, wrappedLine, UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
+            UiTheme.appendSegment(line, row, UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
+            colors.background(UiTheme.MENU_SEGMENT_BACKGROUND);
+            appendBodyReset(line, colors);
+            lines.add(line);
+        }
+        if (lines.isEmpty()) {
+            var line = new AttributedString();
+            TextColorTracker colors = new TextColorTracker(UiTheme.MENU_SECONDARY_BACKGROUND);
+            UiTheme.appendSegment(line, "", UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
             colors.background(UiTheme.MENU_SEGMENT_BACKGROUND);
             appendBodyReset(line, colors);
             lines.add(line);
@@ -233,12 +258,87 @@ public class KeyMenuView extends View {
         return true;
     }
 
-    private String describeCurrentNode() {
-        var suggestions = new ArrayList<String>();
+    private DiscoveryState discoveryState(int width) {
+        var rows = new ArrayList<GroupRow>();
         for (var entry : _currentNode.children().entrySet()) {
-            suggestions.add(UiTheme.displayKey(entry.getKey()) + " " + entry.getValue().summary());
+            MenuNode node = entry.getValue();
+            if (!node.documented()) {
+                continue;
+            }
+            rows.add(new GroupRow(node.group(),
+                    new DiscoveryEntry(UiTheme.displayKey(entry.getKey()), node.summary())));
         }
-        return String.join("  •  ", suggestions);
+        if (rows.isEmpty()) {
+            return new DiscoveryState(List.of("No documented continuations for this prefix."), null);
+        }
+
+        var grouped = new LinkedHashMap<String, List<DiscoveryEntry>>();
+        for (var row : rows) {
+            grouped.computeIfAbsent(row.group(), ignored -> new ArrayList<>()).add(row.entry());
+        }
+
+        var formattedRows = new ArrayList<String>();
+        for (var entry : grouped.entrySet()) {
+            formattedRows.add(formatGroupRow(entry.getKey(), entry.getValue(), width));
+        }
+
+        int pageSize = Math.min(MAX_DISCOVERY_ROWS, Math.max(1, formattedRows.size()));
+        int pageCount = (formattedRows.size() + pageSize - 1) / pageSize;
+        int pageIndex = bouncingPage(pageCount, animationStep());
+        int start = pageIndex * pageSize;
+        int end = Math.min(formattedRows.size(), start + pageSize);
+        String pageLabel = pageCount > 1 ? "groups " + (pageIndex + 1) + "/" + pageCount : null;
+        return new DiscoveryState(formattedRows.subList(start, end), pageLabel);
+    }
+
+    private String formatGroupRow(String group, List<DiscoveryEntry> entries, int width) {
+        String prefix = group + "  ";
+        int availableWidth = Math.max(8, width - prefix.length() - 6);
+        var pages = new ArrayList<String>();
+        StringBuilder current = new StringBuilder();
+        for (var entry : entries) {
+            String segment = entry.key() + " " + entry.summary();
+            if (!current.isEmpty() && current.length() + 3 + segment.length() > availableWidth) {
+                pages.add(current.toString());
+                current = new StringBuilder();
+            }
+            if (!current.isEmpty()) {
+                current.append(" • ");
+            }
+            current.append(segment);
+        }
+        if (current.isEmpty()) {
+            current.append("no documented keys");
+        }
+        pages.add(current.toString());
+
+        int pageIndex = bouncingPage(pages.size(), animationStep());
+        String pageSuffix = pages.size() > 1 ? " [" + (pageIndex + 1) + "/" + pages.size() + "]" : "";
+        return UiTheme.fit(prefix + pages.get(pageIndex) + pageSuffix, width);
+    }
+
+    private long animationStep() {
+        if (_animationStepOverride != null) {
+            return _animationStepOverride.longValue();
+        }
+        return System.currentTimeMillis() / PAGE_INTERVAL_MILLIS;
+    }
+
+    private int bouncingPage(int pageCount, long step) {
+        if (pageCount <= 1) {
+            return 0;
+        }
+        int cycle = pageCount * 2 - 2;
+        int position = (int) Math.floorMod(step, cycle);
+        if (position < pageCount) {
+            return position;
+        }
+        return cycle - position;
+    }
+
+    private List<String> passiveBodyLines(int width) {
+        var wrapped = TextPanelView.wrapText(passiveCommands(), Math.max(1, width - 2));
+        return wrapped.isEmpty() ? List.of("") : wrapped;
     }
 
     private boolean isDiscoverabilityActive() {
@@ -329,6 +429,7 @@ public class KeyMenuView extends View {
         }
         case Escape -> "<ESC>";
         case Enter -> "<ENTER>";
+        case Tab -> "<TAB>";
         case Backspace -> "<BACKSPACE>";
         case ArrowUp -> "<UP>";
         case ArrowDown -> "<DOWN>";
@@ -339,118 +440,233 @@ public class KeyMenuView extends View {
     }
 
     private static MenuNode createRoot() {
-        var root = branch("root");
-        root.child("h", leaf("left"));
-        root.child("j", leaf("down"));
-        root.child("k", leaf("up"));
-        root.child("l", leaf("right"));
-        root.child("g", branch("goto")
-                .child("g", leaf("top of buffer"))
-                .child("m", branch("set mark").child(ANY_CHARACTER, leaf("mark register")))
-                .child("n", leaf("add next cursor"))
-                .child("N", leaf("add previous cursor"))
-                .child("c", leaf("clear extra cursors"))
-                .child("d", leaf("definition"))
-                .child("w", leaf("jump hints")));
-        root.child("d", branch("delete")
-                .child("i", branch("inner").child("w", leaf("inner word")))
-                .child("w", leaf("word"))
-                .child("d", leaf("line")));
-        root.child("c", branch("change")
-                .child("i", branch("inner").child("w", leaf("inner word")))
-                .child("w", leaf("word")));
-        root.child("y", branch("yank").child("y", leaf("line")));
-        root.child("p", leaf("paste after"));
-        root.child("P", leaf("paste before"));
-        root.child("u", leaf("undo"));
-        root.child("<CTRL>-r", leaf("redo"));
-        root.child("i", leaf("insert"));
-        root.child("a", leaf("append"));
-        root.child("A", leaf("append line end"));
-        root.child("o", leaf("open below"));
-        root.child("O", leaf("open above"));
-        root.child("v", leaf("visual"));
-        root.child("V", leaf("visual line"));
-        root.child("<CTRL>-v", leaf("visual block"));
-        root.child("m", leaf("project files"));
-        root.child("M", leaf("project search"));
-        root.child("e", leaf("email"));
-        root.child("s", leaf("slack"));
-        root.child("q", branch("macro").child(ANY_CHARACTER, leaf("record macro")));
-        root.child("@", branch("play macro").child(ANY_CHARACTER, leaf("play macro register")));
-        root.child(".", leaf("repeat last edit"));
-        root.child("<CTRL>-o", leaf("jump back"));
-        root.child("<TAB>", leaf("jump forward"));
-        root.child("z", branch("folds")
-                .child("a", leaf("toggle fold"))
-                .child("c", leaf("close fold"))
-                .child("o", leaf("open fold"))
-                .child("M", leaf("close all folds"))
-                .child("R", leaf("open all folds"))
-                .child("f", leaf("fold selection")));
-        root.child("<ESC>", leaf("start Nemo chat"));
-        root.child("/", leaf("search forward"));
-        root.child("?", leaf("search backward"));
-        root.child("n", leaf("next match"));
-        root.child("N", leaf("previous match"));
-        root.child("*", leaf("word forward"));
-        root.child("#", leaf("word backward"));
-        root.child(":", leaf("command line"));
-        root.child("f", branch("find next").child(ANY_CHARACTER, leaf("type a character")));
-        root.child("F", branch("find previous").child(ANY_CHARACTER, leaf("type a character")));
-        root.child("<CTRL>-w", branch("panes")
-                .child("s", leaf("split below"))
-                .child("v", leaf("split right"))
-                .child("h", leaf("focus left"))
-                .child("j", leaf("focus down"))
-                .child("k", leaf("focus up"))
-                .child("l", leaf("focus right"))
-                .child(">", leaf("wider"))
-                .child("<", leaf("narrower"))
-                .child("+", leaf("taller"))
-                .child("-", leaf("shorter"))
-                .child("=", leaf("equalize"))
-                .child("w", leaf("next pane"))
-                .child("W", leaf("previous pane"))
-                .child("q", leaf("close pane"))
-                .child("o", leaf("only this pane")));
-        root.child("<CTRL>-g", branch("shell")
-                .child("c", branch("create shell")
-                        .child("w", leaf("new shell workspace"))
-                        .child("v", leaf("shell in split right"))
-                        .child("h", leaf("shell in split below")))
-                .child("w", leaf("workspace switch")));
-        root.child("<SPACE>", branch("code")
-                .child("e", branch("actions")
-                        .child("i", leaf("organize imports"))
-                        .child("f", leaf("make final"))
-                        .child("a", leaf("generate accessors"))
-                        .child("s", leaf("generate toString"))
-                        .child("l", leaf("code lens"))));
+        var root = new MenuNode(null, null, false);
+        for (MenuDoc doc : docs()) {
+            root.register(doc);
+        }
+        validate(root, List.of());
         return root;
     }
 
-    private static MenuNode branch(String summary) {
-        return new MenuNode(summary, false);
+    private static void validate(MenuNode node, List<String> path) {
+        for (var entry : node.children().entrySet()) {
+            var childPath = new ArrayList<>(path);
+            childPath.add(entry.getKey());
+            MenuNode child = entry.getValue();
+            if (!child.documented()) {
+                throw new IllegalStateException("Missing discoverability documentation for " + String.join(" ", childPath));
+            }
+            validate(child, childPath);
+        }
     }
 
-    private static MenuNode leaf(String summary) {
-        return new MenuNode(summary, true);
+    private static List<MenuDoc> docs() {
+        return List.of(
+                leaf("h", "Navigation", "left"),
+                leaf("j", "Navigation", "down"),
+                leaf("k", "Navigation", "up"),
+                leaf("l", "Navigation", "right"),
+                leaf("^", "Navigation", "line start"),
+                leaf("$", "Navigation", "line end"),
+                leaf("G", "Navigation", "buffer end"),
+                branch("g", "Navigation", "goto, marks, multicursor, and code jumps"),
+                leaf("g g", "Navigation", "buffer start"),
+                branch("g m", "Marks", "set mark"),
+                leaf("g m <CHAR>", "Marks", "mark register"),
+                leaf("g n", "Multicursor", "add next cursor"),
+                leaf("g N", "Multicursor", "add previous cursor"),
+                leaf("g c", "Multicursor", "clear extra cursors"),
+                leaf("g d", "Code", "definition"),
+                leaf("g r", "Code", "references"),
+                branch("g w", "Navigation", "visible word jump"),
+                leaf("g w <CHAR>", "Navigation", "jump to visible word start"),
+                branch("f", "Navigation", "find next character"),
+                leaf("f <CHAR>", "Navigation", "next matching character"),
+                branch("F", "Navigation", "find previous character"),
+                leaf("F <CHAR>", "Navigation", "previous matching character"),
+                leaf("<CTRL>-o", "Navigation", "jump back"),
+                leaf("<TAB>", "Navigation", "jump forward"),
+                leaf("*", "Search", "search current word forward"),
+                leaf("#", "Search", "search current word backward"),
+                leaf("/", "Search", "forward search"),
+                leaf("?", "Search", "backward search"),
+                leaf("n", "Search", "next match"),
+                leaf("N", "Search", "previous match"),
+                branch("d", "Editing", "delete"),
+                branch("d i", "Editing", "inner text object"),
+                leaf("d i w", "Editing", "inner word"),
+                leaf("d i (", "Editing", "inside parentheses"),
+                leaf("d i [", "Editing", "inside brackets"),
+                leaf("d i {", "Editing", "inside braces"),
+                leaf("d i \"", "Editing", "inside double quotes"),
+                leaf("d i '", "Editing", "inside single quotes"),
+                leaf("d i p", "Editing", "inside paragraph"),
+                branch("d a", "Editing", "around text object"),
+                leaf("d a (", "Editing", "around parentheses"),
+                leaf("d a [", "Editing", "around brackets"),
+                leaf("d a {", "Editing", "around braces"),
+                leaf("d a \"", "Editing", "around double quotes"),
+                leaf("d a '", "Editing", "around single quotes"),
+                leaf("d a p", "Editing", "around paragraph"),
+                leaf("d w", "Editing", "word"),
+                leaf("d d", "Editing", "line"),
+                branch("c", "Editing", "change"),
+                branch("c i", "Editing", "inner text object"),
+                leaf("c i w", "Editing", "inner word"),
+                leaf("c i (", "Editing", "inside parentheses"),
+                leaf("c i [", "Editing", "inside brackets"),
+                leaf("c i {", "Editing", "inside braces"),
+                leaf("c i \"", "Editing", "inside double quotes"),
+                leaf("c i '", "Editing", "inside single quotes"),
+                leaf("c i p", "Editing", "inside paragraph"),
+                branch("c a", "Editing", "around text object"),
+                leaf("c a (", "Editing", "around parentheses"),
+                leaf("c a [", "Editing", "around brackets"),
+                leaf("c a {", "Editing", "around braces"),
+                leaf("c a \"", "Editing", "around double quotes"),
+                leaf("c a '", "Editing", "around single quotes"),
+                leaf("c a p", "Editing", "around paragraph"),
+                leaf("c w", "Editing", "word"),
+                branch("y", "Editing", "yank"),
+                leaf("y y", "Editing", "line"),
+                branch("y i", "Editing", "yank inner text object"),
+                leaf("y i (", "Editing", "inside parentheses"),
+                leaf("y i [", "Editing", "inside brackets"),
+                leaf("y i {", "Editing", "inside braces"),
+                leaf("y i \"", "Editing", "inside double quotes"),
+                leaf("y i '", "Editing", "inside single quotes"),
+                leaf("y i p", "Editing", "inside paragraph"),
+                branch("y a", "Editing", "yank around text object"),
+                leaf("y a (", "Editing", "around parentheses"),
+                leaf("y a [", "Editing", "around brackets"),
+                leaf("y a {", "Editing", "around braces"),
+                leaf("y a \"", "Editing", "around double quotes"),
+                leaf("y a '", "Editing", "around single quotes"),
+                leaf("y a p", "Editing", "around paragraph"),
+                leaf("x", "Editing", "delete character"),
+                leaf("p", "Editing", "paste after"),
+                leaf("P", "Editing", "paste before"),
+                leaf("u", "Editing", "undo"),
+                leaf("<CTRL>-r", "Editing", "redo"),
+                leaf("i", "Editing", "insert"),
+                leaf("a", "Editing", "append"),
+                leaf("A", "Editing", "append line end"),
+                leaf("o", "Editing", "open below"),
+                leaf("O", "Editing", "open above"),
+                leaf(".", "Macros", "repeat last edit"),
+                branch("q", "Macros", "record macro"),
+                leaf("q <CHAR>", "Macros", "record into register"),
+                branch("@", "Macros", "play macro"),
+                leaf("@ <CHAR>", "Macros", "play register"),
+                leaf("v", "Selection", "visual"),
+                leaf("V", "Selection", "visual line"),
+                leaf("<CTRL>-v", "Selection", "visual block"),
+                branch("z", "Folds", "manual folds"),
+                leaf("z a", "Folds", "toggle fold"),
+                leaf("z c", "Folds", "close fold"),
+                leaf("z o", "Folds", "open fold"),
+                leaf("z M", "Folds", "close all"),
+                leaf("z R", "Folds", "open all"),
+                leaf("z f", "Folds", "fold selection"),
+                leaf("m", "Workspace", "project files"),
+                leaf("M", "Workspace", "project search"),
+                leaf("e", "Workspace", "email"),
+                leaf("s", "Workspace", "slack"),
+                leaf("t", "Workspace", "tree view"),
+                leaf(":", "Workspace", "command line"),
+                leaf("!", "Tools", "Nemo"),
+                leaf(">", "Tools", "shell panel"),
+                leaf("B", "Tools", "toggle breakpoint"),
+                branch("<CTRL>-w", "Panes", "split and focus panes"),
+                leaf("<CTRL>-w s", "Panes", "split below"),
+                leaf("<CTRL>-w v", "Panes", "split right"),
+                leaf("<CTRL>-w h", "Panes", "focus left"),
+                leaf("<CTRL>-w j", "Panes", "focus down"),
+                leaf("<CTRL>-w k", "Panes", "focus up"),
+                leaf("<CTRL>-w l", "Panes", "focus right"),
+                leaf("<CTRL>-w >", "Panes", "wider"),
+                leaf("<CTRL>-w <", "Panes", "narrower"),
+                leaf("<CTRL>-w +", "Panes", "taller"),
+                leaf("<CTRL>-w -", "Panes", "shorter"),
+                leaf("<CTRL>-w =", "Panes", "equalize"),
+                leaf("<CTRL>-w w", "Panes", "next pane"),
+                leaf("<CTRL>-w W", "Panes", "previous pane"),
+                leaf("<CTRL>-w q", "Panes", "close pane"),
+                leaf("<CTRL>-w o", "Panes", "only pane"),
+                branch("<CTRL>-g", "Shell", "shell workspace commands"),
+                branch("<CTRL>-g c", "Shell", "create shell"),
+                leaf("<CTRL>-g c w", "Shell", "new shell workspace"),
+                leaf("<CTRL>-g c v", "Shell", "shell in split right"),
+                leaf("<CTRL>-g c h", "Shell", "shell in split below"),
+                leaf("<CTRL>-g w", "Shell", "switch workspace"),
+                branch("<SPACE>", "Code", "code commands"),
+                branch("<SPACE> e", "Code", "language actions"),
+                leaf("<SPACE> e i", "Code", "organize imports"),
+                leaf("<SPACE> e f", "Code", "make final"),
+                leaf("<SPACE> e a", "Code", "generate accessors"),
+                leaf("<SPACE> e s", "Code", "generate toString"),
+                leaf("<SPACE> e l", "Code", "code lens"));
+    }
+
+    private static MenuDoc branch(String pattern, String group, String summary) {
+        return new MenuDoc(pattern, group, summary, false);
+    }
+
+    private static MenuDoc leaf(String pattern, String group, String summary) {
+        return new MenuDoc(pattern, group, summary, true);
+    }
+
+    private record DiscoveryEntry(String key, String summary) {
+    }
+
+    private record GroupRow(String group, DiscoveryEntry entry) {
+    }
+
+    private record DiscoveryState(List<String> rows, String pageLabel) {
+    }
+
+    private record MenuDoc(String pattern, String group, String summary, boolean terminal) {
+        private MenuDoc {
+            if (pattern == null || pattern.isBlank()) {
+                throw new IllegalArgumentException("pattern must not be blank");
+            }
+            if (group == null || group.isBlank()) {
+                throw new IllegalArgumentException("group must not be blank for " + pattern);
+            }
+            if (summary == null || summary.isBlank()) {
+                throw new IllegalArgumentException("summary must not be blank for " + pattern);
+            }
+        }
+
+        private List<String> tokens() {
+            return List.of(pattern.split(" "));
+        }
     }
 
     private static final class MenuNode {
-        private final String _summary;
-        private final boolean _terminal;
+        private String _group;
+        private String _summary;
+        private boolean _terminal;
         private final Map<String, MenuNode> _children = new LinkedHashMap<>();
 
-        private MenuNode(String summary, boolean terminal) {
+        private MenuNode(String group, String summary, boolean terminal) {
+            _group = group;
             _summary = summary;
             _terminal = terminal;
         }
 
-        private MenuNode child(String token, MenuNode node) {
-            _children.put(token, node);
-            return this;
+        private void register(MenuDoc doc) {
+            MenuNode current = this;
+            var tokens = doc.tokens();
+            for (int i = 0; i < tokens.size(); ++i) {
+                String token = tokens.get(i);
+                current = current._children.computeIfAbsent(token, ignored -> new MenuNode(null, null, false));
+                if (i == tokens.size() - 1) {
+                    current._group = doc.group();
+                    current._summary = doc.summary();
+                    current._terminal = doc.terminal();
+                }
+            }
         }
 
         private MenuNode match(String token) {
@@ -469,8 +685,16 @@ public class KeyMenuView extends View {
             return _summary;
         }
 
+        private String group() {
+            return _group;
+        }
+
+        private boolean documented() {
+            return _group != null && !_group.isBlank() && _summary != null && !_summary.isBlank();
+        }
+
         private boolean isTerminal() {
-            return _terminal || _children.isEmpty();
+            return _terminal && _children.isEmpty();
         }
     }
 
