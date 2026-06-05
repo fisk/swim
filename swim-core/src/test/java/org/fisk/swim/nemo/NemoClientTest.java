@@ -68,6 +68,81 @@ class NemoClientTest {
     }
 
     @Test
+    void buildInputCompactsOlderTurnsWhenContextBudgetIsSmall() throws IOException {
+        Path file = tempDir.resolve("LargeConversation.txt");
+        String fileText = "before cursor\n" + "a".repeat(2_000) + "\nCURSOR_ANCHOR\n" + "b".repeat(2_000) + "\nafter cursor\n";
+        Files.writeString(file, fileText);
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        context.getBuffer().getCursor().setPosition(fileText.indexOf("CURSOR_ANCHOR"));
+        var configuration = NemoClient.Configuration.builder()
+                .systemPrompt("System prompt")
+                .contextWindowTokens(900)
+                .build();
+
+        String prompt = NemoPromptBuilder.buildInput(context, List.of(
+                new NemoClient.ChatTurn("me", "old request " + "x".repeat(1_000)),
+                new NemoClient.ChatTurn("nemo", "old answer " + "y".repeat(1_000)),
+                new NemoClient.ChatTurn("me", "latest request must survive")),
+                configuration,
+                List.of());
+
+        assertTrue(prompt.length() <= promptBudgetChars(900));
+        assertTrue(prompt.contains("[earlier conversation compacted:"));
+        assertTrue(prompt.contains("me> latest request must survive"));
+        assertTrue(prompt.contains("CURSOR_ANCHOR"));
+        assertTrue(prompt.contains("File contents (budgeted around cursor):"));
+    }
+
+    @Test
+    void buildInputExcerptsLargeFileAroundCursorWhenContextBudgetIsSmall() throws IOException {
+        Path file = tempDir.resolve("LargeFile.txt");
+        String fileText = "HEAD_SENTINEL\n" + "h".repeat(2_000) + "\nCURSOR_ANCHOR\n" + "t".repeat(2_000)
+                + "\nTAIL_SENTINEL\n";
+        Files.writeString(file, fileText);
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        context.getBuffer().getCursor().setPosition(fileText.indexOf("CURSOR_ANCHOR"));
+        var configuration = NemoClient.Configuration.builder()
+                .systemPrompt("System prompt")
+                .contextWindowTokens(700)
+                .build();
+
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "explain the code around the cursor")),
+                configuration,
+                List.of());
+
+        assertTrue(prompt.length() <= promptBudgetChars(700));
+        assertTrue(prompt.contains("CURSOR_ANCHOR"));
+        assertTrue(prompt.contains("chars before cursor"));
+        assertTrue(prompt.contains("chars after cursor"));
+        assertFalse(prompt.contains("HEAD_SENTINEL"));
+        assertFalse(prompt.contains("TAIL_SENTINEL"));
+    }
+
+    @Test
+    void buildInputBudgetsSkillsBeforeDroppingCurrentRequest() throws IOException {
+        Path file = tempDir.resolve("SkillsBudget.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .systemPrompt("System prompt")
+                .contextWindowTokens(700)
+                .build();
+
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "current request must survive")),
+                configuration,
+                List.of(new NemoSkillDocument("SKILLS.md", "skill-start\n" + "s".repeat(5_000) + "\nskill-end")));
+
+        assertTrue(prompt.length() <= promptBudgetChars(700));
+        assertTrue(prompt.contains("Applicable SKILLS.md instructions (budgeted):"));
+        assertTrue(prompt.contains("skill-start"));
+        assertFalse(prompt.contains("skill-end"));
+        assertTrue(prompt.contains("me> current request must survive"));
+        assertTrue(prompt.contains("class Demo {}"));
+    }
+
+    @Test
     void extractsOutputTextFromResponsesPayload() {
         String response = """
                 {
@@ -697,6 +772,11 @@ class NemoClientTest {
         assertEquals("call_1", calls.get(0).callId());
         assertEquals("list_files", calls.get(0).name());
         assertEquals(".", calls.get(0).arguments().get("path").getAsString());
+    }
+
+    private static int promptBudgetChars(int contextWindowTokens) {
+        int reserve = Math.max(32, contextWindowTokens / 10);
+        return (contextWindowTokens - reserve) * 3;
     }
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {

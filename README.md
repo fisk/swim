@@ -540,6 +540,8 @@ The config loader also accepts the older properties format and still migrates `~
 
 Nemo now runs through langchain4j, so OpenAI-compatible vendors can be selected with `provider`, `baseUrl`, custom headers, query parameters, and custom request parameters.
 
+When `contextWindowTokens` is set, Nemo budgets the prompt before sending it. If the full prompt would exceed the configured window, it preserves the current request and recent turns, compacts older conversation into bounded notes, truncates oversized skill instructions, and excerpts large files around the cursor.
+
 If you place `SKILLS.md` files in the workspace root or in directories above the current file, Nemo will include the applicable skill instructions in its prompt.
 
 Inside the Nemo chat pane:

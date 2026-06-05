@@ -1,42 +1,332 @@
 package org.fisk.swim.nemo;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.fisk.swim.text.BufferContext;
 
 final class NemoPromptBuilder {
+    private static final int APPROX_CHARS_PER_TOKEN = 3;
+    private static final int SUMMARY_LINE_CHARS = 180;
+    private static final int MAX_SUMMARY_LINES = 24;
+    private static final int MAX_BUDGETED_SKILL_CHARS = 24_000;
+
     private NemoPromptBuilder() {
     }
 
     static String buildInput(BufferContext context, List<NemoClient.ChatTurn> turns, NemoClient.Configuration configuration,
             List<NemoSkillDocument> skills) {
         var buffer = context.getBuffer();
-        var transcript = new StringBuilder();
-        for (var turn : turns) {
-            if (!turn.includeInPrompt()) {
-                continue;
+        String fullTranscript = transcript(turns);
+        String fullFile = buffer.getString();
+        int promptBudget = promptBudgetChars(configuration);
+        String path = String.valueOf(buffer.getPath());
+
+        String fullSkills = skillsSection(skills);
+        String fullPrompt = assemblePrompt(configuration.systemPrompt(), fullSkills, fullTranscript,
+                path, "File contents", fullFile);
+        if (promptBudget == Integer.MAX_VALUE) {
+            return fullPrompt;
+        }
+        if (fullPrompt.length() <= promptBudget) {
+            return fullPrompt;
+        }
+
+        return buildBudgetedInput(path, fullFile, buffer.getCursor().getPosition(),
+                turns, configuration, skills, promptBudget);
+    }
+
+    private static String buildBudgetedInput(String path, String fullFile, int cursorPosition,
+            List<NemoClient.ChatTurn> turns, NemoClient.Configuration configuration, List<NemoSkillDocument> skills,
+            int promptBudget) {
+        String systemPrompt = configuration.systemPrompt();
+        String conversationHeader = "\n\nConversation:\n";
+        String fileHeader = "\n\nCurrent file:\n" + path + "\n\nFile contents (budgeted around cursor):\n";
+        int variableBudget = Math.max(0, promptBudget - systemPrompt.length() - conversationHeader.length() - fileHeader.length());
+
+        int skillBudget = skills.isEmpty() ? 0
+                : Math.min(Math.min(variableBudget / 5, MAX_BUDGETED_SKILL_CHARS), skillsSection(skills).length());
+        String skillText = fitSkillsSection(skills, skillBudget);
+        variableBudget = Math.max(0, variableBudget - skillText.length());
+
+        int transcriptBudget = variableBudget / 2;
+        String compactTranscript = compactTranscript(turns, transcriptBudget);
+        String fileContents = fitFileAroundCursor(fullFile, cursorPosition,
+                Math.max(0, variableBudget - compactTranscript.length()));
+
+        int unused = variableBudget - compactTranscript.length() - fileContents.length();
+        if (unused > 0) {
+            compactTranscript = compactTranscript(turns, transcriptBudget + unused);
+            fileContents = fitFileAroundCursor(fullFile, cursorPosition,
+                    Math.max(0, variableBudget - compactTranscript.length()));
+        }
+
+        String result = systemPrompt + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
+        if (result.length() <= promptBudget) {
+            return result;
+        }
+        int overflow = result.length() - promptBudget;
+        fileContents = fitFileAroundCursor(fullFile, cursorPosition, Math.max(0, fileContents.length() - overflow));
+        return systemPrompt + skillText + conversationHeader + compactTranscript + fileHeader + fileContents;
+    }
+
+    private static int promptBudgetChars(NemoClient.Configuration configuration) {
+        Integer contextWindowTokens = configuration.contextWindowTokens();
+        if (contextWindowTokens == null || contextWindowTokens <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        int reserveTokens = outputReserveTokens(configuration, contextWindowTokens);
+        long budget = (long) Math.max(1, contextWindowTokens - reserveTokens) * APPROX_CHARS_PER_TOKEN;
+        return (int) Math.min(Integer.MAX_VALUE, budget);
+    }
+
+    private static int outputReserveTokens(NemoClient.Configuration configuration, int contextWindowTokens) {
+        Integer maxOutputTokens = configuration.maxOutputTokens();
+        if (maxOutputTokens != null && maxOutputTokens > 0) {
+            return Math.min(contextWindowTokens - 1, maxOutputTokens);
+        }
+        int minimumReserve = contextWindowTokens >= 4096 ? 2048 : 32;
+        return Math.min(contextWindowTokens - 1, Math.max(minimumReserve, contextWindowTokens / 10));
+    }
+
+    private static String assemblePrompt(String systemPrompt, String skills, String transcript, String path,
+            String fileLabel, String fileContents) {
+        return systemPrompt
+                + skills
+                + "\n\nConversation:\n"
+                + transcript
+                + "\n\nCurrent file:\n"
+                + path
+                + "\n\n"
+                + fileLabel
+                + ":\n"
+                + fileContents;
+    }
+
+    private static String skillsSection(List<NemoSkillDocument> skills) {
+        if (skills.isEmpty()) {
+            return "";
+        }
+        var result = new StringBuilder();
+        result.append("\n\nApplicable SKILLS.md instructions:");
+        for (var skill : skills) {
+            result.append("\n\n--- ").append(skill.relativePath()).append(" ---\n");
+            result.append(skill.content());
+        }
+        return result.toString();
+    }
+
+    private static String fitSkillsSection(List<NemoSkillDocument> skills, int budget) {
+        if (skills.isEmpty() || budget <= 0) {
+            return "";
+        }
+        String full = skillsSection(skills);
+        if (full.length() <= budget) {
+            return full;
+        }
+
+        var result = new StringBuilder();
+        result.append("\n\nApplicable SKILLS.md instructions (budgeted):");
+        for (int i = 0; i < skills.size(); ++i) {
+            var skill = skills.get(i);
+            String header = "\n\n--- " + skill.relativePath() + " ---\n";
+            int remaining = budget - result.length() - header.length();
+            if (remaining <= 0) {
+                appendIfFits(result, "\n[remaining skill instructions omitted]", budget);
+                break;
             }
+            result.append(header);
+            result.append(fitEnd(skill.content(), remaining));
+            if (skill.content().length() > remaining) {
+                appendIfFits(result, "\n[remaining skill instructions omitted]", budget);
+                break;
+            }
+        }
+        return fitEnd(result.toString(), budget);
+    }
+
+    private static void appendIfFits(StringBuilder result, String text, int budget) {
+        int remaining = budget - result.length();
+        if (remaining > 0) {
+            result.append(fitEnd(text, remaining));
+        }
+    }
+
+    private static String transcript(List<NemoClient.ChatTurn> turns) {
+        var transcript = new StringBuilder();
+        for (var turn : promptTurns(turns)) {
             if (!transcript.isEmpty()) {
                 transcript.append("\n\n");
             }
-            transcript.append(turn.speaker()).append("> ").append(turn.text());
+            transcript.append(renderTurn(turn));
         }
+        return transcript.toString();
+    }
 
-        var prompt = new StringBuilder();
-        prompt.append(configuration.systemPrompt());
-        if (!skills.isEmpty()) {
-            prompt.append("\n\nApplicable SKILLS.md instructions:");
-            for (var skill : skills) {
-                prompt.append("\n\n--- ").append(skill.relativePath()).append(" ---\n");
-                prompt.append(skill.content());
+    private static List<NemoClient.ChatTurn> promptTurns(List<NemoClient.ChatTurn> turns) {
+        var result = new ArrayList<NemoClient.ChatTurn>();
+        for (var turn : turns) {
+            if (turn.includeInPrompt()) {
+                result.add(turn);
             }
         }
-        prompt.append("\n\nConversation:\n");
-        prompt.append(transcript);
-        prompt.append("\n\nCurrent file:\n");
-        prompt.append(buffer.getPath());
-        prompt.append("\n\nFile contents:\n");
-        prompt.append(buffer.getString());
-        return prompt.toString();
+        return result;
+    }
+
+    private static String renderTurn(NemoClient.ChatTurn turn) {
+        return turn.speaker() + "> " + turn.text();
+    }
+
+    private static String compactTranscript(List<NemoClient.ChatTurn> turns, int budget) {
+        var promptTurns = promptTurns(turns);
+        String full = transcript(promptTurns);
+        if (full.length() <= budget) {
+            return full;
+        }
+        if (budget <= 0) {
+            return "";
+        }
+
+        var recent = new ArrayList<String>();
+        int recentChars = 0;
+        int firstIncluded = promptTurns.size();
+        for (int i = promptTurns.size() - 1; i >= 0; --i) {
+            String rendered = renderTurn(promptTurns.get(i));
+            int separatorChars = recent.isEmpty() ? 0 : 2;
+            if (recentChars + separatorChars + rendered.length() > budget) {
+                if (recent.isEmpty()) {
+                    recent.add(fitMiddle(rendered, budget));
+                    firstIncluded = i;
+                }
+                break;
+            }
+            recent.add(rendered);
+            recentChars += separatorChars + rendered.length();
+            firstIncluded = i;
+        }
+        Collections.reverse(recent);
+
+        if (firstIncluded <= 0) {
+            return String.join("\n\n", recent);
+        }
+
+        String recentText = String.join("\n\n", recent);
+        int summaryBudget = Math.max(0, budget - recentText.length() - 2);
+        String summary = compactOlderTurns(promptTurns.subList(0, firstIncluded), summaryBudget);
+        if (summary.isBlank()) {
+            return recentText;
+        }
+        if (recentText.isBlank()) {
+            return summary;
+        }
+        return summary + "\n\n" + recentText;
+    }
+
+    private static String compactOlderTurns(List<NemoClient.ChatTurn> omitted, int budget) {
+        if (omitted.isEmpty() || budget <= 0) {
+            return "";
+        }
+        var lines = new ArrayList<String>();
+        lines.add("[earlier conversation compacted: " + omitted.size() + " turns omitted]");
+        int first = Math.max(0, omitted.size() - MAX_SUMMARY_LINES);
+        for (int i = first; i < omitted.size(); ++i) {
+            var turn = omitted.get(i);
+            lines.add("- " + turn.speaker() + ": " + fitOneLine(turn.text(), SUMMARY_LINE_CHARS));
+        }
+        if (first > 0) {
+            lines.add(1, "- " + first + " older turns omitted before these notes.");
+        }
+        return fitEnd(String.join("\n", lines), budget);
+    }
+
+    private static String fitFileAroundCursor(String text, int cursorPosition, int budget) {
+        if (text.length() <= budget) {
+            return text;
+        }
+        if (budget <= 0) {
+            return "";
+        }
+
+        int cursor = Math.max(0, Math.min(cursorPosition, text.length()));
+        int sliceBudget = Math.max(1, budget - omittedMarkerBudget(text.length()));
+        if (sliceBudget < 80) {
+            return cursorSlice(text, cursor, budget);
+        }
+
+        String result = fileSliceWithMarkers(text, cursor, sliceBudget);
+        int overflow = result.length() - budget;
+        if (overflow > 0) {
+            result = fileSliceWithMarkers(text, cursor, Math.max(1, sliceBudget - overflow));
+        }
+        return result.length() <= budget ? result : cursorSlice(text, cursor, budget);
+    }
+
+    private static String fileSliceWithMarkers(String text, int cursor, int sliceBudget) {
+        int start = Math.max(0, cursor - sliceBudget / 2);
+        int end = Math.min(text.length(), start + sliceBudget);
+        start = Math.max(0, end - sliceBudget);
+
+        var result = new StringBuilder();
+        if (start > 0) {
+            result.append("[... omitted ").append(start).append(" chars before cursor ...]\n");
+        }
+        result.append(text, start, end);
+        if (end < text.length()) {
+            if (!result.isEmpty() && result.charAt(result.length() - 1) != '\n') {
+                result.append('\n');
+            }
+            result.append("[... omitted ").append(text.length() - end).append(" chars after cursor ...]");
+        }
+        return result.toString();
+    }
+
+    private static int omittedMarkerBudget(int textLength) {
+        int digits = Integer.toString(Math.max(0, textLength)).length();
+        return 76 + digits * 2;
+    }
+
+    private static String cursorSlice(String text, int cursor, int budget) {
+        if (budget <= 0) {
+            return "";
+        }
+        int start = Math.max(0, cursor - budget / 2);
+        int end = Math.min(text.length(), start + budget);
+        start = Math.max(0, end - budget);
+        return text.substring(start, end);
+    }
+
+    private static String fitOneLine(String text, int maxChars) {
+        return fitEnd(text.replaceAll("\\s+", " ").trim(), maxChars);
+    }
+
+    private static String fitEnd(String text, int maxChars) {
+        if (text.length() <= maxChars) {
+            return text;
+        }
+        if (maxChars <= 0) {
+            return "";
+        }
+        if (maxChars <= 3) {
+            return text.substring(0, maxChars);
+        }
+        return text.substring(0, maxChars - 3) + "...";
+    }
+
+    private static String fitMiddle(String text, int maxChars) {
+        if (text.length() <= maxChars) {
+            return text;
+        }
+        if (maxChars <= 0) {
+            return "";
+        }
+        String marker = "\n[... compacted ...]\n";
+        if (maxChars <= marker.length() + 2) {
+            return fitEnd(text, maxChars);
+        }
+        int remaining = maxChars - marker.length();
+        int head = remaining / 2;
+        int tail = remaining - head;
+        return text.substring(0, head) + marker + text.substring(text.length() - tail);
     }
 }
