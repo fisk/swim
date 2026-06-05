@@ -122,6 +122,29 @@ class NormalModeTest {
     }
 
     @Test
+    void pageDownAndPageUpScrollByNearlyAFullPage() throws Exception {
+        Path path = tempDir.resolve("page-scroll.txt");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            text.append("line ").append(i).append('\n');
+        }
+        Files.writeString(path, text.toString());
+
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+            int start = view.getStartLine();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.pageDown());
+            int afterDown = view.getStartLine();
+            assertTrue(afterDown >= start + 5);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.pageUp());
+            assertTrue(view.getStartLine() < afterDown);
+        }
+    }
+
+    @Test
     void bangStartsNemoChat() throws Exception {
         Path path = tempDir.resolve("bang-opens-nemo.txt");
         Files.writeString(path, "abc");

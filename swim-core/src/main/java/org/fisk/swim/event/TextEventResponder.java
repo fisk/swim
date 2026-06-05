@@ -90,6 +90,16 @@ public class TextEventResponder implements EventResponder {
                     return Response.NO;
                 }
                 break;
+            case PageUp:
+                if (!str.equals("<PAGEUP>")) {
+                    return Response.NO;
+                }
+                break;
+            case PageDown:
+                if (!str.equals("<PAGEDOWN>")) {
+                    return Response.NO;
+                }
+                break;
             default:
                 return Response.NO;
             }

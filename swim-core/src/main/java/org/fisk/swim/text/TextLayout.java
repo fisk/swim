@@ -149,14 +149,28 @@ public class TextLayout {
         if (position < 0) {
             position = 0;
         }
-        return _logicalLineAtPosition.floorEntry(position).getValue();
+        var entry = _logicalLineAtPosition.floorEntry(position);
+        if (entry != null) {
+            return entry.getValue();
+        }
+        if (!_logicalLineAtPosition.isEmpty()) {
+            return _logicalLineAtPosition.firstEntry().getValue();
+        }
+        throw new IllegalStateException("Logical line map is empty");
     }
 
     public Line getPhysicalLineAt(int position) {
         if (position < 0) {
             position = 0;
         }
-        return _physicalLineAtPosition.floorEntry(position).getValue();
+        var entry = _physicalLineAtPosition.floorEntry(position);
+        if (entry != null) {
+            return entry.getValue();
+        }
+        if (!_physicalLineAtPosition.isEmpty()) {
+            return _physicalLineAtPosition.firstEntry().getValue();
+        }
+        throw new IllegalStateException("Physical line map is empty");
     }
 
     public Line getLastPhysicalLine() {

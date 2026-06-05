@@ -56,6 +56,8 @@ public class Mode implements EventResponder, Drawable {
         _rootResponder.addEventResponder("<RIGHT>", () -> { cursor.goRight(); });
         _rootResponder.addEventResponder("<DOWN>", () -> { cursor.goDown(); });
         _rootResponder.addEventResponder("<UP>", () -> { cursor.goUp(); });
+        _rootResponder.addEventResponder("<PAGEUP>", () -> { bufferContext.getBufferView().scrollPageUp(); });
+        _rootResponder.addEventResponder("<PAGEDOWN>", () -> { bufferContext.getBufferView().scrollPageDown(); });
         _rootResponder.addEventResponder("g g", () -> { window.performJump(cursor::goStartOfBuffer); });
         _rootResponder.addEventResponder("G", () -> { window.performJump(cursor::goEndOfBuffer); });
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "f", true));

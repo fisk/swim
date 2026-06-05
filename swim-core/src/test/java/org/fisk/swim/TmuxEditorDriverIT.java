@@ -263,6 +263,29 @@ class TmuxEditorDriverIT {
         assertEquals("papya\n", Files.readString(file));
     }
 
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryPageUpAndDownScrollWholePages() throws Exception {
+        Path file = tempDir.resolve("page-scroll.txt");
+        var builder = new StringBuilder();
+        for (int i = 0; i < 160; i++) {
+            builder.append("line ").append(i).append('\n');
+        }
+        Files.writeString(file, builder.toString());
+
+        try (var session = startEditor(tempDir, file.getFileName().toString())) {
+            session.waitForText("line 20", STARTUP_TIMEOUT);
+
+            session.sendKey("PageDown");
+            session.waitForText("line 80", UI_TIMEOUT);
+            session.sendKey("PageUp");
+            session.waitForText("line 20", UI_TIMEOUT);
+
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+    }
+
     private TmuxSession startEditor(Path workdir, String fileArgument) throws Exception {
         return InstalledSwimDriver.start(tempDir, workdir, fileArgument);
     }

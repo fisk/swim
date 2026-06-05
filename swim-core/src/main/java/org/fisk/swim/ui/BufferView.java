@@ -138,6 +138,20 @@ public class BufferView extends View {
         setNeedsRedraw();
     }
 
+    public void scrollPageUp() {
+        int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
+        for (int i = 0; i < amount; i++) {
+            scrollUp();
+        }
+    }
+
+    public void scrollPageDown() {
+        int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
+        for (int i = 0; i < amount; i++) {
+            scrollDown();
+        }
+    }
+
     private AttributedString applyDiagnosticBackground(org.fisk.swim.text.TextLayout.Glyph glyph, AttributedString character) {
         if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
             return character;
