@@ -111,7 +111,10 @@ public class HelpIndex {
                 ":q quits the editor.");
         addSection(items, "Nemo",
                 "Press ! or run :nemo <question> to open Nemo for the current workspace.",
-                "Inside Nemo, type normally and press Enter to send; type : commands for Nemo chat commands.",
+                "Inside Nemo, press Enter to send; Shift-Enter, Ctrl-Enter, Alt-Enter, or Ctrl-J insert newlines.",
+                "Pasted multiline text stays in the Nemo draft, so exception traces can be edited before sending.",
+                "Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf.",
+                "Type : commands for Nemo chat commands.",
                 ":sessions, :workers, :new, :switch, :rename, :reset, :delete, and :abort manage sessions and workers.",
                 ":permissions shows permission mode, command policy, OS sandbox backend, and approval policy.",
                 ":permissions read-only, :permissions workspace-write, and :permissions full-access change the active session.",

@@ -10,14 +10,23 @@ import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.SGR;
 import com.googlecode.lanterna.graphics.TextGraphics;
+import com.googlecode.lanterna.input.BasicCharacterPattern;
+import com.googlecode.lanterna.input.KeyDecodingProfile;
 import com.googlecode.lanterna.input.KeyStroke;
+import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.TerminalResizeListener;
+import com.googlecode.lanterna.terminal.ansi.StreamBasedTerminal;
 
 public class TerminalContext {
+    public static final KeyType BRACKETED_PASTE_START_KEY = KeyType.F18;
+    public static final KeyType BRACKETED_PASTE_END_KEY = KeyType.F19;
+    private static final String ENABLE_BRACKETED_PASTE = "\u001b[?2004h";
+    private static final String DISABLE_BRACKETED_PASTE = "\u001b[?2004l";
+
     private record CreatedTerminal(Screen screen, Terminal terminal) {
     }
 
@@ -94,13 +103,27 @@ public class TerminalContext {
     private static CreatedTerminal createTerminal() {
         try {
             var factory = new DefaultTerminalFactory();
-            Terminal terminal = wrapTerminal(factory.createTerminal(), TerminalContext::queryTerminalSizeFromTty);
+            Terminal terminal = factory.createTerminal();
+            configureBracketedPasteDecoding(terminal);
+            terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty);
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
             return new CreatedTerminal(screen, terminal);
         } catch (IOException e) {
             throw new RuntimeException("Can't create screen", e);
         }
+    }
+
+    private static void configureBracketedPasteDecoding(Terminal terminal) {
+        if (!(terminal instanceof StreamBasedTerminal streamBasedTerminal)) {
+            return;
+        }
+        KeyDecodingProfile profile = () -> java.util.List.of(
+                new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_START_KEY),
+                        '\u001b', '[', '2', '0', '0', '~'),
+                new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_END_KEY),
+                        '\u001b', '[', '2', '0', '1', '~'));
+        streamBasedTerminal.getInputDecoder().addProfile(profile);
     }
 
     private synchronized void shutdown() {
@@ -364,11 +387,18 @@ public class TerminalContext {
         @Override
         public void enterPrivateMode() throws IOException {
             _delegate.enterPrivateMode();
+            setBracketedPasteMode(true);
         }
 
         @Override
         public void exitPrivateMode() throws IOException {
+            setBracketedPasteMode(false);
             _delegate.exitPrivateMode();
+        }
+
+        private void setBracketedPasteMode(boolean enabled) throws IOException {
+            _delegate.putString(enabled ? ENABLE_BRACKETED_PASTE : DISABLE_BRACKETED_PASTE);
+            _delegate.flush();
         }
 
         @Override

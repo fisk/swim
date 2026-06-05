@@ -519,6 +519,7 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
     "maxChars": 12000
   },
   "tools": {
+    "webSearch": true,
     "listFiles": true,
     "readFile": true,
     "searchFiles": true,
@@ -601,8 +602,10 @@ Approvals appear as `approval>` messages in the Nemo chat pane. While the worker
 Inside the Nemo chat pane:
 
 - the live input prompt is `!`, but sent chat messages appear in history as `me>`
-- type normally and press `Enter` to send
+- type normally and press `Enter` to send; use `Shift-Enter`, `Ctrl-Enter`, `Alt-Enter`, or `Ctrl-J` to insert a newline
+- pasted multiline text stays in the draft, so exception traces can be edited before sending
 - type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands and pending approval options
+- `webSearch` is enabled by default; set it to `false` to hide Nemo's internet search tool
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session

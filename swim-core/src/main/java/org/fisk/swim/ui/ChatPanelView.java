@@ -48,6 +48,7 @@ public class ChatPanelView extends View {
     private int _startLine;
     private int _commandSelection;
     private boolean _pending;
+    private boolean _bracketedPasteActive;
     private long _pendingStartedAtMillis;
     private Integer _contextUsagePercent;
     private long _pendingRefreshGeneration;
@@ -465,12 +466,25 @@ public class ChatPanelView extends View {
 
     @Override
     public Response processEvent(KeyStrokes events) {
+        _responseAction = null;
         if (events.remaining() != 0) {
-            return Response.NO;
+            String pastedText = pasteText(events);
+            if (pastedText == null) {
+                return Response.NO;
+            }
+            _responseAction = () -> insertInputText(pastedText);
+            return Response.YES;
         }
 
         var event = events.current();
-        _responseAction = null;
+        if (event.getKeyType() == TerminalContext.BRACKETED_PASTE_START_KEY) {
+            _responseAction = () -> _bracketedPasteActive = true;
+            return Response.YES;
+        }
+        if (event.getKeyType() == TerminalContext.BRACKETED_PASTE_END_KEY) {
+            _responseAction = () -> _bracketedPasteActive = false;
+            return Response.YES;
+        }
         switch (event.getKeyType()) {
         case Escape:
             _responseAction = this::close;
@@ -496,6 +510,10 @@ public class ChatPanelView extends View {
             _responseAction = () -> moveCommandSelection(-1);
             return Response.YES;
         case Tab:
+            if (_bracketedPasteActive) {
+                _responseAction = () -> insertInputText("\t");
+                return Response.YES;
+            }
             if (!hasCommandMenuMatches()) {
                 return Response.NO;
             }
@@ -542,13 +560,8 @@ public class ChatPanelView extends View {
             };
             return Response.YES;
         case Enter:
-            if (event.isShiftDown()) {
-                _responseAction = () -> {
-                    _input.insert(_cursorOffset, '\n');
-                    _cursorOffset++;
-                    ensureInputVisible();
-                    notifyCommandInputChanged();
-                };
+            if (_bracketedPasteActive || event.isShiftDown() || event.isCtrlDown() || event.isAltDown()) {
+                _responseAction = () -> insertInputText("\n");
                 return Response.YES;
             }
             if (canSubmitSelectedCommand()) {
@@ -610,18 +623,62 @@ public class ChatPanelView extends View {
                     };
                     return Response.YES;
                 }
+                if (character == 'j' || character == 'J') {
+                    _responseAction = () -> insertInputText("\n");
+                    return Response.YES;
+                }
                 return Response.NO;
             }
-            _responseAction = () -> {
-                _input.insert(_cursorOffset, character);
-                _cursorOffset++;
-                ensureInputVisible();
-                notifyCommandInputChanged();
-            };
+            _responseAction = () -> insertInputText(normalizeInputCharacter(character));
             return Response.YES;
         default:
             return Response.NO;
         }
+    }
+
+    private static String pasteText(KeyStrokes events) {
+        var text = new StringBuilder();
+        for (var event : events) {
+            if (event.getKeyType() == TerminalContext.BRACKETED_PASTE_START_KEY
+                    || event.getKeyType() == TerminalContext.BRACKETED_PASTE_END_KEY) {
+                continue;
+            }
+            switch (event.getKeyType()) {
+            case Character:
+                Character character = event.getCharacter();
+                if (character == null || event.isCtrlDown() || event.isAltDown()) {
+                    return null;
+                }
+                text.append(normalizeInputCharacter(character));
+                break;
+            case Enter:
+                text.append('\n');
+                break;
+            case Tab:
+                text.append('\t');
+                break;
+            default:
+                return null;
+            }
+        }
+        return text.toString();
+    }
+
+    private static String normalizeInputCharacter(char character) {
+        return switch (character) {
+        case '\r' -> "\n";
+        default -> String.valueOf(character);
+        };
+    }
+
+    private void insertInputText(String text) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        _input.insert(_cursorOffset, text);
+        _cursorOffset += text.length();
+        ensureInputVisible();
+        notifyCommandInputChanged();
     }
 
     @Override

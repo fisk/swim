@@ -247,6 +247,25 @@ class NemoClientTest {
     }
 
     @Test
+    void webSearchIsEnabledByDefaultAndCanBeDisabled() throws IOException {
+        assertTrue(NemoClient.Configuration.builder().build().toolWebSearch());
+
+        Path propertiesConfig = tempDir.resolve("nemo-disabled.properties");
+        Files.writeString(propertiesConfig, "tool.web_search=false\n");
+        assertFalse(NemoClient.loadConfiguration(propertiesConfig).toolWebSearch());
+
+        Path jsonConfig = tempDir.resolve("nemo-disabled.json");
+        Files.writeString(jsonConfig, """
+                {
+                  "tools": {
+                    "webSearch": false
+                  }
+                }
+                """);
+        assertFalse(NemoClient.loadConfiguration(jsonConfig).toolWebSearch());
+    }
+
+    @Test
     void configAndStatePathsLiveUnderNemoDirectory() {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());
@@ -550,6 +569,39 @@ class NemoClientTest {
 
         assertTrue(descriptions.contains("Successful writes are saved to disk and persist across Nemo/editor runs"));
         assertTrue(descriptions.contains("Successful patches are saved to disk and persist across Nemo/editor runs"));
+    }
+
+    @Test
+    void parsesDuckDuckGoHtmlResults() {
+        String html = """
+                <div class="result">
+                  <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs%3Fx%3D1&amp;rut=abc">
+                    Example &amp; Docs
+                  </a>
+                  <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">
+                    One <b>useful</b> snippet &amp; more.
+                  </a>
+                </div>
+                <div class="result">
+                  <a class="result__a" href="https://direct.example/path">Direct Result</a>
+                  <div class="result__snippet">Second &#x26; result.</div>
+                </div>
+                """;
+
+        var results = NemoClient.parseDuckDuckGoResults(html, 5);
+
+        assertEquals(2, results.size());
+        assertEquals("Example & Docs", results.get(0).title());
+        assertEquals("https://example.com/docs?x=1", results.get(0).url());
+        assertEquals("One useful snippet & more.", results.get(0).snippet());
+        assertEquals("Direct Result", results.get(1).title());
+        assertEquals("https://direct.example/path", results.get(1).url());
+        assertEquals("Second & result.", results.get(1).snippet());
+    }
+
+    @Test
+    void webSearchRejectsBlankQueriesWithoutNetwork() {
+        assertTrue(NemoClient.webSearch(json(Map.of("query", " "))).contains("query is blank"));
     }
 
     @Test

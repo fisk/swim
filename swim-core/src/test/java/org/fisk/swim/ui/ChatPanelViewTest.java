@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -49,6 +50,53 @@ class ChatPanelViewTest {
 
         assertEquals(null, submitted.get());
         assertEquals("h\ni", view.getInputText());
+    }
+
+    @Test
+    void ctrlJAddsNewlineWithoutSubmitting() {
+        var submitted = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
+
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke('j', true, false));
+        dispatch(view, new KeyStroke('i', false, false));
+
+        assertEquals(null, submitted.get());
+        assertEquals("h\ni", view.getInputText());
+    }
+
+    @Test
+    void batchedMultilinePasteAddsDraftTextWithoutSubmitting() {
+        var submitted = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
+
+        dispatch(view, List.of(
+                new KeyStroke('a', false, false),
+                new KeyStroke(KeyType.Enter),
+                new KeyStroke('b', false, false)));
+
+        assertEquals(null, submitted.get());
+        assertEquals("a\nb", view.getInputText());
+    }
+
+    @Test
+    void bracketedPasteKeepsEnterAndTabInDraft() {
+        var submitted = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
+
+        dispatch(view, new KeyStroke(TerminalContext.BRACKETED_PASTE_START_KEY));
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke(KeyType.Tab));
+        dispatch(view, new KeyStroke(KeyType.Enter));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke(TerminalContext.BRACKETED_PASTE_END_KEY));
+
+        assertEquals(null, submitted.get());
+        assertEquals("a\t\nb", view.getInputText());
+
+        dispatch(view, new KeyStroke(KeyType.Enter));
+
+        assertEquals("a\t\nb", submitted.get());
     }
 
     @Test
@@ -361,7 +409,11 @@ class ChatPanelViewTest {
     }
 
     private static void dispatch(ChatPanelView view, KeyStroke keyStroke) {
-        var response = view.processEvent(new KeyStrokes(List.of(keyStroke)));
+        dispatch(view, List.of(keyStroke));
+    }
+
+    private static void dispatch(ChatPanelView view, List<KeyStroke> keyStrokes) {
+        var response = view.processEvent(new KeyStrokes(keyStrokes));
         if (response == org.fisk.swim.event.Response.YES) {
             view.respond();
         }

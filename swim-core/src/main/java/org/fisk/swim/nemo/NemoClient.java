@@ -3,6 +3,8 @@ package org.fisk.swim.nemo;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -21,6 +23,7 @@ import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -65,6 +68,15 @@ public class NemoClient {
     private static final int _defaultMaxRetries = 2;
     private static final int _defaultSkillsMaxFiles = 8;
     private static final int _defaultSkillsMaxChars = 12_000;
+    private static final boolean _defaultToolWebSearch = true;
+    private static final int _defaultWebSearchMaxResults = 5;
+    private static final int _maxWebSearchResults = 10;
+    private static final Pattern _duckDuckGoResultLinkPattern = Pattern.compile(
+            "(?is)<a\\b[^>]*class=\"[^\"]*result__a[^\"]*\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>");
+    private static final Pattern _duckDuckGoSnippetPattern = Pattern.compile(
+            "(?is)<(?:a|div)\\b[^>]*class=\"[^\"]*result__snippet[^\"]*\"[^>]*>(.*?)</(?:a|div)>");
+    private static final Pattern _htmlTagPattern = Pattern.compile("(?is)<[^>]+>");
+    private static final Pattern _htmlEntityPattern = Pattern.compile("&#(x?[0-9a-fA-F]+);");
     private static final NemoClient _instance = new NemoClient();
 
     private enum OsSandboxBackend {
@@ -75,6 +87,10 @@ public class NemoClient {
 
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
     private final HttpClient _httpClient = HttpClient.newHttpClient();
+    private static final HttpClient _webSearchHttpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
     private static final AtomicReference<OsSandboxBackend> _osSandboxBackend = new AtomicReference<>();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
@@ -118,6 +134,12 @@ public class NemoClient {
     }
 
     record ToolCall(String callId, String name, JsonObject arguments) {
+    }
+
+    record WebSearchResult(String title, String url, String snippet) {
+    }
+
+    private record DuckDuckGoResultAnchor(int start, int end, String href, String titleHtml) {
     }
 
     record ToolTrace(String text) {
@@ -397,7 +419,7 @@ public class NemoClient {
             private int _maxRetries = _defaultMaxRetries;
             private boolean _logRequests;
             private boolean _logResponses;
-            private boolean _toolWebSearch;
+            private boolean _toolWebSearch = _defaultToolWebSearch;
             private boolean _toolListFiles = true;
             private boolean _toolReadFile = true;
             private boolean _toolSearchFiles = true;
@@ -972,7 +994,7 @@ public class NemoClient {
                 .maxRetries(intProperty(properties, "max_retries", _defaultMaxRetries))
                 .logRequests(booleanProperty(properties, "log_requests", false))
                 .logResponses(booleanProperty(properties, "log_responses", false))
-                .toolWebSearch(booleanProperty(properties, "tool.web_search", false))
+                .toolWebSearch(booleanProperty(properties, "tool.web_search", _defaultToolWebSearch))
                 .toolListFiles(booleanProperty(properties, "tool.list_files", true))
                 .toolReadFile(booleanProperty(properties, "tool.read_file", true))
                 .toolSearchFiles(booleanProperty(properties, "tool.search_files", true))
@@ -1032,7 +1054,7 @@ public class NemoClient {
                 .maxRetries(firstNonNull(integerMember(root, "maxRetries", "max_retries"), _defaultMaxRetries))
                 .logRequests(booleanMember(root, false, "logRequests", "log_requests"))
                 .logResponses(booleanMember(root, false, "logResponses", "log_responses"))
-                .toolWebSearch(booleanMember(tools, false, "webSearch", "web_search"))
+                .toolWebSearch(booleanMember(tools, _defaultToolWebSearch, "webSearch", "web_search"))
                 .toolListFiles(booleanMember(tools, true, "listFiles", "list_files"))
                 .toolReadFile(booleanMember(tools, true, "readFile", "read_file"))
                 .toolSearchFiles(booleanMember(tools, true, "searchFiles", "search_files"))
@@ -1822,10 +1844,135 @@ public class NemoClient {
         return Paths.get(System.getProperty("user.dir")).toAbsolutePath();
     }
 
-    private static String webSearch(JsonObject arguments) {
-        String query = stringArgument(arguments, "query", "");
-        return "Web search is not configured in this SWIM build for query: " + query
-                + ". Use workspace tools or configure an external OpenAI-compatible gateway.";
+    static String webSearch(JsonObject arguments) {
+        String query = stringArgument(arguments, "query", "").trim();
+        if (query.isBlank()) {
+            return "Web search failed: query is blank.";
+        }
+        int maxResults = Math.max(1, Math.min(_maxWebSearchResults,
+                intArgument(arguments, "max_results", _defaultWebSearchMaxResults)));
+        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        var request = HttpRequest.newBuilder(URI.create("https://duckduckgo.com/html/?q=" + encodedQuery))
+                .timeout(Duration.ofSeconds(15))
+                .header("User-Agent", "SWIM Nemo/1.0")
+                .header("Accept", "text/html")
+                .GET()
+                .build();
+        try {
+            HttpResponse<String> response = _webSearchHttpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return "Web search failed: HTTP " + response.statusCode() + " for query: " + query;
+            }
+            var results = parseDuckDuckGoResults(response.body(), maxResults);
+            if (results.isEmpty()) {
+                return "No web search results for: " + query;
+            }
+            return formatWebSearchResults(query, results);
+        } catch (IOException e) {
+            return "Web search failed for query: " + query + " (" + e.getMessage() + ")";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "Web search interrupted for query: " + query;
+        } catch (RuntimeException e) {
+            return "Web search failed for query: " + query + " (" + e.getMessage() + ")";
+        }
+    }
+
+    static List<WebSearchResult> parseDuckDuckGoResults(String html, int maxResults) {
+        if (html == null || html.isBlank() || maxResults <= 0) {
+            return List.of();
+        }
+        var anchors = new ArrayList<DuckDuckGoResultAnchor>();
+        var matcher = _duckDuckGoResultLinkPattern.matcher(html);
+        while (matcher.find()) {
+            anchors.add(new DuckDuckGoResultAnchor(
+                    matcher.start(),
+                    matcher.end(),
+                    matcher.group(1),
+                    matcher.group(2)));
+        }
+        var results = new ArrayList<WebSearchResult>();
+        for (int i = 0; i < anchors.size() && results.size() < maxResults; i++) {
+            var anchor = anchors.get(i);
+            String title = htmlToText(anchor.titleHtml());
+            String url = decodeDuckDuckGoUrl(anchor.href());
+            if (title.isBlank() || url.isBlank()) {
+                continue;
+            }
+            int blockEnd = i + 1 < anchors.size() ? anchors.get(i + 1).start() : html.length();
+            String block = html.substring(anchor.end(), blockEnd);
+            String snippet = "";
+            var snippetMatcher = _duckDuckGoSnippetPattern.matcher(block);
+            if (snippetMatcher.find()) {
+                snippet = htmlToText(snippetMatcher.group(1));
+            }
+            results.add(new WebSearchResult(title, url, snippet));
+        }
+        return results;
+    }
+
+    private static String formatWebSearchResults(String query, List<WebSearchResult> results) {
+        var builder = new StringBuilder("Web search results for: ").append(query);
+        for (int i = 0; i < results.size(); i++) {
+            var result = results.get(i);
+            builder.append("\n\n").append(i + 1).append(". ").append(result.title())
+                    .append("\n   ").append(result.url());
+            if (!result.snippet().isBlank()) {
+                builder.append("\n   ").append(result.snippet());
+            }
+        }
+        return builder.toString();
+    }
+
+    private static String decodeDuckDuckGoUrl(String href) {
+        String decodedHref = decodeHtmlEntities(href == null ? "" : href.trim());
+        if (decodedHref.isBlank()) {
+            return "";
+        }
+        int uddgIndex = decodedHref.indexOf("uddg=");
+        if (uddgIndex >= 0) {
+            int valueStart = uddgIndex + "uddg=".length();
+            int valueEnd = decodedHref.indexOf('&', valueStart);
+            String encoded = valueEnd >= 0
+                    ? decodedHref.substring(valueStart, valueEnd)
+                    : decodedHref.substring(valueStart);
+            return URLDecoder.decode(encoded, StandardCharsets.UTF_8);
+        }
+        if (decodedHref.startsWith("//")) {
+            return "https:" + decodedHref;
+        }
+        return decodedHref;
+    }
+
+    private static String htmlToText(String html) {
+        String withoutTags = _htmlTagPattern.matcher(html == null ? "" : html).replaceAll(" ");
+        return decodeHtmlEntities(withoutTags).replaceAll("\\s+", " ").trim();
+    }
+
+    private static String decodeHtmlEntities(String value) {
+        String text = value == null ? "" : value;
+        text = text.replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&nbsp;", " ");
+        var matcher = _htmlEntityPattern.matcher(text);
+        var buffer = new StringBuffer();
+        while (matcher.find()) {
+            String raw = matcher.group(1);
+            int radix = raw.startsWith("x") || raw.startsWith("X") ? 16 : 10;
+            String digits = radix == 16 ? raw.substring(1) : raw;
+            try {
+                matcher.appendReplacement(buffer,
+                        java.util.regex.Matcher.quoteReplacement(String.valueOf((char) Integer.parseInt(digits, radix))));
+            } catch (NumberFormatException e) {
+                matcher.appendReplacement(buffer, java.util.regex.Matcher.quoteReplacement(matcher.group()));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private static Path resolvePathInsideWorkspace(Path workspaceRoot, String rawPath) throws IOException {
@@ -3402,7 +3549,8 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch tool is enabled by default unless disabled in nemo.conf.");
             return;
         case ":q":
         case ":quit":
