@@ -60,7 +60,8 @@ public class VisualMode extends Mode {
         });
         _rootResponder.addEventResponder("y", () -> {
             var text = buffer.getSubstring(minCursor().getPosition(), maxCursor().getPosition() + 1);
-            Copy.getInstance().setText(text, false /* isLine */);
+            Copy.getInstance().setText(text, false /* isLine */,
+                    Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });
     }
@@ -70,6 +71,11 @@ public class VisualMode extends Mode {
         var other = new Cursor(_window.getBufferContext());
         other.setPosition(_window.getBufferContext().getBuffer().getCursor().getPosition());
         _window.getBufferContext().getBuffer().addCursor(other);
+    }
+
+    @Override
+    public void deactivate() {
+        _window.getBufferContext().getBuffer().clearCursors();
     }
 
     @Override

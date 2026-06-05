@@ -28,6 +28,7 @@ import org.fisk.swim.api.SwimPanel;
 
 public class Main implements SwimHost {
     private static final String CORE_MODULE = "org.fisk.swim.core";
+    static final String RELOAD_SESSION_PROPERTY = "swim.session.restore_on_reload";
     private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
             "swim-launcher-");
 
@@ -264,6 +265,8 @@ public class Main implements SwimHost {
     private void reload(Path path, String successMessage) {
         synchronized (_reloadLock) {
             _reloading = true;
+            String previousReloadFlag = System.getProperty(RELOAD_SESSION_PROPERTY);
+            System.setProperty(RELOAD_SESSION_PROPERTY, "true");
             try {
                 Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
                 SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader(), beforeLoad);
@@ -271,6 +274,11 @@ public class Main implements SwimHost {
                     next.showMessage(successMessage);
                 }
             } finally {
+                if (previousReloadFlag == null) {
+                    System.clearProperty(RELOAD_SESSION_PROPERTY);
+                } else {
+                    System.setProperty(RELOAD_SESSION_PROPERTY, previousReloadFlag);
+                }
                 _reloading = false;
             }
         }

@@ -2,6 +2,7 @@ package org.fisk.swim.mode;
 
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.ui.Window;
@@ -23,6 +24,8 @@ public class InputMode extends Mode {
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
+            window.appendRepeatKey(new RecordedKey(KeyType.Escape, null, false, false));
+            window.commitRepeatRecording();
             window.switchToMode(window.getNormalMode());
             buffer.getCursor().goLeft();
         });

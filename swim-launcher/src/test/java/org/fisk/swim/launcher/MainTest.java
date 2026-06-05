@@ -299,6 +299,7 @@ class MainTest {
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
         plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
+            assertEquals("true", System.getProperty(Main.RELOAD_SESSION_PROPERTY));
             previous.close();
             if (beforeLoad != null) {
                 beforeLoad.run();
@@ -323,6 +324,7 @@ class MainTest {
         assertEquals(List.of("Reloaded SWIM core"), next.messages);
         assertTrue(previous.closed);
         assertSame(next, main.getLoadedApp());
+        assertNull(System.getProperty(Main.RELOAD_SESSION_PROPERTY));
     }
 
     @Test

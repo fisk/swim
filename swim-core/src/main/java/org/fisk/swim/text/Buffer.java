@@ -5,6 +5,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
@@ -17,6 +18,7 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguageModeProvider;
 import org.fisk.swim.ui.Cursor;
+import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.undo.UndoLog;
 import org.fisk.swim.utils.LogFactory;
@@ -46,6 +48,13 @@ public class Buffer {
     private int _version = 1;
     private boolean _readOnly;
     private static Logger _log = LogFactory.createLog();
+    private final List<Fold> _folds = new ArrayList<>();
+
+    public record Fold(int start, int end, boolean collapsed) {
+        boolean contains(int position) {
+            return position >= start && position < end;
+        }
+    }
 
     public Cursor getCursor() {
         return _cursors.get(0);
@@ -335,7 +344,8 @@ public class Buffer {
         if (position >= _string.length()) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(position, position + 1), false /* isLine */);
+        Copy.getInstance().setText(getSubstring(position, position + 1), false /* isLine */,
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(position, position + 1);
         rawRemove(getCursor().getPosition(), getCursor().getPosition() + 1);
         _bufferContext.getTextLayout().calculate();
@@ -351,7 +361,8 @@ public class Buffer {
         if (start == -1 || end == -1) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */);
+        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */,
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
         getCursor().setPosition(start);
@@ -380,7 +391,8 @@ public class Buffer {
         if (end == -1) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */);
+        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */,
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
         _bufferContext.getTextLayout().calculate();
@@ -405,7 +417,8 @@ public class Buffer {
             // Last line is special
             start = Math.max(0, start - 1);
         }
-        Copy.getInstance().setText(getSubstring(start, end), true /* isLine */);
+        Copy.getInstance().setText(getSubstring(start, end), true /* isLine */,
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
         _bufferContext.getTextLayout().calculate();
@@ -429,6 +442,324 @@ public class Buffer {
             start = Math.max(0, start - 1);
         }
         return getSubstring(start, end);
+    }
+
+    public List<Integer> findLiteralMatches(String text) {
+        var matches = new ArrayList<Integer>();
+        if (text == null || text.isEmpty()) {
+            return matches;
+        }
+        int from = 0;
+        String haystack = getString();
+        while (from <= haystack.length() - text.length()) {
+            int index = haystack.indexOf(text, from);
+            if (index < 0) {
+                break;
+            }
+            matches.add(index);
+            from = index + Math.max(1, text.length());
+        }
+        return matches;
+    }
+
+    public List<Fold> getFolds() {
+        return List.copyOf(_folds);
+    }
+
+    public Fold collapsedFoldStartingAt(int position) {
+        for (var fold : _folds) {
+            if (fold.collapsed() && fold.start() == position) {
+                return fold;
+            }
+        }
+        return null;
+    }
+
+    public boolean createFold(int selectionStart, int selectionEnd) {
+        var startLine = _bufferContext.getTextLayout().getPhysicalLineAt(selectionStart);
+        var endLine = _bufferContext.getTextLayout().getPhysicalLineAt(Math.max(selectionStart, selectionEnd - 1));
+        int start = startLine.getStartPosition();
+        int end = endLine.getEndPosition(true);
+        if (end <= start || startLine == endLine) {
+            return false;
+        }
+        _folds.removeIf(fold -> overlaps(fold.start(), fold.end(), start, end));
+        _folds.add(new Fold(start, end, true));
+        _folds.sort(java.util.Comparator.comparingInt(Fold::start));
+        _bufferContext.getTextLayout().calculate();
+        return true;
+    }
+
+    public boolean toggleFoldAt(int position) {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (fold.contains(position)) {
+                _folds.set(i, new Fold(fold.start(), fold.end(), !fold.collapsed()));
+                _bufferContext.getTextLayout().calculate();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean closeFoldAt(int position) {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (fold.contains(position)) {
+                _folds.set(i, new Fold(fold.start(), fold.end(), true));
+                _bufferContext.getTextLayout().calculate();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean openFoldAt(int position) {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (fold.contains(position)) {
+                _folds.set(i, new Fold(fold.start(), fold.end(), false));
+                _bufferContext.getTextLayout().calculate();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void openAllFolds() {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            _folds.set(i, new Fold(fold.start(), fold.end(), false));
+        }
+        _bufferContext.getTextLayout().calculate();
+    }
+
+    public void closeAllFolds() {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            _folds.set(i, new Fold(fold.start(), fold.end(), true));
+        }
+        _bufferContext.getTextLayout().calculate();
+    }
+
+    public Range textObjectRange(String object, boolean around) {
+        if (object == null || object.isBlank()) {
+            return null;
+        }
+        return switch (object) {
+        case "w" -> wordRange(around);
+        case "p" -> paragraphRange(around);
+        case "(", ")" -> enclosedRange('(', ')', around);
+        case "{", "}" -> enclosedRange('{', '}', around);
+        case "[", "]" -> enclosedRange('[', ']', around);
+        case "\"", "'" -> quoteRange(object.charAt(0), around);
+        default -> null;
+        };
+    }
+
+    public boolean addNextCursorForLiteral(String text, boolean forward) {
+        var matches = findLiteralMatches(text);
+        if (matches.isEmpty()) {
+            return false;
+        }
+        var taken = new HashSet<Integer>();
+        int anchor = getCursor().getPosition();
+        for (var cursor : getCursors()) {
+            taken.add(cursor.getPosition());
+            if (forward) {
+                anchor = Math.max(anchor, cursor.getPosition());
+            } else {
+                anchor = Math.min(anchor, cursor.getPosition());
+            }
+        }
+        if (forward) {
+            for (int position : matches) {
+                if (position > anchor && !taken.contains(position)) {
+                    var cursor = new org.fisk.swim.ui.Cursor(_bufferContext);
+                    cursor.setPosition(position);
+                    addCursor(cursor);
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (int i = matches.size() - 1; i >= 0; i--) {
+            int position = matches.get(i);
+            if (position < anchor && !taken.contains(position)) {
+                var cursor = new org.fisk.swim.ui.Cursor(_bufferContext);
+                cursor.setPosition(position);
+                addCursor(cursor);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public int substitute(Pattern pattern, String replacement, boolean global, boolean wholeBuffer) {
+        if (_readOnly || pattern == null) {
+            return 0;
+        }
+        int start;
+        int end;
+        if (wholeBuffer) {
+            start = 0;
+            end = getLength();
+        } else {
+            var line = _bufferContext.getTextLayout().getPhysicalLineAt(getCursor().getPosition());
+            start = line.getStartPosition();
+            end = line.getEndPosition(false);
+        }
+        String source = getSubstring(start, end);
+        var matcher = pattern.matcher(source);
+        int matches = 0;
+        while (matcher.find()) {
+            matches++;
+            if (!global) {
+                break;
+            }
+        }
+        if (matches == 0) {
+            return 0;
+        }
+        matcher = pattern.matcher(source);
+        String replaced = global ? matcher.replaceAll(replacement) : matcher.replaceFirst(replacement);
+        _undoLog.recordRemove(start, end);
+        rawRemove(start, end);
+        if (!replaced.isEmpty()) {
+            _undoLog.recordInsert(start, replaced);
+            rawInsert(start, replaced);
+        }
+        _bufferContext.getTextLayout().calculate();
+        getCursor().setPosition(Math.min(start + replaced.length(), getLength()));
+        _bufferContext.getBufferView().adaptViewToCursor();
+        return matches;
+    }
+
+    private Range wordRange(boolean around) {
+        int start = findStartOfWord();
+        int end = findEndOfWord();
+        if (start < 0 || end < 0) {
+            return null;
+        }
+        if (around) {
+            while (start > 0 && Character.isWhitespace(getCharacter(start - 1).charAt(0))) {
+                start--;
+            }
+            while (end < getLength() && Character.isWhitespace(getCharacter(end).charAt(0))) {
+                end++;
+            }
+        }
+        return Range.create(start, end);
+    }
+
+    private Range paragraphRange(boolean around) {
+        var line = _bufferContext.getTextLayout().getPhysicalLineAt(getCursor().getPosition());
+        var current = line;
+        while (current.getPrev() != null && !lineText(current.getPrev()).isBlank()) {
+            current = current.getPrev();
+        }
+        int start = current.getStartPosition();
+        current = line;
+        while (current.getNext() != null && !lineText(current.getNext()).isBlank()) {
+            current = current.getNext();
+        }
+        int end = current.getEndPosition(true);
+        if (around) {
+            if (line.getPrev() != null && lineText(line.getPrev()).isBlank()) {
+                start = line.getPrev().getStartPosition();
+            }
+            if (current.getNext() != null && lineText(current.getNext()).isBlank()) {
+                end = current.getNext().getEndPosition(true);
+            }
+        }
+        return Range.create(start, end);
+    }
+
+    private String lineText(org.fisk.swim.text.TextLayout.Line line) {
+        if (line == null) {
+            return "";
+        }
+        int start = line.getStartPosition();
+        int end = line.getEndPosition(false);
+        return getSubstring(start, end);
+    }
+
+    private Range quoteRange(char quote, boolean around) {
+        String text = getString();
+        int position = Math.min(getCursor().getPosition(), Math.max(0, text.length() - 1));
+        int start = -1;
+        for (int i = position; i >= 0; i--) {
+            if (text.charAt(i) == quote && !isEscaped(text, i)) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) {
+            return null;
+        }
+        int end = -1;
+        for (int i = start + 1; i < text.length(); i++) {
+            if (text.charAt(i) == quote && !isEscaped(text, i)) {
+                end = i;
+                break;
+            }
+        }
+        if (end < 0 || end <= start) {
+            return null;
+        }
+        return around ? Range.create(start, end + 1) : Range.create(start + 1, end);
+    }
+
+    private Range enclosedRange(char open, char close, boolean around) {
+        String text = getString();
+        int position = Math.min(getCursor().getPosition(), Math.max(0, text.length() - 1));
+        int depth = 0;
+        int start = -1;
+        for (int i = position; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == close) {
+                depth++;
+            } else if (c == open) {
+                if (depth == 0) {
+                    start = i;
+                    break;
+                }
+                depth--;
+            }
+        }
+        if (start < 0) {
+            return null;
+        }
+        depth = 0;
+        int end = -1;
+        for (int i = start + 1; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == open) {
+                depth++;
+            } else if (c == close) {
+                if (depth == 0) {
+                    end = i;
+                    break;
+                }
+                depth--;
+            }
+        }
+        if (end < 0 || end <= start) {
+            return null;
+        }
+        return around ? Range.create(start, end + 1) : Range.create(start + 1, end);
+    }
+
+    private static boolean isEscaped(String text, int index) {
+        int escapes = 0;
+        for (int i = index - 1; i >= 0 && text.charAt(i) == '\\'; i--) {
+            escapes++;
+        }
+        return escapes % 2 == 1;
+    }
+
+    private static boolean overlaps(int leftStart, int leftEnd, int rightStart, int rightEnd) {
+        return leftStart < rightEnd && rightStart < leftEnd;
     }
 
     static Pattern _wordPattern = Pattern.compile("\\w");

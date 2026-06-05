@@ -13,6 +13,7 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
+import org.fisk.swim.copy.Copy;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.MailPanelView;
@@ -32,6 +33,75 @@ import org.junit.jupiter.api.io.TempDir;
 class NormalModeTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void quotePrefixSelectsRegisterWithoutEnteringInsertMode() throws Exception {
+        Path path = tempDir.resolve("register-prefix.txt");
+        Files.writeString(path, "abc\n");
+
+        Copy.getInstance().clear();
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            Response response = window.getNormalMode()
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('"'), HeadlessWindowHarness.key('a'))));
+            assertEquals(Response.YES, response);
+            window.getNormalMode().respond();
+            assertEquals("Using register a", HeadlessWindowHarness.getField(window.getCommandView(), "_message", String.class));
+        }
+    }
+
+    @Test
+    void qaStartsMacroRecordingWithoutEnteringInsertMode() throws Exception {
+        Path path = tempDir.resolve("macro-prefix.txt");
+        Files.writeString(path, "abc\n");
+
+        Copy.getInstance().clear();
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            Response response = window.getNormalMode()
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('q'), HeadlessWindowHarness.key('a'))));
+            assertEquals(Response.YES, response);
+            window.getNormalMode().respond();
+            assertTrue(window.isRecordingMacro());
+        }
+    }
+
+    @Test
+    void gnAddsAnotherCursorForCurrentWord() throws Exception {
+        Path path = tempDir.resolve("multicursor-prefix.txt");
+        Files.writeString(path, """
+                alpha
+                beta alpha
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('n'));
+
+            assertEquals(2, window.getBufferContext().getBuffer().getCursors().size());
+        }
+    }
+
+    @Test
+    void textObjectDeleteInsideParensWorks() throws Exception {
+        Path path = tempDir.resolve("text-object.txt");
+        Files.writeString(path, "call(alpha, beta)\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().getCursor().setPosition("call(".length());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('d'),
+                    HeadlessWindowHarness.key('i'),
+                    HeadlessWindowHarness.key('('));
+
+            assertEquals("call()\n", window.getBufferContext().getBuffer().getString());
+        }
+    }
 
     @Test
     void bangStartsNemoChat() throws Exception {

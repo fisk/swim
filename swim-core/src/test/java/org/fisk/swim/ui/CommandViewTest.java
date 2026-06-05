@@ -27,6 +27,8 @@ import org.fisk.swim.debug.DebuggerProvider;
 import org.fisk.swim.debug.DebuggerProviderRegistry;
 import org.fisk.swim.debug.DebuggerSession;
 import org.fisk.swim.debug.DebugSessionListener;
+import org.fisk.swim.copy.Copy;
+import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailPluginRegistry;
@@ -136,8 +138,9 @@ class CommandViewTest {
             HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.down());
 
             var state = commandView.getMenuState();
-            assertEquals("reload", state.matches().get(0).primaryName());
-            assertEquals("rebuild", state.selectedMatch().primaryName());
+            assertTrue(state.matches().size() >= 2);
+            assertEquals(state.matches().get(1).primaryName(), state.selectedMatch().primaryName());
+            assertTrue(!state.matches().get(0).primaryName().equals(state.selectedMatch().primaryName()));
         }
     }
 
@@ -336,6 +339,126 @@ class CommandViewTest {
 
             assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
             assertEquals("needle", ((ProjectSearchPanelView) window.getPanelView()).getQuery());
+        }
+    }
+
+    @Test
+    void registersCommandShowsRegistersAndMacros() throws Exception {
+        Path path = tempDir.resolve("registers.txt");
+        Files.writeString(path, "abc");
+        Copy.getInstance().clear();
+        Copy.getInstance().setText("hello", false, 'a');
+        Copy.getInstance().setMacro('q', List.of(RecordedKey.parseToken("x")));
+
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            invokeRunCommand(harness.getWindow().getCommandView(), "registers");
+
+            assertTrue(harness.getWindow().getPanelView() instanceof TextPanelView);
+            String text = HeadlessWindowHarness.getField(harness.getWindow().getPanelView(), "_text", String.class);
+            assertTrue(text.contains("\"a char hello"));
+            assertTrue(text.contains("@q x"));
+        } finally {
+            Copy.getInstance().clear();
+        }
+    }
+
+    @Test
+    void marksCommandShowsConfiguredMarks() throws Exception {
+        Path path = tempDir.resolve("marks.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            harness.getWindow().setMark('a');
+            invokeRunCommand(harness.getWindow().getCommandView(), "marks");
+
+            assertTrue(harness.getWindow().getPanelView() instanceof TextPanelView);
+            String text = HeadlessWindowHarness.getField(harness.getWindow().getPanelView(), "_text", String.class);
+            assertTrue(text.contains("a "));
+            assertTrue(text.contains("marks.txt"));
+        }
+    }
+
+    @Test
+    void jumpsCommandShowsJumpList() throws Exception {
+        Path path = tempDir.resolve("jumps.txt");
+        Files.writeString(path, """
+                one
+                two
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+            window.performJump(() -> window.getBufferContext().getBuffer().getCursor().goEndOfBuffer());
+            invokeRunCommand(window.getCommandView(), "jumps");
+
+            assertTrue(window.getPanelView() instanceof TextPanelView);
+            String text = HeadlessWindowHarness.getField(window.getPanelView(), "_text", String.class);
+            assertTrue(text.contains("jumps.txt"));
+        }
+    }
+
+    @Test
+    void substituteCommandsRewriteCurrentLineAndWholeBuffer() throws Exception {
+        Path path = tempDir.resolve("substitute.txt");
+        Files.writeString(path, """
+                alpha beta
+                alpha gamma
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+            invokeRunCommand(window.getCommandView(), "s/alpha/omega/");
+            assertEquals("""
+                    omega beta
+                    alpha gamma
+                    """, window.getBufferContext().getBuffer().getString());
+
+            invokeRunCommand(window.getCommandView(), "%s/alpha/delta/g");
+            assertEquals("""
+                    omega beta
+                    delta gamma
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void lgrepBuildsLocationListAndNavigatesMatches() throws Exception {
+        Path path = tempDir.resolve("lgrep.txt");
+        Files.writeString(path, """
+                alpha needle
+                beta
+                gamma needle
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "lgrep needle");
+            assertTrue(window.getPanelView() instanceof ListView);
+
+            invokeRunCommand(window.getCommandView(), "lnext");
+            assertTrue(window.getBufferContext().getBuffer().getCurrentLineText().contains("gamma needle"));
+
+            invokeRunCommand(window.getCommandView(), "lprev");
+            assertTrue(window.getBufferContext().getBuffer().getCurrentLineText().contains("alpha needle"));
+        }
+    }
+
+    @Test
+    void multicursorCommandPlacesCursorsOnAllMatches() throws Exception {
+        Path path = tempDir.resolve("multicursor.txt");
+        Files.writeString(path, """
+                alpha
+                beta alpha
+                alpha gamma
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "multicursor alpha");
+
+            assertEquals(3, window.getBufferContext().getBuffer().getCursors().size());
         }
     }
 

@@ -169,7 +169,7 @@ public class KeyMenuView extends View {
             return passiveCommands();
         }
         if (_path.isEmpty()) {
-            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  slack s  •  windows w <n> Enter  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
+            return "Esc Nemo chat  •  move h/j/k/l  •  files m  •  grep M  •  mail e  •  slack s  •  macros q/@  •  repeat .  •  marks g m / ' / `  •  multicursor g n  •  folds z  •  jumps C-o Tab  •  panes Ctrl-w  •  edit d c y p  •  goto g  •  tools SPC e  •  search / ? n *  •  modes i v V";
         }
         return describeCurrentNode();
     }
@@ -346,6 +346,10 @@ public class KeyMenuView extends View {
         root.child("l", leaf("right"));
         root.child("g", branch("goto")
                 .child("g", leaf("top of buffer"))
+                .child("m", branch("set mark").child(ANY_CHARACTER, leaf("mark register")))
+                .child("n", leaf("add next cursor"))
+                .child("N", leaf("add previous cursor"))
+                .child("c", leaf("clear extra cursors"))
                 .child("d", leaf("definition"))
                 .child("w", leaf("jump hints")));
         root.child("d", branch("delete")
@@ -372,6 +376,18 @@ public class KeyMenuView extends View {
         root.child("M", leaf("project search"));
         root.child("e", leaf("email"));
         root.child("s", leaf("slack"));
+        root.child("q", branch("macro").child(ANY_CHARACTER, leaf("record macro")));
+        root.child("@", branch("play macro").child(ANY_CHARACTER, leaf("play macro register")));
+        root.child(".", leaf("repeat last edit"));
+        root.child("<CTRL>-o", leaf("jump back"));
+        root.child("<TAB>", leaf("jump forward"));
+        root.child("z", branch("folds")
+                .child("a", leaf("toggle fold"))
+                .child("c", leaf("close fold"))
+                .child("o", leaf("open fold"))
+                .child("M", leaf("close all folds"))
+                .child("R", leaf("open all folds"))
+                .child("f", leaf("fold selection")));
         root.child("<ESC>", leaf("start Nemo chat"));
         root.child("/", leaf("search forward"));
         root.child("?", leaf("search backward"));

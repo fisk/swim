@@ -56,8 +56,8 @@ public class Mode implements EventResponder, Drawable {
         _rootResponder.addEventResponder("<RIGHT>", () -> { cursor.goRight(); });
         _rootResponder.addEventResponder("<DOWN>", () -> { cursor.goDown(); });
         _rootResponder.addEventResponder("<UP>", () -> { cursor.goUp(); });
-        _rootResponder.addEventResponder("g g", () -> { cursor.goStartOfBuffer(); });
-        _rootResponder.addEventResponder("G", () -> { cursor.goEndOfBuffer(); });
+        _rootResponder.addEventResponder("g g", () -> { window.performJump(cursor::goStartOfBuffer); });
+        _rootResponder.addEventResponder("G", () -> { window.performJump(cursor::goEndOfBuffer); });
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "f", true));
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "F", false));
     }
@@ -66,7 +66,6 @@ public class Mode implements EventResponder, Drawable {
     }
 
     public void deactivate() {
-        _window.getBufferContext().getBuffer().clearCursors();
     }
 
     @Override

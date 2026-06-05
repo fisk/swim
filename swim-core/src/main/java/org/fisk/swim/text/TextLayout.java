@@ -37,6 +37,10 @@ public class TextLayout {
         public String getCharacter() {
             return _character;
         }
+
+        public boolean isSynthetic() {
+            return _position < 0;
+        }
     }
 
     public static class Line {
@@ -237,22 +241,70 @@ public class TextLayout {
     private void calculateLogicalLines() {
         int width = Math.max(1, _bufferContext.getBufferView().getBounds().getSize().getWidth());
         var string = _bufferContext.getBuffer().getString();
-        var iter = new LayoutIterator(string, width);
-        while (iter.hasNext()) {
-            if (iter.isNewline()) {
-                iter.newLine();
-            } else if (iter.isWrapped()) {
-                iter.newLine();
-                iter.insertGlyph();
-                iter.incX();
-            } else {
-                iter.insertGlyph();
-                iter.incX();
+        _logicalLines = new ArrayList<>();
+        _logicalLineAtPosition = new TreeMap<>();
+        Line line = new Line(0, 0, null, false);
+        _logicalLines.add(line);
+        _logicalLineAtPosition.put(0, line);
+        int x = 0;
+        int y = 0;
+        int position = 0;
+        while (position < string.length()) {
+            var fold = _bufferContext.getBuffer().collapsedFoldStartingAt(position);
+            if (fold != null) {
+                int firstLineEnd = string.indexOf('\n', position);
+                if (firstLineEnd < 0 || firstLineEnd > fold.end()) {
+                    firstLineEnd = Math.min(fold.end(), string.length());
+                }
+                for (int i = position; i < firstLineEnd && x < width - 3; i++) {
+                    line.getGlyphs().add(new Glyph(x++, y, i, string.substring(i, i + 1)));
+                }
+                if (x < width) {
+                    line.getGlyphs().add(new Glyph(-1, y, -1, " "));
+                    x++;
+                }
+                if (x < width) {
+                    line.getGlyphs().add(new Glyph(-1, y, -1, "…"));
+                    x++;
+                }
+                if (x < width) {
+                    line.getGlyphs().add(new Glyph(-1, y, -1, " "));
+                    x++;
+                }
+                position = fold.end();
+                if (position < string.length()) {
+                    Line next = new Line(++y, position, line, false);
+                    line.setNext(next);
+                    line = next;
+                    _logicalLines.add(line);
+                    _logicalLineAtPosition.put(position, line);
+                    x = 0;
+                }
+                continue;
             }
-            iter.next();
+            String character = string.substring(position, position + 1);
+            boolean newline = character.equals("\n");
+            if (newline) {
+                Line next = new Line(++y, position + 1, line, true);
+                line.setNext(next);
+                line = next;
+                _logicalLines.add(line);
+                _logicalLineAtPosition.put(position + 1, line);
+                x = 0;
+                position++;
+                continue;
+            }
+            if (x == width) {
+                Line next = new Line(++y, position, line, false);
+                line.setNext(next);
+                line = next;
+                _logicalLines.add(line);
+                _logicalLineAtPosition.put(position, line);
+                x = 0;
+            }
+            line.getGlyphs().add(new Glyph(x++, y, position, character));
+            position++;
         }
-        _logicalLines = iter.getLines();
-        _logicalLineAtPosition = iter.getLineAtPosition();
     }
 
     private void calculatePhysicalLines() {

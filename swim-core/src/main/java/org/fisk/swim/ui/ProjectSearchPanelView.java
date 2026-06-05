@@ -157,6 +157,10 @@ public class ProjectSearchPanelView extends View {
 
     private void refreshResults() {
         _results = _projectSearch.search(_query.toString());
+        var window = Window.getInstance();
+        if (window != null) {
+            window.setQuickfixResults("Quickfix", _results);
+        }
         _selection = Math.max(0, Math.min(_selection, Math.max(0, _results.size() - 1)));
         _start = Math.max(0, Math.min(_start, Math.max(0, _results.size() - 1)));
         setNeedsRedraw();

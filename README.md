@@ -62,6 +62,8 @@ Normal mode uses familiar Vim-style keys:
 | `w/b/e` | Word motions |
 | `d{motion}` / `c{motion}` / `y{motion}` | Delete / change / yank |
 | `p/P` | Paste after / before |
+| `.` | Repeat the last edit |
+| `q{register}` / `q` / `@{register}` / `@@` | Record macro / stop / play / replay last |
 | `u` / `Ctrl-r` | Undo / redo |
 | `i` | Enter insert mode |
 | `v`, `V`, `Ctrl-v` | Visual, visual-line, visual-block |
@@ -71,6 +73,10 @@ Normal mode uses familiar Vim-style keys:
 | `/` or `?` | Search |
 | `m` | Project file list |
 | `e` | Mail client |
+| `g m{char}` | Set mark |
+| `` `{char}` / `'{char}`` | Jump to mark |
+| `g n` / `g N` / `g c` | Add next/previous multicursor / clear extras |
+| `Ctrl-o` / `Tab` | Jump backward / forward |
 | `t` | Tree view plugin |
 | `Esc` | Start Nemo / open Nemo chat |
 
@@ -89,6 +95,36 @@ SWIM now exposes more of the editor while you work:
 - `w <number> Enter` switches to one of the recent fullscreen windows shown in the header.
 
 This makes it possible to explore commands and key chains without memorizing everything up front.
+
+## User Config
+
+SWIM reads `~/.swim/config.json` for editor startup behavior.
+
+Current config surface:
+
+```json
+{
+  "normalModeRemaps": [
+    {
+      "lhs": "Q",
+      "rhs": "x"
+    }
+  ],
+  "startupCommands": [
+    "help"
+  ],
+  "options": {
+    "indent.java.size": "2"
+  },
+  "restoreLastSession": true
+}
+```
+
+- `normalModeRemaps` rewrites exact NORMAL-mode key sequences using SWIM key notation such as `Q`, `g g`, `<CTRL>-o`, and `<ESC>`.
+- `startupCommands` runs `:` commands during startup.
+- `options` sets editor options. Keys starting with `indent.` map onto indentation settings such as `indent.java.size`, `indent.c.string`, and `indent.default.size`.
+- `restoreLastSession` enables saving and restoring the last open buffer set through `~/.swim/session.json`.
+  It also restores buffer split topology for restored buffer workspaces.
 
 ## Windows, Panes, And Panels
 
@@ -118,6 +154,14 @@ Buffer-pane controls from the command line:
 - `:focus left|right|up|down|next|prev` moves focus
 - `:close` closes the active pane
 - `:only` closes every other pane
+- `:buffers` or `:ls` lists open buffers
+- `:buffer <index|path>`, `:bnext`, and `:bprev` switch buffers
+- `:copen`, `:cnext`, and `:cprev` navigate the quickfix list built from project search
+- `:lgrep <text>`, `:lopen`, `:lnext`, and `:lprev` navigate a location list scoped to the current buffer
+- `:multicursor <text>` places cursors on every literal match in the current buffer
+- `:registers`, `:marks`, and `:jumps` show editor state
+- `:s/pattern/replacement/[g]` substitutes in the current line
+- `:%s/pattern/replacement/[g]` substitutes in the whole buffer
 
 Buffer-pane controls from normal mode:
 
@@ -127,6 +171,18 @@ Buffer-pane controls from normal mode:
 - `Ctrl-w w` and `Ctrl-w W` cycle panes
 - `Ctrl-w q` closes the active pane
 - `Ctrl-w o` keeps only the active pane
+
+Editing additions:
+
+- Named registers: type `"` then a register letter before `yy`, `diw`, `x`, `p`, and similar operators.
+- Text objects for `d/c/y`: `i(`, `a(`, `i[`, `a[`, `i{`, `a{`, `i"`, `a"`, `i'`, `a'`, `ip`, and `ap`.
+- Manual folds:
+  - `V ... z f` creates a fold from the selected lines
+  - `z a` toggles the fold at the cursor
+  - `z c` closes the current fold
+  - `z o` opens the current fold
+  - `z M` closes all folds
+  - `z R` opens all folds
 
 ## Directory Browser
 

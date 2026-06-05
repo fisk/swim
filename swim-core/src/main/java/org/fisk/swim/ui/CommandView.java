@@ -1,5 +1,6 @@
 package org.fisk.swim.ui;
 
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -38,9 +39,28 @@ public class CommandView extends View {
             new CommandSpec("close", List.of(), "", "close the active pane"),
             new CommandSpec("only", List.of(), "", "keep only the active pane"),
             new CommandSpec("focus", List.of(), "left|right|up|down|next|prev", "move focus between panes"),
+            new CommandSpec("buffers", List.of("ls"), "", "show open buffers"),
+            new CommandSpec("buffer", List.of("b"), "<index|path>", "switch to an open buffer"),
+            new CommandSpec("bnext", List.of("bn"), "", "switch to the next open buffer"),
+            new CommandSpec("bprev", List.of("bp"), "", "switch to the previous open buffer"),
+            new CommandSpec("copen", List.of(), "", "open the quickfix list"),
+            new CommandSpec("cclose", List.of(), "", "close the quickfix or location list"),
+            new CommandSpec("cnext", List.of("cn"), "", "jump to the next quickfix entry"),
+            new CommandSpec("cprev", List.of("cp"), "", "jump to the previous quickfix entry"),
+            new CommandSpec("lopen", List.of(), "", "open the location list"),
+            new CommandSpec("lclose", List.of(), "", "close the location list"),
+            new CommandSpec("lnext", List.of("ln"), "", "jump to the next location-list entry"),
+            new CommandSpec("lprev", List.of("lp"), "", "jump to the previous location-list entry"),
+            new CommandSpec("lgrep", List.of(), "<text>", "search the current buffer into the location list"),
+            new CommandSpec("multicursor", List.of("mc"), "<text>", "place cursors on each literal match in the current buffer"),
+            new CommandSpec("s", List.of(), "/pattern/replacement/[g]", "substitute in the current line"),
+            new CommandSpec("%s", List.of(), "/pattern/replacement/[g]", "substitute in the whole buffer"),
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
             new CommandSpec("mail", List.of(), "", "open the mail client"),
+            new CommandSpec("registers", List.of("reg"), "", "show registers and macros"),
+            new CommandSpec("marks", List.of(), "", "show marks"),
+            new CommandSpec("jumps", List.of(), "", "show the jump list"),
             new CommandSpec("slack", List.of(), "", "open the Slack client"),
             new CommandSpec("nemo", List.of(), "<question>", "ask Nemo about the current file"),
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
@@ -158,10 +178,10 @@ public class CommandView extends View {
         _searchString = string;
         if (_prompt.equals("/")) {
             _searchForward = true;
-            cursor.goNext(pattern);
+            Window.getInstance().performJump(() -> cursor.goNext(pattern));
         } else {
             _searchForward = false;
-            cursor.goPrevious(pattern);
+            Window.getInstance().performJump(() -> cursor.goPrevious(pattern));
         }
     }
 
@@ -172,9 +192,9 @@ public class CommandView extends View {
         var pattern = Pattern.compile(Pattern.quote(_searchString));
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
-            cursor.goPrevious(pattern);
+            Window.getInstance().performJump(() -> cursor.goPrevious(pattern));
         } else {
-            cursor.goNext(pattern);
+            Window.getInstance().performJump(() -> cursor.goNext(pattern));
         }
     }
 
@@ -185,15 +205,21 @@ public class CommandView extends View {
         var pattern = Pattern.compile(Pattern.quote(_searchString));
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
-            cursor.goNext(pattern);
+            Window.getInstance().performJump(() -> cursor.goNext(pattern));
         } else {
-            cursor.goPrevious(pattern);
+            Window.getInstance().performJump(() -> cursor.goPrevious(pattern));
         }
     }
 
     private void runCommand(String rawCommand) {
         rawCommand = rawCommand.trim();
         if (rawCommand.equals("")) {
+            return;
+        }
+        var substitution = parseSubstitute(rawCommand);
+        if (substitution != null) {
+            runSubstitute(substitution);
+            _lastCommand = rawCommand;
             return;
         }
         _lastCommand = rawCommand;
@@ -237,6 +263,81 @@ public class CommandView extends View {
         case "focus":
             focus(argument);
             break;
+        case "buffers":
+        case "ls":
+            Window.getInstance().showBufferList();
+            break;
+        case "buffer":
+        case "b":
+            if (argument.isBlank() || !Window.getInstance().switchBufferByToken(argument)) {
+                _message = argument.isBlank() ? "Wrong number of parameters" : "No such buffer: " + argument;
+            }
+            break;
+        case "bnext":
+        case "bn":
+            if (!Window.getInstance().switchNextBuffer()) {
+                _message = "No next buffer";
+            }
+            break;
+        case "bprev":
+        case "bp":
+            if (!Window.getInstance().switchPreviousBuffer()) {
+                _message = "No previous buffer";
+            }
+            break;
+        case "copen":
+            if (!Window.getInstance().openQuickfixList()) {
+                _message = "Quickfix list is empty";
+            }
+            break;
+        case "cclose":
+        case "lclose":
+            if (!Window.getInstance().closeLocationLists()) {
+                _message = "No location list is open";
+            }
+            break;
+        case "cnext":
+        case "cn":
+            if (!Window.getInstance().nextQuickfix()) {
+                _message = "No next quickfix entry";
+            }
+            break;
+        case "cprev":
+        case "cp":
+            if (!Window.getInstance().previousQuickfix()) {
+                _message = "No previous quickfix entry";
+            }
+            break;
+        case "lopen":
+            if (!Window.getInstance().openLocationList()) {
+                _message = "Location list is empty";
+            }
+            break;
+        case "lnext":
+        case "ln":
+            if (!Window.getInstance().nextLocation()) {
+                _message = "No next location entry";
+            }
+            break;
+        case "lprev":
+        case "lp":
+            if (!Window.getInstance().previousLocation()) {
+                _message = "No previous location entry";
+            }
+            break;
+        case "lgrep":
+            if (argument.isBlank()) {
+                _message = "Wrong number of parameters";
+            } else {
+                runLocationGrep(argument);
+            }
+            break;
+        case "multicursor":
+        case "mc":
+            if (argument.isBlank() || !Window.getInstance().createCursorsForLiteral(argument)) {
+                _message = argument.isBlank() ? "Wrong number of parameters" : "No matches for multicursor";
+            }
+            break;
         case "grep":
         case "search":
             ProjectSearchUiSupport.open(Window.getInstance(), argument);
@@ -247,6 +348,16 @@ public class CommandView extends View {
             break;
         case "mail":
             MailUiSupport.toggle(Window.getInstance());
+            break;
+        case "registers":
+        case "reg":
+            Window.getInstance().showTextPanel("Registers", Window.getInstance().registersSummary());
+            break;
+        case "marks":
+            Window.getInstance().showTextPanel("Marks", Window.getInstance().marksSummary());
+            break;
+        case "jumps":
+            Window.getInstance().showTextPanel("Jumps", Window.getInstance().jumpsSummary());
             break;
         case "slack":
             SlackUiSupport.toggle(Window.getInstance());
@@ -546,6 +657,104 @@ public class CommandView extends View {
         }
     }
 
+    private void runSubstitute(SubstituteCommand command) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        try {
+            Pattern pattern = Pattern.compile(command.pattern());
+            int matches = window.getBufferContext().getBuffer()
+                    .substitute(pattern, command.replacement(), command.global(), command.wholeBuffer());
+            if (matches == 0) {
+                _message = "Pattern not found: " + command.pattern();
+                return;
+            }
+            window.getBufferContext().getBuffer().getUndoLog().commit();
+            _message = "Substituted " + matches + " match" + (matches == 1 ? "" : "es");
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Invalid substitute command" : e.getMessage();
+        }
+    }
+
+    private void runLocationGrep(String query) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        var matches = new ArrayList<org.fisk.swim.fileindex.ProjectSearch.Match>();
+        String[] lines = window.getBufferContext().getBuffer().getString().split("\\R", -1);
+        Path path = window.getBufferContext().getBuffer().getPath();
+        for (int i = 0; i < lines.length; i++) {
+            int column = lines[i].indexOf(query);
+            if (column >= 0) {
+                matches.add(new org.fisk.swim.fileindex.ProjectSearch.Match(
+                        path,
+                        path == null ? Path.of("*scratch*") : path.getFileName(),
+                        i + 1,
+                        column + 1,
+                        lines[i]));
+            }
+        }
+        window.setLocationResults("Location", matches);
+        if (matches.isEmpty()) {
+            _message = "Location list is empty";
+        } else {
+            window.openLocationList();
+        }
+    }
+
+    private static SubstituteCommand parseSubstitute(String rawCommand) {
+        boolean wholeBuffer;
+        String remainder;
+        if (rawCommand.startsWith("%s")) {
+            wholeBuffer = true;
+            remainder = rawCommand.substring(2);
+        } else if (rawCommand.startsWith("s")) {
+            wholeBuffer = false;
+            remainder = rawCommand.substring(1);
+        } else {
+            return null;
+        }
+        if (remainder.isEmpty()) {
+            return null;
+        }
+        char delimiter = remainder.charAt(0);
+        if (Character.isLetterOrDigit(delimiter) || Character.isWhitespace(delimiter)) {
+            return null;
+        }
+        var parts = new ArrayList<String>();
+        var current = new StringBuilder();
+        boolean escaped = false;
+        for (int i = 1; i < remainder.length(); i++) {
+            char character = remainder.charAt(i);
+            if (escaped) {
+                current.append(character);
+                escaped = false;
+                continue;
+            }
+            if (character == '\\') {
+                escaped = true;
+                current.append(character);
+                continue;
+            }
+            if (character == delimiter && parts.size() < 2) {
+                parts.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(character);
+        }
+        parts.add(current.toString());
+        if (parts.size() < 3) {
+            throw new IllegalArgumentException("Usage: " + (wholeBuffer ? ":%s" : ":s") + "/pattern/replacement/[g]");
+        }
+        String options = parts.get(2);
+        return new SubstituteCommand(wholeBuffer, parts.get(0), parts.get(1), options.contains("g"));
+    }
+
     @Override
     public Response processEvent(KeyStrokes events) {
         return _responders.processEvent(events);
@@ -624,6 +833,12 @@ public class CommandView extends View {
         rootView.setNeedsRedraw();
     }
 
+    public void execute(String rawCommand) {
+        _message = null;
+        runCommand(rawCommand);
+        refreshChrome();
+    }
+
     public void deactivate() {
         _command = null;
         _prompt = null;
@@ -644,6 +859,9 @@ public class CommandView extends View {
         PREVIOUS_MATCH,
         NEXT_MATCH,
         COMPLETE_MATCH
+    }
+
+    private record SubstituteCommand(boolean wholeBuffer, String pattern, String replacement, boolean global) {
     }
 
     public static record CommandSpec(

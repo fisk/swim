@@ -2,6 +2,7 @@ package org.fisk.swim.ui;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
@@ -13,6 +14,14 @@ public class SplitView extends View {
     public enum Orientation {
         HORIZONTAL,
         VERTICAL
+    }
+
+    public record SessionNode(
+            String orientation,
+            double ratio,
+            SessionNode first,
+            SessionNode second,
+            String leafId) {
     }
 
     private sealed interface Node permits LeafNode, BranchNode {
@@ -189,6 +198,10 @@ public class SplitView extends View {
             view.removeFromParent();
         }
         return view;
+    }
+
+    public SessionNode snapshot(Function<View, String> leafIdProvider) {
+        return snapshotNode(_root, leafIdProvider);
     }
 
     @Override
@@ -533,5 +546,18 @@ public class SplitView extends View {
             return siblingOf(branch._second, target);
         }
         return null;
+    }
+
+    private static SessionNode snapshotNode(Node node, Function<View, String> leafIdProvider) {
+        if (node instanceof LeafNode leaf) {
+            return new SessionNode(null, 0.0, null, null, leafIdProvider.apply(leaf._view));
+        }
+        var branch = (BranchNode) node;
+        return new SessionNode(
+                branch._orientation.name(),
+                branch._ratio,
+                snapshotNode(branch._first, leafIdProvider),
+                snapshotNode(branch._second, leafIdProvider),
+                null);
     }
 }

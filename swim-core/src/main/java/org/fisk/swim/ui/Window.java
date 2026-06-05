@@ -5,14 +5,27 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.config.EditorConfig;
+import org.fisk.swim.config.EditorConfigStore;
+import org.fisk.swim.config.EditorPaths;
+import org.fisk.swim.config.EditorSession;
+import org.fisk.swim.config.NormalModeRemap;
+import org.fisk.swim.config.SessionLayoutNode;
+import org.fisk.swim.config.SessionWorkspace;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.KeyStrokeEvent;
+import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
+import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.fileindex.ProjectSearch;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mode.InputMode;
@@ -66,6 +79,20 @@ public class Window implements Drawable {
         private String _pluginId;
     }
 
+    public record OpenBufferEntry(Path path, String label) {
+    }
+
+    private record CompiledRemap(List<RecordedKey> lhs, List<RecordedKey> rhs, String lhsText) {
+    }
+
+    private record BufferLayoutResult(
+            View root,
+            IdentityHashMap<BufferView, BufferContext> contextsByView,
+            IdentityHashMap<BufferContext, Integer> counts,
+            BufferView activeView,
+            BufferContext activeContext) {
+    }
+
     public enum Direction {
         LEFT,
         RIGHT,
@@ -98,6 +125,13 @@ public class Window implements Drawable {
     private ShellPanelView _savedPanelShell;
     private List<WorkspaceState> _workspaceHistory = new ArrayList<>();
     private WorkspaceState _currentWorkspace;
+    private EditorState _editorState;
+    private final EditorPaths _editorPaths;
+    private final EditorConfig _editorConfig;
+    private final List<CompiledRemap> _normalModeRemaps;
+    private boolean _replayingRemap;
+    private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
+    private SearchLocationList _locationList = SearchLocationList.empty("Location");
 
     public static Window getInstance() {
         return _instance;
@@ -108,14 +142,28 @@ public class Window implements Drawable {
     }
 
     public Window(Path path) {
+        boolean restoreOnReload = Boolean.getBoolean("swim.session.restore_on_reload");
+        _editorPaths = EditorPaths.fromUserHome();
+        _editorConfig = EditorConfigStore.load(_editorPaths);
+        _normalModeRemaps = compileRemaps(_editorConfig.normalModeRemaps());
+        applyConfiguredOptions(_editorConfig);
         setupSplashScreen();
-        setupViews(path != null && path.toFile().isDirectory() ? null : path);
+        Path initialPath = restoreOnReload ? null : path != null && path.toFile().isDirectory() ? null : path;
+        setupViews(initialPath);
         setupBindings();
         setupModes();
         initializeWorkspaceHistory();
-        if (path != null && path.toFile().isDirectory()) {
+        boolean restored = false;
+        if (restoreOnReload || _editorConfig.restoreLastSession()) {
+            restored = restoreLastSession();
+        }
+        if (!restored && path != null && path.toFile().isDirectory()) {
             showDirectoryBrowser(path);
         }
+        if (!restored && restoreOnReload && path != null && !path.toFile().isDirectory()) {
+            setBufferPath(path);
+        }
+        runStartupCommands();
     }
 
     private void ensureLayoutState() {
@@ -144,6 +192,9 @@ public class Window implements Drawable {
         }
         if (_currentWorkspace == null && _workspaceView != null) {
             initializeWorkspaceHistory();
+        }
+        if (_editorState == null) {
+            _editorState = new EditorState();
         }
     }
 
@@ -556,6 +607,11 @@ public class Window implements Drawable {
         return _commandView;
     }
 
+    public EditorState getEditorState() {
+        ensureLayoutState();
+        return _editorState;
+    }
+
     CommandMenuView getCommandMenuView() {
         return _commandMenuView;
     }
@@ -740,12 +796,751 @@ public class Window implements Drawable {
         return _bufferContext;
     }
 
+    public Character consumeSelectedRegister() {
+        return getEditorState().consumeSelectedRegister();
+    }
+
+    public void selectRegister(char register) {
+        getEditorState().selectRegister(register);
+        if (_commandView != null) {
+            _commandView.setMessage("Using register " + Character.toLowerCase(register));
+        }
+    }
+
+    public boolean startMacroRecording(char register) {
+        boolean started = getEditorState().startMacroRecording(register);
+        if (_commandView != null) {
+            _commandView.setMessage(started
+                    ? "Recording macro @" + Character.toLowerCase(register)
+                    : "Unable to start macro recording");
+        }
+        return started;
+    }
+
+    public boolean stopMacroRecording() {
+        boolean stopped = getEditorState().stopMacroRecording();
+        if (_commandView != null && stopped) {
+            _commandView.setMessage("Stopped macro recording");
+        }
+        return stopped;
+    }
+
+    public boolean isRecordingMacro() {
+        return getEditorState().isRecordingMacro();
+    }
+
+    public boolean playMacro(char register, int count) {
+        boolean played = getEditorState().playMacro(register, count);
+        if (_commandView != null && !played) {
+            _commandView.setMessage("Macro register is empty: " + Character.toLowerCase(register));
+        }
+        return played;
+    }
+
+    public boolean playLastMacro(int count) {
+        boolean played = getEditorState().playLastMacro(count);
+        if (_commandView != null && !played) {
+            _commandView.setMessage("No macro available");
+        }
+        return played;
+    }
+
+    public void beginRepeatRecording(List<org.fisk.swim.event.RecordedKey> initialKeys) {
+        getEditorState().beginRepeatRecording(initialKeys);
+    }
+
+    public void beginRepeatRecording(String notation) {
+        beginRepeatRecording(org.fisk.swim.event.RecordedKey.parseSequence(notation));
+    }
+
+    public void skipObservedRepeatKeys(int count) {
+        getEditorState().skipObservedRepeatKeys(count);
+    }
+
+    public void appendRepeatKey(org.fisk.swim.event.RecordedKey key) {
+        getEditorState().appendRepeatKey(key);
+    }
+
+    public void commitRepeatRecording() {
+        getEditorState().commitRepeatRecording();
+    }
+
+    public void cancelRepeatRecording() {
+        getEditorState().cancelRepeatRecording();
+    }
+
+    public boolean repeatLastEdit(int count) {
+        boolean repeated = getEditorState().repeatLastEdit(count);
+        if (_commandView != null && !repeated) {
+            _commandView.setMessage("Nothing to repeat");
+        }
+        return repeated;
+    }
+
+    public void setMark(char mark) {
+        var context = getBufferContext();
+        if (context == null) {
+            return;
+        }
+        getEditorState().setMark(mark, context.getBuffer().getPath(), context.getBuffer().getCursor().getPosition());
+        if (_commandView != null) {
+            _commandView.setMessage("Set mark " + Character.toLowerCase(mark));
+        }
+    }
+
+    public boolean jumpToMark(char mark, boolean lineWise) {
+        EditorLocation location = getEditorState().getMark(mark);
+        if (location == null) {
+            if (_commandView != null) {
+                _commandView.setMessage("No such mark: " + Character.toLowerCase(mark));
+            }
+            return false;
+        }
+        return performJumpTo(location, lineWise);
+    }
+
+    public boolean jumpBack() {
+        EditorLocation location = getEditorState().jumpBack();
+        if (location == null) {
+            if (_commandView != null) {
+                _commandView.setMessage("Jump list is at the oldest entry");
+            }
+            return false;
+        }
+        return jumpToExistingLocation(location, false);
+    }
+
+    public boolean jumpForward() {
+        EditorLocation location = getEditorState().jumpForward();
+        if (location == null) {
+            if (_commandView != null) {
+                _commandView.setMessage("Jump list is at the newest entry");
+            }
+            return false;
+        }
+        return jumpToExistingLocation(location, false);
+    }
+
+    public String registersSummary() {
+        var lines = new ArrayList<String>();
+        for (var entry : org.fisk.swim.copy.Copy.getInstance().registerSnapshot().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).toList()) {
+            lines.add("\"" + entry.getKey() + " " + (entry.getValue().isLine() ? "line " : "char ")
+                    + entry.getValue().text().replace("\n", "\\n"));
+        }
+        for (var entry : org.fisk.swim.copy.Copy.getInstance().macroSnapshot().entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).toList()) {
+            String macro = entry.getValue().stream()
+                    .map(org.fisk.swim.event.RecordedKey::notation)
+                    .reduce((left, right) -> left + " " + right)
+                    .orElse("");
+            lines.add("@" + entry.getKey() + " " + macro);
+        }
+        return lines.isEmpty() ? "No registers are set" : String.join("\n", lines);
+    }
+
+    public String marksSummary() {
+        var lines = new ArrayList<String>();
+        for (var entry : getEditorState().markSnapshot().entrySet().stream().sorted(Map.Entry.comparingByKey()).toList()) {
+            lines.add(entry.getKey() + " " + entry.getValue().display());
+        }
+        return lines.isEmpty() ? "No marks are set" : String.join("\n", lines);
+    }
+
+    public String jumpsSummary() {
+        var jumps = getEditorState().jumpSnapshot();
+        if (jumps.isEmpty()) {
+            return "Jump list is empty";
+        }
+        var lines = new ArrayList<String>();
+        int current = getEditorState().jumpIndex();
+        for (int i = 0; i < jumps.size(); i++) {
+            lines.add((i == current ? ">" : " ") + " " + (i + 1) + " " + jumps.get(i).display());
+        }
+        return String.join("\n", lines);
+    }
+
+    public List<OpenBufferEntry> openBuffers() {
+        ensureLayoutState();
+        var ordered = new LinkedHashMap<String, OpenBufferEntry>();
+        addBufferEntry(ordered, _bufferContext);
+        if (_workspaceHistory != null) {
+            for (var workspace : _workspaceHistory) {
+                addBufferEntry(ordered, workspace == null ? null : workspace._bufferContext);
+            }
+        }
+        if (_bufferContextsByView != null) {
+            for (var context : _bufferContextsByView.values()) {
+                addBufferEntry(ordered, context);
+            }
+        }
+        return List.copyOf(ordered.values());
+    }
+
+    public void showBufferList() {
+        var items = new ArrayList<ListView.ListItem>();
+        for (OpenBufferEntry entry : openBuffers()) {
+            items.add(new ListView.ListItem() {
+                @Override
+                public void onClick() {
+                    if (entry.path() != null) {
+                        setBufferPath(entry.path());
+                    }
+                }
+
+                @Override
+                public String displayString() {
+                    return entry.label();
+                }
+            });
+        }
+        showList(items, "Buffers");
+    }
+
+    public boolean switchBufferByIndex(int oneBasedIndex) {
+        var buffers = openBuffers();
+        if (oneBasedIndex <= 0 || oneBasedIndex > buffers.size()) {
+            return false;
+        }
+        var target = buffers.get(oneBasedIndex - 1);
+        return target.path() != null && setBufferPath(target.path());
+    }
+
+    public boolean switchBufferByToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
+        try {
+            return switchBufferByIndex(Integer.parseInt(token));
+        } catch (NumberFormatException e) {
+        }
+        String normalized = token.trim();
+        for (OpenBufferEntry entry : openBuffers()) {
+            if (entry.path() == null) {
+                continue;
+            }
+            if (entry.label().equals(normalized)
+                    || entry.label().endsWith(normalized)
+                    || entry.path().toString().endsWith(normalized)) {
+                return setBufferPath(entry.path());
+            }
+        }
+        return false;
+    }
+
+    public boolean switchNextBuffer() {
+        return switchRelativeBuffer(1);
+    }
+
+    public boolean switchPreviousBuffer() {
+        return switchRelativeBuffer(-1);
+    }
+
+    public void setQuickfixResults(String title, List<ProjectSearch.Match> matches) {
+        _quickfixList = new SearchLocationList(title == null || title.isBlank() ? "Quickfix" : title, matches, 0);
+    }
+
+    public void setLocationResults(String title, List<ProjectSearch.Match> matches) {
+        _locationList = new SearchLocationList(title == null || title.isBlank() ? "Location" : title, matches, 0);
+    }
+
+    public String quickfixSummary() {
+        return locationSummary(_quickfixList);
+    }
+
+    public String locationSummary() {
+        return locationSummary(_locationList);
+    }
+
+    public boolean openQuickfixList() {
+        return openLocationList(_quickfixList);
+    }
+
+    public boolean openLocationList() {
+        return openLocationList(_locationList);
+    }
+
+    public boolean closeLocationLists() {
+        if (_panelView instanceof ListView || _panelView instanceof TextPanelView) {
+            hidePanel();
+            return true;
+        }
+        return false;
+    }
+
+    public boolean nextQuickfix() {
+        return advanceLocation(true, true);
+    }
+
+    public boolean previousQuickfix() {
+        return advanceLocation(true, false);
+    }
+
+    public boolean nextLocation() {
+        return advanceLocation(false, true);
+    }
+
+    public boolean previousLocation() {
+        return advanceLocation(false, false);
+    }
+
+    public boolean addNextCursorForCurrentWord(boolean forward) {
+        if (_bufferContext == null) {
+            return false;
+        }
+        String word = _bufferContext.getBuffer().getInnerWord();
+        if (word == null || word.isBlank()) {
+            return false;
+        }
+        boolean added = _bufferContext.getBuffer().addNextCursorForLiteral(word, forward);
+        if (added) {
+            _bufferContext.getBufferView().setNeedsRedraw();
+            if (_commandView != null) {
+                _commandView.setMessage("Added cursor for " + word);
+            }
+        }
+        return added;
+    }
+
+    public boolean createCursorsForLiteral(String text) {
+        if (_bufferContext == null || text == null || text.isBlank()) {
+            return false;
+        }
+        var buffer = _bufferContext.getBuffer();
+        var matches = buffer.findLiteralMatches(text);
+        if (matches.isEmpty()) {
+            return false;
+        }
+        buffer.clearCursors();
+        for (int i = 0; i < matches.size(); i++) {
+            if (i == 0) {
+                buffer.getCursor().setPosition(matches.get(i));
+            } else {
+                var cursor = new Cursor(_bufferContext);
+                cursor.setPosition(matches.get(i));
+                buffer.addCursor(cursor);
+            }
+        }
+        _bufferContext.getBufferView().setNeedsRedraw();
+        return true;
+    }
+
+    public void clearAdditionalCursors() {
+        if (_bufferContext != null) {
+            _bufferContext.getBuffer().clearCursors();
+            _bufferContext.getBufferView().setNeedsRedraw();
+        }
+    }
+
+    public void rememberCurrentLocationForJump() {
+        var context = getBufferContext();
+        if (context == null) {
+            return;
+        }
+        getEditorState().recordJump(new EditorLocation(
+                context.getBuffer().getPath(),
+                context.getBuffer().getCursor().getPosition()));
+    }
+
+    public void rememberNewLocationForJump() {
+        rememberCurrentLocationForJump();
+    }
+
+    public boolean performJump(Runnable runnable) {
+        rememberCurrentLocationForJump();
+        runnable.run();
+        rememberNewLocationForJump();
+        return true;
+    }
+
+    private boolean performJumpTo(EditorLocation location, boolean lineWise) {
+        rememberCurrentLocationForJump();
+        if (!jumpToExistingLocation(location, lineWise)) {
+            return false;
+        }
+        rememberNewLocationForJump();
+        return true;
+    }
+
+    private boolean jumpToExistingLocation(EditorLocation location, boolean lineWise) {
+        if (location == null) {
+            return false;
+        }
+        Path currentPath = getBufferContext() == null ? null : getBufferContext().getBuffer().getPath();
+        if (!java.util.Objects.equals(currentPath, location.path())) {
+            if (location.path() == null || !setBufferPath(location.path())) {
+                return false;
+            }
+        }
+        var context = getBufferContext();
+        if (context == null) {
+            return false;
+        }
+        context.getBuffer().getCursor().setPosition(location.position());
+        if (lineWise) {
+            context.getBuffer().getCursor().goStartOfLine();
+        }
+        activateView(context.getBufferView());
+        return true;
+    }
+
+    private boolean switchRelativeBuffer(int delta) {
+        var buffers = openBuffers();
+        if (buffers.size() <= 1 || _bufferContext == null) {
+            return false;
+        }
+        Path currentPath = _bufferContext.getBuffer().getPath();
+        int currentIndex = -1;
+        for (int i = 0; i < buffers.size(); i++) {
+            if (java.util.Objects.equals(currentPath, buffers.get(i).path())) {
+                currentIndex = i;
+                break;
+            }
+        }
+        if (currentIndex < 0) {
+            currentIndex = 0;
+        }
+        for (int step = 1; step <= buffers.size(); step++) {
+            var candidate = buffers.get(Math.floorMod(currentIndex + (delta * step), buffers.size()));
+            if (candidate.path() != null) {
+                return setBufferPath(candidate.path());
+            }
+        }
+        return false;
+    }
+
+    private void addBufferEntry(Map<String, OpenBufferEntry> ordered, BufferContext context) {
+        if (context == null || context.getBuffer() == null || context.getBuffer().getPath() == null) {
+            return;
+        }
+        Path path = context.getBuffer().getPath();
+        String key = path.toAbsolutePath().normalize().toString();
+        ordered.putIfAbsent(key, new OpenBufferEntry(path, bufferLabel(path)));
+    }
+
+    private static String bufferLabel(Path path) {
+        if (path == null) {
+            return "*scratch*";
+        }
+        Path root = org.fisk.swim.fileindex.ProjectPaths.getProjectRootPath(path);
+        if (root != null) {
+            return root.relativize(path).toString();
+        }
+        return path.toString();
+    }
+
+    private boolean openLocationList(SearchLocationList list) {
+        if (list == null || list.matches().isEmpty()) {
+            return false;
+        }
+        var items = new ArrayList<ListView.ListItem>();
+        for (int i = 0; i < list.matches().size(); i++) {
+            int index = i;
+            ProjectSearch.Match match = list.matches().get(i);
+            items.add(new ListView.ListItem() {
+                @Override
+                public void onClick() {
+                    openBufferLocation(match.path(), match.lineNumber(), match.columnNumber());
+                    if (list == _quickfixList) {
+                        _quickfixList = new SearchLocationList(list.title(), list.matches(), index);
+                    } else if (list == _locationList) {
+                        _locationList = new SearchLocationList(list.title(), list.matches(), index);
+                    }
+                }
+
+                @Override
+                public String displayString() {
+                    return match.displayString();
+                }
+            });
+        }
+        showList(items, list.title());
+        return true;
+    }
+
+    private boolean advanceLocation(boolean quickfix, boolean forward) {
+        SearchLocationList list = quickfix ? _quickfixList : _locationList;
+        if (list == null || list.matches().isEmpty()) {
+            return false;
+        }
+        int delta = forward ? 1 : -1;
+        int nextIndex = Math.max(0, Math.min(list.selection() + delta, list.matches().size() - 1));
+        if (nextIndex == list.selection()) {
+            return false;
+        }
+        ProjectSearch.Match match = list.matches().get(nextIndex);
+        boolean opened = openBufferLocation(match.path(), match.lineNumber(), match.columnNumber());
+        if (!opened) {
+            return false;
+        }
+        SearchLocationList updated = new SearchLocationList(list.title(), list.matches(), nextIndex);
+        if (quickfix) {
+            _quickfixList = updated;
+        } else {
+            _locationList = updated;
+        }
+        return true;
+    }
+
+    private static String locationSummary(SearchLocationList list) {
+        if (list == null || list.matches().isEmpty()) {
+            return "Location list is empty";
+        }
+        var lines = new ArrayList<String>();
+        for (int i = 0; i < list.matches().size(); i++) {
+            ProjectSearch.Match match = list.matches().get(i);
+            lines.add((i == list.selection() ? ">" : " ") + " " + match.displayString());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static List<CompiledRemap> compileRemaps(List<NormalModeRemap> remaps) {
+        var compiled = new ArrayList<CompiledRemap>();
+        if (remaps == null) {
+            return compiled;
+        }
+        for (var remap : remaps) {
+            try {
+                var lhs = RecordedKey.parseSequence(remap.lhs());
+                var rhs = RecordedKey.parseSequence(remap.rhs());
+                if (!lhs.isEmpty() && !rhs.isEmpty()) {
+                    compiled.add(new CompiledRemap(List.copyOf(lhs), List.copyOf(rhs), remap.lhs()));
+                }
+            } catch (IllegalArgumentException e) {
+            }
+        }
+        return List.copyOf(compiled);
+    }
+
+    private static void applyConfiguredOptions(EditorConfig config) {
+        if (config == null || config.options().isEmpty()) {
+            return;
+        }
+        for (var entry : config.options().entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+            if (key == null || key.isBlank() || value == null) {
+                continue;
+            }
+            if (key.startsWith("indent.")) {
+                String property = "swim." + key;
+                System.setProperty(property, value);
+                continue;
+            }
+            System.setProperty(key, value);
+        }
+    }
+
+    private void runStartupCommands() {
+        if (_editorConfig == null || _editorConfig.startupCommands().isEmpty() || _commandView == null) {
+            return;
+        }
+        for (String command : _editorConfig.startupCommands()) {
+            if (command == null || command.isBlank()) {
+                continue;
+            }
+            _commandView.execute(command);
+        }
+    }
+
+    private boolean restoreLastSession() {
+        EditorSession session = EditorConfigStore.loadSession(_editorPaths);
+        if (!session.workspaces().isEmpty()) {
+            restoreSessionWorkspaces(session);
+            return !_workspaceHistory.isEmpty();
+        }
+        if (session.openBuffers().isEmpty()) {
+            return false;
+        }
+        String active = session.activeBuffer();
+        if (active != null && !active.isBlank()) {
+            setBufferPath(Path.of(active));
+        } else {
+            setBufferPath(Path.of(session.openBuffers().getFirst()));
+        }
+        for (String buffer : session.openBuffers()) {
+            if (buffer == null || buffer.isBlank()) {
+                continue;
+            }
+            Path path = Path.of(buffer);
+            if (_bufferContext != null && java.util.Objects.equals(_bufferContext.getBuffer().getPath(), path)) {
+                continue;
+            }
+            openBufferWorkspace(path);
+        }
+        if (active != null && !active.isBlank()) {
+            setBufferPath(Path.of(active));
+        }
+        return !session.openBuffers().isEmpty();
+    }
+
+    private EditorSession createSession() {
+        if (_currentWorkspace != null) {
+            captureCurrentWorkspace();
+        }
+        var buffers = openBuffers().stream()
+                .map(OpenBufferEntry::path)
+                .filter(path -> path != null)
+                .map(path -> path.toAbsolutePath().normalize().toString())
+                .toList();
+        String active = _bufferContext == null || _bufferContext.getBuffer().getPath() == null
+                ? null
+                : _bufferContext.getBuffer().getPath().toAbsolutePath().normalize().toString();
+        var workspaces = new ArrayList<SessionWorkspace>();
+        for (var workspace : _workspaceHistory) {
+            SessionWorkspace saved = snapshotWorkspace(workspace);
+            if (saved != null) {
+                workspaces.add(saved);
+            }
+        }
+        int activeWorkspaceIndex = _currentWorkspace == null ? 0 : Math.max(0, _workspaceHistory.indexOf(_currentWorkspace));
+        return new EditorSession(buffers, active, workspaces, activeWorkspaceIndex);
+    }
+
+    private SessionWorkspace snapshotWorkspace(WorkspaceState workspace) {
+        if (workspace == null || workspace._workspaceView == null) {
+            return null;
+        }
+        return switch (workspace._kind) {
+        case BUFFER -> {
+            String activePath = workspace._bufferContext == null || workspace._bufferContext.getBuffer().getPath() == null
+                    ? null
+                    : workspace._bufferContext.getBuffer().getPath().toAbsolutePath().normalize().toString();
+            SessionLayoutNode layout = snapshotLayout(workspace._workspaceView);
+            yield new SessionWorkspace("BUFFER", activePath, activePath, layout);
+        }
+        case DIRECTORY -> {
+            String path = workspace._workspaceView instanceof DirectoryBrowserView browser
+                    ? browser.getDirectory().toAbsolutePath().normalize().toString()
+                    : null;
+            yield path == null ? null : new SessionWorkspace("DIRECTORY", path, path, null);
+        }
+        default -> null;
+        };
+    }
+
+    private SessionLayoutNode snapshotLayout(View view) {
+        if (view instanceof SplitView splitView) {
+            return toSessionLayout(splitView.snapshot(leaf -> {
+                if (leaf instanceof BufferView bufferView) {
+                    Path path = getBufferContextFor(bufferView).getBuffer().getPath();
+                    return path == null ? null : path.toAbsolutePath().normalize().toString();
+                }
+                return null;
+            }));
+        }
+        if (view instanceof BufferView bufferView) {
+            Path path = getBufferContextFor(bufferView).getBuffer().getPath();
+            return path == null ? null : new SessionLayoutNode(null, 0.0, null, null, path.toAbsolutePath().normalize().toString());
+        }
+        return null;
+    }
+
+    private static SessionLayoutNode toSessionLayout(SplitView.SessionNode node) {
+        if (node == null) {
+            return null;
+        }
+        return new SessionLayoutNode(
+                node.orientation(),
+                node.ratio(),
+                toSessionLayout(node.first()),
+                toSessionLayout(node.second()),
+                node.leafId());
+    }
+
+    private void restoreSessionWorkspaces(EditorSession session) {
+        _workspaceHistory.clear();
+        for (SessionWorkspace workspace : session.workspaces()) {
+            WorkspaceState restored = restoreWorkspace(workspace);
+            if (restored != null) {
+                _workspaceHistory.add(restored);
+            }
+        }
+        if (_workspaceHistory.isEmpty()) {
+            return;
+        }
+        int index = Math.max(0, Math.min(session.activeWorkspaceIndex(), _workspaceHistory.size() - 1));
+        activateWorkspace(_workspaceHistory.get(index));
+    }
+
+    private WorkspaceState restoreWorkspace(SessionWorkspace workspace) {
+        if (workspace == null || workspace.kind() == null) {
+            return null;
+        }
+        return switch (workspace.kind()) {
+        case "BUFFER" -> restoreBufferWorkspace(workspace);
+        case "DIRECTORY" -> workspace.path() == null ? null
+                : createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), Path.of(workspace.path())),
+                        WorkspaceKind.DIRECTORY);
+        default -> null;
+        };
+    }
+
+    private WorkspaceState restoreBufferWorkspace(SessionWorkspace workspace) {
+        if (workspace.layout() == null) {
+            return workspace.path() == null ? null : createBufferWorkspace(Path.of(workspace.path()));
+        }
+        BufferLayoutResult result = restoreBufferLayout(workspace.layout(), workspace.activePath());
+        if (result == null) {
+            return workspace.path() == null ? null : createBufferWorkspace(Path.of(workspace.path()));
+        }
+        var restored = new WorkspaceState();
+        restored._kind = WorkspaceKind.BUFFER;
+        restored._workspaceView = result.root();
+        restored._activeView = result.activeView() == null ? result.root() : result.activeView();
+        restored._activeBufferView = result.activeView();
+        restored._bufferContext = result.activeContext();
+        restored._bufferContextsByView = result.contextsByView();
+        restored._bufferViewCounts = result.counts();
+        initializeBufferWorkspaceModes(restored);
+        return restored;
+    }
+
+    private BufferLayoutResult restoreBufferLayout(SessionLayoutNode node, String activePath) {
+        if (node == null) {
+            return null;
+        }
+        if (node.path() != null) {
+            BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), Path.of(node.path()));
+            var contexts = new IdentityHashMap<BufferView, BufferContext>();
+            contexts.put(context.getBufferView(), context);
+            var counts = new IdentityHashMap<BufferContext, Integer>();
+            counts.put(context, 1);
+            boolean active = activePath != null && activePath.equals(node.path());
+            return new BufferLayoutResult(context.getBufferView(), contexts, counts,
+                    active ? context.getBufferView() : null,
+                    active ? context : null);
+        }
+        BufferLayoutResult first = restoreBufferLayout(node.first(), activePath);
+        BufferLayoutResult second = restoreBufferLayout(node.second(), activePath);
+        if (first == null || second == null) {
+            return first != null ? first : second;
+        }
+        SplitView split = new SplitView(Rect.create(0, 0, 0, 0),
+                SplitView.Orientation.valueOf(node.orientation()),
+                first.root(),
+                second.root(),
+                node.ratio());
+        var contexts = new IdentityHashMap<BufferView, BufferContext>();
+        contexts.putAll(first.contextsByView());
+        contexts.putAll(second.contextsByView());
+        var counts = new IdentityHashMap<BufferContext, Integer>();
+        counts.putAll(first.counts());
+        counts.putAll(second.counts());
+        return new BufferLayoutResult(split, contexts, counts,
+                first.activeView() != null ? first.activeView() : second.activeView(),
+                first.activeContext() != null ? first.activeContext() : second.activeContext());
+    }
+
     public ModeLineView getModeLineView() {
         return _modeLineView;
     }
 
     public void dispose() {
         ensureLayoutState();
+        if (_editorConfig != null && (_editorConfig.restoreLastSession() || Boolean.getBoolean("swim.session.restore_on_reload"))) {
+            EditorConfigStore.saveSession(_editorPaths, createSession());
+        }
         if (_bufferContextsByView != null) {
             for (var context : new HashSet<>(_bufferContextsByView.values())) {
                 context.getBuffer().close();
@@ -1150,8 +1945,69 @@ public class Window implements Drawable {
 
     private void setupBindings() {
         var eventThread = EventThread.getInstance();
+        eventThread.addKeyStrokeObserver(keyStroke -> {
+            if (_editorState != null) {
+                _editorState.observeKeyStroke(keyStroke);
+            }
+        });
         var responders = eventThread.getResponder();
         var prefixLayer = responders.addLayer();
+        prefixLayer.addEventResponder(new EventResponder() {
+            private CompiledRemap _matched;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _matched = null;
+                if (_replayingRemap || _normalModeRemaps.isEmpty()
+                        || _rootView == null
+                        || _rootView.getFirstResponder() != _activeBufferView
+                        || _currentMode != _normalMode) {
+                    return Response.NO;
+                }
+                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                for (var keyStroke : events) {
+                    sequence.add(keyStroke);
+                }
+                if (sequence.isEmpty()) {
+                    return Response.NO;
+                }
+                boolean maybe = false;
+                for (var remap : _normalModeRemaps) {
+                    if (sequence.size() > remap.lhs().size()) {
+                        continue;
+                    }
+                    boolean matches = true;
+                    for (int i = 0; i < sequence.size(); i++) {
+                        if (!RecordedKey.fromKeyStroke(sequence.get(i)).equals(remap.lhs().get(i))) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if (!matches) {
+                        continue;
+                    }
+                    if (sequence.size() == remap.lhs().size()) {
+                        _matched = remap;
+                        return Response.YES;
+                    }
+                    maybe = true;
+                }
+                return maybe ? Response.MAYBE : Response.NO;
+            }
+
+            @Override
+            public void respond() {
+                if (_matched == null) {
+                    return;
+                }
+                _replayingRemap = true;
+                var eventThread = EventThread.getInstance();
+                for (var key : _matched.rhs()) {
+                    eventThread.enqueue(new KeyStrokeEvent(key.toKeyStroke()));
+                }
+                eventThread.enqueue(new RunnableEvent(() -> _replayingRemap = false));
+            }
+        });
         responders.addEventResponder(new EventResponder() {
             @Override
             public Response processEvent(KeyStrokes events) {

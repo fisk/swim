@@ -15,7 +15,7 @@ public class VisualLineMode extends VisualMode {
         super(window);
     }
 
-    private Range getSelection() {
+    protected Range getSelection() {
         var minLine = minCursor().getPhysicalLine();
         var maxLine = maxCursor().getPhysicalLine();
         int start = minLine.getStartPosition();
@@ -56,8 +56,14 @@ public class VisualLineMode extends VisualMode {
         _rootResponder.addEventResponder("y", () -> {
             var selection = getSelection();
             var text = buffer.getSubstring(selection.getStart(), selection.getEnd());
-            Copy.getInstance().setText(text, true /* isLine */);
+            Copy.getInstance().setText(text, true /* isLine */,
+                    Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
+        });
+        _rootResponder.addEventResponder("z f", () -> {
+            if (buffer.createFold(getSelection().getStart(), getSelection().getEnd())) {
+                window.switchToMode(window.getNormalMode());
+            }
         });
     }
 

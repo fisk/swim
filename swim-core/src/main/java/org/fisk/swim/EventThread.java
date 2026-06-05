@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 import org.fisk.swim.event.Event;
 import org.fisk.swim.event.KeyStrokeEvent;
@@ -32,6 +33,7 @@ public class EventThread extends Thread {
     private final ExecutorService _eventExecutor;
     private static volatile EventThread _instance;
     private final List<Runnable> _onEventRunnables = new CopyOnWriteArrayList<>();
+    private final List<Consumer<KeyStroke>> _keyStrokeObservers = new CopyOnWriteArrayList<>();
     private volatile boolean _running = true;
     private volatile Future<EventExecutionResult> _currentFuture;
 
@@ -183,6 +185,7 @@ public class EventThread extends Thread {
             switch (_responder.processEvent(keys)) {
             case MAYBE:
                 _log.debug("Maybe");
+                notifyKeyObservers(keyEvent.getKeyStroke());
                 return ignored -> {
                     ignored.clear();
                     ignored.addAll(updated);
@@ -190,10 +193,12 @@ public class EventThread extends Thread {
             case YES:
                 _log.debug("Yes");
                 _responder.respond();
+                notifyKeyObservers(keyEvent.getKeyStroke());
                 return ignored -> ignored.clear();
             case NO:
             default:
                 _log.debug("No/Clear");
+                notifyKeyObservers(keyEvent.getKeyStroke());
                 return ignored -> ignored.clear();
             }
         }
@@ -262,9 +267,14 @@ public class EventThread extends Thread {
         _onEventRunnables.add(runnable);
     }
 
+    public void addKeyStrokeObserver(Consumer<KeyStroke> observer) {
+        _keyStrokeObservers.add(observer);
+    }
+
     public void shutdown() {
         _running = false;
         _onEventRunnables.clear();
+        _keyStrokeObservers.clear();
         Future<EventExecutionResult> currentFuture = _currentFuture;
         if (currentFuture != null) {
             currentFuture.cancel(true);
@@ -277,5 +287,15 @@ public class EventThread extends Thread {
     @FunctionalInterface
     private interface EventExecutionResult {
         void apply(ArrayList<KeyStroke> events);
+    }
+
+    private void notifyKeyObservers(KeyStroke keyStroke) {
+        for (var observer : _keyStrokeObservers) {
+            try {
+                observer.accept(keyStroke);
+            } catch (Exception e) {
+                _log.error("Error in key stroke observer", e);
+            }
+        }
     }
 }

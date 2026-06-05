@@ -2,6 +2,7 @@ package org.fisk.swim.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -136,6 +137,25 @@ class BufferTest {
                   return 0;
                 }
                 """, buffer.getString());
+    }
+
+    @Test
+    void manualFoldCollapsesLogicalLinesUntilReopened() throws IOException {
+        var context = createBufferContext("""
+                one
+                two
+                three
+                four
+                """, 80);
+        var buffer = context.getBuffer();
+        int start = buffer.getString().indexOf("two");
+        int end = buffer.getString().indexOf("four");
+
+        assertTrue(buffer.createFold(start, end));
+        assertEquals(4, context.getTextLayout().getLogicalLineCount());
+
+        assertTrue(buffer.openFoldAt(start));
+        assertEquals(5, context.getTextLayout().getLogicalLineCount());
     }
 
     private Buffer createBuffer(String text, int width) throws IOException {

@@ -60,6 +60,16 @@ public class TextEventResponder implements EventResponder {
                     return Response.NO;
                 }
                 break;
+            case Tab:
+                if (!str.equals("<TAB>")) {
+                    return Response.NO;
+                }
+                break;
+            case ReverseTab:
+                if (!str.equals("<REVERSE-TAB>")) {
+                    return Response.NO;
+                }
+                break;
             case ArrowUp:
                 if (!str.equals("<UP>")) {
                     return Response.NO;
