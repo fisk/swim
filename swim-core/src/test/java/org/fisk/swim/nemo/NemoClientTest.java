@@ -67,6 +67,7 @@ class NemoClientTest {
         assertTrue(prompt.contains("successful edits are saved to disk and persist across Nemo/editor runs"));
         assertTrue(prompt.contains("delegate_task starts focused work in a separate Nemo sub-agent worker"));
         assertTrue(prompt.contains("worker_status/read_worker to check sub-agent progress"));
+        assertTrue(prompt.contains("message_worker to send corrections or extra instructions"));
     }
 
     @Test
@@ -541,12 +542,13 @@ class NemoClientTest {
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(15, tools.size());
+        assertEquals(16, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
         assertEquals("delegate_task", tools.get(1).getAsJsonObject().get("name").getAsString());
         assertEquals("worker_status", tools.get(2).getAsJsonObject().get("name").getAsString());
         assertEquals("read_worker", tools.get(3).getAsJsonObject().get("name").getAsString());
         assertEquals("join_worker", tools.get(4).getAsJsonObject().get("name").getAsString());
+        assertEquals("message_worker", tools.get(5).getAsJsonObject().get("name").getAsString());
     }
 
     @Test
@@ -570,6 +572,7 @@ class NemoClientTest {
         assertTrue(names.contains("worker_status"));
         assertTrue(names.contains("read_worker"));
         assertTrue(names.contains("join_worker"));
+        assertTrue(names.contains("message_worker"));
         assertTrue(names.contains("read_file"));
         assertTrue(names.contains("search_files"));
         assertTrue(names.contains("git_status"));

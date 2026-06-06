@@ -34,9 +34,10 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  Inside Nemo, press Enter to send; Shift-Enter, Ctrl-Enter, Alt-Enter, or Ctrl-J insert newlines."));
         assertTrue(rendered.contains("  Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf."));
         assertTrue(rendered.contains("  Nemo's delegateTask tool starts focused work in parallel sub-agent workers with the same permissions."));
-        assertTrue(rendered.contains("  Nemo can inspect delegated work with worker_status/read_worker and wait with bounded join_worker."));
+        assertTrue(rendered.contains("  Nemo can inspect delegated work with worker_status/read_worker, steer it with message_worker, and wait with bounded join_worker."));
         assertTrue(rendered.contains("  :permissions shows permission mode, command policy, OS sandbox backend, and approval policy."));
-        assertTrue(rendered.contains("  When approval is required, Nemo opens approval options; use arrows and Enter to choose approve once, approve always, or deny."));
+        assertTrue(rendered.contains("  :tell <session-id> <message> sends a message to a worker without switching sessions."));
+        assertTrue(rendered.contains("  When approval is required, Nemo opens same-workspace approval options; use arrows and Enter to choose approve once, approve always, or deny."));
         assertTrue(rendered.contains("  :approvals and :unapprove manage pending and saved tool approvals."));
         assertTrue(rendered.contains("  osSandbox auto uses sandbox-exec on macOS or bwrap on Linux and asks before rerunning after sandbox write denials."));
         assertTrue(rendered.contains("  osSandbox required fails closed when sandboxing is unavailable; disabled runs unsandboxed."));

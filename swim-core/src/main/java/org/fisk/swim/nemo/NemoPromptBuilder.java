@@ -134,6 +134,7 @@ final class NemoPromptBuilder {
         if (configuration.toolDelegateTask()) {
             lines.add("- delegate_task starts focused work in a separate Nemo sub-agent worker so this session can continue; sub-agents inherit these tools, permissions, sandbox, and approval policy.");
             lines.add("- use worker_status/read_worker to check sub-agent progress; use join_worker only when you need the sub-agent result before continuing.");
+            lines.add("- use message_worker to send corrections or extra instructions to a running sub-agent; queued messages are delivered at the next safe request boundary.");
         }
         return String.join("\n", lines);
     }

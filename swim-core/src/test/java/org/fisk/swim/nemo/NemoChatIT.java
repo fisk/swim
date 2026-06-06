@@ -129,6 +129,89 @@ class NemoChatIT {
     }
 
     @Test
+    @Timeout(20)
+    void parentPaneApprovesSubAgentCommandWithoutSwitchingSessions() throws Exception {
+        var requestCount = new AtomicInteger();
+        String commandArguments = "{\"command\":\"printf ok; touch subagent-approved.txt\"}";
+        var server = startSubAgentApprovalServer(requestCount, commandArguments);
+        try {
+            writeApprovalConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 20)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Delegate a command");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Parent saw delegated start.");
+                waitForLine(panel, "Approval required: command policy escalation");
+                waitForLine(panel, "session: session-2 | Build");
+                assertEquals("approval options", panel.getCommandMenuState().title());
+                assertEquals("Approve once", panel.getCommandMenuState().selectedMatch().displayLabel());
+
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                waitForLine(panel, "Approved approval-1 for session-2 (Build).");
+
+                var workerToolConfiguration = NemoClient.Configuration.builder()
+                        .workspaceRoot(tempDir)
+                        .build();
+                String joined = NemoClient.executeTool(workerToolConfiguration, window.getBufferContext(),
+                        new NemoClient.ToolCall("join", "join_worker", json(Map.of(
+                                "session_id", "session-2",
+                                "timeout_seconds", 5))));
+                assertTrue(joined.contains("Sub-agent command approved."));
+                assertTrue(Files.exists(tempDir.resolve("subagent-approved.txt")));
+                assertTrue(requestCount.get() >= 4);
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void tellQueuesMessageForRunningWorkerAndWorkerReceivesFollowUp() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<>("");
+        var server = startServer(requestCount, requestBody, 600, List.of(
+                textResponse("First answer"),
+                textResponse("Queued answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 20)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "First question");
+                var panel = waitForPanel(window);
+                waitForThinking(panel);
+
+                submit(panel, ":new Coordinator");
+                panel = waitForPanel(window);
+                waitForLine(panel, "Created session-2 (Coordinator).");
+
+                submit(panel, ":tell session-1 Please include the queued correction.");
+                waitForLine(panel, "Queued message for session-1 (Session 1).");
+
+                submit(panel, ":switch session-1");
+                panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Queued answer");
+
+                assertTrue(requestBody.get().contains("Additional user message(s) arrived while this worker was already running."));
+                assertTrue(requestBody.get().contains("Please include the queued correction."));
+                assertTrue(requestCount.get() >= 2);
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @Timeout(15)
     void openAiCompatibleFallbackParsesSseTextResponses() throws Exception {
         var requestCount = new AtomicInteger();
@@ -872,6 +955,34 @@ class NemoChatIT {
             } else {
                 response = sseToolCallResponse("call_delegate", "delegate_task",
                         "{\"title\":\"Docs\",\"task\":\"Inspect chat.txt and summarize it.\",\"focus_paths\":[\"chat.txt\"]}");
+            }
+            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(bytes);
+            }
+        });
+        server.start();
+        return server;
+    }
+
+    private HttpServer startSubAgentApprovalServer(AtomicInteger requestCount, String commandArguments) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/chat/completions", exchange -> {
+            requestCount.incrementAndGet();
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String response;
+            if (body.contains("tool_call_id") && body.contains("call_subagent_command")) {
+                response = sseTextResponse("Sub-agent command approved.");
+            } else if (body.contains("You are a Nemo sub-agent delegated")) {
+                response = sseToolCallResponse("call_subagent_command", "run_command", commandArguments);
+            } else if (body.contains("Started sub-agent worker")) {
+                response = sseTextResponse("Parent saw delegated start.");
+            } else {
+                response = sseToolCallResponse("call_delegate", "delegate_task",
+                        "{\"title\":\"Build\",\"task\":\"Run the requested command and report the result.\"}");
             }
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "text/event-stream");

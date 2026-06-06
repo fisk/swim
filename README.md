@@ -598,7 +598,7 @@ The sandbox allows reads, denies host filesystem writes by default, allows `/dev
 | `on_request` | Ask before every mutating or shell action: `run_command`, `write_file`, `apply_patch`, `git_add`, and `git_commit`. |
 | `never` | Do not prompt. Block escalations that require approval. |
 
-Approvals appear as `approval>` messages in the Nemo chat pane. While the worker is paused, Nemo opens the approval menu automatically when the input is empty; use arrows and `Enter` to choose approve once, approve always, or deny. Type `:` if you closed or replaced the menu. The typed commands still work as a fallback: `:approve <id>` runs once, `:approve <id> always` saves an exact workspace-scoped rule, and `:deny <id>` denies the request. Saved approval rules live in `~/.swim/nemo/approvals.json`; they are exact matches for the workspace, tool, and action signature. Use `:approvals` to list pending and saved approvals, and `:unapprove <rule-id|all>` to remove saved rules for the current workspace.
+Approvals appear as `approval>` messages in the Nemo chat pane. Sub-agent approval prompts are mirrored into the visible Nemo pane for the same workspace, so you can approve or deny worker commands without switching sessions. While a worker is paused, Nemo opens the approval menu automatically when the input is empty; use arrows and `Enter` to choose approve once, approve always, or deny. Type `:` if you closed or replaced the menu. The typed commands still work as a fallback: `:approve <id>` runs once, `:approve <id> always` saves an exact workspace-scoped rule, and `:deny <id>` denies the request. Saved approval rules live in `~/.swim/nemo/approvals.json`; they are exact matches for the workspace, tool, and action signature. Use `:approvals` to list pending and saved approvals, and `:unapprove <rule-id|all>` to remove saved rules for the current workspace.
 
 Inside the Nemo chat pane:
 
@@ -608,10 +608,11 @@ Inside the Nemo chat pane:
 - type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands and pending approval options
 - `webSearch` is enabled by default; set it to `false` to hide Nemo's internet search tool
 - `delegateTask` is enabled by default; Nemo can use it to start focused work in parallel sub-agent workers that inherit the session's tools, permissions, sandbox, and approval policy
-- Nemo can use `worker_status`, `read_worker`, and bounded `join_worker` tool calls to inspect or collect delegated worker results
+- Nemo can use `worker_status`, `read_worker`, `message_worker`, and bounded `join_worker` tool calls to inspect, steer, or collect delegated worker results
 - `:sessions` lists sessions for the current workspace
 - `:workers` lists active workers across sessions
 - `:permissions` shows the current tool permission mode; `:permissions read-only`, `:permissions workspace-write`, and `:permissions full-access` change it for the active session
+- `:tell <session-id> <message>` sends a message to a worker without switching; running workers receive it at the next safe request boundary
 - pending approval prompts add approve-once, approve-always, and deny options to the `:` menu; `:approvals` and `:unapprove` manage pending and saved rules
 - `:new [title]` creates a session
 - `:switch <session-id>` changes sessions

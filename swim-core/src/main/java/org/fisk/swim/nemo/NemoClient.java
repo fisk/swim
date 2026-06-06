@@ -141,7 +141,7 @@ public class NemoClient {
     }
 
     private record WorkerSnapshot(String id, String title, boolean pending, long elapsedSeconds,
-            Integer contextUsagePercent, List<ChatTurn> turns) {
+            Integer contextUsagePercent, List<String> pendingApprovalIds, List<ChatTurn> turns) {
     }
 
     private record DuckDuckGoResultAnchor(int start, int end, String href, String titleHtml) {
@@ -164,6 +164,10 @@ public class NemoClient {
 
     interface ToolExecutionSession {
         ApprovalResult requestApproval(Path workspaceRoot, ToolApprovalRequest request) throws InterruptedException;
+
+        default List<ChatTurn> drainQueuedTurns() {
+            return List.of();
+        }
     }
 
     private record ApprovalRule(String id, String workspaceRoot, String toolName, String signature, long createdAtMillis) {
@@ -200,6 +204,7 @@ public class NemoClient {
         private final Path _workspaceRoot;
         private final long _createdAtMillis;
         private final List<ChatTurn> _turns = new ArrayList<>();
+        private final List<ChatTurn> _queuedUserTurns = new ArrayList<>();
         private String _title;
         private long _updatedAtMillis;
         private BufferContext _context;
@@ -233,6 +238,11 @@ public class NemoClient {
         @Override
         public ApprovalResult requestApproval(Path workspaceRoot, ToolApprovalRequest request) throws InterruptedException {
             return requestToolApproval(_conversation, _requestId, workspaceRoot, request);
+        }
+
+        @Override
+        public List<ChatTurn> drainQueuedTurns() {
+            return drainQueuedUserTurns(_conversation, _requestId);
         }
     }
 
@@ -1370,6 +1380,7 @@ public class NemoClient {
         var toolTraces = new ArrayList<ToolTrace>();
 
         while (true) {
+            appendQueuedTurnsToResponsesInput(inputHistory, drainQueuedTurns(executionSession));
             JsonObject request = buildResponsesRequest(configuration, inputHistory);
             HttpResponse<String> response = _httpClient.send(
                     HttpRequest.newBuilder(configuration.responsesUri())
@@ -1399,6 +1410,26 @@ public class NemoClient {
                         List.copyOf(toolTraces));
             }
             appendToolRound(inputHistory, responseBody, toolOutputs);
+        }
+    }
+
+    static List<ChatTurn> drainQueuedTurns(ToolExecutionSession executionSession) {
+        return executionSession == null ? List.of() : executionSession.drainQueuedTurns();
+    }
+
+    static String queuedWorkerMessage(List<ChatTurn> turns) {
+        var lines = new ArrayList<String>();
+        lines.add("Additional user message(s) arrived while this worker was already running.");
+        lines.add("Adjust course if relevant, and explicitly account for them in your next response.");
+        for (ChatTurn turn : turns) {
+            lines.add(turn.speaker() + "> " + turn.text());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static void appendQueuedTurnsToResponsesInput(JsonArray inputHistory, List<ChatTurn> turns) {
+        if (!turns.isEmpty()) {
+            inputHistory.add(createUserInputMessage(queuedWorkerMessage(turns)));
         }
     }
 
@@ -1482,6 +1513,7 @@ public class NemoClient {
         case "worker_status" -> argumentSummary(call.arguments(), "session_id");
         case "read_worker" -> argumentSummary(call.arguments(), "session_id", "max_turns");
         case "join_worker" -> withOutputStatus(argumentSummary(call.arguments(), "session_id", "timeout_seconds"), output);
+        case "message_worker" -> withOutputStatus(argumentSummary(call.arguments(), "session_id", "message"), output);
         case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
         case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
         case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
@@ -1671,6 +1703,12 @@ public class NemoClient {
                             property("max_turns", integerSchema("Maximum transcript turns to include.")),
                             property("max_output_chars", integerSchema("Maximum characters to return."))),
                             List.of("session_id"))));
+            tools.add(functionTool("message_worker",
+                    "Send an additional user message to a delegated Nemo worker/session without switching to it. If the worker is running, the message is queued and delivered at the next safe request boundary; if it is idle, it starts a new turn in that session.",
+                    schema(List.of(
+                            property("session_id", stringSchema("Session id or unique title to message.")),
+                            property("message", stringSchema("User message or correction for the worker."))),
+                            List.of("session_id", "message"))));
         }
         if (configuration.toolListFiles()) {
             tools.add(functionTool("list_files",
@@ -1834,6 +1872,7 @@ public class NemoClient {
         case "worker_status" -> _instance.workerStatus(configuration, context, call.arguments());
         case "read_worker" -> _instance.readWorker(configuration, context, call.arguments());
         case "join_worker" -> _instance.joinWorker(configuration, context, call.arguments());
+        case "message_worker" -> _instance.messageWorker(configuration, context, call.arguments());
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
@@ -2058,6 +2097,33 @@ public class NemoClient {
         return readWorker(configuration, context, arguments);
     }
 
+    private String messageWorker(Configuration configuration, BufferContext context, JsonObject arguments) {
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String sessionId = stringArgument(arguments, "session_id", "").trim();
+        String message = stringArgument(arguments, "message", "").trim();
+        if (sessionId.isBlank()) {
+            return "Worker message failed: session_id is required.";
+        }
+        if (message.isBlank()) {
+            return "Worker message failed: message is blank.";
+        }
+        return sendWorkerMessage(workspaceRoot, sessionId, message);
+    }
+
+    private synchronized String sendWorkerMessage(Path workspaceRoot, String sessionId, String message) {
+        ensureSessionsLoaded();
+        Conversation worker = findConversation(sessionId, workspaceRoot);
+        if (worker == null) {
+            return "Unknown worker/session: " + sessionId;
+        }
+        if (worker._pending) {
+            queueUserMessage(worker, message);
+            return "Queued message for " + worker._id + " (" + worker._title + ").";
+        }
+        submit(worker, message);
+        return "Sent message to " + worker._id + " (" + worker._title + ").";
+    }
+
     private synchronized WorkerSnapshot workerSnapshot(Path workspaceRoot, String sessionId) {
         ensureSessionsLoaded();
         Conversation worker = findConversation(sessionId, workspaceRoot);
@@ -2070,6 +2136,7 @@ public class NemoClient {
                 worker._pending,
                 elapsedSeconds(worker),
                 worker._contextUsagePercent,
+                pendingApprovalIdsForConversation(worker),
                 List.copyOf(worker._turns));
     }
 
@@ -2079,15 +2146,20 @@ public class NemoClient {
         return worker != null && worker._pending;
     }
 
-    private static String formatWorkerStatus(Conversation worker) {
+    private synchronized String formatWorkerStatus(Conversation worker) {
         String status = worker._pending ? "running " + elapsedSeconds(worker) + "s" : "idle";
-        return worker._id + " | " + worker._title + " | " + status + " | turns=" + worker._turns.size();
+        var approvals = pendingApprovalIdsForConversation(worker);
+        String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
+        return worker._id + " | " + worker._title + " | " + status + approvalStatus + " | turns=" + worker._turns.size();
     }
 
     private static String formatWorkerSnapshot(WorkerSnapshot snapshot, int maxTurns) {
         var lines = new ArrayList<String>();
         String status = snapshot.pending() ? "running " + snapshot.elapsedSeconds() + "s" : "idle";
         lines.add("Worker " + snapshot.id() + " | " + snapshot.title() + " | " + status);
+        if (!snapshot.pendingApprovalIds().isEmpty()) {
+            lines.add("pending approvals: " + String.join(",", snapshot.pendingApprovalIds()));
+        }
         if (snapshot.contextUsagePercent() != null) {
             lines.add("context: " + snapshot.contextUsagePercent() + "%");
         }
@@ -2098,6 +2170,16 @@ public class NemoClient {
             lines.add(turn.speaker() + "> " + turn.text());
         }
         return String.join("\n", lines);
+    }
+
+    private synchronized List<String> pendingApprovalIdsForConversation(Conversation conversation) {
+        var ids = new ArrayList<String>();
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (pending._conversationId.equals(conversation._id)) {
+                ids.add(pending._id);
+            }
+        }
+        return ids;
     }
 
     private static String truncateText(String text, int maxChars) {
@@ -3455,8 +3537,16 @@ public class NemoClient {
 
     private void appendApprovalPrompt(Conversation conversation, PendingApproval pending) {
         Runnable append = () -> {
-            appendTurn(conversation, new ChatTurn("approval", formatApprovalPrompt(pending), false));
+            String prompt = formatApprovalPrompt(conversation, pending);
+            appendTurn(conversation, new ChatTurn("approval", prompt, false));
+            Conversation visibleConversation = visibleApprovalConversation(conversation);
+            if (visibleConversation != null && visibleConversation != conversation) {
+                appendTurn(visibleConversation, new ChatTurn("approval", prompt, false));
+            }
             openApprovalMenuIfVisible(conversation);
+            if (visibleConversation != null && visibleConversation != conversation) {
+                openApprovalMenuIfVisible(visibleConversation);
+            }
         };
         EventThread eventThread = EventThread.getInstance();
         if (eventThread.isAlive() && Thread.currentThread() != eventThread) {
@@ -3466,16 +3556,27 @@ public class NemoClient {
         }
     }
 
+    private synchronized Conversation visibleApprovalConversation(Conversation target) {
+        if (_activeSessionId != null) {
+            Conversation active = _conversations.get(_activeSessionId);
+            if (active != null && active._workspaceRoot.equals(target._workspaceRoot) && isPanelVisible(active)) {
+                return active;
+            }
+        }
+        return isPanelVisible(target) ? target : null;
+    }
+
     private static void openApprovalMenuIfVisible(Conversation conversation) {
         if (isPanelVisible(conversation)) {
             conversation._panelView.openCommandInputIfEmpty();
         }
     }
 
-    private static String formatApprovalPrompt(PendingApproval pending) {
+    private static String formatApprovalPrompt(Conversation conversation, PendingApproval pending) {
         var lines = new ArrayList<String>();
         lines.add("Approval required: " + pending._request.reason());
         lines.add("id: " + pending._id);
+        lines.add("session: " + conversation._id + " | " + conversation._title);
         lines.add("tool: " + pending._request.toolName());
         lines.add("workspace: " + pending._workspaceRoot);
         lines.add(pending._request.summary());
@@ -3642,17 +3743,26 @@ public class NemoClient {
 
     private synchronized void submit(Conversation conversation, String question) {
         question = question.trim();
-        if (question.equals("") || conversation._pending) {
+        if (question.equals("")) {
+            return;
+        }
+
+        if (conversation._pending) {
+            queueUserMessage(conversation, question);
             return;
         }
 
         appendTurn(conversation, new ChatTurn("me", question));
+        startRequest(conversation, List.of());
+    }
 
+    private synchronized void startRequest(Conversation conversation, List<ChatTurn> extraPromptTurns) {
         if (conversation._configuration.requiresApiKey() && conversation._configuration.apiKey().isBlank()) {
             appendAssistantNote(conversation, "Set api_key in " + getConfigPath() + " to use :nemo");
             return;
         }
 
+        conversation._queuedUserTurns.clear();
         conversation._pending = true;
         conversation._pendingStartedAtMillis = System.currentTimeMillis();
         conversation._contextUsagePercent = null;
@@ -3664,6 +3774,7 @@ public class NemoClient {
         }
 
         var promptTurns = new ArrayList<>(conversation._turns);
+        promptTurns.addAll(extraPromptTurns);
         var requestConfiguration = conversation._configuration;
         var requestContext = conversation._context;
         var executionSession = new ConversationToolExecutionSession(conversation, requestId);
@@ -3685,6 +3796,21 @@ public class NemoClient {
         worker.start();
     }
 
+    private synchronized void queueUserMessage(Conversation conversation, String message) {
+        var turn = new ChatTurn("me", message);
+        conversation._queuedUserTurns.add(turn);
+        appendTurn(conversation, turn);
+    }
+
+    private synchronized List<ChatTurn> drainQueuedUserTurns(Conversation conversation, long requestId) {
+        if (conversation._activeRequestId != requestId || !conversation._pending || conversation._queuedUserTurns.isEmpty()) {
+            return List.of();
+        }
+        var turns = List.copyOf(conversation._queuedUserTurns);
+        conversation._queuedUserTurns.clear();
+        return turns;
+    }
+
     private static final List<CommandSpec> NEMO_COMMAND_SPECS = List.of(
             new CommandSpec("abort", List.of(), "[session-id|all]", "stop the current or selected worker"),
             new CommandSpec("sessions", List.of(), "", "list Nemo sessions for this workspace"),
@@ -3695,6 +3821,7 @@ public class NemoClient {
             new CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
             new CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
+            new CommandSpec("tell", List.of(), "<session-id> <message>", "send a message to a worker without switching"),
             new CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
             new CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
             new CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
@@ -3712,22 +3839,25 @@ public class NemoClient {
 
     private synchronized List<CommandSpec> pendingApprovalCommandSpecs(Conversation conversation) {
         var specs = new ArrayList<CommandSpec>();
-        for (PendingApproval pending : _pendingApprovals.values()) {
-            if (!pending._conversationId.equals(conversation._id)) {
-                continue;
-            }
+        var pendingApprovals = pendingApprovalsForWorkspace(conversation._workspaceRoot);
+        boolean multiple = pendingApprovals.size() > 1;
+        for (PendingApproval pending : pendingApprovals) {
+            Conversation owner = _conversations.get(pending._conversationId);
+            String ownerLabel = owner == null ? pending._conversationId : owner._id;
             String approveOnce = "approve " + pending._id;
             specs.add(new CommandSpec("approve", List.of(), pending._id,
-                    approvalMenuDetail("Allow this request once", pending), approveOnce, true, "Approve once"));
+                    approvalMenuDetail("Allow this request once", pending), approveOnce, true,
+                    multiple ? "Approve once " + ownerLabel : "Approve once"));
             if (pending._request.persistable()) {
                 String approveAlways = approveOnce + " always";
                 specs.add(new CommandSpec("approve", List.of(), pending._id + " always",
                         approvalMenuDetail("Save an exact approval rule", pending), approveAlways, true,
-                        "Approve always"));
+                        multiple ? "Approve always " + ownerLabel : "Approve always"));
             }
             String deny = "deny " + pending._id;
             specs.add(new CommandSpec("deny", List.of(), pending._id,
-                    approvalMenuDetail("Do not run this request", pending), deny, true, "Deny"));
+                    approvalMenuDetail("Do not run this request", pending), deny, true,
+                    multiple ? "Deny " + ownerLabel : "Deny"));
         }
         return specs;
     }
@@ -3736,6 +3866,21 @@ public class NemoClient {
         String summary = oneLine(pending._request.summary());
         String detail = action + ": " + pending._request.toolName();
         return summary.isBlank() ? detail : detail + " - " + summary;
+    }
+
+    private synchronized List<PendingApproval> pendingApprovalsForWorkspace(Path workspaceRoot) {
+        var approvals = new ArrayList<PendingApproval>();
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (pendingApprovalMatchesWorkspace(pending, workspaceRoot)) {
+                approvals.add(pending);
+            }
+        }
+        return approvals;
+    }
+
+    private synchronized boolean pendingApprovalMatchesWorkspace(PendingApproval pending, Path workspaceRoot) {
+        Conversation owner = _conversations.get(pending._conversationId);
+        return owner != null && owner._workspaceRoot.equals(workspaceRoot.toAbsolutePath().normalize());
     }
 
     private static String oneLine(String text) {
@@ -3780,6 +3925,9 @@ public class NemoClient {
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
+        case ":tell":
+            handleTellCommand(conversation, argument);
+            return;
         case ":approve":
             handleApproveCommand(conversation, argument);
             return;
@@ -3794,8 +3942,8 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Delegated workers can be inspected with worker_status/read_worker and joined with bounded join_worker.");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker.");
             return;
         case ":q":
         case ":quit":
@@ -3824,6 +3972,30 @@ public class NemoClient {
 
         conversation._configuration = conversation._configuration.withToolPermissionMode(mode);
         appendAssistantNote(conversation, formatPermissions(conversation._configuration));
+    }
+
+    private void handleTellCommand(Conversation conversation, String argument) {
+        int split = firstWhitespace(argument);
+        if (split < 0) {
+            appendAssistantNote(conversation, "Usage: :tell <session-id> <message>");
+            return;
+        }
+        String sessionId = argument.substring(0, split).trim();
+        String message = argument.substring(split + 1).trim();
+        if (sessionId.isBlank() || message.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :tell <session-id> <message>");
+            return;
+        }
+        appendAssistantNote(conversation, sendWorkerMessage(conversation._workspaceRoot, sessionId, message));
+    }
+
+    private static int firstWhitespace(String text) {
+        for (int i = 0; i < text.length(); ++i) {
+            if (Character.isWhitespace(text.charAt(i))) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static String formatPermissions(Configuration configuration) {
@@ -3875,9 +4047,8 @@ public class NemoClient {
             appendAssistantNote(conversation, "Unknown approval: " + approvalId);
             return;
         }
-        appendTurn(conversation, new ChatTurn("approval",
-                "Approved " + pending._id + (persist && pending._request.persistable() ? " and saved exact rule." : "."),
-                false));
+        appendApprovalResolution(conversation, pending,
+                "Approved " + pending._id + (persist && pending._request.persistable() ? " and saved exact rule." : "."));
     }
 
     private void handleDenyCommand(Conversation conversation, String argument) {
@@ -3894,13 +4065,13 @@ public class NemoClient {
             appendAssistantNote(conversation, "Unknown approval: " + approvalId);
             return;
         }
-        appendTurn(conversation, new ChatTurn("approval", "Denied " + pending._id + ".", false));
+        appendApprovalResolution(conversation, pending, "Denied " + pending._id + ".");
     }
 
     private synchronized PendingApproval resolveApproval(Conversation conversation, String approvalId, boolean approved,
             boolean persist) {
         PendingApproval pending = _pendingApprovals.get(approvalId);
-        if (pending == null || !pending._conversationId.equals(conversation._id)) {
+        if (pending == null || !pendingApprovalMatchesWorkspace(pending, conversation._workspaceRoot)) {
             return null;
         }
         pending.resolve(approved, persist && pending._request.persistable());
@@ -3910,10 +4081,7 @@ public class NemoClient {
 
     private synchronized String singlePendingApprovalId(Conversation conversation) {
         String match = "";
-        for (PendingApproval pending : _pendingApprovals.values()) {
-            if (!pending._conversationId.equals(conversation._id)) {
-                continue;
-            }
+        for (PendingApproval pending : pendingApprovalsForWorkspace(conversation._workspaceRoot)) {
             if (!match.isBlank()) {
                 return "";
             }
@@ -3922,21 +4090,41 @@ public class NemoClient {
         return match;
     }
 
+    private void appendApprovalResolution(Conversation conversation, PendingApproval pending, String text) {
+        Conversation owner = ownerConversation(pending);
+        String message = owner == null || owner == conversation
+                ? text
+                : appendSentenceSuffix(text, " for " + owner._id + " (" + owner._title + ")");
+        appendTurn(conversation, new ChatTurn("approval", message, false));
+        if (owner != null && owner != conversation) {
+            appendTurn(owner, new ChatTurn("approval", text, false));
+        }
+    }
+
+    private static String appendSentenceSuffix(String text, String suffix) {
+        String stripped = text.endsWith(".") ? text.substring(0, text.length() - 1) : text;
+        return stripped + suffix + ".";
+    }
+
+    private synchronized Conversation ownerConversation(PendingApproval pending) {
+        return _conversations.get(pending._conversationId);
+    }
+
     private synchronized String formatApprovals(Conversation conversation) {
         ensureApprovalsLoaded();
         String workspaceRoot = conversation._workspaceRoot.toAbsolutePath().normalize().toString();
         var lines = new ArrayList<String>();
         lines.add("Approvals:");
         boolean anyPending = false;
-        for (PendingApproval pending : _pendingApprovals.values()) {
-            if (!pending._conversationId.equals(conversation._id)) {
-                continue;
-            }
+        for (PendingApproval pending : pendingApprovalsForWorkspace(conversation._workspaceRoot)) {
             if (!anyPending) {
                 lines.add("Pending:");
                 anyPending = true;
             }
-            lines.add("- " + pending._id + " | " + pending._request.toolName() + " | " + pending._request.reason());
+            Conversation owner = _conversations.get(pending._conversationId);
+            String session = owner == null ? pending._conversationId : owner._id + " | " + owner._title;
+            lines.add("- " + pending._id + " | " + session + " | " + pending._request.toolName()
+                    + " | " + pending._request.reason());
         }
         boolean anySaved = false;
         for (ApprovalRule rule : _approvalRules) {
@@ -4165,7 +4353,10 @@ public class NemoClient {
         for (var session : sessions) {
             String marker = session._id.equals(_activeSessionId) ? "*" : "-";
             String status = session._pending ? "running " + elapsedSeconds(session) + "s" : "idle";
-            lines.add(marker + " " + session._id + " | " + session._title + " | " + status + " | turns=" + session._turns.size());
+            var approvals = pendingApprovalIdsForConversation(session);
+            String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
+            lines.add(marker + " " + session._id + " | " + session._title + " | " + status + approvalStatus
+                    + " | turns=" + session._turns.size());
         }
         return String.join("\n", lines);
     }
@@ -4185,7 +4376,9 @@ public class NemoClient {
         var lines = new ArrayList<String>();
         lines.add("Workers:");
         for (var worker : workers) {
-            lines.add("- " + worker._id + " | " + worker._title + " | " + elapsedSeconds(worker) + "s");
+            var approvals = pendingApprovalIdsForConversation(worker);
+            String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
+            lines.add("- " + worker._id + " | " + worker._title + " | " + elapsedSeconds(worker) + "s" + approvalStatus);
         }
         return String.join("\n", lines);
     }
@@ -4209,6 +4402,7 @@ public class NemoClient {
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._activeRequestId = 0;
+        conversation._queuedUserTurns.clear();
         Thread worker = conversation._worker;
         conversation._worker = null;
         if (isPanelVisible(conversation)) {
@@ -4224,6 +4418,11 @@ public class NemoClient {
         if (conversation._activeRequestId != requestId) {
             return;
         }
+        List<ChatTurn> queuedTurns = List.of();
+        if (!conversation._queuedUserTurns.isEmpty()) {
+            queuedTurns = List.copyOf(conversation._queuedUserTurns);
+            conversation._queuedUserTurns.clear();
+        }
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._contextUsagePercent = response.contextUsagePercent();
@@ -4237,6 +4436,9 @@ public class NemoClient {
             conversation._panelView.setPending(false);
             conversation._panelView.setContextUsagePercent(response.contextUsagePercent());
         }
+        if (!queuedTurns.isEmpty()) {
+            startRequest(conversation, List.of(new ChatTurn("me", queuedWorkerMessage(queuedTurns))));
+        }
     }
 
     private synchronized void handleFailure(Conversation conversation, long requestId, String response) {
@@ -4248,6 +4450,7 @@ public class NemoClient {
         conversation._contextUsagePercent = null;
         conversation._activeRequestId = 0;
         conversation._worker = null;
+        conversation._queuedUserTurns.clear();
         conversation._updatedAtMillis = System.currentTimeMillis();
         if (isPanelVisible(conversation)) {
             conversation._panelView.appendMessage("nemo", response);

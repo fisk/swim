@@ -68,6 +68,10 @@ final class NemoLangChain4jClient {
         TokenUsage cumulativeUsage = null;
         var toolTraces = new ArrayList<NemoClient.ToolTrace>();
         while (true) {
+            List<NemoClient.ChatTurn> queuedTurns = NemoClient.drainQueuedTurns(executionSession);
+            if (!queuedTurns.isEmpty()) {
+                messages.add(new UserMessage(NemoClient.queuedWorkerMessage(queuedTurns)));
+            }
             ChatResponse response = chatModel.chat(ChatRequest.builder()
                     .messages(messages)
                     .toolSpecifications(tools)
@@ -114,6 +118,10 @@ final class NemoLangChain4jClient {
         Integer promptTokens = null;
         var toolTraces = new ArrayList<NemoClient.ToolTrace>();
         while (true) {
+            List<NemoClient.ChatTurn> queuedTurns = NemoClient.drainQueuedTurns(executionSession);
+            if (!queuedTurns.isEmpty()) {
+                messages.add(userMessage(NemoClient.queuedWorkerMessage(queuedTurns)));
+            }
             CompletionResponse response = invokeChatCompletions(configuration, messages, tools);
             promptTokens = response.promptTokens() != null ? response.promptTokens() : promptTokens;
             JsonObject message = response.message();
@@ -289,6 +297,14 @@ final class NemoLangChain4jClient {
                             .addIntegerProperty("max_turns", "Maximum transcript turns to include.")
                             .addIntegerProperty("max_output_chars", "Maximum characters to return.")
                             .required(List.of("session_id"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("message_worker",
+                    "Send an additional user message to a delegated Nemo worker/session without switching to it. If the worker is running, the message is queued and delivered at the next safe request boundary; if it is idle, it starts a new turn in that session.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("session_id", "Session id or unique title to message.")
+                            .addStringProperty("message", "User message or correction for the worker.")
+                            .required(List.of("session_id", "message"))
                             .additionalProperties(false)
                             .build()));
         }
