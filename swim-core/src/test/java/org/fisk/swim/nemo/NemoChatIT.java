@@ -212,6 +212,43 @@ class NemoChatIT {
     }
 
     @Test
+    @Timeout(20)
+    void chatCallsApprovedMcpToolAndReturnsResultToModel() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<>("");
+        var server = startSseServer(requestCount, requestBody, 0, List.of(
+                sseToolCallResponse("call_mcp", "mcp__mock__echo", "{\"message\":\"hello from mcp\"}"),
+                sseTextResponse("MCP answer")));
+        try {
+            writeMcpConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 20)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Use the MCP echo tool");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "Approval required: MCP tool call");
+                assertEquals("approval options", panel.getCommandMenuState().title());
+                assertEquals("Approve once", panel.getCommandMenuState().selectedMatch().displayLabel());
+
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                waitForLine(panel, "tool> mcp__mock__echo: message=hello from mcp -> echo: hello from mcp");
+                waitForLine(panel, "nemo> MCP answer");
+
+                assertTrue(requestBody.get().contains("mcp__mock__echo"));
+                assertTrue(requestBody.get().contains("echo: hello from mcp"));
+                assertTrue(requestCount.get() >= 2);
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Nemo failed")));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     @Timeout(15)
     void openAiCompatibleFallbackParsesSseTextResponses() throws Exception {
         var requestCount = new AtomicInteger();
@@ -1308,6 +1345,36 @@ class NemoChatIT {
                 "tool.web_search=false"));
     }
 
+    private void writeMcpConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Path java = Path.of(System.getProperty("java.home"), "bin", "java");
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                {
+                  "provider": "openai-compatible",
+                  "apiKey": "test-token",
+                  "model": "gpt-5.4",
+                  "baseUrl": "http://127.0.0.1:%d",
+                  "tools": {
+                    "webSearch": false
+                  },
+                  "mcp": {
+                    "servers": {
+                      "mock": {
+                        "command": %s,
+                        "args": ["-cp", %s, %s],
+                        "timeoutSeconds": 5
+                      }
+                    }
+                  }
+                }
+                """.formatted(
+                server.getAddress().getPort(),
+                jsonString(java.toString()),
+                jsonString(System.getProperty("java.class.path")),
+                jsonString(FakeMcpServer.class.getName())));
+    }
+
     private void writeReadOnlyConfig(HttpServer server) throws IOException {
         Path configDir = tempDir.resolve(".swim");
         Files.createDirectories(configDir.resolve("nemo"));
@@ -1357,6 +1424,10 @@ class NemoChatIT {
 
     private static JsonObject json(Map<String, ?> values) {
         return JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
+    }
+
+    private static String jsonString(String value) {
+        return new com.google.gson.Gson().toJson(value);
     }
 
     private String switchToTempUserHome() {

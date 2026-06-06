@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,6 +25,11 @@ import com.google.gson.JsonObject;
 class NemoClientTest {
     @TempDir
     Path tempDir;
+
+    @AfterEach
+    void tearDown() {
+        NemoClient.getInstance().resetForTests();
+    }
 
     @Test
     void buildsPromptFromCurrentBufferAndQuestion() throws IOException {
@@ -84,6 +90,23 @@ class NemoClientTest {
         assertTrue(prompt.contains("permission mode: read-only"));
         assertTrue(prompt.contains("mutating tools are disabled"));
         assertFalse(prompt.contains("successful edits are saved to disk and persist across Nemo/editor runs"));
+    }
+
+    @Test
+    void buildInputDescribesConfiguredMcpServers() throws IOException {
+        Path file = tempDir.resolve("Mcp.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+
+        String prompt = NemoPromptBuilder.buildInput(context,
+                List.of(new NemoClient.ChatTurn("me", "Use available tools")),
+                NemoClient.Configuration.builder()
+                        .mcpServers(List.of(new NemoMcpServerConfig("docs", true, "server", List.of(), Map.of(), null, 5)))
+                        .build(),
+                List.of());
+
+        assertTrue(prompt.contains("MCP stdio servers are configured"));
+        assertTrue(prompt.contains("tools named mcp__server__tool"));
     }
 
     @Test
@@ -250,6 +273,28 @@ class NemoClientTest {
     }
 
     @Test
+    void loadsMcpServersFromPropertiesFile() throws IOException {
+        Path config = tempDir.resolve("nemo.properties");
+        Files.writeString(config, String.join("\n",
+                "mcp.server.docs.command=java",
+                "mcp.server.docs.args=-cp \"target/test-classes\" org.example.Server",
+                "mcp.server.docs.cwd=" + tempDir,
+                "mcp.server.docs.env.API_TOKEN=secret",
+                "mcp.server.docs.timeout_seconds=7"));
+
+        var configuration = NemoClient.loadConfiguration(config);
+
+        assertEquals(1, configuration.mcpServers().size());
+        var server = configuration.mcpServers().get(0);
+        assertEquals("docs", server.name());
+        assertEquals("java", server.command());
+        assertEquals(List.of("-cp", "target/test-classes", "org.example.Server"), server.args());
+        assertEquals(tempDir.toAbsolutePath().normalize(), server.cwd());
+        assertEquals("secret", server.env().get("API_TOKEN"));
+        assertEquals(7, server.timeoutSeconds());
+    }
+
+    @Test
     void webSearchAndSubAgentDelegationAreEnabledByDefaultAndCanBeDisabled() throws IOException {
         assertTrue(NemoClient.Configuration.builder().build().toolWebSearch());
         assertTrue(NemoClient.Configuration.builder().build().toolDelegateTask());
@@ -363,6 +408,106 @@ class NemoClientTest {
         assertEquals("disabled", configuration.toolOsSandbox());
         assertEquals("never", configuration.toolApprovalPolicy());
     }
+
+    @Test
+    void loadsMcpServersFromJsonFile() throws IOException {
+        Path config = tempDir.resolve("nemo-mcp.json");
+        Files.writeString(config, """
+                {
+                  "mcp": {
+                    "servers": {
+                      "docs": {
+                        "command": "java",
+                        "args": ["-cp", "target/test-classes", "org.example.Server"],
+                        "cwd": "%s",
+                        "env": {
+                          "API_TOKEN": "secret"
+                        },
+                        "timeoutSeconds": 9
+                      }
+                    }
+                  }
+                }
+                """.formatted(tempDir.toString().replace("\\", "\\\\")));
+
+        var configuration = NemoClient.loadConfiguration(config);
+
+        assertEquals(1, configuration.mcpServers().size());
+        var server = configuration.mcpServers().get(0);
+        assertEquals("docs", server.name());
+        assertEquals("java", server.command());
+        assertEquals(List.of("-cp", "target/test-classes", "org.example.Server"), server.args());
+        assertEquals(tempDir.toAbsolutePath().normalize(), server.cwd());
+        assertEquals("secret", server.env().get("API_TOKEN"));
+        assertEquals(9, server.timeoutSeconds());
+    }
+
+    @Test
+    void buildToolsIncludesConfiguredMcpTools() throws Exception {
+        var configuration = NemoClient.Configuration.builder()
+                .mcpServers(List.of(fakeMcpServer("mock")))
+                .build();
+
+        var tools = NemoClient.buildTools(configuration);
+
+        assertTrue(tools.toString().contains("\"name\":\"mcp__mock__echo\""));
+        assertTrue(tools.toString().contains("Echo a message."));
+    }
+
+    @Test
+    void readOnlyModeOmitsAndBlocksMcpTools() throws Exception {
+        Path project = tempDir.resolve("mcp-read-only");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .mcpServers(List.of(fakeMcpServer("mock")))
+                .build();
+
+        assertFalse(NemoClient.buildTools(configuration).toString().contains("mcp__mock__echo"));
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("mcp-read-only", "mcp__mock__echo", json(Map.of("message", "hello"))));
+
+        assertTrue(output.contains("blocked by Nemo permissions"));
+    }
+
+    @Test
+    void executesMcpToolAfterApproval() throws Exception {
+        Path project = tempDir.resolve("mcp-workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .mcpServers(List.of(fakeMcpServer("mock")))
+                .build();
+
+        String denied = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("mcp-denied", "mcp__mock__echo", json(Map.of("message", "hello"))));
+        assertTrue(denied.contains("MCP tool calls require approval"));
+
+        var approvalCount = new AtomicInteger();
+        var approvalTool = new AtomicReference<String>();
+        NemoClient.ToolExecutionSession approvalSession = (workspaceRoot, request) -> {
+            approvalCount.incrementAndGet();
+            approvalTool.set(request.toolName());
+            return new NemoClient.ApprovalResult(true, false);
+        };
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("mcp-approved", "mcp__mock__echo", json(Map.of("message", "hello"))),
+                approvalSession);
+
+        assertEquals(1, approvalCount.get());
+        assertEquals("mcp__mock__echo", approvalTool.get());
+        assertEquals("echo: hello", output);
+    }
+
 
     @Test
     void buildInputIncludesApplicableSkillsFiles() throws IOException {
@@ -1378,5 +1523,17 @@ class NemoClientTest {
 
     private static String shellQuoteForTest(Path path) {
         return "'" + path.toString().replace("'", "'\"'\"'") + "'";
+    }
+
+    private static NemoMcpServerConfig fakeMcpServer(String name) {
+        Path java = Path.of(System.getProperty("java.home"), "bin", "java");
+        return new NemoMcpServerConfig(
+                name,
+                true,
+                java.toString(),
+                List.of("-cp", System.getProperty("java.class.path"), FakeMcpServer.class.getName()),
+                Map.of(),
+                null,
+                5);
     }
 }

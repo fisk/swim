@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -87,6 +88,7 @@ public class NemoClient {
     }
 
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
+    private final NemoMcpClient _mcpClient = new NemoMcpClient();
     private final HttpClient _httpClient = HttpClient.newHttpClient();
     private static final HttpClient _webSearchHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -115,6 +117,7 @@ public class NemoClient {
         for (var conversation : _conversations.values()) {
             stopWorker(conversation);
         }
+        _mcpClient.shutdownAll();
         resetMacOsSandboxAvailabilityForTests();
         _conversations.clear();
         _workspaceSessionIds.clear();
@@ -271,6 +274,7 @@ public class NemoClient {
         private final String _systemPrompt;
         private final Integer _contextWindowTokens;
         private final Integer _maxOutputTokens;
+        private final List<NemoMcpServerConfig> _mcpServers;
         private final Double _temperature;
         private final Double _topP;
         private final String _reasoningEffort;
@@ -363,6 +367,7 @@ public class NemoClient {
             _systemPrompt = builder._systemPrompt;
             _contextWindowTokens = builder._contextWindowTokens;
             _maxOutputTokens = builder._maxOutputTokens;
+            _mcpServers = List.copyOf(builder._mcpServers);
             _temperature = builder._temperature;
             _topP = builder._topP;
             _reasoningEffort = builder._reasoningEffort;
@@ -435,6 +440,7 @@ public class NemoClient {
             private String _systemPrompt = _defaultSystemPrompt;
             private Integer _contextWindowTokens;
             private Integer _maxOutputTokens;
+            private List<NemoMcpServerConfig> _mcpServers = List.of();
             private Double _temperature;
             private Double _topP;
             private String _reasoningEffort = "";
@@ -487,6 +493,7 @@ public class NemoClient {
                 _systemPrompt = source._systemPrompt;
                 _contextWindowTokens = source._contextWindowTokens;
                 _maxOutputTokens = source._maxOutputTokens;
+                _mcpServers = new ArrayList<>(source._mcpServers);
                 _temperature = source._temperature;
                 _topP = source._topP;
                 _reasoningEffort = source._reasoningEffort;
@@ -591,6 +598,11 @@ public class NemoClient {
 
             Builder maxOutputTokens(Integer maxOutputTokens) {
                 _maxOutputTokens = maxOutputTokens;
+                return this;
+            }
+
+            Builder mcpServers(List<NemoMcpServerConfig> mcpServers) {
+                _mcpServers = mcpServers == null ? List.of() : List.copyOf(mcpServers);
                 return this;
             }
 
@@ -787,6 +799,7 @@ public class NemoClient {
         String systemPrompt() { return _systemPrompt; }
         Integer contextWindowTokens() { return _contextWindowTokens; }
         Integer maxOutputTokens() { return _maxOutputTokens; }
+        List<NemoMcpServerConfig> mcpServers() { return _mcpServers; }
         Double temperature() { return _temperature; }
         Double topP() { return _topP; }
         String reasoningEffort() { return _reasoningEffort; }
@@ -1018,6 +1031,7 @@ public class NemoClient {
                 .systemPrompt(property(properties, "system_prompt"))
                 .contextWindowTokens(nullableIntegerProperty(properties, "context_window_tokens"))
                 .maxOutputTokens(nullableIntegerProperty(properties, "max_output_tokens"))
+                .mcpServers(mcpServersFromProperties(properties))
                 .temperature(nullableDoubleProperty(properties, "temperature"))
                 .topP(nullableDoubleProperty(properties, "top_p"))
                 .reasoningEffort(property(properties, "reasoning_effort"))
@@ -1062,6 +1076,7 @@ public class NemoClient {
         JsonObject root = JsonParser.parseString(raw).getAsJsonObject();
         JsonObject tools = objectMember(root, "tools");
         JsonObject skills = objectMember(root, "skills");
+        JsonObject mcp = objectMember(root, "mcp");
         var builder = Configuration.builder()
                 .provider(firstNonBlank(stringMember(root, "provider"), stringMember(root, "vendor")))
                 .apiKey(resolveSecret(
@@ -1079,6 +1094,7 @@ public class NemoClient {
                 .systemPrompt(firstNonBlank(stringMember(root, "systemPrompt"), stringMember(root, "system_prompt")))
                 .contextWindowTokens(integerMember(root, "contextWindowTokens", "context_window_tokens"))
                 .maxOutputTokens(integerMember(root, "maxOutputTokens", "max_output_tokens"))
+                .mcpServers(mcpServersFromJson(mcp))
                 .temperature(doubleMember(root, "temperature"))
                 .topP(doubleMember(root, "topP", "top_p"))
                 .reasoningEffort(firstNonBlank(stringMember(root, "reasoningEffort"), stringMember(root, "reasoning_effort")))
@@ -1118,6 +1134,148 @@ public class NemoClient {
         builder.queryParameters(stringMapMember(root, "queryParameters", "query_parameters"));
         builder.customParameters(objectMapMember(root, "customParameters", "custom_parameters"));
         return builder.build();
+    }
+
+    private static List<NemoMcpServerConfig> mcpServersFromJson(JsonObject mcp) {
+        JsonObject servers = objectMember(mcp, "servers");
+        if (servers == null) {
+            servers = objectMember(mcp, "mcpServers", "mcp_servers");
+        }
+        if (servers == null) {
+            return List.of();
+        }
+        var configs = new ArrayList<NemoMcpServerConfig>();
+        for (var entry : servers.entrySet()) {
+            if (!entry.getValue().isJsonObject()) {
+                continue;
+            }
+            JsonObject server = entry.getValue().getAsJsonObject();
+            String name = firstNonBlank(stringMember(server, "name"), entry.getKey());
+            String command = stringMember(server, "command");
+            configs.add(new NemoMcpServerConfig(
+                    name,
+                    booleanMember(server, true, "enabled"),
+                    command,
+                    stringArrayMember(server, "args", "arguments"),
+                    stringMapMember(server, "env", "environment"),
+                    pathOrNull(firstNonBlank(stringMember(server, "cwd"), stringMember(server, "workingDirectory"),
+                            stringMember(server, "working_directory"))),
+                    firstNonNull(integerMember(server, "timeoutSeconds", "timeout_seconds"), _defaultCommandTimeoutSeconds)));
+        }
+        return configs;
+    }
+
+    private static List<NemoMcpServerConfig> mcpServersFromProperties(Properties properties) {
+        var names = new LinkedHashSet<String>();
+        for (String key : properties.stringPropertyNames()) {
+            String name = mcpServerNameFromProperty(key, "mcp.servers.");
+            if (name.isBlank()) {
+                name = mcpServerNameFromProperty(key, "mcp.server.");
+            }
+            if (!name.isBlank()) {
+                names.add(name);
+            }
+        }
+        var configs = new ArrayList<NemoMcpServerConfig>();
+        for (String name : names) {
+            String prefix = properties.stringPropertyNames().stream().anyMatch(key -> key.startsWith("mcp.servers." + name + "."))
+                    ? "mcp.servers." + name + "."
+                    : "mcp.server." + name + ".";
+            configs.add(new NemoMcpServerConfig(
+                    name,
+                    booleanProperty(properties, prefix + "enabled", true),
+                    property(properties, prefix + "command"),
+                    splitShellWords(property(properties, prefix + "args")),
+                    propertiesWithPrefix(properties, prefix + "env."),
+                    pathOrNull(firstNonBlank(property(properties, prefix + "cwd"),
+                            property(properties, prefix + "working_directory"),
+                            property(properties, prefix + "workingDirectory"))),
+                    intProperty(properties, prefix + "timeout_seconds", _defaultCommandTimeoutSeconds)));
+        }
+        return configs;
+    }
+
+    private static String mcpServerNameFromProperty(String key, String prefix) {
+        if (!key.startsWith(prefix)) {
+            return "";
+        }
+        int start = prefix.length();
+        int end = key.indexOf('.', start);
+        return end < 0 ? "" : key.substring(start, end);
+    }
+
+    private static List<String> stringArrayMember(JsonObject object, String... names) {
+        if (object == null) {
+            return List.of();
+        }
+        for (String name : names) {
+            if (!object.has(name)) {
+                continue;
+            }
+            JsonElement value = object.get(name);
+            if (value.isJsonArray()) {
+                var values = new ArrayList<String>();
+                for (JsonElement element : value.getAsJsonArray()) {
+                    if (element.isJsonPrimitive()) {
+                        values.add(element.getAsString());
+                    }
+                }
+                return values;
+            }
+            if (value.isJsonPrimitive()) {
+                return splitShellWords(value.getAsString());
+            }
+        }
+        return List.of();
+    }
+
+    private static List<String> splitShellWords(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        var words = new ArrayList<String>();
+        var current = new StringBuilder();
+        char quote = 0;
+        boolean escaped = false;
+        for (int i = 0; i < text.length(); ++i) {
+            char c = text.charAt(i);
+            if (escaped) {
+                current.append(c);
+                escaped = false;
+                continue;
+            }
+            if (c == '\\') {
+                escaped = true;
+                continue;
+            }
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                } else {
+                    current.append(c);
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+                continue;
+            }
+            if (Character.isWhitespace(c)) {
+                if (!current.isEmpty()) {
+                    words.add(current.toString());
+                    current.setLength(0);
+                }
+                continue;
+            }
+            current.append(c);
+        }
+        if (escaped) {
+            current.append('\\');
+        }
+        if (!current.isEmpty()) {
+            words.add(current.toString());
+        }
+        return words;
     }
 
     private static String resolveSecret(String inlineValue, String envName, String command) throws IOException {
@@ -1291,6 +1449,19 @@ public class NemoClient {
         return object != null && object.has(name) && object.get(name).isJsonObject()
                 ? object.getAsJsonObject(name)
                 : null;
+    }
+
+    private static JsonObject objectMember(JsonObject object, String... names) {
+        if (object == null) {
+            return null;
+        }
+        for (String name : names) {
+            JsonObject member = objectMember(object, name);
+            if (member != null) {
+                return member;
+            }
+        }
+        return null;
     }
 
     private static Map<String, String> stringMapMember(JsonObject object, String... names) {
@@ -1508,7 +1679,11 @@ public class NemoClient {
     }
 
     static ToolTrace toolTrace(ToolCall call, String output) {
-        String detail = switch (call.name()) {
+        String detail;
+        if (isMcpToolName(call.name())) {
+            detail = withOutputStatus(argumentSummary(call.arguments()), output);
+        } else {
+            detail = switch (call.name()) {
         case "delegate_task" -> withOutputStatus(delegateTaskSummary(call.arguments()), output);
         case "worker_status" -> argumentSummary(call.arguments(), "session_id");
         case "read_worker" -> argumentSummary(call.arguments(), "session_id", "max_turns");
@@ -1525,6 +1700,7 @@ public class NemoClient {
         case "git_commit" -> argumentSummary(call.arguments(), "message");
         default -> argumentSummary(call.arguments());
         };
+        }
         return detail.isBlank()
                 ? new ToolTrace(call.name())
                 : new ToolTrace(call.name() + ": " + detail);
@@ -1710,6 +1886,11 @@ public class NemoClient {
                             property("message", stringSchema("User message or correction for the worker."))),
                             List.of("session_id", "message"))));
         }
+        if (isMcpAllowed(configuration)) {
+            for (NemoMcpClient.ToolDescriptor tool : mcpToolDescriptors(configuration)) {
+                tools.add(functionTool(tool.exposedName(), mcpToolDescription(tool), tool.inputSchema()));
+            }
+        }
         if (configuration.toolListFiles()) {
             tools.add(functionTool("list_files",
                     "List files in the workspace. Use this to inspect the project structure.",
@@ -1786,6 +1967,30 @@ public class NemoClient {
                             List.of("message"))));
         }
         return tools;
+    }
+
+    static List<NemoMcpClient.ToolDescriptor> mcpToolDescriptors(Configuration configuration) {
+        if (!isMcpAllowed(configuration)) {
+            return List.of();
+        }
+        return _instance._mcpClient.listTools(configuration.mcpServers());
+    }
+
+    static boolean isMcpAllowed(Configuration configuration) {
+        return !configuration.mcpServers().isEmpty() && !"read_only".equals(configuration.toolPermissionMode());
+    }
+
+    private static String mcpToolDescription(NemoMcpClient.ToolDescriptor tool) {
+        var parts = new ArrayList<String>();
+        parts.add("MCP tool " + tool.toolName() + " from server " + tool.serverName() + ".");
+        if (!tool.title().isBlank()) {
+            parts.add("Title: " + tool.title() + ".");
+        }
+        if (!tool.description().isBlank()) {
+            parts.add(tool.description());
+        }
+        parts.add("External MCP tools can access resources outside Nemo's workspace sandbox and require approval unless the session is full-access.");
+        return String.join(" ", parts);
     }
 
     private static JsonObject functionTool(String name, String description, JsonObject parameters) {
@@ -1866,6 +2071,9 @@ public class NemoClient {
         if (approvalBlock != null) {
             return approvalBlock;
         }
+        if (isMcpToolName(call.name())) {
+            return _instance.callMcpTool(configuration, context, call, executionSession);
+        }
         return switch (call.name()) {
         case "web_search" -> webSearch(call.arguments());
         case "delegate_task" -> _instance.delegateTask(configuration, context, call.arguments());
@@ -1936,6 +2144,10 @@ public class NemoClient {
         if (!"read_only".equals(configuration.toolPermissionMode())) {
             return null;
         }
+        if (isMcpToolName(toolName)) {
+            return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow MCP tools. "
+                    + "Use :permissions workspace-write to allow configured MCP servers.";
+        }
         if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
@@ -1990,6 +2202,36 @@ public class NemoClient {
         } catch (RuntimeException e) {
             return "Web search failed for query: " + query + " (" + e.getMessage() + ")";
         }
+    }
+
+    static boolean isMcpToolName(String toolName) {
+        return toolName != null && toolName.startsWith("mcp__");
+    }
+
+    private String callMcpTool(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        if (!isMcpAllowed(configuration)) {
+            return "MCP tool " + call.name() + " is unavailable in this session.";
+        }
+        if (!"full_access".equals(configuration.toolPermissionMode())) {
+            Path root = resolveWorkspaceRoot(configuration, context);
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    root,
+                    new ToolApprovalRequest(
+                            call.name(),
+                            "MCP tool call",
+                            "call configured MCP tool " + call.name() + "\nArguments: " + compactArgumentValue(call.arguments()),
+                            "mcp:" + call.name() + ":" + compactArgumentValue(call.arguments()),
+                            true),
+                    "Tool " + call.name() + " blocked by Nemo approval: MCP tool calls require approval.");
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
+        }
+        return _mcpClient.callTool(configuration.mcpServers(), call.name(), call.arguments(),
+                configuration.toolMaxOutputChars());
     }
 
     private String delegateTask(Configuration configuration, BufferContext context, JsonObject arguments) {
@@ -3821,6 +4063,7 @@ public class NemoClient {
             new CommandSpec("reset", List.of(), "[session-id]", "clear a Nemo session without deleting it"),
             new CommandSpec("delete", List.of(), "[session-id]", "delete a Nemo session"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
+            new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<session-id> <message>", "send a message to a worker without switching"),
             new CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
             new CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
@@ -3925,6 +4168,9 @@ public class NemoClient {
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
+        case ":mcp":
+            appendAssistantNote(conversation, _mcpClient.status(conversation._configuration.mcpServers()));
+            return;
         case ":tell":
             handleTellCommand(conversation, argument);
             return;
@@ -3942,7 +4188,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker.");
             return;
         case ":q":
@@ -4005,6 +4251,7 @@ public class NemoClient {
         lines.add("- command policy: " + effectiveCommandPolicy(configuration));
         lines.add("- OS sandbox: " + formatOsSandbox(configuration));
         lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-'));
+        lines.add("- MCP servers: " + configuration.mcpServers().size());
         lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit");
         return String.join("\n", lines);
     }

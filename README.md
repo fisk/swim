@@ -518,6 +518,16 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
     "maxFiles": 8,
     "maxChars": 12000
   },
+  "mcp": {
+    "servers": {
+      "filesystem": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/eosterlu/src"],
+        "env": {},
+        "timeoutSeconds": 20
+      }
+    }
+  },
   "tools": {
     "webSearch": true,
     "delegateTask": true,
@@ -543,6 +553,8 @@ Nemo reads configuration from `~/.swim/nemo/nemo.conf`:
 ```
 
 The config loader also accepts the older properties format and still migrates `~/.swim/nemo.conf` into the Nemo directory on first use. Property names use the same structure, for example `tool.permission_mode=workspace_write`, `tool.os_sandbox=auto`, and `tool.approval_policy=on_escalation`.
+
+Nemo supports stdio Model Context Protocol servers configured under `mcp.servers`. MCP tools are discovered with `tools/list`, exposed to the model as `mcp__<server>__<tool>`, and invoked with `tools/call`. MCP tool calls can access external systems outside Nemo's workspace sandbox, so Nemo requires approval for each call unless the session is `full_access`; saved approval rules match the exact MCP tool name and arguments. `read_only` mode hides and blocks MCP tools. The properties format can configure servers with keys such as `mcp.server.filesystem.command=npx`, `mcp.server.filesystem.args=-y @modelcontextprotocol/server-filesystem /path`, and `mcp.server.filesystem.env.API_TOKEN=...`.
 
 Nemo now runs through langchain4j, so OpenAI-compatible vendors can be selected with `provider`, `baseUrl`, custom headers, query parameters, and custom request parameters.
 
@@ -607,6 +619,7 @@ Inside the Nemo chat pane:
 - pasted multiline text stays in the draft, so exception traces can be edited before sending
 - type `:` at the start of the Nemo input to open a Nemo-specific command completion popup for chat commands and pending approval options
 - `webSearch` is enabled by default; set it to `false` to hide Nemo's internet search tool
+- stdio MCP servers configured in `mcp.servers` expose tools named `mcp__server__tool`; use `:mcp` to list configured servers and discovered tools
 - `delegateTask` is enabled by default; Nemo can use it to start focused work in parallel sub-agent workers that inherit the session's tools, permissions, sandbox, and approval policy
 - Nemo can use `worker_status`, `read_worker`, `message_worker`, and bounded `join_worker` tool calls to inspect, steer, or collect delegated worker results
 - `:sessions` lists sessions for the current workspace

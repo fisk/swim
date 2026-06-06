@@ -31,9 +31,15 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.json.JsonAnyOfSchema;
 import dev.langchain4j.model.chat.request.json.JsonArraySchema;
+import dev.langchain4j.model.chat.request.json.JsonBooleanSchema;
+import dev.langchain4j.model.chat.request.json.JsonEnumSchema;
 import dev.langchain4j.model.chat.request.json.JsonIntegerSchema;
+import dev.langchain4j.model.chat.request.json.JsonNumberSchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonRawSchema;
+import dev.langchain4j.model.chat.request.json.JsonReferenceSchema;
 import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -308,6 +314,9 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
+        for (NemoMcpClient.ToolDescriptor descriptor : NemoClient.mcpToolDescriptors(configuration)) {
+            tools.add(mcpTool(descriptor));
+        }
         if (configuration.toolListFiles()) {
             tools.add(tool("list_files",
                     "List files in the workspace. Use this to inspect project structure.",
@@ -414,6 +423,35 @@ final class NemoLangChain4jClient {
                 .description(description)
                 .parameters(parameters)
                 .build();
+    }
+
+    private static ToolSpecification mcpTool(NemoMcpClient.ToolDescriptor descriptor) {
+        var tool = new JsonObject();
+        tool.addProperty("name", descriptor.exposedName());
+        tool.addProperty("description", mcpToolDescription(descriptor));
+        tool.add("parameters", descriptor.inputSchema());
+        try {
+            return ToolSpecification.fromJson(tool.toString());
+        } catch (RuntimeException e) {
+            return ToolSpecification.builder()
+                    .name(descriptor.exposedName())
+                    .description(mcpToolDescription(descriptor))
+                    .parameters(JsonObjectSchema.builder().additionalProperties(true).build())
+                    .build();
+        }
+    }
+
+    private static String mcpToolDescription(NemoMcpClient.ToolDescriptor descriptor) {
+        var parts = new ArrayList<String>();
+        parts.add("MCP tool " + descriptor.toolName() + " from server " + descriptor.serverName() + ".");
+        if (!descriptor.title().isBlank()) {
+            parts.add("Title: " + descriptor.title() + ".");
+        }
+        if (!descriptor.description().isBlank()) {
+            parts.add(descriptor.description());
+        }
+        parts.add("External MCP tools can access resources outside Nemo's workspace sandbox and require approval unless the session is full-access.");
+        return String.join(" ", parts);
     }
 
     private record PathInfo(java.nio.file.Path workspaceRoot) {
@@ -737,6 +775,32 @@ final class NemoLangChain4jClient {
             }
             return object;
         }
+        if (element instanceof JsonNumberSchema numberSchema) {
+            object.addProperty("type", "number");
+            if (numberSchema.description() != null && !numberSchema.description().isBlank()) {
+                object.addProperty("description", numberSchema.description());
+            }
+            return object;
+        }
+        if (element instanceof JsonBooleanSchema booleanSchema) {
+            object.addProperty("type", "boolean");
+            if (booleanSchema.description() != null && !booleanSchema.description().isBlank()) {
+                object.addProperty("description", booleanSchema.description());
+            }
+            return object;
+        }
+        if (element instanceof JsonEnumSchema enumSchema) {
+            object.addProperty("type", "string");
+            if (enumSchema.description() != null && !enumSchema.description().isBlank()) {
+                object.addProperty("description", enumSchema.description());
+            }
+            JsonArray values = new JsonArray();
+            for (String value : enumSchema.enumValues()) {
+                values.add(value);
+            }
+            object.add("enum", values);
+            return object;
+        }
         if (element instanceof JsonArraySchema arraySchema) {
             object.addProperty("type", "array");
             if (arraySchema.description() != null && !arraySchema.description().isBlank()) {
@@ -746,6 +810,33 @@ final class NemoLangChain4jClient {
                 object.add("items", toJsonSchema(arraySchema.items()));
             }
             return object;
+        }
+        if (element instanceof JsonAnyOfSchema anyOfSchema) {
+            if (anyOfSchema.description() != null && !anyOfSchema.description().isBlank()) {
+                object.addProperty("description", anyOfSchema.description());
+            }
+            JsonArray anyOf = new JsonArray();
+            for (var option : anyOfSchema.anyOf()) {
+                anyOf.add(toJsonSchema(option));
+            }
+            object.add("anyOf", anyOf);
+            return object;
+        }
+        if (element instanceof JsonReferenceSchema referenceSchema) {
+            object.addProperty("$ref", referenceSchema.reference());
+            if (referenceSchema.description() != null && !referenceSchema.description().isBlank()) {
+                object.addProperty("description", referenceSchema.description());
+            }
+            return object;
+        }
+        if (element instanceof JsonRawSchema rawSchema) {
+            try {
+                JsonElement raw = JsonParser.parseString(rawSchema.schema());
+                if (raw.isJsonObject()) {
+                    return raw.getAsJsonObject();
+                }
+            } catch (RuntimeException ignored) {
+            }
         }
         return object;
     }

@@ -131,6 +131,9 @@ final class NemoPromptBuilder {
         }
         lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-')
                 + "; approval prompts pause tool execution but do not remove tool capability.");
+        if (!configuration.mcpServers().isEmpty()) {
+            lines.add("- MCP stdio servers are configured; tools named mcp__server__tool are discovered dynamically, may access external systems outside Nemo's workspace sandbox, and require approval unless the session is full-access.");
+        }
         if (configuration.toolDelegateTask()) {
             lines.add("- delegate_task starts focused work in a separate Nemo sub-agent worker so this session can continue; sub-agents inherit these tools, permissions, sandbox, and approval policy.");
             lines.add("- use worker_status/read_worker to check sub-agent progress; use join_worker only when you need the sub-agent result before continuing.");
