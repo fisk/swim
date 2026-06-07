@@ -29,6 +29,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.googlecode.lanterna.TerminalPosition;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
+
 class MailPanelViewTest {
     @TempDir
     Path tempDir;
@@ -863,6 +867,73 @@ class MailPanelViewTest {
     }
 
     @Test
+    void drawHighlightsUnreadThreadSubjects() {
+        var terminal = TerminalContextTestSupport.install(80, 20);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        panel.draw(panel.getBounds());
+
+        var call = drawCallContaining(terminal.drawCalls(), "Unread thread");
+        assertEquals(UiTheme.MAIL_UNREAD_FOREGROUND, call.foreground());
+    }
+
+    @Test
+    void drawHighlightsActiveComposeField() {
+        var terminal = TerminalContextTestSupport.install(80, 20);
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+        panel.draw(panel.getBounds());
+
+        var call = drawCallContaining(terminal.drawCalls(), "To:");
+        assertEquals(UiTheme.ACCENT_BLUE, call.foreground());
+        assertEquals(UiTheme.MAIL_COMPOSE_FIELD_BACKGROUND, call.background());
+    }
+
+    @Test
+    void mouseClickSelectsThreadRow() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        HeadlessWindowHarness.dispatch(panel,
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(30, 3)));
+
+        assertEquals(1, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+        assertEquals("THREADS", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+    }
+
+    @Test
+    void mouseClickSelectsSidebarRow() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        HeadlessWindowHarness.dispatch(panel,
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(2, 3)));
+
+        assertEquals(1, HeadlessWindowHarness.getField(panel, "_sidebarSelection", Integer.class));
+        assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
+    }
+
+    @Test
+    void mouseWheelMovesThreadSelection() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        HeadlessWindowHarness.dispatch(panel,
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(30, 3)));
+
+        assertEquals(2, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+    }
+
+    @Test
+    void mouseClickSelectsComposeField() {
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
+        HeadlessWindowHarness.dispatch(panel,
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(12, 5)));
+
+        assertEquals("SUBJECT", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
+    }
+
+    @Test
     void numberGJumpsToSidebarItem() throws Exception {
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -1604,6 +1675,73 @@ class MailPanelViewTest {
         }
         int endExclusive = Math.min(matching.size(), safeOffset + Math.max(0, limit));
         return new MailThreadPage(matching.subList(safeOffset, endExclusive), matching.size());
+    }
+
+    private static MailClient styledMailClient() {
+        return new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "", "")),
+                        List.of(
+                                new MailThreadSummary(1L, "work", "Read thread", "Alice <alice@example.com>",
+                                        "read snippet", "2026-05-13T08:00:00Z", false, 1, List.of()),
+                                new MailThreadSummary(2L, "work", "Unread thread", "Bob <bob@example.com>",
+                                        "unread snippet", "2026-05-13T09:00:00Z", true, 1, List.of()),
+                                new MailThreadSummary(3L, "work", "Later thread", "Carol <carol@example.com>",
+                                        "later snippet", "2026-05-13T10:00:00Z", false, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(threadId, threadId, "Thread " + threadId,
+                        "sender@example.com", "me@example.com", "2026-05-13T08:00:00Z",
+                        "Body " + threadId, List.of());
+            }
+
+            @Override
+            public Map<Long, List<MailMessageSummary>> loadThreadMessages(List<Long> threadIds) {
+                var messages = new java.util.LinkedHashMap<Long, List<MailMessageSummary>>();
+                for (Long threadId : threadIds) {
+                    boolean unread = threadId == 2L;
+                    String subject = switch (threadId.intValue()) {
+                    case 1 -> "Read thread";
+                    case 2 -> "Unread thread";
+                    default -> "Later thread";
+                    };
+                    messages.put(threadId, List.of(new MailMessageSummary(
+                            threadId,
+                            threadId,
+                            0L,
+                            subject,
+                            "sender@example.com",
+                            "me@example.com",
+                            "2026-05-13T08:00:00Z",
+                            "snippet",
+                            unread)));
+                }
+                return messages;
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return Path.of("/tmp/mail");
+            }
+        };
+    }
+
+    private static org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall drawCallContaining(
+            List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls,
+            String text) {
+        return drawCalls.stream()
+                .filter(call -> call.text().contains(text))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No draw call containing " + text));
     }
 
     private static String renderedText(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls) {

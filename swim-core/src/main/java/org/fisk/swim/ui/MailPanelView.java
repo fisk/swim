@@ -24,6 +24,8 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 
 import com.googlecode.lanterna.TextColor;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.input.KeyType;
 
 public class MailPanelView extends View {
@@ -46,6 +48,17 @@ public class MailPanelView extends View {
     }
 
     private record SidebarRow(SidebarKind kind, String value, String label) {
+    }
+
+    private record BrowseLayout(
+            int bodyTop,
+            int bodyHeight,
+            int sidebarWidth,
+            int separatorX,
+            int threadsX,
+            int threadsWidth,
+            boolean statusVisible,
+            int statusY) {
     }
 
     private enum Mode {
@@ -133,6 +146,7 @@ public class MailPanelView extends View {
     private int _searchCursor;
     private Action _pendingAction = Action.NONE;
     private Character _pendingCharacter;
+    private Runnable _pendingMouseAction;
     private final StringBuilder _sidebarJumpDigits = new StringBuilder();
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _sendInFlight = new AtomicBoolean();
@@ -169,10 +183,15 @@ public class MailPanelView extends View {
     public org.fisk.swim.event.Response processEvent(org.fisk.swim.event.KeyStrokes events) {
         _pendingAction = Action.NONE;
         _pendingCharacter = null;
+        _pendingMouseAction = null;
         if (events.remaining() != 0) {
             return org.fisk.swim.event.Response.NO;
         }
         var event = events.current();
+        if (event instanceof MouseAction mouseAction) {
+            _pendingMouseAction = mouseAction(mouseAction);
+            return _pendingMouseAction == null ? org.fisk.swim.event.Response.NO : org.fisk.swim.event.Response.YES;
+        }
         if (_mode == Mode.COMPOSE) {
             if (event.isCtrlDown() && event.getKeyType() == KeyType.Character
                     && (event.getCharacter() == 's' || event.getCharacter() == 'S')) {
@@ -262,6 +281,11 @@ public class MailPanelView extends View {
 
     @Override
     public void respond() {
+        if (_pendingMouseAction != null) {
+            _pendingMouseAction.run();
+            _pendingMouseAction = null;
+            return;
+        }
         switch (_pendingAction) {
         case MOVE_DOWN -> {
             if (_mode == Mode.COMPOSE) {
@@ -356,6 +380,152 @@ public class MailPanelView extends View {
         _pendingCharacter = null;
     }
 
+    private Runnable mouseAction(MouseAction action) {
+        if (action == null || action.getPosition() == null) {
+            return null;
+        }
+        if (action.getActionType() != MouseActionType.CLICK_DOWN
+                && action.getActionType() != MouseActionType.SCROLL_UP
+                && action.getActionType() != MouseActionType.SCROLL_DOWN) {
+            return null;
+        }
+        Point origin = absoluteOrigin();
+        int localX = action.getPosition().getColumn() - origin.getX();
+        int localY = action.getPosition().getRow() - origin.getY();
+        int width = getBounds().getSize().getWidth();
+        int height = getBounds().getSize().getHeight();
+        if (localX < 0 || localY < 0 || localX >= width || localY >= height) {
+            return null;
+        }
+        if (_mode == Mode.COMPOSE) {
+            return composeMouseAction(action, localX, localY);
+        }
+        return browseMouseAction(action, localX, localY, width, height);
+    }
+
+    private Runnable browseMouseAction(MouseAction action, int localX, int localY, int width, int height) {
+        BrowseLayout layout = browseLayout(width, height);
+        boolean inSidebar = localX < layout.sidebarWidth();
+        boolean inThreads = localX >= layout.threadsX();
+        if (action.getActionType() == MouseActionType.SCROLL_UP
+                || action.getActionType() == MouseActionType.SCROLL_DOWN) {
+            int delta = action.getActionType() == MouseActionType.SCROLL_DOWN ? 3 : -3;
+            if (inSidebar) {
+                return () -> {
+                    _browsePane = BrowsePane.SIDEBAR;
+                    moveSidebarTo(Math.max(0, Math.min(_sidebarSelection + delta, _sidebarRows.size() - 1)));
+                };
+            }
+            if (inThreads) {
+                return () -> {
+                    _browsePane = BrowsePane.THREADS;
+                    moveSelection(delta);
+                };
+            }
+            return null;
+        }
+        if (localY < layout.bodyTop() || localY >= layout.bodyTop() + layout.bodyHeight()) {
+            return null;
+        }
+        int row = localY - layout.bodyTop();
+        if (inSidebar) {
+            if (row == 0) {
+                return () -> {
+                    _browsePane = BrowsePane.SIDEBAR;
+                    setNeedsRedraw();
+                };
+            }
+            int index = _sidebarScrollOffset + row - 1;
+            if (index < 0 || index >= _sidebarRows.size()) {
+                return null;
+            }
+            return () -> {
+                _browsePane = BrowsePane.SIDEBAR;
+                moveSidebarTo(index);
+            };
+        }
+        if (inThreads) {
+            if (row == 0) {
+                return () -> {
+                    _browsePane = BrowsePane.THREADS;
+                    setNeedsRedraw();
+                };
+            }
+            int index = _threadScrollOffset + row - 1;
+            if (index < 0 || index >= visibleThreadRows().size()) {
+                return null;
+            }
+            return () -> {
+                _browsePane = BrowsePane.THREADS;
+                moveTo(index);
+            };
+        }
+        return null;
+    }
+
+    private Runnable composeMouseAction(MouseAction action, int localX, int localY) {
+        if (action.getActionType() == MouseActionType.SCROLL_UP
+                || action.getActionType() == MouseActionType.SCROLL_DOWN) {
+            int delta = action.getActionType() == MouseActionType.SCROLL_DOWN ? 1 : -1;
+            return () -> {
+                if (_composeField == ComposeField.BODY) {
+                    moveComposeVertical(delta);
+                } else {
+                    advanceComposeField(delta);
+                }
+            };
+        }
+        if (localY <= 0) {
+            return null;
+        }
+        int row = localY - 1;
+        return () -> selectComposeFieldForMouse(row, localX);
+    }
+
+    private void selectComposeFieldForMouse(int row, int localX) {
+        switch (row) {
+        case 1 -> {
+            _composeField = ComposeField.TO;
+            _composeToCursor = cursorForMouse(localX, "To: ", _composeTo.length());
+        }
+        case 2 -> {
+            _composeField = ComposeField.CC;
+            _composeCcCursor = cursorForMouse(localX, "Cc: ", _composeCc.length());
+        }
+        case 3 -> {
+            _composeField = ComposeField.BCC;
+            _composeBccCursor = cursorForMouse(localX, "Bcc: ", _composeBcc.length());
+        }
+        case 4 -> {
+            _composeField = ComposeField.SUBJECT;
+            _composeSubjectCursor = cursorForMouse(localX, "Subject: ", _composeSubject.length());
+        }
+        default -> {
+            if (row >= 5) {
+                _composeField = ComposeField.BODY;
+                int bodyRow = Math.max(0, row - 6);
+                _composeBodyRow = Math.max(0, Math.min(bodyRow, _composeBody.size() - 1));
+                _composeBodyColumn = Math.max(0, Math.min(localX - 1, _composeBody.get(_composeBodyRow).length()));
+            }
+        }
+        }
+        setNeedsRedraw();
+    }
+
+    private int cursorForMouse(int localX, String prefix, int length) {
+        return Math.max(0, Math.min(localX - 1 - prefix.length(), length));
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (View parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
+    }
+
     private void accumulateSidebarJumpDigit(Character character) {
         if (character == null || !Character.isDigit(character)) {
             return;
@@ -409,40 +579,26 @@ public class MailPanelView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             int width,
             int height) {
-        var header = new AttributedString();
-        header.append(" Mail ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(" j/k select  / search  c compose  r reply  R reply-all  e refresh  d/u scroll body  o open-link  y copy-link  q close ",
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
-        UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        drawMailHeader(graphics, rect.getPoint(), width, "Mail",
+                "j/k select  / search  c compose  r reply  R reply-all  e refresh  d/u scroll body  o open-link  y copy-link  q close");
 
-        int bodyTop = rect.getPoint().getY() + 1;
-        int bodyHeight = Math.max(0, height - 1);
-        if (_mode == Mode.SEARCH || !_searchQuery.isBlank()) {
-            String line = _mode == Mode.SEARCH
-                    ? " Search: " + withCursor(_searchInput.toString(), _searchCursor)
-                    : " Filter: " + _searchQuery + "  (" + _threads.size() + "/" + _totalThreadCount + " loaded)";
-            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), bodyTop), width,
-                    AttributedString.create(line, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED),
-                    UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
-            bodyTop++;
-            bodyHeight = Math.max(0, bodyHeight - 1);
+        BrowseLayout layout = browseLayout(width, height);
+        int bodyTop = rect.getPoint().getY() + layout.bodyTop();
+        if (hasSearchLine()) {
+            drawSearchLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width);
         }
-        int sidebarWidth = Math.max(24, Math.min(40, Math.max(24, width / 3)));
-        if (width - sidebarWidth <= 8) {
-            sidebarWidth = Math.max(1, width / 4);
-        }
-        int separatorX = rect.getPoint().getX() + sidebarWidth;
-        int threadsX = separatorX + 1;
-        int threadsWidth = Math.max(0, width - sidebarWidth - 1);
-
-        for (int row = 0; row < bodyHeight; row++) {
-            UiTheme.drawLine(graphics, Point.create(separatorX, bodyTop + row), 1,
-                    AttributedString.create("│", UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED),
-                    UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+        if (layout.statusVisible()) {
+            drawMailStatus(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + layout.statusY()), width);
         }
 
-        drawSidebarColumn(graphics, rect.getPoint().getX(), bodyTop, sidebarWidth, bodyHeight);
-        drawThreadTable(graphics, threadsX, bodyTop, threadsWidth, bodyHeight);
+        for (int row = 0; row < layout.bodyHeight(); row++) {
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX() + layout.separatorX(), bodyTop + row), 1,
+                    AttributedString.create("│", UiTheme.TEXT_SUBTLE, UiTheme.MAIL_SECTION_BACKGROUND),
+                    UiTheme.TEXT_SUBTLE, UiTheme.MAIL_SECTION_BACKGROUND);
+        }
+
+        drawSidebarColumn(graphics, rect.getPoint().getX(), bodyTop, layout.sidebarWidth(), layout.bodyHeight());
+        drawThreadTable(graphics, rect.getPoint().getX() + layout.threadsX(), bodyTop, layout.threadsWidth(), layout.bodyHeight());
         drawAuthOverlay(graphics, rect, width, height);
     }
 
@@ -451,28 +607,137 @@ public class MailPanelView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             int width,
             int height) {
-        var header = new AttributedString();
-        header.append(" Compose ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(" Tab next  Shift-Tab prev  Ctrl-s send  Esc cancel ",
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
-        UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        drawMailHeader(graphics, rect.getPoint(), width, "Compose",
+                "Tab next  Shift-Tab prev  Ctrl-s send  Esc cancel");
 
         var lines = buildComposeLines(width);
         int row = 0;
         while (row < height - 1) {
             String line = row < lines.size() ? lines.get(row) : "";
-            TextColor background = row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            boolean active = isActiveComposeRow(row);
+            TextColor background = active ? UiTheme.MAIL_COMPOSE_FIELD_BACKGROUND : mailRowBackground(false, row);
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + row), width,
-                    AttributedString.create(" " + line, UiTheme.TEXT_PRIMARY, background),
+                    composeLine(line, background, active),
                     UiTheme.TEXT_MUTED, background);
             row++;
         }
 
         if (!_statusMessage.isBlank()) {
-            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + height - 1), width,
-                    AttributedString.create(" " + _statusMessage, UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
-                    UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+            drawMailStatus(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + height - 1), width);
         }
+    }
+
+    private void drawMailHeader(
+            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            Point point,
+            int width,
+            String title,
+            String help) {
+        var header = new AttributedString();
+        header.append(" " + title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
+        if (_allUnreadCount > 0) {
+            header.append(" " + _allUnreadCount + " unread ", UiTheme.MAIL_UNREAD_FOREGROUND,
+                    UiTheme.MAIL_HEADER_BACKGROUND);
+        }
+        header.append(" " + help + " ", UiTheme.TEXT_MUTED, UiTheme.MAIL_HEADER_BACKGROUND);
+        UiTheme.drawLine(graphics, point, width, header, UiTheme.TEXT_MUTED, UiTheme.MAIL_HEADER_BACKGROUND);
+    }
+
+    private void drawSearchLine(com.googlecode.lanterna.graphics.TextGraphics graphics, Point point, int width) {
+        var line = new AttributedString();
+        if (_mode == Mode.SEARCH) {
+            line.append(" Search ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
+            line.append(withCursor(_searchInput.toString(), _searchCursor), UiTheme.TEXT_PRIMARY,
+                    UiTheme.MAIL_STATUS_BACKGROUND);
+            line.append("  Enter apply  Esc cancel", UiTheme.TEXT_MUTED, UiTheme.MAIL_STATUS_BACKGROUND);
+        } else {
+            line.append(" Filter ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
+            line.append(_searchQuery, UiTheme.MAIL_UNREAD_FOREGROUND, UiTheme.MAIL_STATUS_BACKGROUND);
+            line.append("  " + _threads.size() + "/" + _totalThreadCount + " loaded", UiTheme.TEXT_MUTED,
+                    UiTheme.MAIL_STATUS_BACKGROUND);
+        }
+        UiTheme.drawLine(graphics, point, width, line, UiTheme.TEXT_MUTED, UiTheme.MAIL_STATUS_BACKGROUND);
+    }
+
+    private void drawMailStatus(com.googlecode.lanterna.graphics.TextGraphics graphics, Point point, int width) {
+        var status = new AttributedString();
+        status.append(" Status ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
+        status.append(UiTheme.fit(_statusMessage, Math.max(0, width - status.length() - 1)),
+                UiTheme.MAIL_UNREAD_FOREGROUND, UiTheme.MAIL_STATUS_BACKGROUND);
+        UiTheme.drawLine(graphics, point, width, status, UiTheme.TEXT_MUTED, UiTheme.MAIL_STATUS_BACKGROUND);
+    }
+
+    private AttributedString sectionHeader(String title, boolean active) {
+        var header = new AttributedString();
+        TextColor foreground = active ? UiTheme.TEXT_ON_ACCENT : UiTheme.ACCENT_BLUE;
+        TextColor background = active ? UiTheme.PANEL_SELECTION_BACKGROUND : UiTheme.MAIL_SECTION_BACKGROUND;
+        header.append(" " + title + " ", foreground, background);
+        return header;
+    }
+
+    private BrowseLayout browseLayout(int width, int height) {
+        int bodyTop = 1;
+        int bodyHeight = Math.max(0, height - 1);
+        if (hasSearchLine()) {
+            bodyTop++;
+            bodyHeight = Math.max(0, bodyHeight - 1);
+        }
+        boolean statusVisible = !_statusMessage.isBlank() && bodyHeight > 1;
+        int statusY = Math.max(0, height - 1);
+        if (statusVisible) {
+            bodyHeight = Math.max(0, bodyHeight - 1);
+        }
+        int sidebarWidth = sidebarWidth(width);
+        int separatorX = sidebarWidth;
+        int threadsX = separatorX + 1;
+        int threadsWidth = Math.max(0, width - sidebarWidth - 1);
+        return new BrowseLayout(bodyTop, bodyHeight, sidebarWidth, separatorX, threadsX, threadsWidth,
+                statusVisible, statusY);
+    }
+
+    private boolean hasSearchLine() {
+        return _mode == Mode.SEARCH || !_searchQuery.isBlank();
+    }
+
+    private int sidebarWidth(int width) {
+        int sidebarWidth = Math.max(24, Math.min(40, Math.max(24, width / 3)));
+        if (width - sidebarWidth <= 8) {
+            sidebarWidth = Math.max(1, width / 4);
+        }
+        return sidebarWidth;
+    }
+
+    private TextColor mailRowBackground(boolean selected, int row) {
+        if (selected) {
+            return UiTheme.PANEL_SELECTION_BACKGROUND;
+        }
+        return row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+    }
+
+    private boolean isActiveComposeRow(int row) {
+        return switch (_composeField) {
+        case TO -> row == 1;
+        case CC -> row == 2;
+        case BCC -> row == 3;
+        case SUBJECT -> row == 4;
+        case BODY -> row >= 5;
+        };
+    }
+
+    private AttributedString composeLine(String line, TextColor background, boolean active) {
+        var output = new AttributedString();
+        output.append(" ", UiTheme.TEXT_MUTED, background);
+        int labelEnd = line.indexOf(':');
+        if (labelEnd >= 0 && labelEnd < Math.min(line.length(), 12)) {
+            output.append(line.substring(0, labelEnd + 1), active ? UiTheme.ACCENT_BLUE : UiTheme.TEXT_MUTED,
+                    background);
+            if (labelEnd + 1 < line.length()) {
+                output.append(line.substring(labelEnd + 1), UiTheme.TEXT_PRIMARY, background);
+            }
+            return output;
+        }
+        output.append(line, active ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED, background);
+        return output;
     }
 
     private List<String> buildComposeLines(int width) {
@@ -1344,8 +1609,8 @@ public class MailPanelView extends View {
         }
         int row = 0;
         UiTheme.drawLine(graphics, Point.create(x, y + row), width,
-                AttributedString.create(" Accounts & Tags", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+                sectionHeader("Accounts & Tags", _browsePane == BrowsePane.SIDEBAR),
+                UiTheme.TEXT_MUTED, UiTheme.MAIL_SECTION_BACKGROUND);
         row++;
         int availableRows = Math.max(0, height - row);
         adjustSidebarScroll(availableRows);
@@ -1353,12 +1618,10 @@ public class MailPanelView extends View {
             int index = _sidebarScrollOffset + visible;
             SidebarRow sidebarRow = _sidebarRows.get(index);
             boolean selected = _browsePane == BrowsePane.SIDEBAR && index == _sidebarSelection;
-            TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
-                    : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
-            TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
+            TextColor background = mailRowBackground(selected, visible);
             UiTheme.drawLine(graphics, Point.create(x, y + row + visible), width,
-                    AttributedString.create(" " + formatSidebarRow(index, sidebarRow, width - 1), foreground, background),
-                    foreground, background);
+                    formatSidebarRow(index, sidebarRow, width, selected, background),
+                    selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_MUTED, background);
         }
     }
 
@@ -1367,21 +1630,21 @@ public class MailPanelView extends View {
             return;
         }
         UiTheme.drawLine(graphics, Point.create(x, y), width,
-                AttributedString.create(" Threads", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_MUTED),
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
+                sectionHeader("Threads", _browsePane == BrowsePane.THREADS),
+                UiTheme.TEXT_MUTED, UiTheme.MAIL_SECTION_BACKGROUND);
         int availableRows = Math.max(0, height - 1);
         adjustThreadScroll(availableRows);
         var rows = visibleThreadRows();
         for (int visible = 0; visible < availableRows; visible++) {
             int index = _threadScrollOffset + visible;
             boolean selected = _browsePane == BrowsePane.THREADS && index == _selectedIndex;
-            TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
-                    : visible % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
-            TextColor foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
-            String line = index < rows.size() ? formatThreadTableRow(rows.get(index), width) : "";
+            TextColor background = mailRowBackground(selected, visible);
+            AttributedString line = index < rows.size()
+                    ? formatThreadTableRow(rows.get(index), width, selected, background)
+                    : AttributedString.create("", UiTheme.TEXT_MUTED, background);
             UiTheme.drawLine(graphics, Point.create(x, y + 1 + visible), width,
-                    AttributedString.create(" " + line, foreground, background),
-                    foreground, background);
+                    line,
+                    selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_MUTED, background);
         }
     }
 
@@ -1447,7 +1710,7 @@ public class MailPanelView extends View {
         _sidebarScrollOffset = Math.max(0, Math.min(_sidebarScrollOffset, maxOffset));
     }
 
-    private String formatSidebarRow(int index, SidebarRow row, int width) {
+    private AttributedString formatSidebarRow(int index, SidebarRow row, int width, boolean selected, TextColor background) {
         String baseLabel = switch (row.kind()) {
         case ALL -> row.label();
         case UNSORTED -> row.label();
@@ -1465,17 +1728,28 @@ public class MailPanelView extends View {
                 .orElse(0);
         case TAG -> _tagUnreadCounts.getOrDefault(row.value(), 0);
         };
+        var output = new AttributedString();
+        TextColor labelForeground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND
+                : unread > 0 ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
+        TextColor countForeground = selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.MAIL_UNREAD_FOREGROUND;
+        output.append(" ", labelForeground, background);
         if (unread <= 0) {
-            return truncateToWidth(label, width);
+            output.append(truncateToWidth(label, Math.max(0, width - 1)), labelForeground, background);
+            return output;
         }
         String suffix = "(" + unread + ")";
-        int leftWidth = Math.max(0, width - suffix.length() - 1);
-        return padRight(truncateToWidth(label, leftWidth), leftWidth) + " " + suffix;
+        int contentWidth = Math.max(0, width - 1);
+        int leftWidth = Math.max(0, contentWidth - suffix.length() - 1);
+        output.append(padRight(truncateToWidth(label, leftWidth), leftWidth), labelForeground, background);
+        output.append(" ", UiTheme.TEXT_MUTED, background);
+        output.append(suffix, countForeground, background);
+        return output;
     }
 
-    private String formatThreadTableRow(ThreadRow row, int width) {
+    private AttributedString formatThreadTableRow(ThreadRow row, int width, boolean selected, TextColor background) {
         String timestamp = safe(row.message().receivedAt(), "");
-        String unreadMarker = row.message().unread() ? "● " : "  ";
+        boolean unread = row.message().unread() || row.thread().unread();
+        String unreadMarker = unread ? "● " : "  ";
         String rootPrefix = row.treePrefix().isEmpty() ? "" : row.treePrefix();
         String countSuffix = row.treePrefix().isEmpty() && row.thread().messageCount() > 1
                 ? " (" + row.thread().messageCount() + ")"
@@ -1484,16 +1758,45 @@ public class MailPanelView extends View {
                 ? " [" + String.join(",", row.thread().tags()) + "]"
                 : "";
         String sender = safe(extractDisplayName(row.message().from()), "(unknown)");
-        String left = unreadMarker + rootPrefix + safe(row.message().subject(), "(no subject)") + countSuffix
-                + "  " + sender + tagSuffix;
-        if (timestamp.isBlank()) {
-            return truncateToWidth(left, width - 1);
+        int contentWidth = Math.max(0, width - 1);
+        int timestampWidth = timestamp.isBlank() ? 0 : Math.min(timestamp.length(), Math.max(0, width / 3));
+        String timestampPart = timestampWidth == 0 ? "" : "  " + truncateToWidth(timestamp, timestampWidth);
+        int leftWidth = timestampPart.isBlank() ? contentWidth : Math.max(0, contentWidth - timestampPart.length());
+        var output = new AttributedString();
+        output.append(" ", selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_MUTED, background);
+        int used = 0;
+        TextColor subjectForeground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND
+                : unread ? UiTheme.MAIL_UNREAD_FOREGROUND : UiTheme.TEXT_PRIMARY;
+        TextColor metadataForeground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_SUBTLE;
+        TextColor tagForeground = selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.MAIL_TAG_FOREGROUND;
+        used += appendFitted(output, unreadMarker, leftWidth - used,
+                unread && !selected ? UiTheme.MAIL_UNREAD_FOREGROUND : metadataForeground, background);
+        used += appendFitted(output, rootPrefix, leftWidth - used, metadataForeground, background);
+        used += appendFitted(output, safe(row.message().subject(), "(no subject)"), leftWidth - used,
+                subjectForeground, background);
+        used += appendFitted(output, countSuffix, leftWidth - used, metadataForeground, background);
+        used += appendFitted(output, "  " + sender, leftWidth - used, metadataForeground, background);
+        used += appendFitted(output, tagSuffix, leftWidth - used, tagForeground, background);
+        if (!timestampPart.isBlank()) {
+            if (used < leftWidth) {
+                output.append(" ".repeat(leftWidth - used), metadataForeground, background);
+            }
+            output.append(timestampPart, metadataForeground, background);
         }
-        int timestampWidth = Math.min(timestamp.length(), Math.max(0, width / 3));
-        int leftWidth = Math.max(0, width - timestampWidth - 2);
-        String truncatedLeft = truncateToWidth(left, leftWidth);
-        String padded = padRight(truncatedLeft, leftWidth);
-        return padded + "  " + timestamp;
+        return output;
+    }
+
+    private static int appendFitted(
+            AttributedString output,
+            String text,
+            int remaining,
+            TextColor foreground,
+            TextColor background) {
+        String fitted = truncateToWidth(text, remaining);
+        if (!fitted.isEmpty()) {
+            output.append(fitted, foreground, background);
+        }
+        return fitted.length();
     }
 
     private static String extractDisplayName(String from) {
@@ -1818,13 +2121,13 @@ public class MailPanelView extends View {
         String top = "┌" + "─".repeat(Math.max(0, modalWidth - 2)) + "┐";
         String bottom = "└" + "─".repeat(Math.max(0, modalWidth - 2)) + "┘";
         UiTheme.drawLine(graphics, Point.create(modalX, modalY), modalWidth,
-                AttributedString.create(top, UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
-                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+                AttributedString.create(top, UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
 
         String title = UiTheme.padRight(" Mail Sign-In Required", Math.max(0, modalWidth - 2));
         UiTheme.drawLine(graphics, Point.create(modalX, modalY + 1), modalWidth,
-                AttributedString.create("│" + title + "│", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
-                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+                AttributedString.create("│" + title + "│", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
 
         for (int i = 0; i < bodyRows; i++) {
             String bodyLine = i < wrapped.size() ? wrapped.get(i) : "";
@@ -1836,11 +2139,12 @@ public class MailPanelView extends View {
 
         String footer = UiTheme.padRight(footerText, Math.max(0, modalWidth - 2));
         UiTheme.drawLine(graphics, Point.create(modalX, modalY + modalHeight - 2), modalWidth,
-                AttributedString.create("│" + footer + "│", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT),
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+                AttributedString.create("│" + footer + "│", UiTheme.MAIL_UNREAD_FOREGROUND,
+                        UiTheme.MAIL_STATUS_BACKGROUND),
+                UiTheme.MAIL_UNREAD_FOREGROUND, UiTheme.MAIL_STATUS_BACKGROUND);
         UiTheme.drawLine(graphics, Point.create(modalX, modalY + modalHeight - 1), modalWidth,
-                AttributedString.create(bottom, UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT),
-                UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
+                AttributedString.create(bottom, UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
     }
 
     private static String rootMessage(Throwable throwable) {

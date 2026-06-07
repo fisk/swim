@@ -51,6 +51,13 @@ public final class UiTheme {
     public static final TextColor CHAT_ME = color("#ffb86b");
     public static final TextColor CHAT_NEMO = color("#7ee787");
 
+    public static final TextColor MAIL_HEADER_BACKGROUND = color("#12384d");
+    public static final TextColor MAIL_SECTION_BACKGROUND = color("#172635");
+    public static final TextColor MAIL_STATUS_BACKGROUND = color("#263243");
+    public static final TextColor MAIL_UNREAD_FOREGROUND = color("#ffcf66");
+    public static final TextColor MAIL_TAG_FOREGROUND = color("#7ee787");
+    public static final TextColor MAIL_COMPOSE_FIELD_BACKGROUND = color("#203349");
+
     public static final TextColor MODELINE_BACKGROUND = color("#091017");
     public static final TextColor MODELINE_FOREGROUND = color("#d2dce5");
     public static final TextColor MODE_NORMAL = color("#1d4e89");

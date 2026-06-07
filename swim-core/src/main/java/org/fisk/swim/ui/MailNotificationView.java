@@ -35,14 +35,14 @@ public final class MailNotificationView extends View {
         var graphics = TerminalContext.getInstance().getGraphics();
         UiTheme.drawLine(graphics, rect.getPoint(), rect.getSize().getWidth(),
                 AttributedString.create(" " + UiTheme.fit(notification.heading(), rect.getSize().getWidth() - 2),
-                        UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GREEN),
-                UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GREEN);
+                        UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND),
+                UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
         UiTheme.drawLine(graphics,
                 Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1),
                 rect.getSize().getWidth(),
                 AttributedString.create(" " + UiTheme.fit(notification.sender(), rect.getSize().getWidth() - 2),
-                        UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ELEVATED),
-                UiTheme.TEXT_PRIMARY,
+                        UiTheme.MAIL_UNREAD_FOREGROUND, UiTheme.SURFACE_ELEVATED),
+                UiTheme.MAIL_UNREAD_FOREGROUND,
                 UiTheme.SURFACE_ELEVATED);
         UiTheme.drawLine(graphics,
                 Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 2),
