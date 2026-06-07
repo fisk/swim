@@ -81,7 +81,8 @@ Normal mode uses familiar Vim-style keys:
 | `g x` / `g a` | Show diagnostics for the current line / show code actions |
 | `g n` / `g N` / `g C` | Add next/previous multicursor / clear extras |
 | `Ctrl-o` / `Tab` | Jump backward / forward |
-| `t` | Tree view plugin |
+| `t` | Todo workspace |
+| `Ctrl-t` | Quick todo capture |
 
 ## Discoverability
 
@@ -212,7 +213,7 @@ Passing a directory to SWIM opens a dired-style directory browser instead of a f
 
 The project tree ships as the separate `swim-tree-view` plugin artifact and is loaded on demand.
 
-- Press `t` in normal mode to open or close the tree view.
+- Run `:tree` to open or close the tree view.
 - The tree opens on the left side of the current layout.
 - Use `j/k` or arrow keys to move.
 - Use `h/l` or left/right arrows to collapse and expand directories.
@@ -221,6 +222,18 @@ The project tree ships as the separate `swim-tree-view` plugin artifact and is l
 - Use `q` or `Esc` to close the tree pane.
 
 The tree follows the current project root and keeps its selection synced to the active file.
+
+## Todo Workspace
+
+Press `t` in normal mode or run `:todo` to open the fullscreen Todo workspace. Press `Ctrl-t` from anywhere to add a quick Inbox todo.
+
+- New todo items start in the uncategorized Inbox.
+- In quick capture, Enter adds the todo and Esc cancels it.
+- Use `p` on a todo to assign or create a project; leaving the project blank moves it back to Inbox.
+- Use `g` to replace tags with a space- or comma-separated tag list.
+- Use `c` or Enter to complete or reopen a todo, and `x` to delete it.
+- The sidebar filters by Inbox, all open todos, completed todos, projects, and tags.
+- Todo data is stored in `~/.swim/todo/todos.mv.db`.
 
 ## Java Support
 

@@ -40,6 +40,8 @@ import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.todo.TodoStore;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -59,7 +61,8 @@ public class Window implements Drawable {
         MAIL,
         SLACK,
         PLUGIN,
-        SHELL
+        SHELL,
+        TODO
     }
 
     private static final class WorkspaceState {
@@ -116,6 +119,8 @@ public class Window implements Drawable {
     private MailNotificationView _mailNotificationView;
     private DiagnosticPopupView _diagnosticPopupView;
     private CodeActionPopupView _codeActionPopupView;
+    private TodoQuickCaptureView _todoQuickCaptureView;
+    private EventResponder _todoQuickCaptureReturnResponder;
     private boolean _hoverDiagnosticsVisible;
     private Size _size;
     private BufferContext _bufferContext;
@@ -307,6 +312,58 @@ public class Window implements Drawable {
             }
         }
         return openSlackWorkspace(client);
+    }
+
+    public boolean showTodoWorkspace(TodoStore store) {
+        if (store == null) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.TODO) {
+            moveWorkspaceToFront(_currentWorkspace);
+            activateView(_workspaceView);
+            return true;
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.TODO) {
+                return activateWorkspace(workspace);
+            }
+        }
+        return openTodoWorkspace(store);
+    }
+
+    public boolean showTodoQuickCapture(TodoStore store) {
+        if (_rootView == null || store == null) {
+            return false;
+        }
+        ensureLayoutState();
+        if (isShowingTodoQuickCapture()) {
+            return false;
+        }
+        _todoQuickCaptureReturnResponder = _rootView.getFirstResponder();
+        _todoQuickCaptureView = new TodoQuickCaptureView(Rect.create(0, 0, 0, 0));
+        _todoQuickCaptureView.setOnCancel(() -> hideTodoQuickCapture(false));
+        _todoQuickCaptureView.setOnSubmit(title -> {
+            try {
+                store.createInboxItem(title);
+                refreshTodoWorkspaceViews();
+                if (_commandView != null) {
+                    _commandView.setMessage("Added to Todo Inbox");
+                }
+                hideTodoQuickCapture(true);
+            } catch (RuntimeException e) {
+                if (_commandView != null) {
+                    _commandView.setMessage(e.getMessage() == null ? "Unable to add Todo item" : e.getMessage());
+                }
+                hideTodoQuickCapture(false);
+            }
+        });
+        _rootView.addSubview(_todoQuickCaptureView);
+        _todoQuickCaptureView.syncBounds();
+        _rootView.setFirstResponder(_todoQuickCaptureView);
+        refreshChromeState();
+        _rootView.setNeedsRedraw();
+        return true;
     }
 
     public boolean sendActiveMailCompose() {
@@ -685,6 +742,37 @@ public class Window implements Drawable {
 
     public boolean isShowingSlackWorkspace() {
         return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.SLACK;
+    }
+
+    public boolean isShowingTodoWorkspace() {
+        return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.TODO;
+    }
+
+    public boolean isShowingTodoQuickCapture() {
+        return _todoQuickCaptureView != null && _todoQuickCaptureView.getParent() != null;
+    }
+
+    public void hideTodoQuickCapture() {
+        hideTodoQuickCapture(false);
+    }
+
+    private void hideTodoQuickCapture(boolean submitted) {
+        TodoQuickCaptureView view = _todoQuickCaptureView;
+        if (view != null) {
+            view.removeFromParent();
+            _todoQuickCaptureView = null;
+        }
+        if (_rootView != null) {
+            if (_rootView.getFirstResponder() == view) {
+                _rootView.setFirstResponder(todoQuickCaptureRestoreTarget());
+            }
+            _rootView.setNeedsRedraw();
+        }
+        if (!submitted && _commandView != null) {
+            _commandView.setMessage(null);
+        }
+        _todoQuickCaptureReturnResponder = null;
+        refreshChromeState();
     }
 
     boolean usesFrameModeLines() {
@@ -1566,6 +1654,7 @@ public class Window implements Drawable {
             _modeLineView.close();
         }
         MailStatusService.shutdownInstance();
+        TodoUiSupport.shutdownInstance();
         _instance = null;
     }
 
@@ -1654,6 +1743,52 @@ public class Window implements Drawable {
         }
     }
 
+    private EventResponder todoQuickCaptureRestoreTarget() {
+        if (isRestorableRootResponder(_todoQuickCaptureReturnResponder)) {
+            return _todoQuickCaptureReturnResponder;
+        }
+        if (isRestorableRootResponder(_activeView)) {
+            return _activeView;
+        }
+        if (isRestorableRootResponder(_activeBufferView)) {
+            return _activeBufferView;
+        }
+        View focusable = findFocusableView(_workspaceView);
+        return isRestorableRootResponder(focusable) ? focusable : null;
+    }
+
+    private boolean isRestorableRootResponder(EventResponder responder) {
+        if (responder == null || responder == _todoQuickCaptureView) {
+            return false;
+        }
+        if (responder instanceof View view) {
+            return view == _rootView || view.getParent() != null;
+        }
+        return true;
+    }
+
+    private void refreshTodoWorkspaceViews() {
+        var refreshed = new HashSet<TodoWorkspaceView>();
+        refreshTodoWorkspaceView(_workspaceView, refreshed);
+        for (var workspace : _workspaceHistory) {
+            if (workspace != null) {
+                refreshTodoWorkspaceView(workspace._workspaceView, refreshed);
+            }
+        }
+    }
+
+    private void refreshTodoWorkspaceView(View view, HashSet<TodoWorkspaceView> refreshed) {
+        if (view instanceof TodoWorkspaceView todoWorkspaceView && refreshed.add(todoWorkspaceView)) {
+            todoWorkspaceView.refreshFromStore();
+            return;
+        }
+        if (view instanceof SplitView splitView) {
+            for (View leaf : splitView.leafViews()) {
+                refreshTodoWorkspaceView(leaf, refreshed);
+            }
+        }
+    }
+
     private void initializeWorkspaceHistory() {
         var initial = captureCurrentWorkspace();
         initial._kind = WorkspaceKind.BUFFER;
@@ -1681,6 +1816,9 @@ public class Window implements Drawable {
         if (responder instanceof CodeActionPopupView) {
             return KeyMenuView.FocusContext.LIST_PANEL;
         }
+        if (responder instanceof TodoQuickCaptureView) {
+            return KeyMenuView.FocusContext.PANEL;
+        }
         if (responder instanceof ProjectSearchPanelView) {
             return KeyMenuView.FocusContext.SEARCH_PANEL;
         }
@@ -1692,6 +1830,9 @@ public class Window implements Drawable {
         }
         if (responder instanceof ShellPanelView) {
             return KeyMenuView.FocusContext.SHELL;
+        }
+        if (responder instanceof TodoWorkspaceView) {
+            return KeyMenuView.FocusContext.PANEL;
         }
         if (responder instanceof BufferView) {
             return KeyMenuView.FocusContext.BUFFER;
@@ -1727,6 +1868,9 @@ public class Window implements Drawable {
         if (responder instanceof CodeActionPopupView popupView) {
             return popupView.getTitle();
         }
+        if (responder instanceof TodoQuickCaptureView captureView) {
+            return captureView.getTitle();
+        }
         if (responder instanceof ProjectSearchPanelView searchPanelView) {
             return searchPanelView.getTitle();
         }
@@ -1738,6 +1882,9 @@ public class Window implements Drawable {
         }
         if (responder instanceof ShellPanelView) {
             return "shell input active";
+        }
+        if (responder instanceof TodoWorkspaceView todoWorkspaceView) {
+            return todoWorkspaceView.getTitle();
         }
         if (responder instanceof ChatPanelView chatPanelView) {
             return chatPanelView.getTitle();
@@ -1773,6 +1920,7 @@ public class Window implements Drawable {
         } else {
             _log.debug("Relayout not needed due to same size");
         }
+        AttributedString.clearRenderedClickRanges();
         _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
         _size = size;
         if (_activeView instanceof BufferView bufferView) {
@@ -2135,6 +2283,8 @@ public class Window implements Drawable {
         });
         var responders = eventThread.getResponder();
         var prefixLayer = responders.addLayer();
+        var quickCaptureLayer = responders.addLayer();
+        quickCaptureLayer.addEventResponder("<CTRL>-t", () -> TodoUiSupport.quickCapture(Window.this));
         prefixLayer.addEventResponder(new EventResponder() {
             private CompiledRemap _matched;
 
@@ -2480,6 +2630,9 @@ public class Window implements Drawable {
         if (_mailNotificationView != null) {
             _mailNotificationView.syncBounds();
         }
+        if (_todoQuickCaptureView != null) {
+            _todoQuickCaptureView.syncBounds();
+        }
     }
 
     private boolean keyMenuNeedsRelayout(Size size) {
@@ -2743,6 +2896,13 @@ public class Window implements Drawable {
         return activateWorkspace(workspace);
     }
 
+    private boolean openTodoWorkspace(org.fisk.swim.todo.TodoStore store) {
+        WorkspaceState workspace = createViewWorkspace(new TodoWorkspaceView(Rect.create(0, 0, 0, 0), store),
+                WorkspaceKind.TODO);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
     private WorkspaceState createMailWorkspace(org.fisk.swim.mail.MailClient client) {
         var workspace = new WorkspaceState();
         workspace._kind = WorkspaceKind.MAIL;
@@ -2917,11 +3077,17 @@ public class Window implements Drawable {
         if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.SLACK) {
             return WorkspaceKind.SLACK;
         }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.TODO) {
+            return WorkspaceKind.TODO;
+        }
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
         }
         if (_workspaceView instanceof SlackPanelView) {
             return WorkspaceKind.SLACK;
+        }
+        if (_workspaceView instanceof TodoWorkspaceView) {
+            return WorkspaceKind.TODO;
         }
         if (_workspaceView instanceof ShellPanelView) {
             return WorkspaceKind.SHELL;
@@ -3009,6 +3175,7 @@ public class Window implements Drawable {
         case MAIL -> "mail";
         case SLACK -> "slack";
         case SHELL -> workspace._workspaceView instanceof ShellPanelView shellPanelView ? shellPanelView.getTitle() : "shell";
+        case TODO -> "todo";
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {

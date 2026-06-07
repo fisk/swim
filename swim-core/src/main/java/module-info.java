@@ -4,9 +4,11 @@ module org.fisk.swim.core {
     requires langchain4j.open.ai;
     requires com.google.gson;
     requires com.googlecode.lanterna;
+    requires com.h2database;
     requires static java.compiler;
     requires java.management;
     requires java.net.http;
+    requires java.sql;
     requires static jdk.httpserver;
     requires org.apache.logging.log4j;
     requires org.apache.logging.log4j.core;

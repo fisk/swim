@@ -18,6 +18,7 @@ build
 /workspace/
 /email/
 /email/accounts.json
+/todo/
 /slack/
 /nemo.conf
 /nemo/

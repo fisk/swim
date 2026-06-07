@@ -11,7 +11,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.fisk.swim.EventThread;
 import org.junit.jupiter.api.Test;
 
+import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.input.KeyStroke;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 class EventThreadTest {
     @Test
@@ -166,6 +169,30 @@ class EventThreadTest {
         thread.enqueue(new RunnableEvent(afterCancelRan::countDown));
 
         assertTrue(afterCancelRan.await(2, TimeUnit.SECONDS));
+
+        thread.shutdown();
+        thread.join(2000);
+    }
+
+    @Test
+    void mouseClearsPendingKeyPrefixAndDoesNotNotifyKeyObservers() throws Exception {
+        var thread = new EventThread();
+        var matched = new AtomicInteger();
+        var observed = new AtomicInteger();
+        var completed = new CountDownLatch(1);
+        thread.getResponder().addEventResponder(new TextEventResponder("g g", matched::incrementAndGet));
+        thread.addKeyStrokeObserver(ignored -> observed.incrementAndGet());
+        thread.start();
+
+        thread.enqueue(new KeyStrokeEvent(new KeyStroke('g', false, false)));
+        thread.enqueue(new KeyStrokeEvent(new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(0, 0))));
+        thread.enqueue(new KeyStrokeEvent(new KeyStroke('g', false, false)));
+        thread.enqueue(new RunnableEvent(completed::countDown));
+
+        assertTrue(completed.await(2, TimeUnit.SECONDS));
+        Thread.sleep(100);
+        assertEquals(0, matched.get());
+        assertEquals(2, observed.get());
 
         thread.shutdown();
         thread.join(2000);

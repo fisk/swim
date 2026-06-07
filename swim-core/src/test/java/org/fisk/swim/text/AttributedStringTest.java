@@ -2,8 +2,12 @@ package org.fisk.swim.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.ui.Point;
 import org.junit.jupiter.api.Test;
 
 import com.googlecode.lanterna.TextColor;
@@ -69,6 +73,48 @@ class AttributedStringTest {
         assertEquals("bcde", slice.toString());
         assertEquals(4, slice.length());
         assertEquals("b,cd,e", fragments(slice));
+    }
+
+    @Test
+    void clickRangeReceivesIndexIntoRange() {
+        var clicked = new AtomicInteger(-1);
+        var string = AttributedString.create("hello", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+        string.onClick(1, 4, clicked::set);
+
+        string.clickAt(3);
+
+        assertEquals(2, clicked.get());
+    }
+
+    @Test
+    void slicePreservesClickableSubranges() {
+        var clicked = new AtomicInteger(-1);
+        var string = AttributedString.create("abcdef", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+        string.onClick(2, 5, clicked::set);
+
+        var slice = string.slice(1, 4);
+        slice.clickAt(2);
+
+        assertEquals(1, clicked.get());
+    }
+
+    @Test
+    void drawAtRegistersClickableScreenRange() {
+        TerminalContextTestSupport.install(20, 5);
+        try {
+            var clicked = new AtomicInteger(-1);
+            var string = AttributedString.create("hello", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+            string.onClick(1, 4, clicked::set);
+
+            AttributedString.clearRenderedClickRanges();
+            string.drawAt(Point.create(5, 2), TerminalContext.getInstance().getGraphics());
+            Runnable action = AttributedString.clickActionAt(Point.create(7, 2));
+            action.run();
+
+            assertEquals(1, clicked.get());
+        } finally {
+            TerminalContext.shutdownInstance();
+        }
     }
 
     private static String fragments(AttributedString string) {

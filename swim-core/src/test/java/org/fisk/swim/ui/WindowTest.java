@@ -27,6 +27,10 @@ import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.googlecode.lanterna.TerminalPosition;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
+
 class WindowTest {
     @TempDir
     Path tempDir;
@@ -881,6 +885,46 @@ class WindowTest {
     }
 
     @Test
+    void clickingSplitFrameBarActivatesThatBufferFrame() throws Exception {
+        Path file = writeFile("click-split-frame.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var topView = window.getBufferContext().getBufferView();
+            var bottomView = window.splitActiveBufferVertically();
+            assertSame(bottomView, window.getActiveView());
+            window.activateView(topView);
+
+            Rect bottomBounds = absoluteScreenBounds(bottomView);
+            click(window, bottomBounds.getPoint().getX() + 2,
+                    bottomBounds.getPoint().getY() + bottomBounds.getSize().getHeight());
+
+            assertSame(bottomView, window.getActiveView());
+            assertSame(bottomView, window.getRootView().getFirstResponder());
+        }
+    }
+
+    @Test
+    void clickingSplitBufferGutterActivatesThatBufferFrame() throws Exception {
+        Path file = writeFile("click-split-gutter.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var topView = window.getBufferContext().getBufferView();
+            var bottomView = window.splitActiveBufferVertically();
+            assertSame(bottomView, window.getActiveView());
+            window.activateView(topView);
+
+            Rect bottomBounds = absoluteScreenBounds(bottomView);
+            click(window, bottomBounds.getPoint().getX(),
+                    bottomBounds.getPoint().getY());
+
+            assertSame(bottomView, window.getActiveView());
+            assertSame(bottomView, window.getRootView().getFirstResponder());
+        }
+    }
+
+    @Test
     void splitThenVsplitDoesNotLoseAnExtraRowToHorizontalSeparator() throws Exception {
         Path file = writeFile("nested-split.txt", "alpha\nbeta\n");
 
@@ -1196,6 +1240,11 @@ class WindowTest {
             y += parent.getBounds().getPoint().getY();
         }
         return Rect.create(x, y, view.getBounds().getSize().getWidth(), view.getBounds().getSize().getHeight());
+    }
+
+    private static void click(Window window, int x, int y) {
+        HeadlessWindowHarness.dispatch(window.getRootView(),
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(x, y)));
     }
 
     private static ListView.ListItem item(String label) {

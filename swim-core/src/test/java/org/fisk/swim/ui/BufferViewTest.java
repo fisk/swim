@@ -14,7 +14,9 @@ import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
 import org.fisk.swim.lsp.DiagnosticService;
+import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
@@ -77,6 +79,94 @@ class BufferViewTest {
                     new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(3, 3)));
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertEquals("Line Diagnostics", popup.getTitle());
+        }
+    }
+
+    @Test
+    void singletonMouseClickMovesCursorToClickedTextPosition() throws Exception {
+        Path path = tempDir.resolve("click-cursor.txt");
+        Files.writeString(path, "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var view = windowBufferView(harness);
+
+            var response = view.processEvent(new KeyStrokes(List.of(
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(4, 2)))));
+
+            assertEquals(Response.YES, response);
+            assertEquals(2, harness.getWindow().getBufferContext().getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void normalModeMouseDragEntersVisualModeAndSelectsDraggedText() throws Exception {
+        Path path = tempDir.resolve("drag-visual.txt");
+        Files.writeString(path, "abcdef\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = windowBufferView(harness);
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY();
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.DRAG, 1, new TerminalPosition(textX + 3, textY)));
+
+            assertEquals(window.getVisualMode(), window.getCurrentMode());
+            assertEquals(2, window.getBufferContext().getBuffer().getCursors().size());
+            assertEquals(3, window.getBufferContext().getBuffer().getCursor().getPosition());
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(1));
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(2));
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(3));
+        }
+    }
+
+    @Test
+    void mouseReleaseCreatesVisualSelectionWhenTerminalDoesNotSendDragEvents() throws Exception {
+        Path path = tempDir.resolve("release-visual.txt");
+        Files.writeString(path, "abcdef\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = windowBufferView(harness);
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY();
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 4, textY)));
+
+            assertEquals(window.getVisualMode(), window.getCurrentMode());
+            assertEquals(4, window.getBufferContext().getBuffer().getCursor().getPosition());
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(1));
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(4));
+        }
+    }
+
+    @Test
+    void simpleMouseClickReleaseKeepsNormalMode() throws Exception {
+        Path path = tempDir.resolve("release-click.txt");
+        Files.writeString(path, "abcdef\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = windowBufferView(harness);
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY();
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 2, textY)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 2, textY)));
+
+            assertEquals(window.getNormalMode(), window.getCurrentMode());
+            assertEquals(2, window.getBufferContext().getBuffer().getCursor().getPosition());
         }
     }
 
@@ -190,6 +280,20 @@ class BufferViewTest {
         diagnostic.setSource("test");
         diagnostic.setMessage(message);
         return diagnostic;
+    }
+
+    private static BufferView windowBufferView(HeadlessWindowHarness harness) {
+        return harness.getWindow().getBufferContext().getBufferView();
+    }
+
+    private static Point absoluteScreenOrigin(View view) {
+        int x = view.getBounds().getPoint().getX();
+        int y = view.getBounds().getPoint().getY();
+        for (var parent = view.getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     private static char[][] renderCells(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int width, int height) {

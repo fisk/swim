@@ -18,6 +18,8 @@ class HelpIndexTest {
         assertTrue(rendered.contains("SWIM tutorial"));
         assertTrue(rendered.contains("  :help shows this tutorial."));
         assertTrue(rendered.contains("  :slack opens the fullscreen Slack workspace."));
+        assertTrue(rendered.contains("  :todo opens the Todo workspace."));
+        assertTrue(rendered.contains("  Ctrl-t opens quick Todo capture from any screen."));
         assertTrue(rendered.contains("  :vsplit opens another view to the right of the active buffer."));
         assertTrue(rendered.contains("Pane shortcuts"));
         assertTrue(rendered.contains("  Ctrl-w > and Ctrl-w < make the active pane wider or narrower."));
@@ -30,6 +32,11 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  g w<char> jumps to visible word starts and shows hints when needed."));
         assertTrue(rendered.contains("  g c<char> jumps to visible matching characters and shows hints when needed."));
         assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
+        assertTrue(rendered.contains("Todo"));
+        assertTrue(rendered.contains("  Press t or run :todo to open the Todo workspace."));
+        assertTrue(rendered.contains("  Press Ctrl-t from any screen to add a quick Inbox todo."));
+        assertTrue(rendered.contains("  In quick capture, Enter adds the todo and Esc cancels it."));
+        assertTrue(rendered.contains("  Todo items are stored in ~/.swim/todo/todos.mv.db."));
         assertTrue(rendered.contains("Nemo"));
         assertTrue(rendered.contains("  Inside Nemo, press Enter to send; Shift-Enter, Ctrl-Enter, Alt-Enter, or Ctrl-J insert newlines."));
         assertTrue(rendered.contains("  Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf."));

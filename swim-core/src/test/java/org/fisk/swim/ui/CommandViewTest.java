@@ -36,6 +36,7 @@ import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.slack.SlackPluginRegistry;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.MailPanelView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -305,6 +306,52 @@ class CommandViewTest {
     }
 
     @Test
+    void todoCommandOpensTodoWorkspace() throws Exception {
+        Path path = tempDir.resolve("todo-command.txt");
+        Files.writeString(path, "abc");
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        TodoUiSupport.shutdownInstance();
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "todo");
+
+            assertTrue(window.isShowingTodoWorkspace());
+            assertTrue(window.getActiveView() instanceof TodoWorkspaceView);
+        } finally {
+            TodoUiSupport.shutdownInstance();
+            System.setProperty("user.home", previousHome);
+        }
+    }
+
+    @Test
+    void treeCommandOpensTreePanel() throws Exception {
+        Path path = tempDir.resolve("tree-command-left.txt");
+        Path target = tempDir.resolve("tree-command-right.txt");
+        Files.writeString(path, "left\npane");
+        Files.writeString(target, "right\npane");
+        RecordingHost host = new RecordingHost();
+        host.panel = new FakeTreePanel(target);
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "tree");
+
+            assertEquals("swim-tree-view", host.pluginId);
+            assertTrue(window.getPanelView() instanceof PluginPanelView);
+
+            HeadlessWindowHarness.dispatch((PluginPanelView) window.getPanelView(), HeadlessWindowHarness.enter());
+
+            assertEquals("right\npane", window.getBufferContext().getBuffer().getString());
+            assertSame(window.getBufferContext().getBufferView(), window.getActiveView());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
     void gitCommandOpensPluginWorkspace() throws Exception {
         Path path = tempDir.resolve("git-command.txt");
         Files.writeString(path, "abc");
@@ -558,6 +605,34 @@ class CommandViewTest {
         @Override
         public SwimPanelResult handleInput(String input, int width, int height) {
             return SwimPanelResult.success();
+        }
+    }
+
+    private static final class FakeTreePanel implements SwimPanel {
+        private final Path _openPath;
+
+        private FakeTreePanel(Path openPath) {
+            _openPath = openPath;
+        }
+
+        @Override
+        public String getId() {
+            return "swim-tree-view";
+        }
+
+        @Override
+        public String getTitle() {
+            return "Tree";
+        }
+
+        @Override
+        public List<String> render(int width, int height) {
+            return List.of("Tree", "> - " + _openPath.getFileName());
+        }
+
+        @Override
+        public SwimPanelResult handleInput(String input, int width, int height) {
+            return "enter".equals(input) ? SwimPanelResult.success(_openPath) : SwimPanelResult.success();
         }
     }
 

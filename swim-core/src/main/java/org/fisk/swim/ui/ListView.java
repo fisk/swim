@@ -15,6 +15,8 @@ import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 public class ListView extends View {
     public static abstract class ListItem {
@@ -29,6 +31,7 @@ public class ListView extends View {
     private int _start;
     private StringBuilder _filter = new StringBuilder();
     protected ListEventResponder _responders = new ListEventResponder();
+    private Runnable _pendingMouseAction;
 
     private void filterList() {
         if (_filter.length() == 0) {
@@ -120,12 +123,62 @@ public class ListView extends View {
 
     @Override
     public Response processEvent(KeyStrokes events) {
+        _pendingMouseAction = null;
+        if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
+            _pendingMouseAction = mouseAction(mouseAction);
+            return _pendingMouseAction == null ? Response.NO : Response.YES;
+        }
         return _responders.processEvent(events);
     }
 
     @Override
     public void respond() {
+        if (_pendingMouseAction != null) {
+            _pendingMouseAction.run();
+            _pendingMouseAction = null;
+            return;
+        }
         _responders.respond();
+    }
+
+    private Runnable mouseAction(MouseAction action) {
+        if (action.getActionType() != MouseActionType.CLICK_DOWN
+                && action.getActionType() != MouseActionType.CLICK_RELEASE) {
+            return null;
+        }
+        Point origin = absoluteOrigin();
+        int localX = action.getPosition().getColumn() - origin.getX();
+        int localY = action.getPosition().getRow() - origin.getY();
+        if (localX < 0 || localY < 2
+                || localX >= getBounds().getSize().getWidth()
+                || localY >= getBounds().getSize().getHeight()) {
+            return null;
+        }
+        int index = _start + localY - 2;
+        if (index < 0 || index >= _filteredList.size()) {
+            return null;
+        }
+        return () -> {
+            _selection = index;
+            setNeedsRedraw();
+            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+                _filteredList.get(_selection).onClick();
+                Window window = Window.getInstance();
+                if (window != null) {
+                    window.hidePanel();
+                }
+            }
+        };
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (View parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     String getTitle() {

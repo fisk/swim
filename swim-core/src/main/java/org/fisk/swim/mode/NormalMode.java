@@ -3,7 +3,6 @@ package org.fisk.swim.mode;
 import java.util.function.BiConsumer;
 
 import org.fisk.swim.copy.Copy;
-import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.debug.DebuggerManager;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.FancyJumpResponder;
@@ -15,9 +14,9 @@ import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
-import org.fisk.swim.ui.PluginPanelView;
 import org.fisk.swim.ui.ProjectSearchUiSupport;
 import org.fisk.swim.ui.ShellPanelView;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.MotionResponder;
@@ -25,7 +24,6 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.event.TextEventResponder;
 
 public class NormalMode extends Mode {
-    private static final String TREE_VIEW_PLUGIN_ID = "swim-tree-view";
     private FancyJumpResponder _fancyWordJump;
     private FancyJumpResponder _fancyCharacterJump;
     
@@ -285,7 +283,7 @@ public class NormalMode extends Mode {
             SlackUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("t", () -> {
-            toggleTreeView();
+            TodoUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder(":", () -> {
             window.getCommandView().activate(":");
@@ -518,28 +516,6 @@ public class NormalMode extends Mode {
         };
         if (!opened) {
             window.getCommandView().setMessage("Failed to start shell workspace");
-        }
-    }
-
-    private void toggleTreeView() {
-        if (_window.getPanelView() instanceof PluginPanelView panelView
-                && TREE_VIEW_PLUGIN_ID.equals(panelView.getPluginId())) {
-            _window.hidePanel();
-            return;
-        }
-        if (_window.isShowingPanel()) {
-            _window.hidePanel();
-        }
-        SwimRuntime.loadPlugin(TREE_VIEW_PLUGIN_ID);
-        var panel = SwimRuntime.getPanel(TREE_VIEW_PLUGIN_ID);
-        if (panel == null) {
-            _window.getCommandView().setMessage("Tree view plugin unavailable");
-            return;
-        }
-        panel.syncToCurrentPath(_window.getBufferContext().getBuffer().getPath());
-        if (!_window.showSidePanel(new PluginPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), TREE_VIEW_PLUGIN_ID, panel),
-                true, 0.28)) {
-            _window.getCommandView().setMessage("Unable to open tree view");
         }
     }
 

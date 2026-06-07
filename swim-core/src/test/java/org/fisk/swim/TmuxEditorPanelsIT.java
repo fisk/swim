@@ -196,7 +196,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "src/aaa-current.txt")) {
             session.waitForText("current tree file", STARTUP_TIMEOUT);
 
-            session.sendLiteral("t");
+            session.runCommand("tree");
             session.waitForText("Tree", UI_TIMEOUT);
             session.sendLiteral("j");
             session.sendEnter();
@@ -222,7 +222,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "src/current.txt")) {
             session.waitForText("tree refresh", STARTUP_TIMEOUT);
 
-            session.sendLiteral("t");
+            session.runCommand("tree");
             session.waitForText("Tree", UI_TIMEOUT);
 
             Files.writeString(later, "appeared later\n");
@@ -253,7 +253,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "current.txt")) {
             session.waitForText("tree nested", STARTUP_TIMEOUT);
 
-            session.sendLiteral("t");
+            session.runCommand("tree");
             session.waitForText("Tree:", UI_TIMEOUT);
             session.sendLiteral("k");
             session.waitForText("nested", UI_TIMEOUT);

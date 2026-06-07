@@ -23,6 +23,7 @@ import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
@@ -58,6 +59,8 @@ public class CommandView extends View {
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
             new CommandSpec("mail", List.of(), "", "open the mail client"),
+            new CommandSpec("todo", List.of(), "", "open the Todo workspace"),
+            new CommandSpec("tree", List.of(), "", "open the tree view"),
             new CommandSpec("registers", List.of("reg"), "", "show registers and macros"),
             new CommandSpec("marks", List.of(), "", "show marks"),
             new CommandSpec("jumps", List.of(), "", "show the jump list"),
@@ -348,6 +351,12 @@ public class CommandView extends View {
             break;
         case "mail":
             MailUiSupport.toggle(Window.getInstance());
+            break;
+        case "todo":
+            TodoUiSupport.open(Window.getInstance());
+            break;
+        case "tree":
+            TreeUiSupport.toggle(Window.getInstance());
             break;
         case "registers":
         case "reg":

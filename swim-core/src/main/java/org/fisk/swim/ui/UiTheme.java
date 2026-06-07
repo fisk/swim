@@ -134,6 +134,7 @@ public final class UiTheme {
         case "<CTRL>-g" -> "C-g";
         case "<CTRL>-v" -> "C-v";
         case "<CTRL>-r" -> "C-r";
+        case "<CTRL>-t" -> "C-t";
         case "<CTRL>-y" -> "C-y";
         case "<CTRL>-e" -> "C-e";
         case "<CHAR>" -> "char";

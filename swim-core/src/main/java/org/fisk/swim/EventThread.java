@@ -23,6 +23,7 @@ import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 import com.googlecode.lanterna.input.KeyStroke;
+import com.googlecode.lanterna.input.MouseAction;
 
 public class EventThread extends Thread {
     private static Logger _log = LogFactory.createLog();
@@ -179,6 +180,9 @@ public class EventThread extends Thread {
     private EventExecutionResult executeEvent(Event event, ArrayList<KeyStroke> events) {
         if (event instanceof KeyStrokeEvent keyEvent) {
             _log.debug("Received key stroke event");
+            if (keyEvent.getKeyStroke() instanceof MouseAction mouseAction) {
+                return executeMouseEvent(mouseAction);
+            }
             var updated = new ArrayList<KeyStroke>(events);
             updated.add(keyEvent.getKeyStroke());
             var keys = new KeyStrokes(updated);
@@ -208,6 +212,20 @@ public class EventThread extends Thread {
         }
         return ignored -> {
         };
+    }
+
+    private EventExecutionResult executeMouseEvent(MouseAction mouseAction) {
+        var keys = new KeyStrokes(List.of(mouseAction));
+        switch (_responder.processEvent(keys)) {
+        case YES:
+            _responder.respond();
+            break;
+        case MAYBE:
+        case NO:
+        default:
+            break;
+        }
+        return List::clear;
     }
 
     private static boolean isCancelEvent(Event event) {

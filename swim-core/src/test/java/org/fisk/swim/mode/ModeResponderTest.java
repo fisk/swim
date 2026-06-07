@@ -8,18 +8,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
-
-import org.fisk.swim.SwimRuntime;
-import org.fisk.swim.api.SwimHost;
-import org.fisk.swim.api.SwimPanel;
-import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
-import org.fisk.swim.ui.PluginPanelView;
+import org.fisk.swim.ui.TodoWorkspaceView;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -330,31 +325,27 @@ class Demo {
     }
 
     @Test
-    void treeBindingLoadsPluginPanelAndOpensSelectedFile() throws IOException {
-        Path first = writeFile("tree-left.txt", "left\npane");
-        Path second = writeFile("tree-right.txt", "right\npane");
-        RecordingHost host = new RecordingHost(new FakeTreePanel(second));
-        SwimRuntime.setHost(host);
-
+    void todoBindingOpensFullscreenTodoWorkspace() throws IOException {
+        Path first = writeFile("todo-binding.txt", "left\npane");
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        TodoUiSupport.shutdownInstance();
         try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
             Window window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('t'));
 
-            assertEquals("swim-tree-view", host.pluginId);
-            assertTrue(window.getPanelView() instanceof PluginPanelView);
-            assertEquals("{0, 2, 6, 6}", absoluteBounds((org.fisk.swim.ui.View) window.getPanelView()).toString());
-            assertEquals("{7, 2, 17, 6}", absoluteBounds(window.getBufferContext().getBufferView()).toString());
-
-            HeadlessWindowHarness.dispatch((PluginPanelView) window.getPanelView(), HeadlessWindowHarness.enter());
-
-            assertEquals("right\npane", window.getBufferContext().getBuffer().getString());
-            assertSame(window.getBufferContext().getBufferView(), window.getActiveView());
-
-            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('t'));
+            assertTrue(window.isShowingTodoWorkspace());
+            assertTrue(window.getActiveView() instanceof TodoWorkspaceView);
             assertFalse(window.isShowingPanel());
+            assertEquals("{0, 2, 24, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
+
+            HeadlessWindowHarness.dispatch((TodoWorkspaceView) window.getActiveView(), HeadlessWindowHarness.key('q'));
+            assertFalse(window.isShowingTodoWorkspace());
+            assertSame(window.getBufferContext().getBufferView(), window.getActiveView());
         } finally {
-            SwimRuntime.clear();
+            TodoUiSupport.shutdownInstance();
+            System.setProperty("user.home", previousHome);
         }
     }
 
@@ -377,71 +368,4 @@ class Demo {
                 view.getBounds().getSize().getHeight());
     }
 
-    private static final class RecordingHost implements SwimHost {
-        private final SwimPanel panel;
-        private String pluginId;
-
-        private RecordingHost(SwimPanel panel) {
-            this.panel = panel;
-        }
-
-        @Override
-        public void requestReload(Path path) {
-        }
-
-        @Override
-        public void requestRebuildAndReload(Path path) {
-        }
-
-        @Override
-        public void requestLoadPlugin(String pluginId, Path path) {
-            this.pluginId = pluginId;
-        }
-
-        @Override
-        public SwimPanel getPanel(String pluginId) {
-            return panel;
-        }
-
-        @Override
-        public void requestExit() {
-        }
-
-        @Override
-        public Path getBuildRoot() {
-            return tempPath();
-        }
-
-        private Path tempPath() {
-            return Path.of("/tmp");
-        }
-    }
-
-    private static final class FakeTreePanel implements SwimPanel {
-        private final Path _openPath;
-
-        private FakeTreePanel(Path openPath) {
-            _openPath = openPath;
-        }
-
-        @Override
-        public String getId() {
-            return "swim-tree-view";
-        }
-
-        @Override
-        public String getTitle() {
-            return "Tree";
-        }
-
-        @Override
-        public List<String> render(int width, int height) {
-            return List.of("Tree", "> - " + _openPath.getFileName());
-        }
-
-        @Override
-        public SwimPanelResult handleInput(String input, int width, int height) {
-            return "enter".equals(input) ? SwimPanelResult.success(_openPath) : SwimPanelResult.success();
-        }
-    }
 }

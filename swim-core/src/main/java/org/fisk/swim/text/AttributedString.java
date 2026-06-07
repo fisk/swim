@@ -3,6 +3,7 @@ package org.fisk.swim.text;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.Range;
@@ -13,6 +14,11 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 
 public class AttributedString {
+    @FunctionalInterface
+    public interface ClickHandler {
+        void onClick(int index);
+    }
+
     public static class AttributeSet {
         private TextColor _foregroundColour;
         private TextColor _backgroundColour;
@@ -50,7 +56,10 @@ public class AttributedString {
     }
 
     private List<AttributedStringFragment> _fragments = new ArrayList<>();
+    private List<ClickRange> _clickRanges = new ArrayList<>();
     private int _length = 0;
+    private static final Object CLICK_MAP_LOCK = new Object();
+    private static final List<RenderedClickRange> _renderedClickRanges = new ArrayList<>();
 
     public List<AttributedStringFragment> getFragments() {
         return _fragments;
@@ -68,6 +77,7 @@ public class AttributedString {
         var fragments = new ArrayList<AttributedStringFragment>();
         fragments.addAll(other._fragments);
         str._fragments = fragments;
+        str._clickRanges = new ArrayList<>(other._clickRanges);
         return str;
     }
 
@@ -77,8 +87,58 @@ public class AttributedString {
     }
 
     public void append(AttributedString str) {
+        int offset = _length;
         _fragments.addAll(str._fragments);
         _length += str._length;
+        for (ClickRange range : str._clickRanges) {
+            _clickRanges.add(range.shift(offset));
+        }
+    }
+
+    public AttributedString onClick(int start, int end, ClickHandler handler) {
+        if (start < 0 || end < start || end > _length) {
+            throw new IllegalArgumentException("Click range out of bounds: " + start + ", " + end + " length: " + _length);
+        }
+        if (start == end || handler == null) {
+            return this;
+        }
+        _clickRanges.add(new ClickRange(start, end, handler));
+        return this;
+    }
+
+    public boolean clickAt(int index) {
+        if (index < 0 || index >= _length) {
+            return false;
+        }
+        for (int i = _clickRanges.size() - 1; i >= 0; i--) {
+            ClickRange range = _clickRanges.get(i);
+            if (range.contains(index)) {
+                range.handler().onClick(index - range.start());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static void clearRenderedClickRanges() {
+        synchronized (CLICK_MAP_LOCK) {
+            _renderedClickRanges.clear();
+        }
+    }
+
+    public static Runnable clickActionAt(Point point) {
+        if (point == null) {
+            return null;
+        }
+        synchronized (CLICK_MAP_LOCK) {
+            for (int i = _renderedClickRanges.size() - 1; i >= 0; i--) {
+                Runnable action = _renderedClickRanges.get(i).actionAt(point);
+                if (action != null) {
+                    return action;
+                }
+            }
+        }
+        return null;
     }
 
     public AttributedString slice(int start, int end) {
@@ -96,6 +156,12 @@ public class AttributedString {
             result._length += result.formatFragmentRange(Range.create(start, end), fragmentRange, fragment._attributes,
                     fragment._string);
             currentX += fragmentLength;
+        }
+        for (ClickRange range : _clickRanges) {
+            ClickRange sliced = range.slice(start, end);
+            if (sliced != null) {
+                result._clickRanges.add(sliced);
+            }
         }
         return result;
     }
@@ -142,8 +208,10 @@ public class AttributedString {
         }
         var newAttr = new AttributeSet(foregroundColour, backgroundColour);
         var oldFragments = _fragments;
+        var oldClickRanges = _clickRanges;
         int currentX = 0;
         _fragments = new ArrayList<>();
+        _clickRanges = new ArrayList<>();
         boolean inserted = false;
         int length = 0;
         for (var fragment: oldFragments) {
@@ -176,6 +244,9 @@ public class AttributedString {
             length += str.length();
         }
         _length += str.length();
+        for (ClickRange range : oldClickRanges) {
+            _clickRanges.add(range.insert(position, str.length()));
+        }
         if (length != _length) {
             throw new RuntimeException("Unexpected length: " + length + ", expected: " + _length);
         }
@@ -183,6 +254,7 @@ public class AttributedString {
     
     public void remove(int startPosition, int endPosition) {
         var oldFragments = _fragments;
+        var oldClickRanges = _clickRanges;
         int currentX = _length;
         _fragments = new ArrayList<>();
         Collections.reverse(oldFragments);
@@ -200,6 +272,13 @@ public class AttributedString {
         }
         Collections.reverse(_fragments);
         _length -= endPosition - startPosition;
+        _clickRanges = new ArrayList<>();
+        for (ClickRange range : oldClickRanges) {
+            ClickRange removed = range.remove(startPosition, endPosition);
+            if (removed != null) {
+                _clickRanges.add(removed);
+            }
+        }
     }
     
     public AttributedString getCharacter(int position) {
@@ -224,6 +303,7 @@ public class AttributedString {
             graphics.putString(point.getX() + currentX, point.getY(), fragment._string);
             currentX += fragment._string.length();
         }
+        registerRenderedClickRanges(point);
     }
 
     public int length() {
@@ -236,5 +316,90 @@ public class AttributedString {
             str.append(fragment._string);
         }
         return str.toString();
+    }
+
+    private void registerRenderedClickRanges(Point point) {
+        if (_clickRanges.isEmpty() || point == null) {
+            return;
+        }
+        synchronized (CLICK_MAP_LOCK) {
+            for (ClickRange range : _clickRanges) {
+                _renderedClickRanges.add(new RenderedClickRange(point.getX() + range.start(),
+                        point.getX() + range.end(), point.getY(), range.handler()));
+            }
+        }
+    }
+
+    private record ClickRange(int start, int end, ClickHandler handler) {
+        private ClickRange {
+            Objects.requireNonNull(handler, "handler");
+        }
+
+        private boolean contains(int index) {
+            return index >= start && index < end;
+        }
+
+        private ClickRange shift(int offset) {
+            return new ClickRange(start + offset, end + offset, handler);
+        }
+
+        private ClickRange slice(int sliceStart, int sliceEnd) {
+            int nextStart = Math.max(start, sliceStart);
+            int nextEnd = Math.min(end, sliceEnd);
+            if (nextStart >= nextEnd) {
+                return null;
+            }
+            return new ClickRange(nextStart - sliceStart, nextEnd - sliceStart, handler);
+        }
+
+        private ClickRange insert(int position, int length) {
+            if (position <= start) {
+                return new ClickRange(start + length, end + length, handler);
+            }
+            if (position < end) {
+                return new ClickRange(start, end + length, handler);
+            }
+            return this;
+        }
+
+        private ClickRange remove(int removeStart, int removeEnd) {
+            int removedLength = removeEnd - removeStart;
+            if (removeEnd <= start) {
+                return new ClickRange(start - removedLength, end - removedLength, handler);
+            }
+            if (removeStart >= end) {
+                return this;
+            }
+            int nextStart = start;
+            int nextEnd = end;
+            if (removeStart <= start) {
+                nextStart = removeStart;
+            }
+            if (removeStart > start) {
+                nextEnd -= Math.min(end, removeEnd) - removeStart;
+            } else if (removeEnd < end) {
+                nextEnd = removeStart + (end - removeEnd);
+            } else {
+                nextEnd = nextStart;
+            }
+            if (removeEnd <= start) {
+                nextStart -= removedLength;
+                nextEnd -= removedLength;
+            }
+            if (nextEnd <= nextStart) {
+                return null;
+            }
+            return new ClickRange(nextStart, nextEnd, handler);
+        }
+    }
+
+    private record RenderedClickRange(int startX, int endX, int y, ClickHandler handler) {
+        private Runnable actionAt(Point point) {
+            if (point.getY() != y || point.getX() < startX || point.getX() >= endX) {
+                return null;
+            }
+            int index = point.getX() - startX;
+            return () -> handler.onClick(index);
+        }
     }
 }

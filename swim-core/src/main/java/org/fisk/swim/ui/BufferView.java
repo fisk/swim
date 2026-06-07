@@ -22,6 +22,7 @@ public class BufferView extends View {
     private BufferContext _bufferContext;
     private static final Logger _log = LogFactory.createLog();
     private int _startLine = 0;
+    private Integer _mouseSelectionAnchorPosition;
 
     public int getStartLine() {
         return _startLine;
@@ -55,9 +56,9 @@ public class BufferView extends View {
 
     @Override
     public Response processEvent(KeyStrokes events) {
-        if (events.remaining() == 1 && events.current() instanceof MouseAction mouseAction) {
+        if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
             handleMouseAction(mouseAction);
-            return Response.NO;
+            return Response.YES;
         }
         if (Window.getInstance() != null) {
             Window.getInstance().hideHoverDiagnostics();
@@ -202,7 +203,8 @@ public class BufferView extends View {
         }
         if (action.getActionType() != MouseActionType.MOVE
                 && action.getActionType() != MouseActionType.DRAG
-                && action.getActionType() != MouseActionType.CLICK_DOWN) {
+                && action.getActionType() != MouseActionType.CLICK_DOWN
+                && action.getActionType() != MouseActionType.CLICK_RELEASE) {
             return;
         }
         Point origin = absoluteOrigin();
@@ -211,22 +213,96 @@ public class BufferView extends View {
         int textStart = getTextColumnStart();
         if (localX < 0 || localY < 0
                 || localX >= getBounds().getSize().getWidth()
-                || localY >= getBounds().getSize().getHeight()
-                || localX < textStart
+                || localY >= getBounds().getSize().getHeight()) {
+            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+                _mouseSelectionAnchorPosition = null;
+            }
+            window.hideHoverDiagnostics();
+            return;
+        }
+        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+            window.activateView(this);
+        }
+        if (localX < textStart
                 || localX >= textStart + getTextWidth()) {
+            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+                _mouseSelectionAnchorPosition = null;
+            }
             window.hideHoverDiagnostics();
             return;
         }
         var visibleLines = _bufferContext.getTextLayout().getVisibleLogicalLines();
         if (localY < 0 || localY >= visibleLines.size()) {
+            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+                _mouseSelectionAnchorPosition = null;
+            }
             window.hideHoverDiagnostics();
             return;
         }
         var wrappedLine = visibleLines.get(localY);
+        int mousePosition = positionForMouse(wrappedLine, localX - textStart);
+        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+            _mouseSelectionAnchorPosition = mousePosition;
+            moveCursorToClick(mousePosition);
+        } else if (action.getActionType() == MouseActionType.DRAG) {
+            updateVisualSelectionForDrag(window, mousePosition);
+        } else if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+            updateVisualSelectionForRelease(window, mousePosition);
+        }
         int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
         window.updateHoveredDiagnostics(_bufferContext,
                 sourceLine,
                 Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+    }
+
+    private void moveCursorToClick(int position) {
+        setCursorPositionForMouse(position);
+    }
+
+    private void updateVisualSelectionForDrag(Window window, int position) {
+        if (_mouseSelectionAnchorPosition == null) {
+            return;
+        }
+        startOrUpdateVisualSelection(window, position);
+    }
+
+    private void updateVisualSelectionForRelease(Window window, int position) {
+        Integer anchor = _mouseSelectionAnchorPosition;
+        _mouseSelectionAnchorPosition = null;
+        if (anchor == null || anchor == position) {
+            return;
+        }
+        startOrUpdateVisualSelection(window, position);
+    }
+
+    private void startOrUpdateVisualSelection(Window window, int position) {
+        if (window.getCurrentMode() == window.getNormalMode()) {
+            window.switchToMode(window.getVisualMode());
+        }
+        if (window.getCurrentMode() != window.getVisualMode()) {
+            return;
+        }
+        setCursorPositionForMouse(position);
+    }
+
+    private void setCursorPositionForMouse(int position) {
+        _bufferContext.getBuffer().getCursor().setPosition(position);
+        adaptViewToCursor();
+        setNeedsRedraw();
+    }
+
+    private int positionForMouse(org.fisk.swim.text.TextLayout.Line line, int textX) {
+        int position = line.getStartPosition();
+        for (var glyph : line.getGlyphs()) {
+            if (glyph.isSynthetic()) {
+                continue;
+            }
+            if (textX <= glyph.getX()) {
+                return Math.max(0, glyph.getPosition());
+            }
+            position = glyph.getPosition() + 1;
+        }
+        return Math.max(0, Math.min(position, _bufferContext.getBuffer().getLength()));
     }
 
     private Point absoluteOrigin() {

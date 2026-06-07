@@ -2,6 +2,7 @@ package org.fisk.swim.terminal;
 
 import java.io.IOException;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -17,6 +18,8 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen;
 import com.googlecode.lanterna.screen.TerminalScreen;
 import com.googlecode.lanterna.terminal.DefaultTerminalFactory;
+import com.googlecode.lanterna.terminal.ExtendedTerminal;
+import com.googlecode.lanterna.terminal.MouseCaptureMode;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.TerminalResizeListener;
 import com.googlecode.lanterna.terminal.ansi.StreamBasedTerminal;
@@ -26,6 +29,8 @@ public class TerminalContext {
     public static final KeyType BRACKETED_PASTE_END_KEY = KeyType.F19;
     private static final String ENABLE_BRACKETED_PASTE = "\u001b[?2004h";
     private static final String DISABLE_BRACKETED_PASTE = "\u001b[?2004l";
+    private static final String ENABLE_SGR_MOUSE = "\u001b[?1006h";
+    private static final String DISABLE_SGR_MOUSE = "\u001b[?1006l";
 
     private record CreatedTerminal(Screen screen, Terminal terminal) {
     }
@@ -104,7 +109,7 @@ public class TerminalContext {
         try {
             var factory = new DefaultTerminalFactory();
             Terminal terminal = factory.createTerminal();
-            configureBracketedPasteDecoding(terminal);
+            configureTerminalInputDecoding(terminal);
             terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty);
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
@@ -114,15 +119,16 @@ public class TerminalContext {
         }
     }
 
-    private static void configureBracketedPasteDecoding(Terminal terminal) {
+    private static void configureTerminalInputDecoding(Terminal terminal) {
         if (!(terminal instanceof StreamBasedTerminal streamBasedTerminal)) {
             return;
         }
-        KeyDecodingProfile profile = () -> java.util.List.of(
+        KeyDecodingProfile profile = () -> List.of(
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_START_KEY),
                         '\u001b', '[', '2', '0', '0', '~'),
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_END_KEY),
-                        '\u001b', '[', '2', '0', '1', '~'));
+                        '\u001b', '[', '2', '0', '1', '~'),
+                new SgrMouseCharacterPattern());
         streamBasedTerminal.getInputDecoder().addProfile(profile);
     }
 
@@ -388,16 +394,26 @@ public class TerminalContext {
         public void enterPrivateMode() throws IOException {
             _delegate.enterPrivateMode();
             setBracketedPasteMode(true);
+            setMouseCaptureMode(true);
         }
 
         @Override
         public void exitPrivateMode() throws IOException {
+            setMouseCaptureMode(false);
             setBracketedPasteMode(false);
             _delegate.exitPrivateMode();
         }
 
         private void setBracketedPasteMode(boolean enabled) throws IOException {
             _delegate.putString(enabled ? ENABLE_BRACKETED_PASTE : DISABLE_BRACKETED_PASTE);
+            _delegate.flush();
+        }
+
+        private void setMouseCaptureMode(boolean enabled) throws IOException {
+            if (_delegate instanceof ExtendedTerminal extendedTerminal) {
+                extendedTerminal.setMouseCaptureMode(enabled ? MouseCaptureMode.CLICK_RELEASE_DRAG : null);
+            }
+            _delegate.putString(enabled ? ENABLE_SGR_MOUSE : DISABLE_SGR_MOUSE);
             _delegate.flush();
         }
 

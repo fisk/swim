@@ -4,8 +4,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
+
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 public class SplitView extends View {
     private static final int DIVIDER_THICKNESS = 1;
@@ -229,8 +234,51 @@ public class SplitView extends View {
         drawFrameBars(rect.getPoint(), _root);
     }
 
+    @Override
+    public Response processEvent(KeyStrokes events) {
+        if (events.remaining() != 0 || !(events.current() instanceof MouseAction mouseAction)) {
+            return super.processEvent(events);
+        }
+        Response response = super.processEvent(events);
+        if (response != Response.NO) {
+            return response;
+        }
+        if (mouseAction.getActionType() != MouseActionType.CLICK_DOWN) {
+            return Response.NO;
+        }
+        View leaf = leafFrameAt(mouseAction);
+        if (leaf == null) {
+            return Response.NO;
+        }
+        var window = Window.getInstance();
+        if (window != null) {
+            window.activateView(leaf);
+        }
+        return Response.YES;
+    }
+
     private void layoutTree(Rect bounds) {
         layoutNode(_root, Rect.create(0, 0, bounds.getSize().getWidth(), bounds.getSize().getHeight()));
+    }
+
+    private View leafFrameAt(MouseAction action) {
+        if (action.getPosition() == null) {
+            return null;
+        }
+        Point origin = absoluteOrigin();
+        int x = action.getPosition().getColumn() - origin.getX();
+        int y = action.getPosition().getRow() - origin.getY();
+        return leafFrameAt(_root, x, y);
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     private void layoutNode(Node node, Rect bounds) {
@@ -480,6 +528,25 @@ public class SplitView extends View {
         }
         var branch = (BranchNode) node;
         return containsLeaf(branch._first, view) || containsLeaf(branch._second, view);
+    }
+
+    private static View leafFrameAt(Node node, int x, int y) {
+        if (node instanceof LeafNode leaf) {
+            return contains(leaf._frameRect, x, y) ? leaf._view : null;
+        }
+        var branch = (BranchNode) node;
+        View first = leafFrameAt(branch._first, x, y);
+        if (first != null) {
+            return first;
+        }
+        return leafFrameAt(branch._second, x, y);
+    }
+
+    private static boolean contains(Rect rect, int x, int y) {
+        return x >= rect.getPoint().getX()
+                && y >= rect.getPoint().getY()
+                && x < rect.getPoint().getX() + rect.getSize().getWidth()
+                && y < rect.getPoint().getY() + rect.getSize().getHeight();
     }
 
     private static BranchNode findNearestBranch(Node node, View target, Orientation orientation) {

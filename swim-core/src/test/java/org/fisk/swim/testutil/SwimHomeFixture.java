@@ -34,6 +34,12 @@ public final class SwimHomeFixture {
         return email;
     }
 
+    public Path todoHome() throws IOException {
+        Path todo = _swimHome.resolve("todo");
+        Files.createDirectories(todo);
+        return todo;
+    }
+
     public Path nemoHome() throws IOException {
         Path nemo = _swimHome.resolve("nemo");
         Files.createDirectories(nemo);
@@ -60,6 +66,10 @@ public final class SwimHomeFixture {
 
     public Path emailDatabasePath() throws IOException {
         return emailHome().resolve("mail.mv.db");
+    }
+
+    public Path todoDatabasePath() throws IOException {
+        return todoHome().resolve("todos.mv.db");
     }
 
     public Path writeNemoConfig(String text) throws IOException {
@@ -96,8 +106,19 @@ public final class SwimHomeFixture {
     }
 
     public void runH2(String sql) throws Exception {
+        runH2(emailHome().resolve("mail"), sql);
+    }
+
+    public void runTodoH2(String sql) throws Exception {
+        runH2(todoHome().resolve("todos"), sql);
+    }
+
+    public String queryTodoH2(String sql) throws Exception {
+        return runH2(todoHome().resolve("todos"), sql);
+    }
+
+    private String runH2(Path base, String sql) throws Exception {
         Path jar = findH2Jar();
-        Path base = emailHome().resolve("mail");
         var process = new ProcessBuilder(
                 "java",
                 "-cp",
@@ -113,6 +134,7 @@ public final class SwimHomeFixture {
         if (process.waitFor() != 0) {
             throw new IOException("H2 shell failed: " + output);
         }
+        return output;
     }
 
     private static Path findH2Jar() throws IOException {

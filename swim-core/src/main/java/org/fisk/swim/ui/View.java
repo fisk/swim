@@ -7,12 +7,15 @@ import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 public class View implements Drawable, EventResponder {
     private static final Logger _log = LogFactory.createLog();
@@ -23,6 +26,7 @@ public class View implements Drawable, EventResponder {
     private boolean _needsRedraw = true;
     private EventResponder _firstResponder;
     private EventResponder _lastResponder;
+    private Runnable _lastMouseAction;
     private int _resizeMask = RESIZE_MASK_LEFT |
         RESIZE_MASK_RIGHT |
         RESIZE_MASK_TOP |
@@ -125,6 +129,10 @@ public class View implements Drawable, EventResponder {
 
     @Override
     public Response processEvent(KeyStrokes events) {
+        _lastMouseAction = null;
+        if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
+            return processMouseAction(mouseAction);
+        }
         var firstResponder = _firstResponder;
         if (firstResponder == null) {
             return Response.NO;
@@ -138,9 +146,83 @@ public class View implements Drawable, EventResponder {
 
     @Override
     public void respond() {
+        if (_lastMouseAction != null) {
+            _lastMouseAction.run();
+            _lastMouseAction = null;
+            return;
+        }
         if (_lastResponder != null) {
             _lastResponder.respond();
             _lastResponder = null;
+        }
+    }
+
+    private Response processMouseAction(MouseAction action) {
+        View target = findTopmostSubviewAt(action.getPosition());
+        if (target != null) {
+            var response = target.processEvent(new KeyStrokes(List.of(action)));
+            if (response == Response.YES) {
+                _lastResponder = target;
+                return Response.YES;
+            }
+            if (response == Response.MAYBE) {
+                return Response.MAYBE;
+            }
+            if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+                focusViewForMouse(target);
+            }
+        }
+        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+            Runnable clickAction = AttributedString.clickActionAt(
+                    Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+            if (clickAction != null) {
+                _lastMouseAction = clickAction;
+                return Response.YES;
+            }
+        }
+        return Response.NO;
+    }
+
+    private View findTopmostSubviewAt(TerminalPosition position) {
+        if (position == null) {
+            return null;
+        }
+        for (int i = _subviews.size() - 1; i >= 0; i--) {
+            View view = _subviews.get(i);
+            if (view.containsAbsolute(position.getColumn(), position.getRow())) {
+                return view;
+            }
+        }
+        return null;
+    }
+
+    private boolean containsAbsolute(int x, int y) {
+        Point origin = absoluteOrigin();
+        return x >= origin.getX()
+                && y >= origin.getY()
+                && x < origin.getX() + _bounds.getSize().getWidth()
+                && y < origin.getY() + _bounds.getSize().getHeight();
+    }
+
+    private Point absoluteOrigin() {
+        int x = _bounds.getPoint().getX();
+        int y = _bounds.getPoint().getY();
+        for (View parent = _parent; parent != null; parent = parent._parent) {
+            x += parent._bounds.getPoint().getX();
+            y += parent._bounds.getPoint().getY();
+        }
+        return Point.create(x, y);
+    }
+
+    private static void focusViewForMouse(View view) {
+        var window = Window.getInstance();
+        if (window == null || view == null) {
+            return;
+        }
+        if (view instanceof BufferView || view instanceof ShellPanelView || view instanceof ListView
+                || view instanceof ProjectSearchPanelView || view instanceof TextPanelView
+                || view instanceof PluginPanelView) {
+            window.activateView(view);
         }
     }
 

@@ -166,6 +166,15 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void defaultBodyIncludesTodoShortcut() {
+        var view = new KeyMenuView(Rect.create(0, 0, 220, 2));
+        view.setAnimationStepOverride(1L);
+
+        assertTrue(view.bodyText().contains("t todo"));
+        assertTrue(view.bodyText().contains("C-t quick todo"));
+    }
+
+    @Test
     void defaultBodyIncludesProjectSearchShortcut() {
         var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
         view.setAnimationStepOverride(1L);
