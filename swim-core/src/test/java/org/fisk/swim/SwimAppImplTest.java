@@ -112,6 +112,16 @@ class SwimAppImplTest {
     }
 
     @Test
+    void checkpointForReloadDelegatesToWindow() {
+        FakeBindings bindings = new FakeBindings();
+        SwimAppImpl app = new SwimAppImpl(bindings);
+
+        app.checkpointForReload();
+
+        assertTrue(bindings.window.checkpointed);
+    }
+
+    @Test
     void closeInterruptsIoThreadAndShutsDownRuntimeServices() {
         FakeBindings bindings = new FakeBindings();
         SwimAppImpl app = new SwimAppImpl(bindings);
@@ -283,6 +293,7 @@ class SwimAppImplTest {
         private Path currentPath;
         private String message;
         private boolean disposed;
+        private boolean checkpointed;
 
         @Override
         public void update(boolean forced) {
@@ -297,6 +308,11 @@ class SwimAppImplTest {
         @Override
         public void setMessage(String message) {
             this.message = message;
+        }
+
+        @Override
+        public void checkpointForReload() {
+            checkpointed = true;
         }
 
         @Override

@@ -322,6 +322,7 @@ class MainTest {
         assertSame(main, next.startedHost);
         assertEquals(List.of(true), next.refreshCalls);
         assertEquals(List.of("Reloaded SWIM core"), next.messages);
+        assertTrue(previous.checkpointed);
         assertTrue(previous.closed);
         assertSame(next, main.getLoadedApp());
         assertNull(System.getProperty(Main.RELOAD_SESSION_PROPERTY));
@@ -380,6 +381,7 @@ class MainTest {
         main.requestReload(tempDir.resolve("project.txt"));
 
         assertEquals(List.of("Reload failed"), previous.messages);
+        assertTrue(previous.checkpointed);
         assertTrue(previous.closed);
         assertSame(previous, main.getLoadedApp());
     }
@@ -419,6 +421,7 @@ class MainTest {
         main.requestRebuildAndReload(tempDir.resolve("project.txt"));
 
         assertEquals(List.of("Rebuilding SWIM...", "Reload failed after rebuild"), previous.messages);
+        assertTrue(previous.checkpointed);
         assertTrue(previous.closed);
         assertSame(previous, main.getLoadedApp());
     }
@@ -444,6 +447,7 @@ class MainTest {
         main.requestRebuildAndReload(path);
 
         assertEquals(List.of("Rebuilding SWIM..."), previous.messages);
+        assertTrue(previous.checkpointed);
         assertTrue(previous.closed);
         assertEquals(path, next.startedPath);
         assertEquals(List.of(true), next.refreshCalls);
@@ -787,6 +791,7 @@ class MainTest {
         private final List<Boolean> refreshCalls = new ArrayList<>();
         private final List<String> messages = new ArrayList<>();
         private boolean closed;
+        private boolean checkpointed;
 
         @Override
         public void start(Path path, SwimHost host) {
@@ -807,6 +812,11 @@ class MainTest {
         @Override
         public void showMessage(String message) {
             messages.add(message);
+        }
+
+        @Override
+        public void checkpointForReload() {
+            checkpointed = true;
         }
 
         @Override

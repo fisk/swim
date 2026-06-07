@@ -204,7 +204,9 @@ public class BufferView extends View {
         if (action.getActionType() != MouseActionType.MOVE
                 && action.getActionType() != MouseActionType.DRAG
                 && action.getActionType() != MouseActionType.CLICK_DOWN
-                && action.getActionType() != MouseActionType.CLICK_RELEASE) {
+                && action.getActionType() != MouseActionType.CLICK_RELEASE
+                && action.getActionType() != MouseActionType.SCROLL_UP
+                && action.getActionType() != MouseActionType.SCROLL_DOWN) {
             return;
         }
         Point origin = absoluteOrigin();
@@ -220,16 +222,18 @@ public class BufferView extends View {
             window.hideHoverDiagnostics();
             return;
         }
+        if (action.getActionType() == MouseActionType.SCROLL_UP) {
+            window.hideHoverDiagnostics();
+            scrollUp();
+            return;
+        }
+        if (action.getActionType() == MouseActionType.SCROLL_DOWN) {
+            window.hideHoverDiagnostics();
+            scrollDown();
+            return;
+        }
         if (action.getActionType() == MouseActionType.CLICK_DOWN) {
             window.activateView(this);
-        }
-        if (localX < textStart
-                || localX >= textStart + getTextWidth()) {
-            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
-                _mouseSelectionAnchorPosition = null;
-            }
-            window.hideHoverDiagnostics();
-            return;
         }
         var visibleLines = _bufferContext.getTextLayout().getVisibleLogicalLines();
         if (localY < 0 || localY >= visibleLines.size()) {
@@ -240,19 +244,42 @@ public class BufferView extends View {
             return;
         }
         var wrappedLine = visibleLines.get(localY);
-        int mousePosition = positionForMouse(wrappedLine, localX - textStart);
+        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
+        if (action.getActionType() == MouseActionType.MOVE) {
+            window.updateHoveredDiagnostics(_bufferContext,
+                    sourceLine,
+                    Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+            return;
+        }
+        window.hideHoverDiagnostics();
+        int textX = localX - textStart;
+        boolean insideTextColumns = textX >= 0 && textX < getTextWidth();
+        if (!insideTextColumns && action.getActionType() == MouseActionType.CLICK_DOWN) {
+            return;
+        }
+        if (!insideTextColumns && _mouseSelectionAnchorPosition == null) {
+            return;
+        }
+        textX = Math.max(0, Math.min(textX, getTextWidth()));
+        int mousePosition = positionForMouse(wrappedLine, textX);
         if (action.getActionType() == MouseActionType.CLICK_DOWN) {
-            _mouseSelectionAnchorPosition = mousePosition;
-            moveCursorToClick(mousePosition);
+            beginMouseSelection(window, mousePosition);
         } else if (action.getActionType() == MouseActionType.DRAG) {
             updateVisualSelectionForDrag(window, mousePosition);
         } else if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
             updateVisualSelectionForRelease(window, mousePosition);
         }
-        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
-        window.updateHoveredDiagnostics(_bufferContext,
-                sourceLine,
-                Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+    }
+
+    private void beginMouseSelection(Window window, int position) {
+        _mouseSelectionAnchorPosition = position;
+        if (window.getCurrentMode() == window.getVisualMode()) {
+            var cursors = _bufferContext.getBuffer().getCursors();
+            if (cursors.size() > 1) {
+                cursors.get(1).setPosition(position);
+            }
+        }
+        moveCursorToClick(position);
     }
 
     private void moveCursorToClick(int position) {

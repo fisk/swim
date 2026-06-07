@@ -53,6 +53,18 @@ public final class TerminalContextTestSupport {
                             drawCalls.add(new DrawCall(x, y, text, foreground.get(), background.get()));
                         }
                         return proxy;
+                    case "drawRectangle":
+                        if (args != null && args.length >= 3
+                                && args[0] instanceof TerminalPosition position
+                                && args[1] instanceof TerminalSize size
+                                && args[2] instanceof Character character) {
+                            String text = Character.toString(character).repeat(Math.max(0, size.getColumns()));
+                            for (int row = 0; row < size.getRows(); row++) {
+                                drawCalls.add(new DrawCall(position.getColumn(), position.getRow() + row, text,
+                                        foreground.get(), background.get()));
+                            }
+                        }
+                        return proxy;
                     default:
                         return defaultValue(proxy, method.getReturnType(), columns, rows);
                     }

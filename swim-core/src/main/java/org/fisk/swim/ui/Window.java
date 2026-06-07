@@ -1637,7 +1637,7 @@ public class Window implements Drawable {
     public void dispose() {
         ensureLayoutState();
         if (_editorConfig != null && Boolean.getBoolean("swim.session.restore_on_reload")) {
-            EditorConfigStore.saveSession(_editorPaths, createSession());
+            saveSessionForReload();
         }
         if (_bufferContextsByView != null) {
             for (var context : new HashSet<>(_bufferContextsByView.values())) {
@@ -1656,6 +1656,13 @@ public class Window implements Drawable {
         MailStatusService.shutdownInstance();
         TodoUiSupport.shutdownInstance();
         _instance = null;
+    }
+
+    public void saveSessionForReload() {
+        ensureLayoutState();
+        if (_editorPaths != null) {
+            EditorConfigStore.saveSession(_editorPaths, createSession());
+        }
     }
 
     public void setRootView(View view) {
@@ -2081,6 +2088,22 @@ public class Window implements Drawable {
             return false;
         }
         int logicalLine = context.getBuffer().getCursor().getLogicalLine().getY();
+        return showCodeActionsForLine(context, logicalLine, currentCursorAnchor());
+    }
+
+    private boolean showCodeActionsForDiagnosticPopup() {
+        var selected = _diagnosticPopupView == null ? null : _diagnosticPopupView.getSelectedEntry();
+        if (selected == null) {
+            return showCodeActionsForCurrentLine();
+        }
+        var context = getBufferContext();
+        if (context == null || _rootView == null) {
+            return false;
+        }
+        return showCodeActionsForLine(context, selected.startLine(), currentCursorAnchor());
+    }
+
+    private boolean showCodeActionsForLine(BufferContext context, int logicalLine, Point anchor) {
         var lineDiagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, logicalLine);
         if (!(context.getBuffer().getLanguageMode() instanceof DiagnosticActionProvider provider)) {
             if (_commandView != null) {
@@ -2102,7 +2125,7 @@ public class Window implements Drawable {
             _codeActionPopupView.setOnClose(this::hideCodeActionPopup);
             _rootView.addSubview(_codeActionPopupView);
         }
-        _codeActionPopupView.configure(actions, currentCursorAnchor(), "Code Actions");
+        _codeActionPopupView.configure(actions, anchor, "Code Actions");
         _rootView.setFirstResponder(_codeActionPopupView);
         refreshChromeState();
         _rootView.setNeedsRedraw();
@@ -2181,7 +2204,7 @@ public class Window implements Drawable {
         if (_diagnosticPopupView == null || _diagnosticPopupView.getParent() == null) {
             _diagnosticPopupView = new DiagnosticPopupView(Rect.create(0, 0, 0, 0));
             _diagnosticPopupView.setOnClose(this::hideDiagnosticPopup);
-            _diagnosticPopupView.setOnActions(this::showCodeActionsForCurrentLine);
+            _diagnosticPopupView.setOnActions(this::showCodeActionsForDiagnosticPopup);
             _rootView.addSubview(_diagnosticPopupView);
         }
         _hoverDiagnosticsVisible = hover;

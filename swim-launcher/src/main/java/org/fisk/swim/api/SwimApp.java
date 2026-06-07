@@ -8,6 +8,9 @@ public interface SwimApp extends AutoCloseable {
     Path getCurrentPath();
     void showMessage(String message);
 
+    default void checkpointForReload() {
+    }
+
     @Override
     void close();
 }

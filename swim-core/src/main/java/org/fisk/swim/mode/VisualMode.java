@@ -5,6 +5,7 @@ import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
+import org.fisk.swim.ui.BufferView;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.Window;
@@ -87,21 +88,29 @@ public class VisualMode extends Mode {
         if (maxCursor.getPosition() - minCursor.getPosition() == 0) {
             return;
         }
+        BufferView bufferView = _window.getBufferContext().getBufferView();
+        int textX = rect.getPoint().getX() + bufferView.getTextColumnStart();
+        int textRight = textX + bufferView.getTextWidth();
+        int height = rect.getSize().getHeight();
         int minY = minCursor.getYRelative();
-        int minX = minCursor.getX();
         int maxY = maxCursor.getYRelative();
-        int maxX = maxCursor.getX();
-        for (int line = minY; line <= maxY; ++line) {
-            int fromColumn = rect.getPoint().getX();
-            int toColumn = fromColumn + rect.getSize().getWidth();
-            if (line == minY) {
-                fromColumn = minX;
+        for (int row = Math.max(0, minY); row <= Math.min(maxY, height - 1); ++row) {
+            int fromColumn = textX;
+            int toColumn = textRight;
+            if (row == minY) {
+                fromColumn = textX + minCursor.getX();
             }
-            if (line == maxY) {
-                toColumn = maxX;
+            if (row == maxY) {
+                toColumn = textX + maxCursor.getX() + 1;
+            }
+            fromColumn = Math.max(textX, Math.min(fromColumn, textRight));
+            toColumn = Math.max(fromColumn, Math.min(toColumn, textRight));
+            if (toColumn <= fromColumn) {
+                continue;
             }
             graphics.setBackgroundColor(TextColor.ANSI.YELLOW);
-            graphics.drawRectangle(new TerminalPosition(fromColumn, line), new TerminalSize(toColumn - fromColumn, 1), ' ');
+            graphics.drawRectangle(new TerminalPosition(fromColumn, rect.getPoint().getY() + row),
+                    new TerminalSize(toColumn - fromColumn, 1), ' ');
         }
     }
 

@@ -269,6 +269,7 @@ public class Main implements SwimHost {
             String previousReloadFlag = System.getProperty(RELOAD_SESSION_PROPERTY);
             if (restoreSession) {
                 System.setProperty(RELOAD_SESSION_PROPERTY, "true");
+                checkpointCurrentAppForReload();
             }
             try {
                 Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
@@ -286,6 +287,17 @@ public class Main implements SwimHost {
                 }
                 _reloading = false;
             }
+        }
+    }
+
+    private void checkpointCurrentAppForReload() {
+        SwimApp loaded = _plugins.currentApp();
+        if (loaded == null) {
+            return;
+        }
+        try {
+            loaded.checkpointForReload();
+        } catch (RuntimeException e) {
         }
     }
 

@@ -22,6 +22,8 @@ public class SwimAppImpl implements SwimApp {
         void update(boolean forced);
         Path getCurrentPath();
         void setMessage(String message);
+        default void checkpointForReload() {
+        }
         void dispose();
     }
 
@@ -60,6 +62,11 @@ public class SwimAppImpl implements SwimApp {
             @Override
             public void setMessage(String message) {
                 Window.getInstance().getCommandView().setMessage(message);
+            }
+
+            @Override
+            public void checkpointForReload() {
+                Window.getInstance().saveSessionForReload();
             }
 
             @Override
@@ -218,6 +225,14 @@ public class SwimAppImpl implements SwimApp {
             if (window != null) {
                 window.setMessage(message);
             }
+        }
+    }
+
+    @Override
+    public void checkpointForReload() {
+        var window = _bindings.getWindow();
+        if (window != null) {
+            window.checkpointForReload();
         }
     }
 

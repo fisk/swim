@@ -1,6 +1,7 @@
 package org.fisk.swim.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
@@ -83,6 +84,27 @@ class BufferViewTest {
     }
 
     @Test
+    void mouseHoverShowsDiagnosticPopupFromLineNumberGutter() throws Exception {
+        Path path = tempDir.resolve("hover-gutter.txt");
+        Files.writeString(path, "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+            Point origin = absoluteScreenOrigin(view);
+            DiagnosticService.getInstance().publish(PROVIDER, window.getBufferContext().getBuffer().getURI().toString(), path,
+                    List.of(diagnostic(1, 0, DiagnosticSeverity.Error, "gutter hover error")));
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+
+            var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
+            assertNotNull(popup);
+            assertEquals("Line Diagnostics", popup.getTitle());
+        }
+    }
+
+    @Test
     void singletonMouseClickMovesCursorToClickedTextPosition() throws Exception {
         Path path = tempDir.resolve("click-cursor.txt");
         Files.writeString(path, "alpha\nbeta\n");
@@ -125,6 +147,58 @@ class BufferViewTest {
     }
 
     @Test
+    void visualModeMouseDragStartsNewSelectionFromClickedPosition() throws Exception {
+        Path path = tempDir.resolve("drag-existing-visual.txt");
+        Files.writeString(path, "abcdef\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = windowBufferView(harness);
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(1);
+            window.switchToMode(window.getVisualMode());
+            buffer.getCursor().setPosition(4);
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY();
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 2, textY)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.DRAG, 1, new TerminalPosition(textX + 5, textY)));
+
+            assertEquals(window.getVisualMode(), window.getCurrentMode());
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(2));
+            assertTrue(((VisualMode) window.getCurrentMode()).isSelected(5));
+            assertEquals(5, buffer.getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void visualModeFillCoversSelectionThroughLineEndWithoutScreenCoordinateGaps() throws Exception {
+        Path path = tempDir.resolve("visual-fill.txt");
+        Files.writeString(path, "ab\ncd\n");
+
+        var terminal = TerminalContextTestSupport.install(80, 10);
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = windowBufferView(harness);
+            var buffer = window.getBufferContext().getBuffer();
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY();
+            buffer.getCursor().setPosition(1);
+            window.switchToMode(window.getVisualMode());
+            buffer.getCursor().setPosition(3);
+
+            window.update(true);
+
+            assertEquals(TextColor.ANSI.YELLOW, backgroundAt(terminal.drawCalls(), textX + 2, textY));
+            assertEquals(TextColor.ANSI.YELLOW, backgroundAt(terminal.drawCalls(), textX, textY + 1));
+        }
+    }
+
+    @Test
     void mouseReleaseCreatesVisualSelectionWhenTerminalDoesNotSendDragEvents() throws Exception {
         Path path = tempDir.resolve("release-visual.txt");
         Files.writeString(path, "abcdef\n");
@@ -145,6 +219,29 @@ class BufferViewTest {
             assertEquals(4, window.getBufferContext().getBuffer().getCursor().getPosition());
             assertTrue(((VisualMode) window.getCurrentMode()).isSelected(1));
             assertTrue(((VisualMode) window.getCurrentMode()).isSelected(4));
+        }
+    }
+
+    @Test
+    void mouseWheelScrollsBufferView() throws Exception {
+        Path path = tempDir.resolve("mouse-wheel-scroll.txt");
+        var builder = new StringBuilder();
+        for (int i = 1; i <= 30; i++) {
+            if (i > 1) {
+                builder.append('\n');
+            }
+            builder.append("line ").append(i);
+        }
+        Files.writeString(path, builder.toString());
+
+        try (var harness = HeadlessWindowHarness.create(path, 30, 10)) {
+            var view = windowBufferView(harness);
+            Point origin = absoluteScreenOrigin(view);
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(origin.getX(), origin.getY())));
+
+            assertEquals(1, view.getStartLine());
         }
     }
 
@@ -336,6 +433,23 @@ class BufferViewTest {
                 continue;
             }
             return call.foreground();
+        }
+        throw new AssertionError("No draw call at " + x + "," + y + " in " + Arrays.toString(drawCalls.toArray()));
+    }
+
+    private static TextColor backgroundAt(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int x, int y) {
+        TextColor result = null;
+        for (var call : drawCalls) {
+            if (call.y() != y) {
+                continue;
+            }
+            if (x < call.x() || x >= call.x() + call.text().length()) {
+                continue;
+            }
+            result = call.background();
+        }
+        if (result != null) {
+            return result;
         }
         throw new AssertionError("No draw call at " + x + "," + y + " in " + Arrays.toString(drawCalls.toArray()));
     }
