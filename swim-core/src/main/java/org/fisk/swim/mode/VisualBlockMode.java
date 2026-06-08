@@ -52,18 +52,21 @@ public class VisualBlockMode extends VisualMode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
-        _rootResponder.addEventResponder("<ESC>", () -> { window.switchToMode(window.getNormalMode()); });
+        _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
         _rootResponder.addEventResponder("o", () -> {
+            allow("visual selection");
             var position = cursor.getPosition();
             cursor.setPosition(getOtherCursor().getPosition());
             getOtherCursor().setPosition(position);
             bufferContext.getBufferView().adaptViewToCursor();
         });
         _rootResponder.addEventResponder("d", () -> {
+            allow("buffer edit");
             deleteSelection();
             window.switchToMode(window.getNormalMode());
         });
         _rootResponder.addEventResponder("I", () -> {
+            allow("buffer edit");
             var selection = getSelection();
             if (selection.isEmpty()) {
                 return;

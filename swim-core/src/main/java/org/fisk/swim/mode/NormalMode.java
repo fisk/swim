@@ -45,36 +45,40 @@ public class NormalMode extends Mode {
         JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
         ClangdLspPluginSupport.installNormalModeBindings(this, window);
         _rootResponder.addEventResponder("i", () -> {
+            allow("enter input mode");
             if (window.exitShellBrowseToPrompt()) {
                 return;
             }
             window.beginRepeatRecording("i");
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder("v", () -> { window.switchToMode(window.getVisualMode()); });
-        _rootResponder.addEventResponder("V", () -> { window.switchToMode(window.getVisualLineMode()); });
-        _rootResponder.addEventResponder("<CTRL>-v", () -> { window.switchToMode(window.getVisualBlockMode()); });
-        _rootResponder.addEventResponder("<CTRL>-w s", () -> { window.splitActiveBufferVertically(); });
-        _rootResponder.addEventResponder("<CTRL>-w v", () -> { window.splitActiveBufferHorizontally(); });
-        _rootResponder.addEventResponder("<CTRL>-w h", () -> { announceIfUnmoved(window.focusView(Window.Direction.LEFT), "No pane to the left"); });
-        _rootResponder.addEventResponder("<CTRL>-w j", () -> { announceIfUnmoved(window.focusView(Window.Direction.DOWN), "No pane below"); });
-        _rootResponder.addEventResponder("<CTRL>-w k", () -> { announceIfUnmoved(window.focusView(Window.Direction.UP), "No pane above"); });
-        _rootResponder.addEventResponder("<CTRL>-w l", () -> { announceIfUnmoved(window.focusView(Window.Direction.RIGHT), "No pane to the right"); });
-        _rootResponder.addEventResponder("<CTRL>-w w", () -> { announceIfUnmoved(window.focusNextView(), "No other pane"); });
-        _rootResponder.addEventResponder("<CTRL>-w W", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); });
-        _rootResponder.addEventResponder("<CTRL>-w q", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); });
-        _rootResponder.addEventResponder("<CTRL>-w o", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); });
+        _rootResponder.addEventResponder("v", allowed("enter visual mode", () -> { window.switchToMode(window.getVisualMode()); }));
+        _rootResponder.addEventResponder("V", allowed("enter visual line mode", () -> { window.switchToMode(window.getVisualLineMode()); }));
+        _rootResponder.addEventResponder("<CTRL>-v", allowed("enter visual block mode", () -> { window.switchToMode(window.getVisualBlockMode()); }));
+        _rootResponder.addEventResponder("<CTRL>-w s", allowed("split buffer", () -> { window.splitActiveBufferVertically(); }));
+        _rootResponder.addEventResponder("<CTRL>-w v", allowed("split buffer", () -> { window.splitActiveBufferHorizontally(); }));
+        _rootResponder.addEventResponder("<CTRL>-w h", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.LEFT), "No pane to the left"); }));
+        _rootResponder.addEventResponder("<CTRL>-w j", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.DOWN), "No pane below"); }));
+        _rootResponder.addEventResponder("<CTRL>-w k", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.UP), "No pane above"); }));
+        _rootResponder.addEventResponder("<CTRL>-w l", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.RIGHT), "No pane to the right"); }));
+        _rootResponder.addEventResponder("<CTRL>-w w", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusNextView(), "No other pane"); }));
+        _rootResponder.addEventResponder("<CTRL>-w W", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); }));
+        _rootResponder.addEventResponder("<CTRL>-w q", allowed("close buffer split", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); }));
+        _rootResponder.addEventResponder("<CTRL>-w o", allowed("close buffer splits", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); }));
         _rootResponder.addEventResponder(ctrlWMotion(">", count ->
-                announceIfUnmoved(window.resizeActiveViewWidth(4 * count), "No vertical split to resize")));
+                { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewWidth(4 * count), "No vertical split to resize"); }));
         _rootResponder.addEventResponder(ctrlWMotion("<", count ->
-                announceIfUnmoved(window.resizeActiveViewWidth(-4 * count), "No vertical split to resize")));
+                { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewWidth(-4 * count), "No vertical split to resize"); }));
         _rootResponder.addEventResponder(ctrlWMotion("+", count ->
-                announceIfUnmoved(window.resizeActiveViewHeight(2 * count), "No horizontal split to resize")));
+                { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewHeight(2 * count), "No horizontal split to resize"); }));
         _rootResponder.addEventResponder(ctrlWMotion("-", count ->
-                announceIfUnmoved(window.resizeActiveViewHeight(-2 * count), "No horizontal split to resize")));
+                { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewHeight(-2 * count), "No horizontal split to resize"); }));
         _rootResponder.addEventResponder(ctrlWMotion("=", ignored ->
-                announceIfUnmoved(window.equalizeSplits(), "No split to equalize")));
+                { allow("resize buffer split"); announceIfUnmoved(window.equalizeSplits(), "No split to equalize"); }));
         _rootResponder.addEventResponder("<CTRL>-s", () -> {
+            if (window.blockEditorDriveAction("<CTRL>-s", "sending mail or Slack messages is not allowed")) {
+                return;
+            }
             if (window.sendActiveMailCompose()) {
                 return;
             }
@@ -85,41 +89,45 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<CTRL>-g c w", () -> { startShell(window, ShellTarget.WORKSPACE); });
         _rootResponder.addEventResponder("<CTRL>-g c v", () -> { startShell(window, ShellTarget.VERTICAL_SPLIT); });
         _rootResponder.addEventResponder("<CTRL>-g c h", () -> { startShell(window, ShellTarget.HORIZONTAL_SPLIT); });
-        _rootResponder.addEventResponder(registerResponder((ignored, register) -> window.selectRegister(register)));
-        _rootResponder.addEventResponder(prefixCharacterResponder("g m", (ignored, mark) -> window.setMark(mark)));
+        _rootResponder.addEventResponder(registerResponder((ignored, register) -> { allow("select register"); window.selectRegister(register); }));
+        _rootResponder.addEventResponder(prefixCharacterResponder("g m", (ignored, mark) -> { allow("set mark"); window.setMark(mark); }));
         _rootResponder.addEventResponder(markJumpResponder("'", true, window));
         _rootResponder.addEventResponder(markJumpResponder("`", false, window));
         _rootResponder.addEventResponder(macroResponder(window));
-        _rootResponder.addEventResponder("g n", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); });
-        _rootResponder.addEventResponder("g N", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); });
-        _rootResponder.addEventResponder("g C", window::clearAdditionalCursors);
-        _rootResponder.addEventResponder("g ]", () -> { window.navigateDiagnostic(true, false); });
-        _rootResponder.addEventResponder("g [", () -> { window.navigateDiagnostic(false, false); });
-        _rootResponder.addEventResponder("g }", () -> { window.navigateDiagnostic(true, true); });
-        _rootResponder.addEventResponder("g {", () -> { window.navigateDiagnostic(false, true); });
-        _rootResponder.addEventResponder("g x", () -> { window.showDiagnosticsForCurrentLine(true); });
-        _rootResponder.addEventResponder("g a", () -> { window.showCodeActionsForCurrentLine(); });
+        _rootResponder.addEventResponder("g n", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); }));
+        _rootResponder.addEventResponder("g N", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); }));
+        _rootResponder.addEventResponder("g C", allowed("multicursor", window::clearAdditionalCursors));
+        _rootResponder.addEventResponder("g ]", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, false); }));
+        _rootResponder.addEventResponder("g [", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, false); }));
+        _rootResponder.addEventResponder("g }", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, true); }));
+        _rootResponder.addEventResponder("g {", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, true); }));
+        _rootResponder.addEventResponder("g x", allowed("diagnostic popup", () -> { window.showDiagnosticsForCurrentLine(true); }));
+        _rootResponder.addEventResponder("g a", allowed("code actions", () -> { window.showCodeActionsForCurrentLine(); }));
         _rootResponder.addEventResponder(prefixCharacterResponder("@", (ignored, register) -> {
+            if (window.blockEditorDriveAction("macro playback", "macros are outside the editor-control sandbox")) {
+                return;
+            }
             if (register == '@') {
                 window.playLastMacro(1);
             } else {
                 window.playMacro(register, 1);
             }
         }));
-        _rootResponder.addEventResponder(new MotionResponder(".", count -> window.repeatLastEdit(count)));
-        _rootResponder.addEventResponder(new MotionResponder("<CTRL>-o", count -> repeat(count, window::jumpBack)));
-        _rootResponder.addEventResponder(new MotionResponder("<TAB>", count -> repeat(count, window::jumpForward)));
-        _rootResponder.addEventResponder("z a", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldAt(
-                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); });
-        _rootResponder.addEventResponder("z c", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldAt(
-                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); });
-        _rootResponder.addEventResponder("z o", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldAt(
-                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); });
-        _rootResponder.addEventResponder("z M", () -> { window.getBufferContext().getBuffer().closeAllFolds(); });
-        _rootResponder.addEventResponder("z R", () -> { window.getBufferContext().getBuffer().openAllFolds(); });
-        _rootResponder.addEventResponder("u", () -> { window.getBufferContext().getBuffer().undo(); });
-        _rootResponder.addEventResponder("<CTRL>-r", () -> {window.getBufferContext().getBuffer().redo(); });
+        _rootResponder.addEventResponder(new MotionResponder(".", count -> { allow("repeat edit"); window.repeatLastEdit(count); }));
+        _rootResponder.addEventResponder(new MotionResponder("<CTRL>-o", count -> { allow("jump navigation"); repeat(count, window::jumpBack); }));
+        _rootResponder.addEventResponder(new MotionResponder("<TAB>", count -> { allow("jump navigation"); repeat(count, window::jumpForward); }));
+        _rootResponder.addEventResponder("z a", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z c", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z o", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z M", allowed("fold", () -> { window.getBufferContext().getBuffer().closeAllFolds(); }));
+        _rootResponder.addEventResponder("z R", allowed("fold", () -> { window.getBufferContext().getBuffer().openAllFolds(); }));
+        _rootResponder.addEventResponder("u", allowed("undo", () -> { window.getBufferContext().getBuffer().undo(); }));
+        _rootResponder.addEventResponder("<CTRL>-r", allowed("redo", () -> {window.getBufferContext().getBuffer().redo(); }));
         _rootResponder.addEventResponder("d i w", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d i w");
             activeBuffer.deleteInnerWord();
@@ -139,6 +147,7 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "d i p", "p", false, TextObjectOperator.DELETE);
         installTextObjectResponder(window, "d a p", "p", true, TextObjectOperator.DELETE);
         _rootResponder.addEventResponder("d w", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d w");
             activeBuffer.deleteWord();
@@ -146,6 +155,7 @@ public class NormalMode extends Mode {
             window.commitRepeatRecording();
         });
         _rootResponder.addEventResponder("d d", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d d");
             activeBuffer.deleteLine();
@@ -153,6 +163,7 @@ public class NormalMode extends Mode {
             window.commitRepeatRecording();
         });
         _rootResponder.addEventResponder("x", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("x");
             activeBuffer.removeAt();
@@ -160,6 +171,7 @@ public class NormalMode extends Mode {
             window.commitRepeatRecording();
         });
         _rootResponder.addEventResponder("c i w", () -> {
+            allow("buffer edit");
             window.beginRepeatRecording("c i w");
             window.getBufferContext().getBuffer().deleteInnerWord();
             window.switchToMode(window.getInputMode());
@@ -177,21 +189,25 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "c i p", "p", false, TextObjectOperator.CHANGE);
         installTextObjectResponder(window, "c a p", "p", true, TextObjectOperator.CHANGE);
         _rootResponder.addEventResponder("c w", () -> {
+            allow("buffer edit");
             window.beginRepeatRecording("c w");
             window.getBufferContext().getBuffer().deleteWord();
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("a", () -> {
+            allow("enter input mode");
             window.beginRepeatRecording("a");
             window.switchToMode(window.getInputMode());
             window.getBufferContext().getBuffer().getCursor().goRight();
         });
         _rootResponder.addEventResponder("A", () -> {
+            allow("enter input mode");
             window.beginRepeatRecording("A");
             window.switchToMode(window.getInputMode());
             window.getBufferContext().getBuffer().getCursor().goEndOfLine();
         });
         _rootResponder.addEventResponder("o", () -> {
+            allow("buffer edit");
             var cursor = window.getBufferContext().getBuffer().getCursor();
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("o");
@@ -200,6 +216,7 @@ public class NormalMode extends Mode {
             activeBuffer.insert("\n");
         });
         _rootResponder.addEventResponder("O", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
             cursor.goStartOfLine();
@@ -213,6 +230,7 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("p", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
             var value = Copy.getInstance().getValue(window.consumeSelectedRegister());
@@ -230,6 +248,7 @@ public class NormalMode extends Mode {
             window.commitRepeatRecording();
         });
         _rootResponder.addEventResponder("P", () -> {
+            allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
             var value = Copy.getInstance().getValue(window.consumeSelectedRegister());
@@ -244,6 +263,7 @@ public class NormalMode extends Mode {
             window.commitRepeatRecording();
         });
         _rootResponder.addEventResponder("y y", () -> {
+            allow("yank");
             var text = window.getBufferContext().getBuffer().getCurrentLineText();
             Copy.getInstance().setText(text, true /* isLine */, window.consumeSelectedRegister());
         });
@@ -260,6 +280,7 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "y i p", "p", false, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y a p", "p", true, TextObjectOperator.YANK);
         _rootResponder.addEventResponder("m", () -> {
+            allow("project file list");
             if (window.isShowingList()) {
                 window.hideList();
             } else {
@@ -267,9 +288,13 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("M", () -> {
+            allow("project search panel");
             ProjectSearchUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("B", () -> {
+            if (window.blockEditorDriveAction("debug breakpoint", "debugger actions are outside the editor-control sandbox")) {
+                return;
+            }
             try {
                 DebuggerManager.toggleBreakpointAtCursor();
             } catch (Exception e) {
@@ -277,26 +302,42 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("e", () -> {
+            if (window.blockEditorDriveAction("mail workspace", "email is confidential and unavailable to Nemo")) {
+                return;
+            }
             MailUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("s", () -> {
+            if (window.blockEditorDriveAction("Slack workspace", "Slack is outside the editor-control sandbox")) {
+                return;
+            }
             SlackUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder("t", () -> {
+            if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
+                return;
+            }
             TodoUiSupport.toggle(window);
         });
         _rootResponder.addEventResponder(":", () -> {
             window.getCommandView().activate(":");
         });
         _rootResponder.addEventResponder("!", () -> {
+            if (window.blockEditorDriveAction("Nemo chat", "opening Nemo from editor control is not allowed")) {
+                return;
+            }
             NemoClient.getInstance().run(window.getBufferContext(), "");
         });
         _rootResponder.addEventResponder(">", () -> {
+            if (window.blockEditorDriveAction("shell panel", "opening shell input through drive_editor is not allowed")) {
+                return;
+            }
             if (!window.showShellPanel()) {
                 window.getCommandView().setMessage("Failed to start shell");
             }
         });
         _rootResponder.addEventResponder("*", () -> {
+            allow("search current word");
             var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
                 window.getCommandView().activate("/");
@@ -305,6 +346,7 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("#", () -> {
+            allow("search current word");
             var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
                 window.getCommandView().activate("?");
@@ -319,9 +361,11 @@ public class NormalMode extends Mode {
             window.getCommandView().activate("?");
         });
         _rootResponder.addEventResponder("n", () -> {
+            allow("search next");
             window.getCommandView().searchNext();
         });
         _rootResponder.addEventResponder("N", () -> {
+            allow("search previous");
             window.getCommandView().searchPrevious();
         });
     }
@@ -411,7 +455,10 @@ public class NormalMode extends Mode {
     }
 
     private static EventResponder markJumpResponder(String prefix, boolean lineWise, Window window) {
-        return prefixCharacterResponder(prefix, (ignored, mark) -> window.jumpToMark(mark, lineWise));
+        return prefixCharacterResponder(prefix, (ignored, mark) -> {
+            window.allowEditorDriveAction("mark jump");
+            window.jumpToMark(mark, lineWise);
+        });
     }
 
     private static EventResponder macroResponder(Window window) {
@@ -456,6 +503,9 @@ public class NormalMode extends Mode {
 
             @Override
             public void respond() {
+                if (window.blockEditorDriveAction("macro", "macros are outside the editor-control sandbox")) {
+                    return;
+                }
                 if (_stop) {
                     window.stopMacroRecording();
                 } else if (_register != null) {
@@ -509,6 +559,9 @@ public class NormalMode extends Mode {
     }
 
     private void startShell(Window window, ShellTarget target) {
+        if (window.blockEditorDriveAction("shell workspace", "opening shell input through drive_editor is not allowed")) {
+            return;
+        }
         boolean opened = switch (target) {
         case WORKSPACE -> window.showShellWorkspace();
         case VERTICAL_SPLIT -> window.showShellSplitHorizontally();
@@ -544,20 +597,25 @@ public class NormalMode extends Mode {
         }
         switch (operator) {
         case DELETE -> {
+            window.allowEditorDriveAction("buffer edit");
             window.beginRepeatRecording(pattern);
             buffer.remove(range.getStart(), range.getEnd());
             buffer.getUndoLog().commit();
             window.commitRepeatRecording();
         }
         case CHANGE -> {
+            window.allowEditorDriveAction("buffer edit");
             window.beginRepeatRecording(pattern);
             buffer.remove(range.getStart(), range.getEnd());
             window.switchToMode(window.getInputMode());
         }
-        case YANK -> Copy.getInstance().setText(
-                buffer.getSubstring(range.getStart(), range.getEnd()),
-                false,
-                window.consumeSelectedRegister());
+        case YANK -> {
+            window.allowEditorDriveAction("yank");
+            Copy.getInstance().setText(
+                    buffer.getSubstring(range.getStart(), range.getEnd()),
+                    false,
+                    window.consumeSelectedRegister());
+        }
         }
     }
 }

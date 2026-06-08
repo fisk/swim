@@ -31,7 +31,10 @@ public class CodeActionPopupView extends View {
         _responders.addEventResponder("<DOWN>", () -> moveSelection(1));
         _responders.addEventResponder("<UP>", () -> moveSelection(-1));
         _responders.addEventResponder("<ENTER>", this::acceptSelection);
-        _responders.addEventResponder("<ESC>", () -> _onClose.run());
+        _responders.addEventResponder("<ESC>", () -> {
+            allowEditorDriveAction("close code actions");
+            _onClose.run();
+        });
     }
 
     public void configure(List<DiagnosticAction> actions, Point anchor, String title) {
@@ -132,6 +135,7 @@ public class CodeActionPopupView extends View {
     }
 
     private void moveSelection(int delta) {
+        allowEditorDriveAction("code action selection");
         if (_actions.isEmpty()) {
             return;
         }
@@ -140,11 +144,18 @@ public class CodeActionPopupView extends View {
     }
 
     private void acceptSelection() {
+        allowEditorDriveAction("apply code action");
         if (_actions.isEmpty()) {
             return;
         }
         _actions.get(_selection).apply().run();
         _onClose.run();
+    }
+
+    private static void allowEditorDriveAction(String action) {
+        if (Window.getInstance() != null) {
+            Window.getInstance().allowEditorDriveAction(action);
+        }
     }
 
     private void ensureSelectionVisible(int visibleRows) {

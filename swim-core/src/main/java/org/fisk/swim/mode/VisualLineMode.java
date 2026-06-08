@@ -38,22 +38,26 @@ public class VisualLineMode extends VisualMode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
-        _rootResponder.addEventResponder("<ESC>", () -> { window.switchToMode(window.getNormalMode()); });
+        _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
         _rootResponder.addEventResponder("o", () -> {
+            allow("visual selection");
             var position = cursor.getPosition();
             cursor.setPosition(getOtherCursor().getPosition());
             getOtherCursor().setPosition(position);
             bufferContext.getBufferView().adaptViewToCursor();
         });
         _rootResponder.addEventResponder("d", () -> {
+            allow("buffer edit");
             deleteSelection();
             window.switchToMode(window.getNormalMode());
         });
         _rootResponder.addEventResponder("c", () -> {
+            allow("buffer edit");
             deleteSelection();
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("y", () -> {
+            allow("yank");
             var selection = getSelection();
             var text = buffer.getSubstring(selection.getStart(), selection.getEnd());
             Copy.getInstance().setText(text, true /* isLine */,
@@ -61,6 +65,7 @@ public class VisualLineMode extends VisualMode {
             window.switchToMode(window.getNormalMode());
         });
         _rootResponder.addEventResponder("z f", () -> {
+            allow("fold");
             if (buffer.createFold(getSelection().getStart(), getSelection().getEnd())) {
                 window.switchToMode(window.getNormalMode());
             }

@@ -21,6 +21,7 @@ public class InputMode extends Mode {
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
         _rootResponder.addEventResponder("<ESC>", () -> {
+            window.allowEditorDriveAction("exit input mode");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
@@ -47,6 +48,7 @@ public class InputMode extends Mode {
 
             @Override
             public void respond() {
+                window.allowEditorDriveAction("insert text");
                 buffer.insert(Character.toString(_character));
                 languageMode(buffer).handleInsertedCharacter(bufferContext, _character);
                 bufferContext.getBufferView().setNeedsRedraw();
@@ -54,6 +56,7 @@ public class InputMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("<BACKSPACE>", () -> {
+            window.allowEditorDriveAction("buffer edit");
             int previousPosition = buffer.getCursor().getPosition();
             buffer.removeBefore();
             var languageMode = languageMode(buffer);
@@ -63,12 +66,16 @@ public class InputMode extends Mode {
             languageMode.handleBackspace(bufferContext);
         });
         _rootResponder.addEventResponder("<ENTER>", () -> {
+            window.allowEditorDriveAction("insert newline");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
             buffer.insert("\n");
         });
         _rootResponder.addEventResponder("<CTRL>-s", () -> {
+            if (_window.blockEditorDriveAction("<CTRL>-s", "sending mail or Slack messages is not allowed")) {
+                return;
+            }
             if (_window.sendActiveMailCompose()) {
                 return;
             }
@@ -77,6 +84,7 @@ public class InputMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("<LEFT>", () -> {
+            window.allowEditorDriveAction("cursor motion");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
@@ -85,6 +93,7 @@ public class InputMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("<RIGHT>", () -> {
+            window.allowEditorDriveAction("cursor motion");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
@@ -93,12 +102,14 @@ public class InputMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("<DOWN>", () -> {
+            window.allowEditorDriveAction("cursor motion");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
             cursor.goDown();
         });
         _rootResponder.addEventResponder("<UP>", () -> {
+            window.allowEditorDriveAction("cursor motion");
             var languageMode = languageMode(buffer);
             languageMode.cancelCompletion();
             languageMode.cancelSnippet();
@@ -212,6 +223,9 @@ public class InputMode extends Mode {
             @Override
             public void respond() {
                 var completion = languageMode(buffer);
+                if (_action != CompletionAction.NONE) {
+                    window.allowEditorDriveAction("completion");
+                }
                 switch (_action) {
                 case SNIPPET_TYPE:
                     completion.handleSnippetCharacter(bufferContext, _typedCharacter);

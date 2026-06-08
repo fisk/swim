@@ -195,6 +195,12 @@ public class ShellPanelView extends View {
         if (events.remaining() != 0) {
             return Response.NO;
         }
+        var window = Window.getInstance();
+        if (window != null && window.isEditorDriveSandboxActive()) {
+            _pendingAction = () -> window.blockEditorDriveAction("shell input",
+                    "shell input through drive_editor is not allowed");
+            return Response.YES;
+        }
         var event = events.current();
         if (_commandMode) {
             _pendingAction = commandModeAction(event);

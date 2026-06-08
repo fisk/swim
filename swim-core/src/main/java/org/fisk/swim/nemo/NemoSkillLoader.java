@@ -32,8 +32,12 @@ final class NemoSkillLoader {
         }
 
         var skillDocuments = new ArrayList<NemoSkillDocument>();
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            skillDocuments.add(NemoEditorControlSkill.document());
+        }
+        int loadedWorkspaceSkills = 0;
         for (Path skillPath : candidates) {
-            if (skillDocuments.size() >= configuration.skillsMaxFiles() || !Files.isRegularFile(skillPath)) {
+            if (loadedWorkspaceSkills >= configuration.skillsMaxFiles() || !Files.isRegularFile(skillPath)) {
                 continue;
             }
             try {
@@ -44,6 +48,7 @@ final class NemoSkillLoader {
                 }
                 String relativePath = normalizedRoot.relativize(skillPath).toString();
                 skillDocuments.add(new NemoSkillDocument(relativePath.isBlank() ? "SKILLS.md" : relativePath, content));
+                loadedWorkspaceSkills++;
             } catch (IOException ignored) {
             }
         }

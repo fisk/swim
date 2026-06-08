@@ -1,5 +1,8 @@
 package org.fisk.swim.ui;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
@@ -39,6 +42,25 @@ public class BufferView extends View {
     public int getTextWidth() {
         int totalWidth = getBounds().getSize().getWidth();
         return Math.max(1, totalWidth - getLineNumberGutterWidth() - getScrollbarWidth());
+    }
+
+    public List<String> snapshotVisibleTextLines() {
+        var textLayout = _bufferContext.getTextLayout();
+        textLayout.calculate();
+        int width = getTextWidth();
+        var result = new ArrayList<String>();
+        for (var line : textLayout.getVisibleLogicalLines()) {
+            char[] row = " ".repeat(width).toCharArray();
+            for (var glyph : line.getGlyphs()) {
+                if (glyph.isSynthetic() || glyph.getX() < 0 || glyph.getX() >= width || "\n".equals(glyph.getCharacter())) {
+                    continue;
+                }
+                String character = glyph.getCharacter();
+                row[glyph.getX()] = character == null || character.isEmpty() ? ' ' : character.charAt(0);
+            }
+            result.add(stripTrailingSpaces(new String(row)));
+        }
+        return result;
     }
 
     public BufferView(Rect rect, BufferContext bufferContext) {
@@ -223,11 +245,13 @@ public class BufferView extends View {
             return;
         }
         if (action.getActionType() == MouseActionType.SCROLL_UP) {
+            window.allowEditorDriveAction("scroll buffer");
             window.hideHoverDiagnostics();
             scrollUp();
             return;
         }
         if (action.getActionType() == MouseActionType.SCROLL_DOWN) {
+            window.allowEditorDriveAction("scroll buffer");
             window.hideHoverDiagnostics();
             scrollDown();
             return;
@@ -263,10 +287,13 @@ public class BufferView extends View {
         textX = Math.max(0, Math.min(textX, getTextWidth()));
         int mousePosition = positionForMouse(wrappedLine, textX);
         if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+            window.allowEditorDriveAction("mouse cursor");
             beginMouseSelection(window, mousePosition);
         } else if (action.getActionType() == MouseActionType.DRAG) {
+            window.allowEditorDriveAction("mouse visual selection");
             updateVisualSelectionForDrag(window, mousePosition);
         } else if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+            window.allowEditorDriveAction("mouse visual selection");
             updateVisualSelectionForRelease(window, mousePosition);
         }
     }
@@ -466,5 +493,13 @@ public class BufferView extends View {
             }
         }
         return lines;
+    }
+
+    private static String stripTrailingSpaces(String text) {
+        int end = text.length();
+        while (end > 0 && text.charAt(end - 1) == ' ') {
+            end--;
+        }
+        return text.substring(0, end);
     }
 }

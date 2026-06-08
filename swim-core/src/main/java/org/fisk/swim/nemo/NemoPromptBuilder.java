@@ -134,6 +134,20 @@ final class NemoPromptBuilder {
         if (!configuration.mcpServers().isEmpty()) {
             lines.add("- MCP stdio servers are configured; tools named mcp__server__tool are discovered dynamically, may access external systems outside Nemo's workspace sandbox, and require approval unless the session is full-access.");
         }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            lines.add("- start_editor_control requests host approval for an explicit single-owner editor-control session; call it before screen_snapshot or drive_editor.");
+        }
+        if (configuration.toolScreenSnapshot()) {
+            lines.add("- screen_snapshot can inspect a host-filtered view of the editor screen only during an active editor-control session; host-only approval overlays, Nemo chat contents, and private/non-buffer workspaces are not visible through it.");
+        }
+        if (configuration.toolDriveEditor() && NemoClient.isToolAllowedByPermission(configuration, "drive_editor")) {
+            lines.add("- drive_editor can send bounded key streams to the active editor buffer only while this session holds editor-control; editor actions are opt-in at execution time, allowing workspace-local navigation, editing, search, and saves when permitted while blocking host overlays, shell input, Nemo UI, mail, Slack, Todo, external workspaces, and other boundary-crossing interactions.");
+        } else if (configuration.toolDriveEditor()) {
+            lines.add("- drive_editor is configured but unavailable in the current permission mode.");
+        }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            lines.add("- finish_editor_control releases the editor-control lock and reopens the invoking Nemo chat when editor-control work is done so you can report findings.");
+        }
         var pluginTools = NemoClient.pluginToolDescriptors(configuration);
         if (!pluginTools.isEmpty()) {
             lines.add("- loaded plugins expose tools named plugin__plugin__tool; plugin tools run plugin code, may access plugin-managed systems, and require approval unless the session is full-access or the plugin marks the tool approval-free.");

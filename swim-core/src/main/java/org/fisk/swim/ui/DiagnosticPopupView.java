@@ -36,9 +36,18 @@ public class DiagnosticPopupView extends View {
         _responders.addEventResponder("k", () -> moveSelection(-1));
         _responders.addEventResponder("<DOWN>", () -> moveSelection(1));
         _responders.addEventResponder("<UP>", () -> moveSelection(-1));
-        _responders.addEventResponder("a", () -> _onActions.run());
-        _responders.addEventResponder("<ENTER>", () -> _onActions.run());
-        _responders.addEventResponder("<ESC>", () -> _onClose.run());
+        _responders.addEventResponder("a", () -> {
+            allowEditorDriveAction("diagnostic actions");
+            _onActions.run();
+        });
+        _responders.addEventResponder("<ENTER>", () -> {
+            allowEditorDriveAction("diagnostic actions");
+            _onActions.run();
+        });
+        _responders.addEventResponder("<ESC>", () -> {
+            allowEditorDriveAction("close diagnostics");
+            _onClose.run();
+        });
     }
 
     public void configure(List<DiagnosticEntry> entries, Point anchor, String title, boolean interactive) {
@@ -163,11 +172,18 @@ public class DiagnosticPopupView extends View {
     }
 
     private void moveSelection(int delta) {
+        allowEditorDriveAction("diagnostic selection");
         if (_entries.isEmpty()) {
             return;
         }
         _selection = Math.max(0, Math.min(_entries.size() - 1, _selection + delta));
         setNeedsRedraw();
+    }
+
+    private static void allowEditorDriveAction(String action) {
+        if (Window.getInstance() != null) {
+            Window.getInstance().allowEditorDriveAction(action);
+        }
     }
 
     private void ensureSelectionVisible(int visibleRows) {

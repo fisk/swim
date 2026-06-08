@@ -1,5 +1,6 @@
 package org.fisk.swim.ui;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -79,6 +80,7 @@ public class CommandView extends View {
     private StringBuilder _command = null;
     private int _commandSelection;
     private String _lastCommand = null;
+    private boolean _editorDriveOwned;
     private ListEventResponder _responders = new ListEventResponder();
     private boolean _searchForward;
     private String _searchString;
@@ -92,9 +94,11 @@ public class CommandView extends View {
         super(bounds);
         setBackgroundColour(UiTheme.COMMAND_INACTIVE_BACKGROUND);
         _responders.addEventResponder("<ESC>", () -> {
+            allowEditorDrivePromptAction("close prompt");
             deactivate();
         });
         _responders.addEventResponder("<ENTER>", () -> {
+            allowEditorDrivePromptAction(isSearch() ? "run search prompt" : "run command prompt");
             if (isSearch()) {
                 runSearch(_command.toString());
             } else {
@@ -105,6 +109,7 @@ public class CommandView extends View {
             }
         });
         _responders.addEventResponder("<BACKSPACE>", () -> {
+            allowEditorDrivePromptAction("edit prompt");
             if (_command.length() > 0) {
                 _command.delete(_command.length() - 1, _command.length());
                 resetCommandSelection();
@@ -134,9 +139,18 @@ public class CommandView extends View {
             @Override
             public void respond() {
                 switch (_action) {
-                case PREVIOUS_MATCH -> moveCommandSelection(-1);
-                case NEXT_MATCH -> moveCommandSelection(1);
-                case COMPLETE_MATCH -> completeSelectedCommand();
+                case PREVIOUS_MATCH -> {
+                    allowEditorDrivePromptAction("select command completion");
+                    moveCommandSelection(-1);
+                }
+                case NEXT_MATCH -> {
+                    allowEditorDrivePromptAction("select command completion");
+                    moveCommandSelection(1);
+                }
+                case COMPLETE_MATCH -> {
+                    allowEditorDrivePromptAction("complete command");
+                    completeSelectedCommand();
+                }
                 default -> {
                 }
                 }
@@ -160,6 +174,7 @@ public class CommandView extends View {
 
             @Override
             public void respond() {
+                allowEditorDrivePromptAction("edit prompt");
                 _command.append(_character);
                 resetCommandSelection();
                 refreshChrome();
@@ -217,6 +232,10 @@ public class CommandView extends View {
     private void runCommand(String rawCommand) {
         rawCommand = rawCommand.trim();
         if (rawCommand.equals("")) {
+            return;
+        }
+        rawCommand = editorDriveSandboxedCommand(rawCommand);
+        if (rawCommand == null) {
             return;
         }
         var substitution = parseSubstitute(rawCommand);
@@ -447,6 +466,98 @@ public class CommandView extends View {
             replacement += " ";
         }
         _command = new StringBuilder(before).append(replacement).append(after);
+    }
+
+    private String editorDriveSandboxedCommand(String rawCommand) {
+        var window = Window.getInstance();
+        if (window == null || !_editorDriveOwned || !window.isEditorDriveCommandSandboxActive()) {
+            return rawCommand;
+        }
+        int splitIndex = rawCommand.indexOf(' ');
+        String command = splitIndex == -1 ? rawCommand : rawCommand.substring(0, splitIndex);
+        String argument = splitIndex == -1 ? "" : rawCommand.substring(splitIndex + 1).trim();
+        try {
+            if (parseSubstitute(rawCommand) != null) {
+                return allowEditorDriveCommand(window, rawCommand);
+            }
+        } catch (IllegalArgumentException ignored) {
+            return allowEditorDriveCommand(window, rawCommand);
+        }
+        return switch (command) {
+        case "e" -> sandboxedEditorOpenCommand(window, rawCommand, argument);
+        case "split", "sp", "vsplit", "vs", "close", "only", "focus",
+                "buffers", "ls", "buffer", "b", "bnext", "bn", "bprev", "bp",
+                "copen", "cclose", "cnext", "cn", "cprev", "cp",
+                "lopen", "lclose", "lnext", "ln", "lprev", "lp",
+                "lgrep", "multicursor", "mc", "grep", "search",
+                "h", "help", "tree", "registers", "reg", "marks", "jumps" -> allowEditorDriveCommand(window, rawCommand);
+        case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
+        case "q" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
+        case "mail", "todo", "slack", "nemo" -> blockEditorDriveCommand(window, rawCommand,
+                "opening host communication or assistant workspaces is not allowed");
+        case "shell", "sh", "vshell", "hshell" -> blockEditorDriveCommand(window, rawCommand,
+                "opening shell input through drive_editor is not allowed");
+        case "reload", "rebuild", "upgrade" -> blockEditorDriveCommand(window, rawCommand,
+                "reload and rebuild commands require host action");
+        case "debug", "dbg" -> blockEditorDriveCommand(window, rawCommand,
+                "debugger commands are outside the editor-control sandbox");
+        case "git" -> blockEditorDriveCommand(window, rawCommand,
+                "git UI commands are outside the editor-control sandbox");
+        default -> blockEditorDriveCommand(window, rawCommand,
+                "unknown or unsupported command in the editor-control sandbox");
+        };
+    }
+
+    private String sandboxedEditorOpenCommand(Window window, String rawCommand, String argument) {
+        if (argument.isBlank()) {
+            return blockEditorDriveCommand(window, rawCommand, ":e requires an existing workspace path");
+        }
+        Path path;
+        try {
+            path = window.resolveEditorDriveWorkspacePath(argument);
+        } catch (IllegalArgumentException e) {
+            return blockEditorDriveCommand(window, rawCommand, e.getMessage());
+        }
+        if (!Files.isRegularFile(path)) {
+            Path parent = path.getParent();
+            if (Files.exists(path) || parent == null || !Files.isDirectory(parent)) {
+                return blockEditorDriveCommand(window, rawCommand,
+                        "path is not an existing workspace file or creatable workspace file: " + argument);
+            }
+        }
+        window.allowEditorDriveAction(":e");
+        return "e " + path;
+    }
+
+    private String sandboxedEditorWriteCommand(Window window, String rawCommand, String argument) {
+        if (!argument.isBlank()) {
+            return blockEditorDriveCommand(window, rawCommand, ":w does not accept arguments");
+        }
+        var context = window.getBufferContext();
+        Path path = context == null ? null : context.getBuffer().getPath();
+        String block = window.editorDriveWorkspacePathBlock(path, "save");
+        if (block != null) {
+            return blockEditorDriveCommand(window, rawCommand, block);
+        }
+        return allowEditorDriveCommand(window, rawCommand);
+    }
+
+    private String blockEditorDriveCommand(Window window, String rawCommand, String reason) {
+        _message = "Editor control blocked :" + rawCommand + ": " + reason;
+        window.blockEditorDriveCommand(_message);
+        return null;
+    }
+
+    private String allowEditorDriveCommand(Window window, String rawCommand) {
+        window.allowEditorDriveAction(":" + rawCommand);
+        return rawCommand;
+    }
+
+    private void allowEditorDrivePromptAction(String action) {
+        var window = Window.getInstance();
+        if (window != null && _editorDriveOwned) {
+            window.allowEditorDriveAction(action);
+        }
     }
 
     private void splitBuffer(boolean vertical) {
@@ -814,6 +925,18 @@ public class CommandView extends View {
         return _command != null;
     }
 
+    boolean isEditorDriveOwned() {
+        return _editorDriveOwned;
+    }
+
+    boolean isEditorDriveCommandPrompt() {
+        return isActive() && _editorDriveOwned && isCommandPrompt();
+    }
+
+    boolean isEditorDriveOwnedPrompt() {
+        return isActive() && _editorDriveOwned;
+    }
+
     String getPrompt() {
         return _prompt;
     }
@@ -836,6 +959,10 @@ public class CommandView extends View {
         _command = new StringBuilder();
         resetCommandSelection();
         var window = Window.getInstance();
+        _editorDriveOwned = window != null && window.isEditorDriveInputActive();
+        if (_editorDriveOwned) {
+            window.allowEditorDriveAction(isCommandPrompt() ? "open command prompt" : "open search prompt");
+        }
         var rootView = window.getRootView();
         rootView.setFirstResponder(this);
         window.refreshChromeState();
@@ -851,6 +978,7 @@ public class CommandView extends View {
     public void deactivate() {
         _command = null;
         _prompt = null;
+        _editorDriveOwned = false;
         resetCommandSelection();
         var window = Window.getInstance();
         if (window == null) {

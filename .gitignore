@@ -1,6 +1,11 @@
 .classpath
 .settings
 .project
+.DS_Store
+.m2-work/
+.swim
+.swp
+session.json
 build
 /target/
 /swim-core/target/

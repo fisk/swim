@@ -315,6 +315,37 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            tools.add(tool("start_editor_control",
+                    "Request host approval to start an explicit editor-control session. Only one Nemo session can hold control at a time; call this before screen_snapshot or drive_editor, then finish_editor_control when done.",
+                    JsonObjectSchema.builder()
+                            .additionalProperties(false)
+                            .build()));
+        }
+        if (configuration.toolScreenSnapshot()) {
+            tools.add(tool("screen_snapshot",
+                    "Return a host-filtered structured text snapshot of the current editor screen during an active editor-control session. Host-only approval overlays and Nemo's own chat contents are not included.",
+                    JsonObjectSchema.builder()
+                            .additionalProperties(false)
+                            .build()));
+        }
+        if (configuration.toolDriveEditor() && NemoClient.isToolAllowedByPermission(configuration, "drive_editor")) {
+            tools.add(tool("drive_editor",
+                    "Send a bounded stream of text editor input to the active buffer during the active editor-control session and return before/after snapshots. Literal text is typed as characters; supported tokens include <ESC>, <ENTER>, <TAB>, <BACKSPACE>, <UP>, <DOWN>, <LEFT>, <RIGHT>, <PAGE-UP>, <PAGE-DOWN>, <SPACE>, <LT>, <GT>, and <CTRL-x>. Editor actions assess sandbox permissions at execution time: workspace-local navigation, editing, search, and saves are allowed when permitted; host overlays, shell, Nemo, mail, Slack, Todo, external workspaces, and other boundary-crossing actions are blocked.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("input", "Literal text plus optional key tokens to send to the editor.")
+                            .addIntegerProperty("max_events", "Optional maximum parsed key events to process, capped at 500.")
+                            .required(List.of("input"))
+                            .additionalProperties(false)
+                            .build()));
+        }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            tools.add(tool("finish_editor_control",
+                    "Finish the active editor-control session, release the single-control lock, and reopen the Nemo chat conversation that invoked these tools so you can report findings to the user.",
+                    JsonObjectSchema.builder()
+                            .additionalProperties(false)
+                            .build()));
+        }
         for (NemoMcpClient.ToolDescriptor descriptor : NemoClient.mcpToolDescriptors(configuration)) {
             tools.add(mcpTool(descriptor));
         }

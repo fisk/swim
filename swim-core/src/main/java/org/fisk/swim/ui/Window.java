@@ -8,6 +8,7 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
@@ -26,6 +27,7 @@ import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectSearch;
+import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
@@ -49,6 +51,7 @@ import org.slf4j.Logger;
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.TextColor;
+import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen.RefreshType;
 
@@ -88,6 +91,10 @@ public class Window implements Drawable {
     public record OpenBufferEntry(Path path, String label) {
     }
 
+    public record EditorDriveResult(boolean accepted, String message, int eventsProcessed,
+            String beforeSnapshot, String afterSnapshot) {
+    }
+
     private record CompiledRemap(List<RecordedKey> lhs, List<RecordedKey> rhs, String lhsText) {
     }
 
@@ -121,6 +128,14 @@ public class Window implements Drawable {
     private CodeActionPopupView _codeActionPopupView;
     private TodoQuickCaptureView _todoQuickCaptureView;
     private EventResponder _todoQuickCaptureReturnResponder;
+    private HostApprovalOverlayView _hostApprovalOverlayView;
+    private EventResponder _hostApprovalReturnResponder;
+    private boolean _editorDriveInputActive;
+    private boolean _editorDriveCommandSandboxActive;
+    private Path _editorDriveWorkspaceRoot;
+    private String _editorDriveCommandBlock;
+    private boolean _editorDriveActionAllowed;
+    private String _editorDriveActionLabel;
     private boolean _hoverDiagnosticsVisible;
     private Size _size;
     private BufferContext _bufferContext;
@@ -214,6 +229,14 @@ public class Window implements Drawable {
     }
 
     public boolean setBufferPath(Path path) {
+        if (isEditorDriveSandboxActive()) {
+            String block = editorDriveWorkspacePathBlock(path, "open");
+            if (block != null) {
+                blockEditorDriveAction("open file", block);
+                return false;
+            }
+            allowEditorDriveAction("open file");
+        }
         hideTransientDiagnostics();
         if (path != null && path.toFile().isDirectory()) {
             return showDirectoryBrowser(path);
@@ -259,6 +282,9 @@ public class Window implements Drawable {
         if (directory == null || !directory.toFile().isDirectory()) {
             return false;
         }
+        if (blockEditorDriveAction("open directory", "directory browser is outside the editor-control sandbox")) {
+            return false;
+        }
         if (_currentWorkspace != null
                 && _currentWorkspace._kind == WorkspaceKind.BUFFER
                 && _activeView instanceof DirectoryBrowserView browserView) {
@@ -281,6 +307,9 @@ public class Window implements Drawable {
     }
 
     public boolean showMailWorkspace(org.fisk.swim.mail.MailClient client) {
+        if (blockEditorDriveAction("mail workspace", "email is confidential and unavailable to Nemo")) {
+            return false;
+        }
         if (client == null) {
             return false;
         }
@@ -298,6 +327,9 @@ public class Window implements Drawable {
     }
 
     public boolean showSlackWorkspace(org.fisk.swim.slack.SlackClient client) {
+        if (blockEditorDriveAction("Slack workspace", "Slack is outside the editor-control sandbox")) {
+            return false;
+        }
         if (client == null) {
             return false;
         }
@@ -315,6 +347,9 @@ public class Window implements Drawable {
     }
 
     public boolean showTodoWorkspace(TodoStore store) {
+        if (blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
+            return false;
+        }
         if (store == null) {
             return false;
         }
@@ -333,6 +368,9 @@ public class Window implements Drawable {
     }
 
     public boolean showTodoQuickCapture(TodoStore store) {
+        if (blockEditorDriveAction("Todo quick capture", "Todo is outside the editor-control sandbox")) {
+            return false;
+        }
         if (_rootView == null || store == null) {
             return false;
         }
@@ -366,6 +404,48 @@ public class Window implements Drawable {
         return true;
     }
 
+    public boolean showHostApprovalOverlay(List<HostApprovalOverlayView.Entry> entries,
+            Consumer<HostApprovalOverlayView.Decision> onDecision) {
+        if (_rootView == null || entries == null || entries.isEmpty()) {
+            hideHostApprovalOverlay();
+            return false;
+        }
+        ensureLayoutState();
+        if (_hostApprovalOverlayView == null || _hostApprovalOverlayView.getParent() == null) {
+            _hostApprovalReturnResponder = _rootView.getFirstResponder();
+            _hostApprovalOverlayView = new HostApprovalOverlayView(Rect.create(0, 0, 0, 0));
+            _rootView.addSubview(_hostApprovalOverlayView);
+        }
+        _hostApprovalOverlayView.setOnDecision(onDecision);
+        _hostApprovalOverlayView.setEntries(entries);
+        _hostApprovalOverlayView.syncBounds();
+        _rootView.setFirstResponder(_hostApprovalOverlayView);
+        refreshChromeState();
+        _rootView.setNeedsRedraw();
+        return true;
+    }
+
+    public void hideHostApprovalOverlay() {
+        HostApprovalOverlayView view = _hostApprovalOverlayView;
+        if (view != null) {
+            view.removeFromParent();
+            _hostApprovalOverlayView = null;
+        }
+        if (_rootView != null) {
+            if (_rootView.getFirstResponder() == view) {
+                _rootView.setFirstResponder(hostApprovalRestoreTarget());
+            }
+            _rootView.setNeedsRedraw();
+        }
+        _hostApprovalReturnResponder = null;
+        refreshChromeState();
+    }
+
+    public boolean isShowingHostApprovalOverlay() {
+        return _hostApprovalOverlayView != null && _hostApprovalOverlayView.getParent() != null
+                && _hostApprovalOverlayView.hasEntries();
+    }
+
     public boolean sendActiveMailCompose() {
         MailPanelView panel = findMailPanelView(_workspaceView);
         if (panel == null || !panel.isComposeActive()) {
@@ -385,6 +465,9 @@ public class Window implements Drawable {
     }
 
     public boolean showPluginWorkspace(String pluginId, SwimPanel panel) {
+        if (blockEditorDriveAction("plugin workspace", "plugin workspaces are outside the editor-control sandbox")) {
+            return false;
+        }
         if (pluginId == null || panel == null) {
             return false;
         }
@@ -398,14 +481,23 @@ public class Window implements Drawable {
     }
 
     public boolean showShellWorkspace() {
+        if (blockEditorDriveAction("shell workspace", "opening shell input through drive_editor is not allowed")) {
+            return false;
+        }
         return openShellWorkspace();
     }
 
     public boolean showShellSplitHorizontally() {
+        if (blockEditorDriveAction("shell split", "opening shell input through drive_editor is not allowed")) {
+            return false;
+        }
         return openShellSplit(SplitView.Orientation.HORIZONTAL);
     }
 
     public boolean showShellSplitVertically() {
+        if (blockEditorDriveAction("shell split", "opening shell input through drive_editor is not allowed")) {
+            return false;
+        }
         return openShellSplit(SplitView.Orientation.VERTICAL);
     }
 
@@ -505,10 +597,12 @@ public class Window implements Drawable {
     }
 
     public BufferView splitActiveBufferHorizontally() {
+        allowEditorDriveAction("split buffer");
         return splitActiveBuffer(SplitView.Orientation.HORIZONTAL);
     }
 
     public BufferView splitActiveBufferVertically() {
+        allowEditorDriveAction("split buffer");
         return splitActiveBuffer(SplitView.Orientation.VERTICAL);
     }
 
@@ -529,28 +623,33 @@ public class Window implements Drawable {
     }
 
     public boolean closeActiveView() {
+        allowEditorDriveAction("close buffer split");
         return closeView(getActiveView());
     }
 
     public boolean resizeActiveViewWidth(int deltaColumns) {
         ensureLayoutState();
+        allowEditorDriveAction("resize buffer split");
         return _workspaceView instanceof SplitView splitRoot
                 && splitRoot.resizeLeaf(getActiveView(), SplitView.Orientation.HORIZONTAL, deltaColumns);
     }
 
     public boolean resizeActiveViewHeight(int deltaRows) {
         ensureLayoutState();
+        allowEditorDriveAction("resize buffer split");
         return _workspaceView instanceof SplitView splitRoot
                 && splitRoot.resizeLeaf(getActiveView(), SplitView.Orientation.VERTICAL, deltaRows);
     }
 
     public boolean equalizeSplits() {
         ensureLayoutState();
+        allowEditorDriveAction("resize buffer split");
         return _workspaceView instanceof SplitView splitRoot && splitRoot.equalize();
     }
 
     public boolean closeOtherViews() {
         ensureLayoutState();
+        allowEditorDriveAction("close buffer splits");
         var keepView = getEditableBufferView();
         if (keepView == null) {
             return false;
@@ -584,6 +683,7 @@ public class Window implements Drawable {
 
     public boolean focusNextView() {
         ensureLayoutState();
+        allowEditorDriveAction("focus buffer split");
         var leaves = getLeafViews();
         if (leaves.size() <= 1) {
             return false;
@@ -599,6 +699,7 @@ public class Window implements Drawable {
 
     public boolean focusPreviousView() {
         ensureLayoutState();
+        allowEditorDriveAction("focus buffer split");
         var leaves = getLeafViews();
         if (leaves.size() <= 1) {
             return false;
@@ -614,6 +715,7 @@ public class Window implements Drawable {
 
     public boolean focusView(Direction direction) {
         ensureLayoutState();
+        allowEditorDriveAction("focus buffer split");
         var currentView = getActiveView();
         if (currentView == null) {
             return false;
@@ -709,6 +811,436 @@ public class Window implements Drawable {
         return _currentMode == null ? "NORMAL" : _currentMode.getName();
     }
 
+    public String guestScreenSnapshot() {
+        ensureLayoutState();
+        String block = guestScreenSnapshotBlockReason();
+        if (block != null) {
+            return "screen_snapshot blocked: " + block;
+        }
+        var lines = new ArrayList<String>();
+        Size size = _rootView == null ? _size : _rootView.getBounds().getSize();
+        if (size != null) {
+            lines.add("screen: " + size.getWidth() + "x" + size.getHeight());
+        }
+        lines.add("mode: " + modeNameForDisplay());
+        EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+        lines.add("focus: " + guestFocusLabel(responder));
+        if (_commandView != null && _commandView.isActive()) {
+            lines.add("command: " + _commandView.getPrompt() + _commandView.getCommandText());
+        }
+        if (_panelView instanceof ChatPanelView chatPanelView) {
+            lines.add("panel: " + chatPanelView.getTitle() + " (content omitted)");
+        } else if (_panelView instanceof ShellPanelView) {
+            lines.add("panel: shell (content omitted)");
+        } else if (_panelView instanceof TextPanelView textPanelView) {
+            lines.add("panel: " + textPanelView.getTitle());
+        } else if (_panelView instanceof ListView listView) {
+            lines.add("panel: " + listView.getTitle());
+        }
+        if (_currentWorkspace != null) {
+            lines.add("workspace: " + _currentWorkspace._kind.name().toLowerCase());
+        }
+        appendBufferSnapshot(lines, _activeBufferView, _bufferContext, "active-buffer");
+        return String.join("\n", lines);
+    }
+
+    public String guestScreenSnapshotBlockReason() {
+        ensureLayoutState();
+        if (isMailVisibleToGuest()) {
+            return "mail is visible; email content is confidential and unavailable to Nemo.";
+        }
+        if (_currentWorkspace != null && _currentWorkspace._kind != WorkspaceKind.BUFFER) {
+            return "current workspace is " + _currentWorkspace._kind.name().toLowerCase()
+                    + "; Nemo screen observation is only available in buffer workspaces.";
+        }
+        return null;
+    }
+
+    public EditorDriveResult driveEditorInput(String input, int maxEvents) {
+        return driveEditorInput(input, maxEvents, currentEditorDriveWorkspaceRoot(), true);
+    }
+
+    public EditorDriveResult driveEditorInput(String input, int maxEvents, Path workspaceRoot,
+            boolean sandboxCommands) {
+        ensureLayoutState();
+        boolean previousActive = _editorDriveInputActive;
+        boolean previousSandboxActive = _editorDriveCommandSandboxActive;
+        Path previousRoot = _editorDriveWorkspaceRoot;
+        String previousCommandBlock = _editorDriveCommandBlock;
+        boolean previousActionAllowed = _editorDriveActionAllowed;
+        String previousActionLabel = _editorDriveActionLabel;
+        _editorDriveInputActive = true;
+        _editorDriveCommandSandboxActive = sandboxCommands;
+        _editorDriveWorkspaceRoot = normalizeEditorDriveWorkspaceRoot(workspaceRoot);
+        _editorDriveCommandBlock = null;
+        _editorDriveActionAllowed = false;
+        _editorDriveActionLabel = null;
+        try {
+            String before = guestScreenSnapshot();
+            if (input == null || input.isEmpty()) {
+                return new EditorDriveResult(false, "No input was provided.", 0, before, guestScreenSnapshot());
+            }
+            int effectiveMaxEvents = maxEvents <= 0 ? 200 : Math.min(maxEvents, 500);
+            List<KeyStroke> strokes = parseEditorDriveInput(input);
+            if (strokes.isEmpty()) {
+                return new EditorDriveResult(false, "No key events were parsed from the input.", 0, before,
+                        guestScreenSnapshot());
+            }
+            if (strokes.size() > effectiveMaxEvents) {
+                return new EditorDriveResult(false,
+                        "Input parsed to " + strokes.size() + " key events, over the limit of " + effectiveMaxEvents
+                                + ".",
+                        0, before, guestScreenSnapshot());
+            }
+            String readinessBlock = prepareEditorDrive();
+            if (readinessBlock != null) {
+                return new EditorDriveResult(false, readinessBlock, 0, before, guestScreenSnapshot());
+            }
+
+            var pending = new ArrayList<KeyStroke>();
+            int processed = 0;
+            for (KeyStroke stroke : strokes) {
+                String keyBlock = editorDriveKeyBlock(stroke);
+                if (keyBlock != null) {
+                    return new EditorDriveResult(false, keyBlock, processed, before, guestScreenSnapshot());
+                }
+                pending.add(stroke);
+                resetEditorDriveActionAllowance();
+                Response response = _rootView.processEvent(new KeyStrokes(pending));
+                boolean handled = response == Response.YES;
+                if (response == Response.YES) {
+                    _rootView.respond();
+                    pending.clear();
+                } else if (response == Response.NO) {
+                    pending.clear();
+                }
+                processed++;
+                refreshChromeState();
+                if (_rootView != null) {
+                    _rootView.setNeedsRedraw();
+                }
+                String postBlock = editorDrivePostEventBlock(handled);
+                if (postBlock != null) {
+                    return new EditorDriveResult(false, postBlock, processed, before, guestScreenSnapshot());
+                }
+            }
+            if (!pending.isEmpty()) {
+                return new EditorDriveResult(false,
+                        "Input ended in an incomplete key sequence; send the remaining keys in the next drive_editor call.",
+                        processed, before, guestScreenSnapshot());
+            }
+            return new EditorDriveResult(true, "Processed " + processed + " key event" + (processed == 1 ? "." : "s."),
+                    processed, before, guestScreenSnapshot());
+        } finally {
+            _editorDriveInputActive = previousActive;
+            _editorDriveCommandSandboxActive = previousSandboxActive;
+            _editorDriveWorkspaceRoot = previousRoot;
+            _editorDriveCommandBlock = previousCommandBlock;
+            _editorDriveActionAllowed = previousActionAllowed;
+            _editorDriveActionLabel = previousActionLabel;
+        }
+    }
+
+    boolean isEditorDriveInputActive() {
+        return _editorDriveInputActive;
+    }
+
+    boolean isEditorDriveCommandSandboxActive() {
+        return _editorDriveCommandSandboxActive
+                && (_editorDriveInputActive || (_commandView != null && _commandView.isEditorDriveOwned()));
+    }
+
+    public boolean isEditorDriveSandboxActive() {
+        return _editorDriveInputActive || (_commandView != null && _commandView.isEditorDriveOwned());
+    }
+
+    public boolean blockEditorDriveAction(String action, String reason) {
+        if (!isEditorDriveSandboxActive()) {
+            return false;
+        }
+        String message = "Editor control blocked " + action + ": " + reason;
+        if (_commandView != null) {
+            _commandView.setMessage(message);
+        }
+        blockEditorDriveCommand(message);
+        return true;
+    }
+
+    public boolean allowEditorDriveAction(String action) {
+        if (!isEditorDriveSandboxActive()) {
+            return true;
+        }
+        _editorDriveActionAllowed = true;
+        _editorDriveActionLabel = action == null || action.isBlank() ? "editor action" : action;
+        return true;
+    }
+
+    Path resolveEditorDriveWorkspacePath(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            throw new IllegalArgumentException("path is required");
+        }
+        Path root = _editorDriveWorkspaceRoot;
+        Path inputPath = Path.of(rawPath.trim());
+        Path resolved = inputPath.isAbsolute()
+                ? inputPath.toAbsolutePath().normalize()
+                : (root == null ? Path.of(System.getProperty("user.dir")) : root).resolve(inputPath).toAbsolutePath()
+                        .normalize();
+        if (root != null && !resolved.startsWith(root)) {
+            throw new IllegalArgumentException("path escapes workspace: " + rawPath);
+        }
+        return resolved;
+    }
+
+    public String editorDriveWorkspacePathBlock(Path path, String action) {
+        if (!isEditorDriveSandboxActive()) {
+            return null;
+        }
+        if (path == null) {
+            return action + " requires a file path";
+        }
+        Path root = _editorDriveWorkspaceRoot;
+        Path resolved = path.toAbsolutePath().normalize();
+        if (root != null && !resolved.startsWith(root)) {
+            return action + " is only allowed inside the workspace: " + path;
+        }
+        return null;
+    }
+
+    void blockEditorDriveCommand(String message) {
+        if (_editorDriveInputActive) {
+            _editorDriveCommandBlock = message;
+        }
+    }
+
+    private String consumeEditorDriveCommandBlock() {
+        String message = _editorDriveCommandBlock;
+        _editorDriveCommandBlock = null;
+        return message;
+    }
+
+    private Path currentEditorDriveWorkspaceRoot() {
+        Path path = _bufferContext == null ? null : _bufferContext.getBuffer().getPath();
+        Path root = ProjectPaths.getProjectRootPath(path);
+        if (root != null) {
+            return root.toAbsolutePath().normalize();
+        }
+        if (path != null && path.toFile().isFile()) {
+            return path.toAbsolutePath().normalize().getParent();
+        }
+        return Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    }
+
+    private static Path normalizeEditorDriveWorkspaceRoot(Path workspaceRoot) {
+        return workspaceRoot == null ? null : workspaceRoot.toAbsolutePath().normalize();
+    }
+
+    private String guestFocusLabel(EventResponder responder) {
+        if (responder == null) {
+            return "none";
+        }
+        if (responder == _hostApprovalOverlayView) {
+            EventResponder restoreTarget = hostApprovalRestoreTarget();
+            return restoreTarget == responder ? "buffer" : guestFocusLabel(restoreTarget);
+        }
+        if (responder == _commandView) {
+            return "command";
+        }
+        if (responder instanceof BufferView) {
+            return "buffer";
+        }
+        if (responder instanceof ChatPanelView) {
+            return "nemo-panel";
+        }
+        if (responder instanceof ShellPanelView) {
+            return "shell";
+        }
+        if (responder instanceof ListView) {
+            return "list";
+        }
+        if (responder instanceof TextPanelView) {
+            return "text-panel";
+        }
+        if (responder instanceof TodoQuickCaptureView) {
+            return "todo-capture";
+        }
+        return responder.getClass().getSimpleName();
+    }
+
+    private void appendBufferSnapshot(List<String> lines, BufferView bufferView, BufferContext bufferContext, String label) {
+        if (bufferView == null || bufferContext == null) {
+            lines.add(label + ": unavailable");
+            return;
+        }
+        Path path = bufferContext.getBuffer().getPath();
+        lines.add(label + ": " + (path == null ? "*scratch*" : path.toAbsolutePath().normalize()));
+        lines.add("bounds: " + bufferView.getBounds());
+        var cursor = bufferContext.getBuffer().getCursor();
+        lines.add("cursor: position=" + cursor.getPosition()
+                + " line=" + (cursor.getPhysicalLine().getY() + 1)
+                + " column=" + (cursor.getX() + 1));
+        lines.add("visible-lines:");
+        List<String> visible = bufferView.snapshotVisibleTextLines();
+        if (visible.isEmpty()) {
+            lines.add("  (empty)");
+            return;
+        }
+        int firstLine = bufferView.getStartLine() + 1;
+        for (int i = 0; i < visible.size(); i++) {
+            lines.add(String.format("  %4d | %s", firstLine + i, visible.get(i)));
+        }
+    }
+
+    private String prepareEditorDrive() {
+        if (_rootView == null) {
+            return "No editor window is available.";
+        }
+        if (isShowingHostApprovalOverlay()) {
+            return "Host approval is waiting; editor control is stopped until the host approves or presses Esc to deny.";
+        }
+        if (_currentWorkspace != null && _currentWorkspace._kind != WorkspaceKind.BUFFER) {
+            return "Editor control is only available in buffer workspaces; current workspace is "
+                    + _currentWorkspace._kind.name().toLowerCase() + ".";
+        }
+        if (_commandView != null && _commandView.isActive()) {
+            if (_commandView.isEditorDriveOwnedPrompt()) {
+                return null;
+            }
+            return "Editor control is blocked while a host command or search prompt is active.";
+        }
+        EventResponder responder = _rootView.getFirstResponder();
+        if (responder instanceof ShellPanelView) {
+            return "Editor control is blocked while shell input is focused.";
+        }
+        if (responder instanceof ChatPanelView && _activeBufferView != null) {
+            activateView(_activeBufferView);
+            return null;
+        }
+        if (_activeBufferView == null || _currentMode == null) {
+            return "No active editable buffer is available.";
+        }
+        if (responder != _activeBufferView) {
+            if (responder instanceof BufferView) {
+                return null;
+            }
+            activateView(_activeBufferView);
+        }
+        return null;
+    }
+
+    private String editorDrivePostEventBlock(boolean handled) {
+        String commandBlock = consumeEditorDriveCommandBlock();
+        if (commandBlock != null) {
+            return commandBlock;
+        }
+        if (handled && !_editorDriveActionAllowed) {
+            return "Editor control blocked unsupported action: handled key sequence did not opt in to the editor-control sandbox.";
+        }
+        if (isShowingHostApprovalOverlay()) {
+            return "Host approval appeared; editor control stopped before the host-only overlay.";
+        }
+        if (_commandView != null && _commandView.isActive()) {
+            if (_commandView.isEditorDriveOwnedPrompt()) {
+                return null;
+            }
+            return "Editor control stopped because a host command or search prompt became active.";
+        }
+        EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+        if (responder == _commandView && _commandView != null && _commandView.isEditorDriveOwnedPrompt()) {
+            return null;
+        }
+        if (responder instanceof ShellPanelView) {
+            return "Editor control stopped because shell input became active.";
+        }
+        if (responder != null && !(responder instanceof BufferView) && !(responder instanceof Mode)) {
+            return "Editor control stopped because focus left the editor buffer.";
+        }
+        return null;
+    }
+
+    private void resetEditorDriveActionAllowance() {
+        _editorDriveActionAllowed = false;
+        _editorDriveActionLabel = null;
+    }
+
+    private String editorDriveKeyBlock(KeyStroke stroke) {
+        if (stroke == null) {
+            return "Invalid empty key event.";
+        }
+        return null;
+    }
+
+    private static List<KeyStroke> parseEditorDriveInput(String input) {
+        var strokes = new ArrayList<KeyStroke>();
+        int index = 0;
+        while (index < input.length()) {
+            char c = input.charAt(index);
+            if (c == '<') {
+                int end = input.indexOf('>', index + 1);
+                if (end > index) {
+                    KeyStroke token = parseEditorDriveToken(input.substring(index + 1, end));
+                    if (token != null) {
+                        strokes.add(token);
+                        index = end + 1;
+                        continue;
+                    }
+                }
+            }
+            if (c == '\r') {
+                strokes.add(new KeyStroke(KeyType.Enter));
+                if (index + 1 < input.length() && input.charAt(index + 1) == '\n') {
+                    index++;
+                }
+            } else if (c == '\n') {
+                strokes.add(new KeyStroke(KeyType.Enter));
+            } else if (c == '\t') {
+                strokes.add(new KeyStroke(KeyType.Tab));
+            } else if (c == '\b' || c == 127) {
+                strokes.add(new KeyStroke(KeyType.Backspace));
+            } else if (c == 27) {
+                strokes.add(new KeyStroke(KeyType.Escape));
+            } else {
+                strokes.add(new KeyStroke(c, false, false));
+            }
+            index++;
+        }
+        return strokes;
+    }
+
+    private static KeyStroke parseEditorDriveToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return null;
+        }
+        String token = rawToken.trim();
+        String normalized = token.toUpperCase().replace('_', '-');
+        if (normalized.startsWith("CTRL-") || normalized.startsWith("C-")) {
+            int prefixLength = normalized.startsWith("CTRL-") ? 5 : 2;
+            String value = token.substring(prefixLength);
+            if (value.length() == 1) {
+                return new KeyStroke(value.charAt(0), true, false);
+            }
+            if ("SPACE".equals(value.toUpperCase())) {
+                return new KeyStroke(' ', true, false);
+            }
+            return null;
+        }
+        return switch (normalized) {
+        case "ESC", "ESCAPE" -> new KeyStroke(KeyType.Escape);
+        case "ENTER", "RET", "RETURN", "CR" -> new KeyStroke(KeyType.Enter);
+        case "TAB" -> new KeyStroke(KeyType.Tab);
+        case "BACKSPACE", "BS" -> new KeyStroke(KeyType.Backspace);
+        case "UP", "ARROW-UP" -> new KeyStroke(KeyType.ArrowUp);
+        case "DOWN", "ARROW-DOWN" -> new KeyStroke(KeyType.ArrowDown);
+        case "LEFT", "ARROW-LEFT" -> new KeyStroke(KeyType.ArrowLeft);
+        case "RIGHT", "ARROW-RIGHT" -> new KeyStroke(KeyType.ArrowRight);
+        case "PAGE-UP", "PAGEUP" -> new KeyStroke(KeyType.PageUp);
+        case "PAGE-DOWN", "PAGEDOWN" -> new KeyStroke(KeyType.PageDown);
+        case "SPACE" -> new KeyStroke(' ', false, false);
+        case "LT" -> new KeyStroke('<', false, false);
+        case "GT" -> new KeyStroke('>', false, false);
+        default -> null;
+        };
+    }
+
     public Mode getNormalMode() {
         return _normalMode;
     }
@@ -730,6 +1262,9 @@ public class Window implements Drawable {
     }
 
     public boolean switchToRecentWindow(int oneBasedIndex) {
+        if (blockEditorDriveAction("workspace switch", "switching workspaces through drive_editor is not allowed")) {
+            return false;
+        }
         if (oneBasedIndex <= 0 || oneBasedIndex > _workspaceHistory.size()) {
             return false;
         }
@@ -738,6 +1273,16 @@ public class Window implements Drawable {
 
     public boolean isShowingMailWorkspace() {
         return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL;
+    }
+
+    public boolean isMailVisibleToGuest() {
+        ensureLayoutState();
+        return isShowingMailWorkspace()
+                || _workspaceView instanceof MailPanelView
+                || _panelView instanceof MailPanelView
+                || _activeView instanceof MailPanelView
+                || findMailPanelView(_workspaceView) != null
+                || findMailPanelView(_panelView) != null;
     }
 
     public boolean isShowingSlackWorkspace() {
@@ -1764,8 +2309,22 @@ public class Window implements Drawable {
         return isRestorableRootResponder(focusable) ? focusable : null;
     }
 
+    private EventResponder hostApprovalRestoreTarget() {
+        if (isRestorableRootResponder(_hostApprovalReturnResponder)) {
+            return _hostApprovalReturnResponder;
+        }
+        if (isRestorableRootResponder(_activeView)) {
+            return _activeView;
+        }
+        if (isRestorableRootResponder(_activeBufferView)) {
+            return _activeBufferView;
+        }
+        View focusable = findFocusableView(_workspaceView);
+        return isRestorableRootResponder(focusable) ? focusable : null;
+    }
+
     private boolean isRestorableRootResponder(EventResponder responder) {
-        if (responder == null || responder == _todoQuickCaptureView) {
+        if (responder == null || responder == _todoQuickCaptureView || responder == _hostApprovalOverlayView) {
             return false;
         }
         if (responder instanceof View view) {
@@ -2307,7 +2866,12 @@ public class Window implements Drawable {
         var responders = eventThread.getResponder();
         var prefixLayer = responders.addLayer();
         var quickCaptureLayer = responders.addLayer();
-        quickCaptureLayer.addEventResponder("<CTRL>-t", () -> TodoUiSupport.quickCapture(Window.this));
+        quickCaptureLayer.addEventResponder("<CTRL>-t", () -> {
+            if (blockEditorDriveAction("Todo quick capture", "Todo is outside the editor-control sandbox")) {
+                return;
+            }
+            TodoUiSupport.quickCapture(Window.this);
+        });
         prefixLayer.addEventResponder(new EventResponder() {
             private CompiledRemap _matched;
 
@@ -2354,6 +2918,10 @@ public class Window implements Drawable {
             @Override
             public void respond() {
                 if (_matched == null) {
+                    return;
+                }
+                if (blockEditorDriveAction("normal-mode remap",
+                        "remaps are outside the editor-control sandbox; send the explicit keys instead")) {
                     return;
                 }
                 _replayingRemap = true;
@@ -2655,6 +3223,9 @@ public class Window implements Drawable {
         }
         if (_todoQuickCaptureView != null) {
             _todoQuickCaptureView.syncBounds();
+        }
+        if (_hostApprovalOverlayView != null) {
+            _hostApprovalOverlayView.syncBounds();
         }
     }
 

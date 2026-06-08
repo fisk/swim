@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,6 +39,7 @@ import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.CommandView.CommandMenuState;
 import org.fisk.swim.ui.CommandView.CommandSpec;
+import org.fisk.swim.ui.HostApprovalOverlayView;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -74,6 +76,8 @@ public class NemoClient {
     private static final int _defaultSkillsMaxChars = 12_000;
     private static final boolean _defaultToolWebSearch = true;
     private static final boolean _defaultToolDelegateTask = true;
+    private static final boolean _defaultToolScreenSnapshot = true;
+    private static final boolean _defaultToolDriveEditor = true;
     private static final int _defaultWebSearchMaxResults = 5;
     private static final int _maxWebSearchResults = 10;
     private static final Pattern _duckDuckGoResultLinkPattern = Pattern.compile(
@@ -102,6 +106,7 @@ public class NemoClient {
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
     private final List<ApprovalRule> _approvalRules = new ArrayList<>();
+    private EditorControlLease _editorControlLease;
     private boolean _sessionsLoaded;
     private boolean _approvalsLoaded;
     private String _activeSessionId;
@@ -126,6 +131,7 @@ public class NemoClient {
         _workspaceSessionIds.clear();
         _pendingApprovals.clear();
         _approvalRules.clear();
+        _editorControlLease = null;
         _sessionsLoaded = false;
         _approvalsLoaded = false;
         _activeSessionId = null;
@@ -162,7 +168,11 @@ public class NemoClient {
         }
     }
 
-    record ToolApprovalRequest(String toolName, String reason, String summary, String signature, boolean persistable) {
+    record ToolApprovalRequest(String toolName, String reason, String summary, String signature, boolean persistable,
+            boolean hostOnly) {
+        ToolApprovalRequest(String toolName, String reason, String summary, String signature, boolean persistable) {
+            this(toolName, reason, summary, signature, persistable, false);
+        }
     }
 
     record ApprovalResult(boolean approved, boolean persisted) {
@@ -177,6 +187,9 @@ public class NemoClient {
     }
 
     private record ApprovalRule(String id, String workspaceRoot, String toolName, String signature, long createdAtMillis) {
+    }
+
+    private record EditorControlLease(String ownerId, String ownerTitle, String workspaceRoot, long startedAtMillis) {
     }
 
     private static final class PendingApproval {
@@ -254,6 +267,13 @@ public class NemoClient {
 
     public void run(BufferContext context, String question) {
         question = question.trim();
+        if (mailVisibleToNemo()) {
+            Window window = Window.getInstance();
+            if (window != null && window.getCommandView() != null) {
+                window.getCommandView().setMessage("Nemo is unavailable while mail is visible");
+            }
+            return;
+        }
         Configuration configuration = loadConfiguration(getConfigPath());
         var conversation = ensureConversation(context, configuration);
         if (question.startsWith(":")) {
@@ -287,6 +307,8 @@ public class NemoClient {
         private final boolean _logResponses;
         private final boolean _toolWebSearch;
         private final boolean _toolDelegateTask;
+        private final boolean _toolScreenSnapshot;
+        private final boolean _toolDriveEditor;
         private final boolean _toolListFiles;
         private final boolean _toolReadFile;
         private final boolean _toolSearchFiles;
@@ -380,6 +402,8 @@ public class NemoClient {
             _logResponses = builder._logResponses;
             _toolWebSearch = builder._toolWebSearch;
             _toolDelegateTask = builder._toolDelegateTask;
+            _toolScreenSnapshot = builder._toolScreenSnapshot;
+            _toolDriveEditor = builder._toolDriveEditor;
             _toolListFiles = builder._toolListFiles;
             _toolReadFile = builder._toolReadFile;
             _toolSearchFiles = builder._toolSearchFiles;
@@ -453,6 +477,8 @@ public class NemoClient {
             private boolean _logResponses;
             private boolean _toolWebSearch = _defaultToolWebSearch;
             private boolean _toolDelegateTask = _defaultToolDelegateTask;
+            private boolean _toolScreenSnapshot = _defaultToolScreenSnapshot;
+            private boolean _toolDriveEditor = _defaultToolDriveEditor;
             private boolean _toolListFiles = true;
             private boolean _toolReadFile = true;
             private boolean _toolSearchFiles = true;
@@ -506,6 +532,8 @@ public class NemoClient {
                 _logResponses = source._logResponses;
                 _toolWebSearch = source._toolWebSearch;
                 _toolDelegateTask = source._toolDelegateTask;
+                _toolScreenSnapshot = source._toolScreenSnapshot;
+                _toolDriveEditor = source._toolDriveEditor;
                 _toolListFiles = source._toolListFiles;
                 _toolReadFile = source._toolReadFile;
                 _toolSearchFiles = source._toolSearchFiles;
@@ -651,6 +679,16 @@ public class NemoClient {
 
             Builder toolDelegateTask(boolean toolDelegateTask) {
                 _toolDelegateTask = toolDelegateTask;
+                return this;
+            }
+
+            Builder toolScreenSnapshot(boolean toolScreenSnapshot) {
+                _toolScreenSnapshot = toolScreenSnapshot;
+                return this;
+            }
+
+            Builder toolDriveEditor(boolean toolDriveEditor) {
+                _toolDriveEditor = toolDriveEditor;
                 return this;
             }
 
@@ -812,6 +850,8 @@ public class NemoClient {
         boolean logResponses() { return _logResponses; }
         boolean toolWebSearch() { return _toolWebSearch; }
         boolean toolDelegateTask() { return _toolDelegateTask; }
+        boolean toolScreenSnapshot() { return _toolScreenSnapshot; }
+        boolean toolDriveEditor() { return _toolDriveEditor; }
         boolean toolListFiles() { return _toolListFiles; }
         boolean toolReadFile() { return _toolReadFile; }
         boolean toolSearchFiles() { return _toolSearchFiles; }
@@ -1044,6 +1084,8 @@ public class NemoClient {
                 .logResponses(booleanProperty(properties, "log_responses", false))
                 .toolWebSearch(booleanProperty(properties, "tool.web_search", _defaultToolWebSearch))
                 .toolDelegateTask(booleanProperty(properties, "tool.delegate_task", _defaultToolDelegateTask))
+                .toolScreenSnapshot(booleanProperty(properties, "tool.screen_snapshot", _defaultToolScreenSnapshot))
+                .toolDriveEditor(booleanProperty(properties, "tool.drive_editor", _defaultToolDriveEditor))
                 .toolListFiles(booleanProperty(properties, "tool.list_files", true))
                 .toolReadFile(booleanProperty(properties, "tool.read_file", true))
                 .toolSearchFiles(booleanProperty(properties, "tool.search_files", true))
@@ -1107,6 +1149,8 @@ public class NemoClient {
                 .logResponses(booleanMember(root, false, "logResponses", "log_responses"))
                 .toolWebSearch(booleanMember(tools, _defaultToolWebSearch, "webSearch", "web_search"))
                 .toolDelegateTask(booleanMember(tools, _defaultToolDelegateTask, "delegateTask", "delegate_task"))
+                .toolScreenSnapshot(booleanMember(tools, _defaultToolScreenSnapshot, "screenSnapshot", "screen_snapshot"))
+                .toolDriveEditor(booleanMember(tools, _defaultToolDriveEditor, "driveEditor", "drive_editor"))
                 .toolListFiles(booleanMember(tools, true, "listFiles", "list_files"))
                 .toolReadFile(booleanMember(tools, true, "readFile", "read_file"))
                 .toolSearchFiles(booleanMember(tools, true, "searchFiles", "search_files"))
@@ -1527,10 +1571,19 @@ public class NemoClient {
 
     private ResponseResult request(Configuration configuration, BufferContext context, List<ChatTurn> turns,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        if (mailVisibleToNemo()) {
+            return new ResponseResult("Nemo is unavailable while mail is visible; switch away from mail and retry.",
+                    null, List.of());
+        }
         if (usesResponsesApi(configuration)) {
             return requestResponses(configuration, context, turns, executionSession);
         }
         return _langChain4jClient.request(configuration, context, turns, executionSession);
+    }
+
+    private static boolean mailVisibleToNemo() {
+        Window window = Window.getInstance();
+        return window != null && window.isMailVisibleToGuest();
     }
 
     private static boolean usesResponsesApi(Configuration configuration) {
@@ -1692,6 +1745,10 @@ public class NemoClient {
         case "read_worker" -> argumentSummary(call.arguments(), "session_id", "max_turns");
         case "join_worker" -> withOutputStatus(argumentSummary(call.arguments(), "session_id", "timeout_seconds"), output);
         case "message_worker" -> withOutputStatus(argumentSummary(call.arguments(), "session_id", "message"), output);
+        case "start_editor_control" -> firstOutputLine(output);
+        case "screen_snapshot" -> withOutputStatus("", output);
+        case "drive_editor" -> withOutputStatus(argumentSummary(call.arguments(), "input", "max_events"), output);
+        case "finish_editor_control" -> firstOutputLine(output);
         case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
         case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
         case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
@@ -1888,6 +1945,29 @@ public class NemoClient {
                             property("session_id", stringSchema("Session id or unique title to message.")),
                             property("message", stringSchema("User message or correction for the worker."))),
                             List.of("session_id", "message"))));
+        }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            tools.add(functionTool("start_editor_control",
+                    "Request host approval to start an explicit editor-control session. Only one Nemo session can hold control at a time; call this before screen_snapshot or drive_editor, then finish_editor_control when done.",
+                    schema(List.of())));
+        }
+        if (configuration.toolScreenSnapshot()) {
+            tools.add(functionTool("screen_snapshot",
+                    "Return a host-filtered structured text snapshot of the current editor screen during an active editor-control session. Host-only approval overlays and Nemo's own chat contents are not included.",
+                    schema(List.of())));
+        }
+        if (configuration.toolDriveEditor() && isToolAllowedByPermission(configuration, "drive_editor")) {
+            tools.add(functionTool("drive_editor",
+                    "Send a bounded stream of text editor input to the active buffer during the active editor-control session and return before/after snapshots. Literal text is typed as characters; supported tokens include <ESC>, <ENTER>, <TAB>, <BACKSPACE>, <UP>, <DOWN>, <LEFT>, <RIGHT>, <PAGE-UP>, <PAGE-DOWN>, <SPACE>, <LT>, <GT>, and <CTRL-x>. Editor actions assess sandbox permissions at execution time: workspace-local navigation, editing, search, and saves are allowed when permitted; host overlays, shell, Nemo, mail, Slack, Todo, external workspaces, and other boundary-crossing actions are blocked.",
+                    schema(List.of(
+                            property("input", stringSchema("Literal text plus optional key tokens to send to the editor.")),
+                            property("max_events", integerSchema("Optional maximum parsed key events to process, capped at 500."))),
+                            List.of("input"))));
+        }
+        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
+            tools.add(functionTool("finish_editor_control",
+                    "Finish the active editor-control session, release the single-control lock, and reopen the Nemo chat conversation that invoked these tools so you can report findings to the user.",
+                    schema(List.of())));
         }
         if (isMcpAllowed(configuration)) {
             for (NemoMcpClient.ToolDescriptor tool : mcpToolDescriptors(configuration)) {
@@ -2128,6 +2208,10 @@ public class NemoClient {
         case "read_worker" -> _instance.readWorker(configuration, context, call.arguments());
         case "join_worker" -> _instance.joinWorker(configuration, context, call.arguments());
         case "message_worker" -> _instance.messageWorker(configuration, context, call.arguments());
+        case "start_editor_control" -> startEditorControl(configuration, context, executionSession);
+        case "screen_snapshot" -> screenSnapshot(configuration, context, call.arguments(), executionSession);
+        case "drive_editor" -> driveEditor(configuration, context, call.arguments(), executionSession);
+        case "finish_editor_control" -> finishEditorControl(executionSession);
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
@@ -2203,7 +2287,7 @@ public class NemoClient {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow plugin tools "
                     + "unless the plugin marks them read-only. Use :permissions workspace-write to allow plugin tools.";
         }
-        if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName)) {
+        if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit", "drive_editor").contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
         }
@@ -2265,6 +2349,254 @@ public class NemoClient {
 
     static boolean isPluginToolName(String toolName) {
         return toolName != null && toolName.startsWith("plugin__");
+    }
+
+    private static String startEditorControl(Configuration configuration, BufferContext context,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        if (!configuration.toolScreenSnapshot() && !configuration.toolDriveEditor()) {
+            return "Tool start_editor_control is disabled in this session.";
+        }
+        if (executionSession == null) {
+            return "start_editor_control blocked by Nemo approval: editor control requires an active Nemo session.";
+        }
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String visibilityBlock = editorControlVisibilityBlock("start_editor_control");
+        if (visibilityBlock != null) {
+            return visibilityBlock;
+        }
+        String ownerId = editorControlOwnerId(executionSession);
+        String ownerTitle = editorControlOwnerTitle(executionSession);
+        String existingBlock = _instance.editorControlLeaseBlock(ownerId);
+        if (existingBlock == null) {
+            return runOnEditorThread(() -> {
+                Window window = Window.getInstance();
+                return "editor control already active for this session.\n\n"
+                        + (window == null ? "No active editor window." : window.guestScreenSnapshot());
+            }, "editor control already active for this session.");
+        }
+        if (!_instance.editorControlLeaseAvailableFor(ownerId)) {
+            return existingBlock;
+        }
+        ApprovalResult approval = executionSession.requestApproval(root, new ToolApprovalRequest(
+                "start_editor_control",
+                "editor control session",
+                "Allow " + ownerTitle
+                        + " to observe the host-filtered editor screen and send sandboxed editor input until finish_editor_control releases the lock. Only one Nemo session can hold editor control at a time.",
+                "editor-control-session:" + ownerId + ":" + System.nanoTime(),
+                false,
+                true));
+        if (!approval.approved()) {
+            return "Tool start_editor_control blocked by Nemo approval: user denied editor control.";
+        }
+        String acquireBlock = _instance.acquireEditorControlLease(ownerId, ownerTitle, root);
+        if (acquireBlock != null) {
+            return acquireBlock;
+        }
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            if (window == null) {
+                return "editor control started for " + ownerTitle + ".\n\nNo active editor window.";
+            }
+            if (executionSession instanceof ConversationToolExecutionSession conversationSession) {
+                _instance.showConversation(conversationSession._conversation);
+            }
+            return "editor control started for " + ownerTitle + ".\n\n"
+                    + window.guestScreenSnapshot();
+        }, "editor control started for " + ownerTitle + ".");
+    }
+
+    private static String screenSnapshot(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        if (!configuration.toolScreenSnapshot()) {
+            return "Tool screen_snapshot is disabled in this session.";
+        }
+        String leaseBlock = _instance.editorControlLeaseBlock(editorControlOwnerId(executionSession));
+        if (leaseBlock != null) {
+            return "Tool screen_snapshot blocked by editor control: " + leaseBlock;
+        }
+        String visibilityBlock = editorControlVisibilityBlock("screen_snapshot");
+        if (visibilityBlock != null) {
+            return visibilityBlock;
+        }
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            return window == null ? "No active editor window." : window.guestScreenSnapshot();
+        }, "No active editor window.");
+    }
+
+    private static String driveEditor(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        if (!configuration.toolDriveEditor()) {
+            return "Tool drive_editor is disabled in this session.";
+        }
+        String input = stringArgument(arguments, "input", "");
+        if (input.isEmpty()) {
+            return "drive_editor failed: input is required.";
+        }
+        int maxEvents = Math.max(1, Math.min(500, intArgument(arguments, "max_events", 200)));
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String leaseBlock = _instance.editorControlLeaseBlock(editorControlOwnerId(executionSession));
+        if (leaseBlock != null) {
+            return "Tool drive_editor blocked by editor control: " + leaseBlock;
+        }
+        String visibilityBlock = editorControlVisibilityBlock("drive_editor");
+        if (visibilityBlock != null) {
+            return visibilityBlock;
+        }
+        Window.EditorDriveResult result = runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            return window == null
+                    ? new Window.EditorDriveResult(false, "No active editor window.", 0, "", "")
+                    : window.driveEditorInput(input, maxEvents, root, true);
+        }, new Window.EditorDriveResult(false, "No active editor window.", 0, "", ""));
+        return truncateOutput(configuration, formatEditorDriveResult(result));
+    }
+
+    private static String finishEditorControl(ToolExecutionSession executionSession) throws InterruptedException {
+        String releaseMessage = _instance.releaseEditorControlLease(editorControlOwnerId(executionSession));
+        if (!(executionSession instanceof ConversationToolExecutionSession conversationSession)) {
+            return releaseMessage == null
+                    ? "finish_editor_control unavailable: no invoking Nemo conversation is active."
+                    : releaseMessage;
+        }
+        Conversation conversation = conversationSession._conversation;
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            if (window == null) {
+                return "finish_editor_control failed: no active editor window.";
+            }
+            _instance.showConversation(conversation);
+            return (releaseMessage == null ? "No active editor-control session was owned by this request."
+                    : releaseMessage)
+                    + "\nOpened Nemo chat " + conversation._id + " (" + conversation._title + ").";
+        }, "finish_editor_control failed: no active editor window.");
+    }
+
+    private static String editorControlOwnerId(ToolExecutionSession executionSession) {
+        if (executionSession instanceof ConversationToolExecutionSession conversationSession) {
+            return conversationSession._conversation._id + ":" + conversationSession._requestId;
+        }
+        return executionSession == null
+                ? null
+                : "tool-session:" + Integer.toHexString(System.identityHashCode(executionSession));
+    }
+
+    private static String editorControlOwnerTitle(ToolExecutionSession executionSession) {
+        if (executionSession instanceof ConversationToolExecutionSession conversationSession) {
+            Conversation conversation = conversationSession._conversation;
+            return conversation._id + " | " + conversation._title;
+        }
+        return executionSession == null ? "unknown Nemo session" : "Nemo tool session";
+    }
+
+    private static String editorControlVisibilityBlock(String toolName) throws InterruptedException {
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            if (window == null) {
+                return null;
+            }
+            String reason = window.guestScreenSnapshotBlockReason();
+            return reason == null ? null : "Tool " + toolName + " blocked by Nemo permissions: " + reason;
+        }, null);
+    }
+
+    private synchronized boolean editorControlLeaseAvailableFor(String ownerId) {
+        return _editorControlLease == null
+                || (ownerId != null && _editorControlLease.ownerId().equals(ownerId));
+    }
+
+    private synchronized String editorControlLeaseBlock(String ownerId) {
+        if (_editorControlLease == null) {
+            return "no active editor-control session; call start_editor_control first.";
+        }
+        if (ownerId != null && _editorControlLease.ownerId().equals(ownerId)) {
+            return null;
+        }
+        return "editor control is locked by " + _editorControlLease.ownerTitle() + ".";
+    }
+
+    private synchronized String acquireEditorControlLease(String ownerId, String ownerTitle, Path workspaceRoot) {
+        if (ownerId == null) {
+            return "Tool start_editor_control blocked by editor control: no invoking Nemo session is active.";
+        }
+        String block = editorControlLeaseBlock(ownerId);
+        if (block == null) {
+            return null;
+        }
+        if (_editorControlLease != null) {
+            return "Tool start_editor_control blocked by editor control: " + block;
+        }
+        _editorControlLease = new EditorControlLease(
+                ownerId,
+                ownerTitle == null || ownerTitle.isBlank() ? ownerId : ownerTitle,
+                workspaceRoot == null ? "" : workspaceRoot.toAbsolutePath().normalize().toString(),
+                System.currentTimeMillis());
+        return null;
+    }
+
+    private synchronized String releaseEditorControlLease(String ownerId) {
+        if (_editorControlLease == null || ownerId == null) {
+            return null;
+        }
+        if (!_editorControlLease.ownerId().equals(ownerId)) {
+            return "editor control remains locked by " + _editorControlLease.ownerTitle() + ".";
+        }
+        long elapsedSeconds = Math.max(0, (System.currentTimeMillis() - _editorControlLease.startedAtMillis()) / 1000);
+        String message = "editor control finished for " + _editorControlLease.ownerTitle()
+                + " after " + elapsedSeconds + "s.";
+        _editorControlLease = null;
+        return message;
+    }
+
+    private synchronized void releaseEditorControlLease(Conversation conversation, long requestId) {
+        if (conversation != null) {
+            releaseEditorControlLease(conversation._id + ":" + requestId);
+        }
+    }
+
+    private static String formatEditorDriveResult(Window.EditorDriveResult result) {
+        var lines = new ArrayList<String>();
+        lines.add("accepted: " + result.accepted());
+        lines.add("message: " + result.message());
+        lines.add("events_processed: " + result.eventsProcessed());
+        if (result.beforeSnapshot() != null && !result.beforeSnapshot().isBlank()) {
+            lines.add("before:");
+            lines.add(result.beforeSnapshot());
+        }
+        if (result.afterSnapshot() != null && !result.afterSnapshot().isBlank()) {
+            lines.add("after:");
+            lines.add(result.afterSnapshot());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static <T> T runOnEditorThread(Callable<T> callable, T fallback) throws InterruptedException {
+        EventThread eventThread = EventThread.getInstance();
+        if (!eventThread.isAlive()
+                || Thread.currentThread() == eventThread
+                || Thread.currentThread().getName().equals("event-thread-worker")) {
+            try {
+                return callable.call();
+            } catch (Exception e) {
+                _log.warn("Nemo editor tool failed", e);
+                return fallback;
+            }
+        }
+        var latch = new CountDownLatch(1);
+        var result = new AtomicReference<T>(fallback);
+        eventThread.enqueue(new RunnableEvent(() -> {
+            try {
+                result.set(callable.call());
+            } catch (Exception e) {
+                _log.warn("Nemo editor tool failed", e);
+            } finally {
+                latch.countDown();
+            }
+        }));
+        if (!latch.await(5, TimeUnit.SECONDS)) {
+            return fallback;
+        }
+        return result.get();
     }
 
     private String callMcpTool(Configuration configuration, BufferContext context, ToolCall call,
@@ -2788,7 +3120,18 @@ public class NemoClient {
             return deniedMessage + " Approval is required but no approval session is active.";
         }
         ApprovalResult approval = executionSession.requestApproval(workspaceRoot, request);
-        return approval.approved() ? null : deniedMessage;
+        return approval.approved() ? null : approvalDeniedMessage(deniedMessage, request);
+    }
+
+    private static String approvalDeniedMessage(String deniedMessage, ToolApprovalRequest request) {
+        String message = "Nemo approval denied: user denied " + request.toolName() + " (" + request.reason() + ").";
+        if (deniedMessage == null || deniedMessage.isBlank()) {
+            return message;
+        }
+        if (deniedMessage.toLowerCase().contains("user denied")) {
+            return deniedMessage;
+        }
+        return deniedMessage + (deniedMessage.endsWith("\n") ? "" : "\n") + message;
     }
 
     private static boolean approvalPolicyAllowsEscalationPrompt(Configuration configuration) {
@@ -3839,12 +4182,18 @@ public class NemoClient {
             _pendingApprovals.put(id, pending);
         }
 
-        appendApprovalPrompt(conversation, pending);
+        boolean hostPromptVisible = request.hostOnly() && presentHostApprovalPrompt(pending);
+        if (!hostPromptVisible) {
+            appendApprovalPrompt(conversation, pending);
+        }
         try {
             pending._latch.await();
         } finally {
             synchronized (this) {
                 _pendingApprovals.remove(pending._id);
+            }
+            if (request.hostOnly()) {
+                refreshHostApprovalOverlay(normalizedRoot);
             }
         }
 
@@ -3877,6 +4226,75 @@ public class NemoClient {
                 request.signature(),
                 System.currentTimeMillis()));
         persistApprovals();
+    }
+
+    private boolean presentHostApprovalPrompt(PendingApproval pending) {
+        if (Window.getInstance() == null) {
+            return false;
+        }
+        refreshHostApprovalOverlay(pending._workspaceRoot);
+        return true;
+    }
+
+    private void refreshHostApprovalOverlay(String normalizedRoot) {
+        Runnable refresh = () -> {
+            Window window = Window.getInstance();
+            if (window == null) {
+                return;
+            }
+            List<HostApprovalOverlayView.Entry> entries = hostApprovalEntries(normalizedRoot);
+            if (entries.isEmpty()) {
+                window.hideHostApprovalOverlay();
+                return;
+            }
+            window.showHostApprovalOverlay(entries, this::handleHostApprovalDecision);
+        };
+        EventThread eventThread = EventThread.getInstance();
+        if (eventThread.isAlive()
+                && Thread.currentThread() != eventThread
+                && !Thread.currentThread().getName().equals("event-thread-worker")) {
+            eventThread.enqueue(new RunnableEvent(refresh));
+        } else {
+            refresh.run();
+        }
+    }
+
+    private synchronized List<HostApprovalOverlayView.Entry> hostApprovalEntries(String normalizedRoot) {
+        var entries = new ArrayList<HostApprovalOverlayView.Entry>();
+        for (PendingApproval pending : _pendingApprovals.values()) {
+            if (!pending._workspaceRoot.equals(normalizedRoot) || !pending._request.hostOnly()) {
+                continue;
+            }
+            Conversation owner = _conversations.get(pending._conversationId);
+            String title = owner == null ? pending._id : owner._id + " | " + owner._title;
+            entries.add(new HostApprovalOverlayView.Entry(
+                    pending._id,
+                    title,
+                    pending._request.toolName(),
+                    pending._request.reason(),
+                    pending._request.summary(),
+                    pending._request.persistable()));
+        }
+        return entries;
+    }
+
+    private void handleHostApprovalDecision(HostApprovalOverlayView.Decision decision) {
+        PendingApproval pending;
+        synchronized (this) {
+            pending = _pendingApprovals.get(decision.id());
+            if (pending == null || !pending._request.hostOnly()) {
+                return;
+            }
+            pending.resolve(decision.approved(), decision.persist());
+            _pendingApprovals.remove(decision.id());
+        }
+        Conversation owner = ownerConversation(pending);
+        if (owner != null) {
+            appendTurn(owner, new ChatTurn("approval",
+                    (decision.approved() ? "Host approved " : "Host denied ") + pending._id + ".",
+                    !decision.approved()));
+        }
+        refreshHostApprovalOverlay(pending._workspaceRoot);
     }
 
     private void appendApprovalPrompt(Conversation conversation, PendingApproval pending) {
@@ -4184,7 +4602,9 @@ public class NemoClient {
 
     private synchronized List<CommandSpec> pendingApprovalCommandSpecs(Conversation conversation) {
         var specs = new ArrayList<CommandSpec>();
-        var pendingApprovals = pendingApprovalsForWorkspace(conversation._workspaceRoot);
+        var pendingApprovals = pendingApprovalsForWorkspace(conversation._workspaceRoot).stream()
+                .filter(pending -> !pending._request.hostOnly())
+                .toList();
         boolean multiple = pendingApprovals.size() > 1;
         for (PendingApproval pending : pendingApprovals) {
             Conversation owner = _conversations.get(pending._conversationId);
@@ -4291,7 +4711,7 @@ public class NemoClient {
         case ":help":
             appendAssistantNote(conversation,
                     "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker.");
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch, delegateTask, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
         case ":quit":
@@ -4358,7 +4778,7 @@ public class NemoClient {
         int availablePluginTools = pluginToolDescriptors(configuration).size();
         lines.add("- plugin tools: " + availablePluginTools
                 + (registeredPluginTools == availablePluginTools ? "" : " available of " + registeredPluginTools + " registered"));
-        lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit");
+        lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit, drive_editor");
         return String.join("\n", lines);
     }
 
@@ -4435,6 +4855,9 @@ public class NemoClient {
     private synchronized String singlePendingApprovalId(Conversation conversation) {
         String match = "";
         for (PendingApproval pending : pendingApprovalsForWorkspace(conversation._workspaceRoot)) {
+            if (pending._request.hostOnly()) {
+                continue;
+            }
             if (!match.isBlank()) {
                 return "";
             }
@@ -4445,12 +4868,13 @@ public class NemoClient {
 
     private void appendApprovalResolution(Conversation conversation, PendingApproval pending, String text) {
         Conversation owner = ownerConversation(pending);
+        boolean denied = text.startsWith("Denied ");
         String message = owner == null || owner == conversation
                 ? text
                 : appendSentenceSuffix(text, " for " + owner._id + " (" + owner._title + ")");
-        appendTurn(conversation, new ChatTurn("approval", message, false));
+        appendTurn(conversation, new ChatTurn("approval", message, denied && owner == conversation));
         if (owner != null && owner != conversation) {
-            appendTurn(owner, new ChatTurn("approval", text, false));
+            appendTurn(owner, new ChatTurn("approval", text, denied));
         }
     }
 
@@ -4752,6 +5176,8 @@ public class NemoClient {
     }
 
     private void stopWorker(Conversation conversation) {
+        long requestId = conversation._activeRequestId;
+        releaseEditorControlLease(conversation, requestId);
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._activeRequestId = 0;
@@ -4771,6 +5197,7 @@ public class NemoClient {
         if (conversation._activeRequestId != requestId) {
             return;
         }
+        releaseEditorControlLease(conversation, requestId);
         List<ChatTurn> queuedTurns = List.of();
         if (!conversation._queuedUserTurns.isEmpty()) {
             queuedTurns = List.copyOf(conversation._queuedUserTurns);
@@ -4798,6 +5225,7 @@ public class NemoClient {
         if (conversation._activeRequestId != requestId) {
             return;
         }
+        releaseEditorControlLease(conversation, requestId);
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._contextUsagePercent = null;

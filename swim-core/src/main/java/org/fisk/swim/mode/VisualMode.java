@@ -44,22 +44,26 @@ public class VisualMode extends Mode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
-        _rootResponder.addEventResponder("<ESC>", () -> { window.switchToMode(window.getNormalMode()); });
+        _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
         _rootResponder.addEventResponder("o", () -> {
+            allow("visual selection");
             var position = cursor.getPosition();
             cursor.setPosition(getOtherCursor().getPosition());
             getOtherCursor().setPosition(position);
             bufferContext.getBufferView().adaptViewToCursor();
         });
         _rootResponder.addEventResponder("d", () -> {
+            allow("buffer edit");
             buffer.remove(minCursor().getPosition(), maxCursor().getPosition() + 1);
             window.switchToMode(window.getNormalMode());
         });
         _rootResponder.addEventResponder("c", () -> {
+            allow("buffer edit");
             buffer.remove(minCursor().getPosition(), maxCursor().getPosition() + 1);
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("y", () -> {
+            allow("yank");
             var text = buffer.getSubstring(minCursor().getPosition(), maxCursor().getPosition() + 1);
             Copy.getInstance().setText(text, false /* isLine */,
                     Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());

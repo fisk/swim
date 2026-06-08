@@ -22,6 +22,9 @@ public final class DebuggerUiSupport {
         if (window == null) {
             return;
         }
+        if (window.blockEditorDriveAction("debugger", "debugger actions are outside the editor-control sandbox")) {
+            return;
+        }
         if (window.getPanelView() instanceof DebuggerPanelView) {
             window.activateView(window.getPanelView());
             return;

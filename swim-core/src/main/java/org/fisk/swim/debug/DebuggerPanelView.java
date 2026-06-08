@@ -46,6 +46,12 @@ public final class DebuggerPanelView extends View {
         if (events.remaining() != 0) {
             return Response.NO;
         }
+        var window = org.fisk.swim.ui.Window.getInstance();
+        if (window != null && window.isEditorDriveSandboxActive()) {
+            _pendingAction = () -> window.blockEditorDriveAction("debugger",
+                    "debugger actions are outside the editor-control sandbox");
+            return Response.YES;
+        }
         String input = normalize(events.current().getKeyType(), events.current().getCharacter(),
                 events.current().isCtrlDown(), events.current().isAltDown());
         if (input == null) {

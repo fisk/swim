@@ -6,6 +6,7 @@ import java.util.List;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.TextLayout.Glyph;
+import org.fisk.swim.ui.Window;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
@@ -103,6 +104,9 @@ public class FancyJumpResponder implements EventResponder {
     public void respond() {
         if (_selectedTarget == null) {
             return;
+        }
+        if (Window.getInstance() != null) {
+            Window.getInstance().allowEditorDriveAction("fancy jump");
         }
         _bufferContext.getBuffer().getCursor().setPosition(_selectedTarget.position());
         _bufferContext.getBufferView().adaptViewToCursor();

@@ -44,24 +44,35 @@ public class Mode implements EventResponder, Drawable {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
-        _rootResponder.addEventResponder("<CTRL>-y", () -> { bufferContext.getBufferView().scrollUp(); });
-        _rootResponder.addEventResponder("<CTRL>-e", () -> { bufferContext.getBufferView().scrollDown(); });
-        _rootResponder.addEventResponder("$", () -> { cursor.goEndOfLine(); });
-        _rootResponder.addEventResponder("^", () -> { cursor.goStartOfLine(); });
-        _rootResponder.addEventResponder("h", () -> { cursor.goLeft(); });
-        _rootResponder.addEventResponder("l", () -> { cursor.goRight(); });
-        _rootResponder.addEventResponder("j", () -> { cursor.goDown(); });
-        _rootResponder.addEventResponder("k", () -> { cursor.goUp(); });
-        _rootResponder.addEventResponder("<LEFT>", () -> { cursor.goLeft(); });
-        _rootResponder.addEventResponder("<RIGHT>", () -> { cursor.goRight(); });
-        _rootResponder.addEventResponder("<DOWN>", () -> { cursor.goDown(); });
-        _rootResponder.addEventResponder("<UP>", () -> { cursor.goUp(); });
-        _rootResponder.addEventResponder("<PAGEUP>", () -> { bufferContext.getBufferView().scrollPageUp(); });
-        _rootResponder.addEventResponder("<PAGEDOWN>", () -> { bufferContext.getBufferView().scrollPageDown(); });
-        _rootResponder.addEventResponder("g g", () -> { window.performJump(cursor::goStartOfBuffer); });
-        _rootResponder.addEventResponder("G", () -> { window.performJump(cursor::goEndOfBuffer); });
+        _rootResponder.addEventResponder("<CTRL>-y", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollUp(); }));
+        _rootResponder.addEventResponder("<CTRL>-e", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollDown(); }));
+        _rootResponder.addEventResponder("$", allowed("cursor motion", () -> { cursor.goEndOfLine(); }));
+        _rootResponder.addEventResponder("^", allowed("cursor motion", () -> { cursor.goStartOfLine(); }));
+        _rootResponder.addEventResponder("h", allowed("cursor motion", () -> { cursor.goLeft(); }));
+        _rootResponder.addEventResponder("l", allowed("cursor motion", () -> { cursor.goRight(); }));
+        _rootResponder.addEventResponder("j", allowed("cursor motion", () -> { cursor.goDown(); }));
+        _rootResponder.addEventResponder("k", allowed("cursor motion", () -> { cursor.goUp(); }));
+        _rootResponder.addEventResponder("<LEFT>", allowed("cursor motion", () -> { cursor.goLeft(); }));
+        _rootResponder.addEventResponder("<RIGHT>", allowed("cursor motion", () -> { cursor.goRight(); }));
+        _rootResponder.addEventResponder("<DOWN>", allowed("cursor motion", () -> { cursor.goDown(); }));
+        _rootResponder.addEventResponder("<UP>", allowed("cursor motion", () -> { cursor.goUp(); }));
+        _rootResponder.addEventResponder("<PAGEUP>", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollPageUp(); }));
+        _rootResponder.addEventResponder("<PAGEDOWN>", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollPageDown(); }));
+        _rootResponder.addEventResponder("g g", allowed("cursor motion", () -> { window.performJump(cursor::goStartOfBuffer); }));
+        _rootResponder.addEventResponder("G", allowed("cursor motion", () -> { window.performJump(cursor::goEndOfBuffer); }));
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "f", true));
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "F", false));
+    }
+
+    protected Runnable allowed(String action, Runnable runnable) {
+        return () -> {
+            _window.allowEditorDriveAction(action);
+            runnable.run();
+        };
+    }
+
+    protected void allow(String action) {
+        _window.allowEditorDriveAction(action);
     }
 
     public void activate() {

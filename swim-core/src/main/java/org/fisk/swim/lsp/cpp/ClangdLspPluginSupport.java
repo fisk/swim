@@ -56,8 +56,14 @@ public final class ClangdLspPluginSupport {
             return;
         }
         var layer = mode.addKeybindingLayer();
-        layer.addEventResponder("g d", () -> withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext())));
-        layer.addEventResponder("g r", () -> withLoadedClient(window, client -> client.findReferences(window.getBufferContext())));
+        layer.addEventResponder("g d", () -> {
+            window.allowEditorDriveAction("lsp definition");
+            withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext()));
+        });
+        layer.addEventResponder("g r", () -> {
+            window.allowEditorDriveAction("lsp references");
+            withLoadedClient(window, client -> client.findReferences(window.getBufferContext()));
+        });
     }
 
     private static ClangdLspClient startClientIfNeeded(Path path, ClangdLspClient client) {

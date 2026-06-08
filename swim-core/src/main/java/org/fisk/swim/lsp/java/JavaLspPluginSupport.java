@@ -51,14 +51,38 @@ public final class JavaLspPluginSupport {
         }
 
         var layer = mode.addKeybindingLayer();
-        layer.addEventResponder("g d", () -> withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext())));
-        layer.addEventResponder("g r", () -> withLoadedClient(window, client -> client.findReferences(window.getBufferContext())));
-        layer.addEventResponder(leader + " e i", () -> organizeImports(window));
-        layer.addEventResponder(leader + " e f", () -> withLoadedClient(window, client -> client.makeFinal(window.getBufferContext())));
-        layer.addEventResponder(leader + " e a", () -> withLoadedClient(window, client -> client.generateAccessors(window.getBufferContext())));
-        layer.addEventResponder(leader + " e s", () -> withLoadedClient(window, client -> client.generateToString(window.getBufferContext())));
-        layer.addEventResponder(leader + " e l", () -> withLoadedClient(window, client -> client.codeLens(window.getBufferContext())));
-        layer.addEventResponder("o", () -> organizeImports(window));
+        layer.addEventResponder("g d", () -> {
+            window.allowEditorDriveAction("lsp definition");
+            withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext()));
+        });
+        layer.addEventResponder("g r", () -> {
+            window.allowEditorDriveAction("lsp references");
+            withLoadedClient(window, client -> client.findReferences(window.getBufferContext()));
+        });
+        layer.addEventResponder(leader + " e i", () -> {
+            window.allowEditorDriveAction("lsp code action");
+            organizeImports(window);
+        });
+        layer.addEventResponder(leader + " e f", () -> {
+            window.allowEditorDriveAction("lsp code action");
+            withLoadedClient(window, client -> client.makeFinal(window.getBufferContext()));
+        });
+        layer.addEventResponder(leader + " e a", () -> {
+            window.allowEditorDriveAction("lsp code action");
+            withLoadedClient(window, client -> client.generateAccessors(window.getBufferContext()));
+        });
+        layer.addEventResponder(leader + " e s", () -> {
+            window.allowEditorDriveAction("lsp code action");
+            withLoadedClient(window, client -> client.generateToString(window.getBufferContext()));
+        });
+        layer.addEventResponder(leader + " e l", () -> {
+            window.allowEditorDriveAction("lsp code lens");
+            withLoadedClient(window, client -> client.codeLens(window.getBufferContext()));
+        });
+        layer.addEventResponder("o", () -> {
+            window.allowEditorDriveAction("lsp code action");
+            organizeImports(window);
+        });
     }
 
     public static LanguageMode createLanguageMode(Path path) {

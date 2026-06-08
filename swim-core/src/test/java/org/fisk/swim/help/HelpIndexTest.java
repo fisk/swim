@@ -44,10 +44,14 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  MCP tools are exposed as mcp__server__tool, require approval unless full-access, and are hidden in read-only mode."));
         assertTrue(rendered.contains("  Nemo's delegateTask tool starts focused work in parallel sub-agent workers with the same permissions."));
         assertTrue(rendered.contains("  Nemo can inspect delegated work with worker_status/read_worker, steer it with message_worker, and wait with bounded join_worker."));
+        assertTrue(rendered.contains("  Nemo can use screen_snapshot and drive_editor to inspect and control the editor after host approval."));
+        assertTrue(rendered.contains("  screen_snapshot is blocked while mail is visible; email content is never exposed to Nemo."));
+        assertTrue(rendered.contains("  Editor-control approvals appear in a host overlay that Nemo cannot see or control; Esc in that overlay stops/denies the request."));
+        assertTrue(rendered.contains("  finish_editor_control reopens the invoking Nemo chat when editor-control work is done."));
         assertTrue(rendered.contains("  :mcp lists configured MCP servers and discovered tools."));
         assertTrue(rendered.contains("  :permissions shows permission mode, command policy, OS sandbox backend, and approval policy."));
         assertTrue(rendered.contains("  :tell <session-id> <message> sends a message to a worker without switching sessions."));
-        assertTrue(rendered.contains("  When approval is required, Nemo opens same-workspace approval options; use arrows and Enter to choose approve once, approve always, or deny."));
+        assertTrue(rendered.contains("  When normal tool approval is required, Nemo opens same-workspace approval options; use arrows and Enter to choose approve once, approve always, or deny."));
         assertTrue(rendered.contains("  :approvals and :unapprove manage pending and saved tool approvals."));
         assertTrue(rendered.contains("  osSandbox auto uses sandbox-exec on macOS or bwrap on Linux and asks before rerunning after sandbox write denials."));
         assertTrue(rendered.contains("  osSandbox required fails closed when sandboxing is unavailable; disabled runs unsandboxed."));

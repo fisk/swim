@@ -16,6 +16,10 @@ import java.util.function.Function;
 import org.fisk.swim.api.SwimNemoTool;
 import org.fisk.swim.api.SwimNemoToolInvocation;
 import org.fisk.swim.api.SwimNemoToolRegistry;
+import org.fisk.swim.mail.MailClient;
+import org.fisk.swim.mail.MailMessageDetail;
+import org.fisk.swim.mail.MailSnapshot;
+import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
@@ -29,6 +33,19 @@ import com.google.gson.JsonObject;
 class NemoClientTest {
     @TempDir
     Path tempDir;
+
+    private static final class RecordingToolSession implements NemoClient.ToolExecutionSession {
+        private final AtomicReference<NemoClient.ToolApprovalRequest> request = new AtomicReference<>();
+        private final AtomicInteger approvals = new AtomicInteger();
+        private boolean approved = true;
+
+        @Override
+        public NemoClient.ApprovalResult requestApproval(Path workspaceRoot, NemoClient.ToolApprovalRequest request) {
+            approvals.incrementAndGet();
+            this.request.set(request);
+            return new NemoClient.ApprovalResult(approved, false);
+        }
+    }
 
     @AfterEach
     void tearDown() {
@@ -79,6 +96,11 @@ class NemoClientTest {
         assertTrue(prompt.contains("delegate_task starts focused work in a separate Nemo sub-agent worker"));
         assertTrue(prompt.contains("worker_status/read_worker to check sub-agent progress"));
         assertTrue(prompt.contains("message_worker to send corrections or extra instructions"));
+        assertTrue(prompt.contains("start_editor_control requests host approval"));
+        assertTrue(prompt.contains("screen_snapshot can inspect a host-filtered view"));
+        assertTrue(prompt.contains("drive_editor can send bounded key streams"));
+        assertTrue(prompt.contains("private/non-buffer workspaces are not visible"));
+        assertTrue(prompt.contains("finish_editor_control releases the editor-control lock"));
     }
 
     @Test
@@ -166,9 +188,10 @@ class NemoClientTest {
         Files.writeString(file, fileText);
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
         context.getBuffer().getCursor().setPosition(fileText.indexOf("CURSOR_ANCHOR"));
+        int contextWindowTokens = 1000;
         var configuration = NemoClient.Configuration.builder()
                 .systemPrompt("System prompt")
-                .contextWindowTokens(700)
+                .contextWindowTokens(contextWindowTokens)
                 .build();
 
         String prompt = NemoPromptBuilder.buildInput(context,
@@ -176,7 +199,7 @@ class NemoClientTest {
                 configuration,
                 List.of());
 
-        assertTrue(prompt.length() <= promptBudgetChars(700));
+        assertTrue(prompt.length() <= promptBudgetChars(contextWindowTokens));
         assertTrue(prompt.contains("CURSOR_ANCHOR"));
         assertTrue(prompt.contains("chars before cursor"));
         assertTrue(prompt.contains("chars after cursor"));
@@ -189,9 +212,10 @@ class NemoClientTest {
         Path file = tempDir.resolve("SkillsBudget.txt");
         Files.writeString(file, "class Demo {}\n");
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        int contextWindowTokens = 1500;
         var configuration = NemoClient.Configuration.builder()
                 .systemPrompt("System prompt")
-                .contextWindowTokens(700)
+                .contextWindowTokens(contextWindowTokens)
                 .build();
 
         String prompt = NemoPromptBuilder.buildInput(context,
@@ -199,7 +223,7 @@ class NemoClientTest {
                 configuration,
                 List.of(new NemoSkillDocument("SKILLS.md", "skill-start\n" + "s".repeat(5_000) + "\nskill-end")));
 
-        assertTrue(prompt.length() <= promptBudgetChars(700));
+        assertTrue(prompt.length() <= promptBudgetChars(contextWindowTokens));
         assertTrue(prompt.contains("Applicable workspace instructions (budgeted):"));
         assertTrue(prompt.contains("skill-start"));
         assertFalse(prompt.contains("skill-end"));
@@ -303,28 +327,38 @@ class NemoClientTest {
     void webSearchAndSubAgentDelegationAreEnabledByDefaultAndCanBeDisabled() throws IOException {
         assertTrue(NemoClient.Configuration.builder().build().toolWebSearch());
         assertTrue(NemoClient.Configuration.builder().build().toolDelegateTask());
+        assertTrue(NemoClient.Configuration.builder().build().toolScreenSnapshot());
+        assertTrue(NemoClient.Configuration.builder().build().toolDriveEditor());
         assertFalse(NemoClient.Configuration.builder().build().forSubAgent().toolDelegateTask());
 
         Path propertiesConfig = tempDir.resolve("nemo-disabled.properties");
         Files.writeString(propertiesConfig, String.join("\n",
                 "tool.web_search=false",
-                "tool.delegate_task=false"));
+                "tool.delegate_task=false",
+                "tool.screen_snapshot=false",
+                "tool.drive_editor=false"));
         var propertiesConfiguration = NemoClient.loadConfiguration(propertiesConfig);
         assertFalse(propertiesConfiguration.toolWebSearch());
         assertFalse(propertiesConfiguration.toolDelegateTask());
+        assertFalse(propertiesConfiguration.toolScreenSnapshot());
+        assertFalse(propertiesConfiguration.toolDriveEditor());
 
         Path jsonConfig = tempDir.resolve("nemo-disabled.json");
         Files.writeString(jsonConfig, """
                 {
                   "tools": {
                     "webSearch": false,
-                    "delegateTask": false
+                    "delegateTask": false,
+                    "screenSnapshot": false,
+                    "driveEditor": false
                   }
                 }
                 """);
         var jsonConfiguration = NemoClient.loadConfiguration(jsonConfig);
         assertFalse(jsonConfiguration.toolWebSearch());
         assertFalse(jsonConfiguration.toolDelegateTask());
+        assertFalse(jsonConfiguration.toolScreenSnapshot());
+        assertFalse(jsonConfiguration.toolDriveEditor());
     }
 
     @Test
@@ -634,10 +668,32 @@ class NemoClientTest {
                 skills);
 
         assertTrue(prompt.contains("Applicable workspace instructions"));
+        assertTrue(prompt.contains("--- built-in/editor-control ---"));
+        assertTrue(prompt.contains("Call start_editor_control before screen_snapshot"));
         assertTrue(prompt.contains("--- SKILLS.md ---"));
         assertTrue(prompt.contains("Root skill"));
         assertTrue(prompt.contains("--- src/SKILLS.md ---"));
         assertTrue(prompt.contains("Nested skill"));
+    }
+
+    @Test
+    void editorControlSkillDoesNotConsumeWorkspaceGuidanceBudget() throws IOException {
+        Path project = tempDir.resolve("editor-control-skill");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("AGENTS.md"), "Root agents");
+        Path file = project.resolve("Demo.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .skillsEnabled(true)
+                .workspaceRoot(project)
+                .skillsMaxFiles(1)
+                .build();
+
+        var guidance = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
+
+        assertEquals(List.of("built-in/editor-control", "AGENTS.md"),
+                guidance.stream().map(NemoSkillDocument::relativePath).toList());
     }
 
     @Test
@@ -653,6 +709,8 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .skillsEnabled(true)
                 .workspaceRoot(project)
+                .toolScreenSnapshot(false)
+                .toolDriveEditor(false)
                 .build();
 
         var guidance = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
@@ -675,6 +733,8 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .skillsEnabled(true)
                 .workspaceRoot(project)
+                .toolScreenSnapshot(false)
+                .toolDriveEditor(false)
                 .build();
 
         var guidance = NemoSkillLoader.loadApplicableSkills(context, project, configuration);
@@ -790,13 +850,17 @@ class NemoClientTest {
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(16, tools.size());
+        assertEquals(20, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
         assertEquals("delegate_task", tools.get(1).getAsJsonObject().get("name").getAsString());
         assertEquals("worker_status", tools.get(2).getAsJsonObject().get("name").getAsString());
         assertEquals("read_worker", tools.get(3).getAsJsonObject().get("name").getAsString());
         assertEquals("join_worker", tools.get(4).getAsJsonObject().get("name").getAsString());
         assertEquals("message_worker", tools.get(5).getAsJsonObject().get("name").getAsString());
+        assertEquals("start_editor_control", tools.get(6).getAsJsonObject().get("name").getAsString());
+        assertEquals("screen_snapshot", tools.get(7).getAsJsonObject().get("name").getAsString());
+        assertEquals("drive_editor", tools.get(8).getAsJsonObject().get("name").getAsString());
+        assertEquals("finish_editor_control", tools.get(9).getAsJsonObject().get("name").getAsString());
     }
 
     @Test
@@ -821,6 +885,9 @@ class NemoClientTest {
         assertTrue(names.contains("read_worker"));
         assertTrue(names.contains("join_worker"));
         assertTrue(names.contains("message_worker"));
+        assertTrue(names.contains("start_editor_control"));
+        assertTrue(names.contains("screen_snapshot"));
+        assertTrue(names.contains("finish_editor_control"));
         assertTrue(names.contains("read_file"));
         assertTrue(names.contains("search_files"));
         assertTrue(names.contains("git_status"));
@@ -830,6 +897,7 @@ class NemoClientTest {
         assertFalse(names.contains("apply_patch"));
         assertFalse(names.contains("git_add"));
         assertFalse(names.contains("git_commit"));
+        assertFalse(names.contains("drive_editor"));
     }
 
     @Test
@@ -839,6 +907,298 @@ class NemoClientTest {
 
         assertTrue(descriptions.contains("Successful writes are saved to disk and persist across Nemo/editor runs"));
         assertTrue(descriptions.contains("Successful patches are saved to disk and persist across Nemo/editor runs"));
+    }
+
+    @Test
+    void startEditorControlRequiresHostOnlyApprovalAndExcludesHostOverlay() throws Exception {
+        Path project = tempDir.resolve("editor-tools");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            harness.getWindow().showHostApprovalOverlay(List.of(new org.fisk.swim.ui.HostApprovalOverlayView.Entry(
+                    "approval-secret",
+                    "session",
+                    "drive_editor",
+                    "editor control",
+                    "SECRET OVERLAY",
+                    false)), ignored -> {
+                    });
+            var session = new RecordingToolSession();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    session);
+
+            assertEquals("start_editor_control", session.request.get().toolName());
+            assertTrue(session.request.get().hostOnly());
+            assertTrue(output.contains("alpha"));
+            assertFalse(output.contains("SECRET OVERLAY"));
+            assertFalse(output.contains("approval-secret"));
+
+            String snapshot = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("screen", "screen_snapshot", json(Map.of())),
+                    session);
+            assertTrue(snapshot.contains("alpha"));
+            assertFalse(snapshot.contains("SECRET OVERLAY"));
+        }
+    }
+
+    @Test
+    void screenSnapshotBlocksMailBeforeApproval() throws Exception {
+        Path project = tempDir.resolve("mail-screen-block");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            assertTrue(harness.getWindow().showMailWorkspace(secretMailClient()));
+            var session = new RecordingToolSession();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    session);
+
+            assertTrue(output.contains("mail is visible"));
+            assertFalse(output.contains("SECRET SUBJECT"));
+            assertFalse(output.contains("SECRET BODY"));
+            assertEquals(0, session.approvals.get());
+        }
+    }
+
+    @Test
+    void screenSnapshotRequiresActiveEditorControlSession() throws Exception {
+        Path project = tempDir.resolve("screen-requires-start");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("screen", "screen_snapshot", json(Map.of())),
+                    new RecordingToolSession());
+
+            assertTrue(output.contains("call start_editor_control first"));
+            assertFalse(output.contains("alpha"));
+        }
+    }
+
+    @Test
+    void driveEditorRequiresActiveEditorControlSession() throws Exception {
+        Path project = tempDir.resolve("drive-requires-start");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("drive", "drive_editor", json(Map.of("input", "ihello <ESC>"))),
+                    new RecordingToolSession());
+
+            assertTrue(output.contains("call start_editor_control first"));
+            assertEquals("alpha\n", context.getBuffer().getString());
+        }
+    }
+
+    @Test
+    void driveEditorToolEditsBufferAfterSessionStartApproval() throws Exception {
+        Path project = tempDir.resolve("drive-editor");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            var session = new RecordingToolSession();
+
+            String started = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    session);
+            assertTrue(started.contains("editor control started"));
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("drive", "drive_editor", json(Map.of(
+                            "input", "ihello <ESC>",
+                            "max_events", 50))),
+                    session);
+
+            assertEquals("start_editor_control", session.request.get().toolName());
+            assertTrue(session.request.get().hostOnly());
+            assertTrue(output.contains("accepted: true"));
+            assertTrue(context.getBuffer().getString().startsWith("hello alpha"));
+        }
+    }
+
+    @Test
+    void editorControlLeaseRejectsOtherToolSessions() throws Exception {
+        Path project = tempDir.resolve("drive-editor-lock");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            var owner = new RecordingToolSession();
+            var other = new RecordingToolSession();
+
+            assertTrue(NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    owner).contains("editor control started"));
+            String blocked = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("drive", "drive_editor", json(Map.of("input", "ihello <ESC>"))),
+                    other);
+            assertTrue(blocked.contains("locked by"));
+            assertEquals("alpha\n", context.getBuffer().getString());
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("drive", "drive_editor", json(Map.of("input", "ihello <ESC>"))),
+                    owner);
+            assertTrue(output.contains("accepted: true"));
+            assertTrue(context.getBuffer().getString().startsWith("hello alpha"));
+        }
+    }
+
+    @Test
+    void finishEditorControlReleasesLeaseForNextSession() throws Exception {
+        Path project = tempDir.resolve("drive-editor-release");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            var owner = new RecordingToolSession();
+            var other = new RecordingToolSession();
+
+            assertTrue(NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    owner).contains("editor control started"));
+            assertTrue(NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("screen", "screen_snapshot", json(Map.of())),
+                    other).contains("locked by"));
+
+            String finished = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("finish", "finish_editor_control", json(Map.of())),
+                    owner);
+            assertTrue(finished.contains("editor control finished"));
+
+            String restarted = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start2", "start_editor_control", json(Map.of())),
+                    other);
+            assertTrue(restarted.contains("editor control started"));
+        }
+    }
+
+    @Test
+    void driveEditorBlocksMailBeforeApproval() throws Exception {
+        Path project = tempDir.resolve("mail-drive-block");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            assertTrue(harness.getWindow().showMailWorkspace(secretMailClient()));
+            var session = new RecordingToolSession();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    session);
+
+            assertTrue(output.contains("mail is visible"));
+            assertFalse(output.contains("SECRET SUBJECT"));
+            assertFalse(output.contains("SECRET BODY"));
+            assertEquals(0, session.approvals.get());
+        }
+    }
+
+    @Test
+    void runDoesNotOpenNemoWhileMailIsVisible() throws Exception {
+        Path project = tempDir.resolve("mail-run-block");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var window = harness.getWindow();
+            assertTrue(window.showMailWorkspace(secretMailClient()));
+
+            NemoClient.getInstance().run(window.getBufferContext(), "Summarize this");
+
+            assertFalse(window.isShowingPanel());
+            assertTrue(HeadlessWindowHarness.getField(window.getCommandView(), "_message", String.class)
+                    .contains("Nemo is unavailable"));
+        }
+    }
+
+    @Test
+    void readOnlyModeAllowsSnapshotButBlocksDriving() throws Exception {
+        Path project = tempDir.resolve("read-only-editor");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .build();
+        try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            var context = harness.getWindow().getBufferContext();
+            var session = new RecordingToolSession();
+
+            String started = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("start", "start_editor_control", json(Map.of())),
+                    session);
+            String snapshot = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("screen", "screen_snapshot", json(Map.of())),
+                    session);
+            String drive = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("drive", "drive_editor", json(Map.of("input", "ihello <ESC>"))),
+                    session);
+
+            assertTrue(started.contains("editor control started"));
+            assertTrue(snapshot.contains("alpha"));
+            assertTrue(drive.contains("blocked by Nemo permissions"));
+            assertEquals("alpha\n", context.getBuffer().getString());
+        }
+    }
+
+    @Test
+    void finishEditorControlRequiresInvokingConversationSession() throws Exception {
+        Path project = tempDir.resolve("finish-editor");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "alpha\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("finish", "finish_editor_control", json(Map.of())));
+
+        assertTrue(output.contains("no invoking Nemo conversation is active"));
     }
 
     @Test
@@ -1174,6 +1534,32 @@ class NemoClientTest {
         assertEquals("OS sandbox blocked filesystem write", approvalReason.get());
         assertTrue(Files.exists(outside));
         assertTrue(output.contains("exit_code: 0"));
+    }
+
+    @Test
+    void deniedEscalationApprovalIsReportedToNemo() throws Exception {
+        Path project = tempDir.resolve("denied-escalation");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolApprovalPolicy("on-escalation")
+                .build();
+        var approvalCount = new AtomicInteger();
+        NemoClient.ToolExecutionSession approvalSession = (workspaceRoot, request) -> {
+            approvalCount.incrementAndGet();
+            return new NemoClient.ApprovalResult(false, false);
+        };
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("policy-denied", "run_command", json(Map.of("command", "rm target"))),
+                approvalSession);
+
+        assertEquals(1, approvalCount.get());
+        assertTrue(output.contains("restricted mode does not allow rm"));
+        assertTrue(output.contains("Nemo approval denied: user denied run_command"));
     }
 
     @Test
@@ -1674,6 +2060,34 @@ class NemoClientTest {
 
     private static String shellQuoteForTest(Path path) {
         return "'" + path.toString().replace("'", "'\"'\"'") + "'";
+    }
+
+    private MailClient secretMailClient() {
+        return new MailClient() {
+            @Override
+            public MailSnapshot snapshot() {
+                return new MailSnapshot(
+                        List.of(),
+                        List.of(new MailThreadSummary(1L, "work", "SECRET SUBJECT", "sender@example.com",
+                                "SECRET SNIPPET", "2026-05-15T10:00:00Z", true, 1, List.of())),
+                        "");
+            }
+
+            @Override
+            public MailMessageDetail loadMessage(long threadId) {
+                return new MailMessageDetail(1L, threadId, "SECRET SUBJECT", "sender@example.com",
+                        "dest@example.com", "2026-05-15T10:00:00Z", "SECRET BODY", List.of());
+            }
+
+            @Override
+            public void refresh() {
+            }
+
+            @Override
+            public Path getDataPath() {
+                return tempDir.resolve(".swim/email");
+            }
+        };
     }
 
     private static NemoMcpServerConfig fakeMcpServer(String name) {

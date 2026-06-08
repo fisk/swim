@@ -3,6 +3,7 @@ package org.fisk.swim.event;
 import java.util.regex.Pattern;
 
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
@@ -56,6 +57,9 @@ public class FindResponder implements EventResponder {
     @Override
     public void respond() {
         _log.info("Responding");
+        if (Window.getInstance() != null) {
+            Window.getInstance().allowEditorDriveAction("find motion");
+        }
         respond(_count, Character.toString(_character));
     }
 }
