@@ -36,6 +36,7 @@ import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mode.InputMode;
 import org.fisk.swim.mode.Mode;
 import org.fisk.swim.mode.NormalMode;
+import org.fisk.swim.mode.ReplaceMode;
 import org.fisk.swim.mode.VisualBlockMode;
 import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
@@ -83,6 +84,7 @@ public class Window implements Drawable {
         private IdentityHashMap<BufferContext, Integer> _bufferViewCounts;
         private NormalMode _normalMode;
         private InputMode _inputMode;
+        private ReplaceMode _replaceMode;
         private VisualMode _visualMode;
         private VisualLineMode _visualLineMode;
         private VisualBlockMode _visualBlockMode;
@@ -146,6 +148,7 @@ public class Window implements Drawable {
     private IdentityHashMap<BufferContext, Integer> _bufferViewCounts;
     private NormalMode _normalMode;
     private InputMode _inputMode;
+    private ReplaceMode _replaceMode;
     private VisualMode _visualMode;
     private VisualLineMode _visualLineMode;
     private VisualBlockMode _visualBlockMode;
@@ -1353,6 +1356,10 @@ public class Window implements Drawable {
         return _inputMode;
     }
 
+    public Mode getReplaceMode() {
+        return _replaceMode;
+    }
+
     public Mode getVisualMode() {
         return _visualMode;
     }
@@ -1550,7 +1557,7 @@ public class Window implements Drawable {
     public void selectRegister(char register) {
         getEditorState().selectRegister(register);
         if (_commandView != null) {
-            _commandView.setMessage("Using register " + Character.toLowerCase(register));
+            _commandView.setMessage("Using register " + register);
         }
     }
 
@@ -3693,6 +3700,7 @@ public class Window implements Drawable {
         var previousActiveBufferView = _activeBufferView;
         var previousNormalMode = _normalMode;
         var previousInputMode = _inputMode;
+        var previousReplaceMode = _replaceMode;
         var previousVisualMode = _visualMode;
         var previousVisualLineMode = _visualLineMode;
         var previousVisualBlockMode = _visualBlockMode;
@@ -3702,6 +3710,7 @@ public class Window implements Drawable {
             _activeBufferView = workspace._activeBufferView;
             workspace._normalMode = new NormalMode(this);
             workspace._inputMode = new InputMode(this);
+            workspace._replaceMode = new ReplaceMode(this);
             workspace._visualMode = new VisualMode(this);
             workspace._visualLineMode = new VisualLineMode(this);
             workspace._visualBlockMode = new VisualBlockMode(this);
@@ -3711,6 +3720,7 @@ public class Window implements Drawable {
             _activeBufferView = previousActiveBufferView;
             _normalMode = previousNormalMode;
             _inputMode = previousInputMode;
+            _replaceMode = previousReplaceMode;
             _visualMode = previousVisualMode;
             _visualLineMode = previousVisualLineMode;
             _visualBlockMode = previousVisualBlockMode;
@@ -3722,12 +3732,15 @@ public class Window implements Drawable {
         ensureLayoutState();
         _normalMode = new NormalMode(this);
         _inputMode = new InputMode(this);
+        _replaceMode = new ReplaceMode(this);
         _visualMode = new VisualMode(this);
         _visualLineMode = new VisualLineMode(this);
         _visualBlockMode = new VisualBlockMode(this);
 
         if (previousMode instanceof InputMode) {
             _currentMode = _inputMode;
+        } else if (previousMode instanceof ReplaceMode) {
+            _currentMode = _replaceMode;
         } else if (previousMode instanceof VisualLineMode) {
             _currentMode = _visualLineMode;
         } else if (previousMode instanceof VisualBlockMode) {
@@ -3758,6 +3771,7 @@ public class Window implements Drawable {
             workspace._bufferViewCounts = _bufferViewCounts;
             workspace._normalMode = _normalMode;
             workspace._inputMode = _inputMode;
+            workspace._replaceMode = _replaceMode;
             workspace._visualMode = _visualMode;
             workspace._visualLineMode = _visualLineMode;
             workspace._visualBlockMode = _visualBlockMode;
@@ -3814,6 +3828,7 @@ public class Window implements Drawable {
             _bufferViewCounts = workspace._bufferViewCounts;
             _normalMode = workspace._normalMode;
             _inputMode = workspace._inputMode;
+            _replaceMode = workspace._replaceMode;
             _visualMode = workspace._visualMode;
             _visualLineMode = workspace._visualLineMode;
             _visualBlockMode = workspace._visualBlockMode;
@@ -3833,6 +3848,7 @@ public class Window implements Drawable {
         }
         _normalMode = workspace._normalMode;
         _inputMode = workspace._inputMode;
+        _replaceMode = workspace._replaceMode;
         _visualMode = workspace._visualMode;
         _visualLineMode = workspace._visualLineMode;
         _visualBlockMode = workspace._visualBlockMode;

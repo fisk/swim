@@ -34,22 +34,20 @@ class CommandMenuViewTest {
     }
 
     @Test
-    void commandMenuGrowsTallerWhenDetailTextNeedsMoreRowsAndSpaceExists() throws IOException {
-        Path path = tempDir.resolve("command-menu-grow.txt");
-        Files.writeString(path, "abc");
+    void commandMenuGrowsTallerWhenDetailTextNeedsMoreRowsAndSpaceExists() {
+        var menuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        var matches = List.of(
+                new CommandView.CommandSpec("wide-detail", List.of(), "",
+                        "this detail intentionally needs several rows in a narrow command menu"),
+                new CommandView.CommandSpec("wide-detail-two", List.of(), "",
+                        "another intentionally long detail keeps the popup taller than the minimum"));
 
-        try (var harness = HeadlessWindowHarness.create(path, 28, 10)) {
-            var commandView = harness.getWindow().getCommandView();
-            var menuView = HeadlessWindowHarness.getField(harness.getWindow(), "_commandMenuView", CommandMenuView.class);
-            commandView.activate(":");
-            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('r'));
+        menuView.setState(new CommandView.CommandMenuState(true, "wide", matches, 0));
+        menuView.resize(Size.create(28, 9));
 
-            menuView.setState(commandView.getMenuState());
-
-            assertEquals(28, menuView.getBounds().getSize().getWidth());
-            assertTrue(menuView.getBounds().getSize().getHeight() > 3);
-            assertTrue(menuView.getBounds().getSize().getHeight() <= 9);
-        }
+        assertEquals(28, menuView.getBounds().getSize().getWidth());
+        assertTrue(menuView.getBounds().getSize().getHeight() > 3);
+        assertTrue(menuView.getBounds().getSize().getHeight() <= 9);
     }
 
     @Test

@@ -47,4 +47,33 @@ class CopyTest {
         assertEquals(List.of("x", "<ESC>"), copy.getMacro('b').stream().map(RecordedKey::notation).toList());
         assertEquals(Character.valueOf('b'), copy.getLastMacroRegister());
     }
+
+    @Test
+    void storesClassicDeleteAndAppendRegisters() {
+        var copy = Copy.getInstance();
+
+        copy.setDelete("x", false, null);
+        assertEquals("x", copy.getText('-'));
+
+        copy.setDelete("line\n", true, null);
+        assertEquals("line\n", copy.getText('1'));
+
+        copy.setYank("a", false, 'q');
+        copy.setYank("b", false, 'Q');
+        assertEquals("ab", copy.getText('q'));
+
+        copy.setYank("discard", false, '_');
+        assertEquals("ab", copy.getText('q'));
+        assertEquals("b", copy.getText());
+    }
+
+    @Test
+    void storesBlockPayloads() {
+        var copy = Copy.getInstance();
+
+        copy.setBlock(List.of("ab", "cd"), 'b');
+
+        assertTrue(copy.isBlock('b'));
+        assertEquals(List.of("ab", "cd"), copy.getValue('b').blockLines());
+    }
 }

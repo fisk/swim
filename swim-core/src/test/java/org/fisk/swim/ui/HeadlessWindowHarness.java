@@ -12,6 +12,7 @@ import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.mode.InputMode;
 import org.fisk.swim.mode.NormalMode;
+import org.fisk.swim.mode.ReplaceMode;
 import org.fisk.swim.mode.VisualBlockMode;
 import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
@@ -118,12 +119,14 @@ public final class HeadlessWindowHarness implements AutoCloseable {
 
         var normalMode = new NormalMode(window);
         var inputMode = new InputMode(window);
+        var replaceMode = new ReplaceMode(window);
         var visualMode = new VisualMode(window);
         var visualLineMode = new VisualLineMode(window);
         var visualBlockMode = new VisualBlockMode(window);
 
         setField(window, "_normalMode", normalMode);
         setField(window, "_inputMode", inputMode);
+        setField(window, "_replaceMode", replaceMode);
         setField(window, "_visualMode", visualMode);
         setField(window, "_visualLineMode", visualLineMode);
         setField(window, "_visualBlockMode", visualBlockMode);

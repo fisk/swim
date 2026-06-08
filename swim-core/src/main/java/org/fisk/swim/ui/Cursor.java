@@ -175,6 +175,75 @@ public class Cursor {
         _lastX = _x;
     }
 
+    public void goFirstNonBlankOfLine() {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        int start = buffer.getLineStartPosition(_position);
+        int end = buffer.getLineEndPosition(_position, false);
+        int target = start;
+        while (target < end) {
+            String character = buffer.getCharacter(target);
+            if (!character.equals(" ") && !character.equals("\t")) {
+                break;
+            }
+            target++;
+        }
+        setPosition(target);
+        _lastX = _x;
+    }
+
+    public void goWordForward(int count, boolean bigWord) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.nextWordPosition(_position, count, bigWord));
+        _lastX = _x;
+    }
+
+    public void goWordBackward(int count, boolean bigWord) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.previousWordPosition(_position, count, bigWord));
+        _lastX = _x;
+    }
+
+    public void goWordEnd(int count, boolean bigWord) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.wordEndPosition(_position, count, bigWord));
+        _lastX = _x;
+    }
+
+    public void goParagraphForward(int count) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.paragraphForwardPosition(_position, count));
+        _lastX = _x;
+    }
+
+    public void goParagraphBackward(int count) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.paragraphBackwardPosition(_position, count));
+        _lastX = _x;
+    }
+
+    public void goSentenceForward(int count) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.sentenceForwardPosition(_position, count));
+        _lastX = _x;
+    }
+
+    public void goSentenceBackward(int count) {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        setPosition(buffer.sentenceBackwardPosition(_position, count));
+        _lastX = _x;
+    }
+
+    public boolean goMatchingBracket() {
+        var buffer = Window.getInstance().getBufferContext().getBuffer();
+        int position = buffer.matchingBracketPosition(_position);
+        if (position < 0) {
+            return false;
+        }
+        setPosition(position);
+        _lastX = _x;
+        return true;
+    }
+
     public void setPosition(int position) {
         _position = position;
         calculate();

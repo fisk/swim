@@ -31,9 +31,9 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  Press i to enter INSERT mode and type text."));
         assertTrue(rendered.contains("  g w<char> jumps to visible word starts and shows hints when needed."));
         assertTrue(rendered.contains("  g c<char> jumps to visible matching characters and shows hints when needed."));
-        assertTrue(rendered.contains("  / starts forward search, ? starts backward search, n/N repeat it."));
+        assertTrue(rendered.contains("  / starts regex forward search, ? starts regex backward search, n/N repeat it."));
         assertTrue(rendered.contains("Todo"));
-        assertTrue(rendered.contains("  Press t or run :todo to open the Todo workspace."));
+        assertTrue(rendered.contains("  Run :todo to open the Todo workspace."));
         assertTrue(rendered.contains("  Press Ctrl-t from any screen to add a quick Inbox todo."));
         assertTrue(rendered.contains("  In quick capture, Enter adds the todo and Esc cancels it."));
         assertTrue(rendered.contains("  Todo items are stored in ~/.swim/todo/todos.mv.db."));

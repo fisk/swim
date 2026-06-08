@@ -53,7 +53,7 @@ class CommandViewTest {
     }
 
     @Test
-    void searchNextAndPreviousTreatSearchStringLiterally() throws IOException {
+    void searchNextAndPreviousUseRegexPatterns() throws IOException {
         Path path = tempDir.resolve("search.txt");
         Files.writeString(path, "x [ y [ z");
 
@@ -63,7 +63,7 @@ class CommandViewTest {
             var cursor = window.getBufferContext().getBuffer().getCursor();
 
             commandView.activate("/");
-            commandView.runSearch("[");
+            commandView.runSearch("\\[");
             commandView.deactivate();
             assertEquals(2, cursor.getPosition());
 
@@ -121,8 +121,8 @@ class CommandViewTest {
             var state = commandView.getMenuState();
             assertTrue(state.visible());
             assertEquals("v", state.prefix());
-            assertEquals("vsplit", state.selectedMatch().primaryName());
-            assertEquals(2, state.matches().size());
+            assertEquals("v", state.selectedMatch().primaryName());
+            assertEquals(3, state.matches().size());
         }
     }
 
@@ -465,6 +465,72 @@ class CommandViewTest {
                     omega beta
                     delta gamma
                     """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void rangedSubstituteOnlyRewritesSelectedLines() throws Exception {
+        Path path = tempDir.resolve("ranged-substitute.txt");
+        Files.writeString(path, """
+                alpha
+                alpha
+                alpha
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "2,3s/alpha/beta/g");
+
+            assertEquals("""
+                    alpha
+                    beta
+                    beta
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void globalDeleteRemovesMatchingLines() throws Exception {
+        Path path = tempDir.resolve("global-delete.txt");
+        Files.writeString(path, """
+                keep
+                remove this
+                keep too
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "g/remove/d");
+
+            assertEquals("""
+                    keep
+                    keep too
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void writeReadAndNormalCommandsWork() throws Exception {
+        Path path = tempDir.resolve("ex-commands.txt");
+        Path output = tempDir.resolve("written.txt");
+        Path read = tempDir.resolve("read.txt");
+        Files.writeString(path, "one\ntwo\n");
+        Files.writeString(read, "inserted\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "w " + output);
+            assertEquals("one\ntwo\n", Files.readString(output));
+
+            invokeRunCommand(window.getCommandView(), "read " + read);
+            assertEquals("one\ninserted\ntwo\n", window.getBufferContext().getBuffer().getString());
+
+            window.getBufferContext().getBuffer().getCursor().setPosition(0);
+            invokeRunCommand(window.getCommandView(), "normal dd");
+            assertEquals("inserted\ntwo\n", window.getBufferContext().getBuffer().getString());
         }
     }
 

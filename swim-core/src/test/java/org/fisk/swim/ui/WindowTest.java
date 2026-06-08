@@ -65,6 +65,9 @@ class WindowTest {
     void narrowWindowExpandsTopMenuHeight() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("narrow-menu.txt", "abc"), 18, 11)) {
             var window = harness.getWindow();
+            window.getKeyMenuView().setModeName("NORMAL");
+            window.getKeyMenuView().setBufferFocused(true);
+            window.getKeyMenuView().setFocusContext(KeyMenuView.FocusContext.BUFFER);
             window.getKeyMenuView().observe(HeadlessWindowHarness.key('g'));
 
             invoke(window, "applyLayout", new Class<?>[] { Size.class }, Size.create(18, 11));
@@ -76,11 +79,11 @@ class WindowTest {
     }
 
     @Test
-    void prefixDropdownRequestsRelayoutWhenTopMenuNeedsMoreRows() throws Exception {
+    void topMenuHeightMismatchRequestsRelayout() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("prefix-dropdown.txt", "abc"), 80, 12)) {
             var window = harness.getWindow();
 
-            window.getKeyMenuView().observe(HeadlessWindowHarness.key('g'));
+            window.getKeyMenuView().setBounds(Rect.create(0, 0, 80, 1));
 
             assertTrue((Boolean) invoke(window, "keyMenuNeedsRelayout", new Class<?>[] { Size.class }, Size.create(80, 12)));
         }

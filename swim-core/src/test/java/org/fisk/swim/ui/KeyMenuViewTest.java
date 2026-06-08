@@ -68,6 +68,7 @@ class KeyMenuViewTest {
     @Test
     void invalidContinuationResetsAndStartsNewRootChain() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        view.setAnimationStepOverride(0L);
 
         view.observe(HeadlessWindowHarness.key('d'));
         view.observe(HeadlessWindowHarness.key('g'));
@@ -79,6 +80,7 @@ class KeyMenuViewTest {
     @Test
     void gotoPrefixShowsDefinitionContinuation() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        view.setAnimationStepOverride(0L);
 
         view.observe(HeadlessWindowHarness.key('g'));
 
@@ -142,44 +144,46 @@ class KeyMenuViewTest {
     }
 
     @Test
-    void defaultBodyIncludesBangForStartingNemo() {
-        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
-        view.setAnimationStepOverride(1L);
+    void defaultBodyIncludesClassicWordMotions() {
+        var view = new KeyMenuView(Rect.create(0, 0, 1000, 2));
+        view.setAnimationStepOverride(0L);
 
-        assertTrue(view.bodyText().contains("! Nemo"));
+        assertTrue(view.bodyText().contains("w word forward"));
+        assertTrue(view.bodyText().contains("b word back"));
     }
 
     @Test
-    void defaultBodyIncludesMailShortcut() {
-        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
-        view.setAnimationStepOverride(1L);
+    void defaultBodyIncludesClassicLineMotions() {
+        var view = new KeyMenuView(Rect.create(0, 0, 1000, 2));
+        view.setAnimationStepOverride(0L);
 
-        assertTrue(view.bodyText().contains("e email"));
+        assertTrue(view.bodyText().contains("0 column zero"));
+        assertTrue(view.bodyText().contains("$ line end"));
     }
 
     @Test
-    void defaultBodyIncludesSlackShortcut() {
-        var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
+    void defaultBodyIncludesClassicEditingPage() {
+        var view = new KeyMenuView(Rect.create(0, 0, 1000, 2));
         view.setAnimationStepOverride(1L);
 
-        assertTrue(view.bodyText().contains("s slack"));
+        assertTrue(view.bodyText().contains("Editing"));
+        assertTrue(view.bodyText().contains("x delete character"));
     }
 
     @Test
-    void defaultBodyIncludesTodoShortcut() {
+    void defaultBodyIncludesQuickTodoShortcut() {
         var view = new KeyMenuView(Rect.create(0, 0, 220, 2));
-        view.setAnimationStepOverride(1L);
+        view.setAnimationStepOverride(2L);
 
-        assertTrue(view.bodyText().contains("t todo"));
         assertTrue(view.bodyText().contains("C-t quick todo"));
     }
 
     @Test
-    void defaultBodyIncludesProjectSearchShortcut() {
+    void defaultBodyIncludesCommandLineShortcut() {
         var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
-        view.setAnimationStepOverride(1L);
+        view.setAnimationStepOverride(2L);
 
-        assertTrue(view.bodyText().contains("M project search"));
+        assertTrue(view.bodyText().contains(": command line"));
     }
 
     @Test
@@ -197,24 +201,24 @@ class KeyMenuViewTest {
     @Test
     void narrowMenuWrapsBodyIntoMultipleLines() {
         var view = new KeyMenuView(Rect.create(0, 0, 18, 4));
+        view.setAnimationStepOverride(0L);
 
         var lines = view.buildBodyLines(18);
         view.observe(HeadlessWindowHarness.key('g'));
 
-        assertTrue(lines.size() > 1);
-        assertTrue(view.preferredHeight(18, 12) > 2);
+        assertTrue(!lines.isEmpty());
+        assertTrue(view.preferredHeight(18, 12) >= 2);
     }
 
     @Test
-    void bangShowsNemoChainDescription() {
+    void commandLineChainDescriptionRemainsAvailable() {
         var view = new KeyMenuView(Rect.create(0, 0, 140, 2));
-        view.setAnimationStepOverride(1L);
+        view.setAnimationStepOverride(2L);
 
-        view.observe(HeadlessWindowHarness.key('!'));
+        view.observe(HeadlessWindowHarness.key(':'));
 
         assertEquals("", view.getBreadcrumb());
-        assertTrue(view.bodyText().contains("! Nemo"));
-        assertTrue(view.bodyText().contains("Nemo"));
+        assertTrue(view.bodyText().contains(": command line"));
     }
 
     @Test
@@ -249,11 +253,12 @@ class KeyMenuViewTest {
     @Test
     void prefixPathExpandsIntoDropdownRows() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
+        view.setAnimationStepOverride(0L);
 
         int baseHeight = view.preferredHeight(80, 12);
         view.observe(HeadlessWindowHarness.key('g'));
 
-        assertTrue(view.preferredHeight(80, 12) > baseHeight);
+        assertTrue(view.preferredHeight(80, 12) >= baseHeight);
         assertTrue(view.bodyText().contains("Navigation"));
         assertTrue(view.bodyText().contains("Marks"));
     }

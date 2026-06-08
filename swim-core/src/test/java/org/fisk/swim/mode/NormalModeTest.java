@@ -1,6 +1,7 @@
 package org.fisk.swim.mode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -48,6 +49,23 @@ class NormalModeTest {
             assertEquals(Response.YES, response);
             window.getNormalMode().respond();
             assertEquals("Using register a", HeadlessWindowHarness.getField(window.getCommandView(), "_message", String.class));
+        }
+    }
+
+    @Test
+    void mPrefixSetsClassicMark() throws Exception {
+        Path path = tempDir.resolve("classic-mark.txt");
+        Files.writeString(path, "abc\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().getCursor().setPosition(2);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('m'), HeadlessWindowHarness.key('a'));
+            window.getBufferContext().getBuffer().getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('`'), HeadlessWindowHarness.key('a'));
+
+            assertEquals(2, window.getBufferContext().getBuffer().getCursor().getPosition());
         }
     }
 
@@ -189,77 +207,68 @@ class NormalModeTest {
     }
 
     @Test
-    void greaterThanStartsShellPanel() throws Exception {
-        Path path = tempDir.resolve("greater-than-opens-shell.txt");
-        Files.writeString(path, "abc");
+    void greaterThanStartsIndentOperator() throws Exception {
+        Path path = tempDir.resolve("greater-than-indents.txt");
+        Files.writeString(path, "abc\n");
 
         try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
             var window = harness.getWindow();
 
-            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('>'));
+            assertEquals(Response.MAYBE, window.getNormalMode()
+                    .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('>')))));
 
-            assertTrue(window.getPanelView() instanceof ShellPanelView);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('>'), HeadlessWindowHarness.key('>'));
+
+            assertEquals("    abc\n", window.getBufferContext().getBuffer().getString());
         }
     }
 
     @Test
-    void eStartsMailPanel() throws Exception {
-        Path path = tempDir.resolve("mail-opens-panel.txt");
-        Files.writeString(path, "abc");
+    void eMovesToEndOfWord() throws Exception {
+        Path path = tempDir.resolve("e-word-end.txt");
+        Files.writeString(path, "alpha beta\n");
 
-        RecordingHost host = new RecordingHost();
-        SwimRuntime.setHost(host);
-        MailPluginRegistry.register(new FakeMailClient(tempDir.resolve(".swim/email")));
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('e'));
 
-            assertTrue(window.isShowingMailWorkspace());
-            assertTrue(window.getActiveView() instanceof MailPanelView);
-            assertTrue(host.pluginId == null || "swim-email".equals(host.pluginId));
-        } finally {
-            MailPluginRegistry.clear();
-            SwimRuntime.clear();
+            assertEquals(4, window.getBufferContext().getBuffer().getCursor().getPosition());
         }
     }
 
     @Test
-    void sStartsSlackWorkspace() throws Exception {
-        Path path = tempDir.resolve("slack-opens-workspace.txt");
-        Files.writeString(path, "abc");
+    void sDeletesCharacterAndEntersInputMode() throws Exception {
+        Path path = tempDir.resolve("s-substitute-char.txt");
+        Files.writeString(path, "abc\n");
 
-        RecordingHost host = new RecordingHost();
-        SwimRuntime.setHost(host);
-        SlackPluginRegistry.register(new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json")));
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
+            window.getBufferContext().getBuffer().getCursor().setPosition(1);
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('s'));
 
-            assertTrue(window.isShowingSlackWorkspace());
-            assertTrue(((org.fisk.swim.ui.SplitView) HeadlessWindowHarness.getField(window, "_workspaceView")).getFirstView()
-                    instanceof SlackPanelView);
-            assertTrue(host.pluginId == null || "swim-slack".equals(host.pluginId));
-        } finally {
-            SlackPluginRegistry.clear();
-            SwimRuntime.clear();
+            assertEquals("ac\n", window.getBufferContext().getBuffer().getString());
+            assertSame(window.getInputMode(), window.getCurrentMode());
         }
     }
 
     @Test
-    void uppercaseMStartsProjectSearchPanel() throws Exception {
-        Path root = tempDir.resolve("search-workspace");
-        Files.createDirectories(root.resolve(".git"));
-        Path path = root.resolve("Main.java");
-        Files.writeString(path, "class Main {}\n");
+    void uppercaseMMovesToMiddleOfScreen() throws Exception {
+        Path path = tempDir.resolve("middle-motion.txt");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 20; i++) {
+            text.append("line ").append(i).append('\n');
+        }
+        Files.writeString(path, text.toString());
 
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
+            window.getBufferContext().getBufferView().scrollPageDown();
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('M'));
 
-            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+            assertTrue(window.getBufferContext().getBuffer().getCurrentLineText().contains("line "));
         }
     }
 
@@ -290,6 +299,103 @@ class NormalModeTest {
                     .processEvent(new KeyStrokes(List.of(HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('c'))));
 
             assertEquals(Response.MAYBE, response);
+        }
+    }
+
+    @Test
+    void operatorDeleteToEndOfLineWorks() throws Exception {
+        Path path = tempDir.resolve("delete-to-end.txt");
+        Files.writeString(path, "alpha beta\ngamma\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().getCursor().setPosition("alpha ".length());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('$'));
+
+            assertEquals("alpha \ngamma\n", window.getBufferContext().getBuffer().getString());
+            assertEquals("beta", Copy.getInstance().getText());
+        }
+    }
+
+    @Test
+    void classicWordMotionsAndCountsWork() throws Exception {
+        Path path = tempDir.resolve("word-motions.txt");
+        Files.writeString(path, "alpha beta gamma\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('2'), HeadlessWindowHarness.key('w'));
+            assertEquals("alpha beta ".length(), window.getBufferContext().getBuffer().getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('b'));
+            assertEquals("alpha ".length(), window.getBufferContext().getBuffer().getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('e'));
+            assertEquals("alpha beta".length() - 1, window.getBufferContext().getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void indentOutdentAndCaseOperatorsWork() throws Exception {
+        Path path = tempDir.resolve("operators.txt");
+        Files.writeString(path, "alpha\n  beta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('>'), HeadlessWindowHarness.key('>'));
+            assertEquals("    alpha\n  beta\n", window.getBufferContext().getBuffer().getString());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('<'), HeadlessWindowHarness.key('<'));
+            assertEquals("alpha\n  beta\n", window.getBufferContext().getBuffer().getString());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('U'),
+                    HeadlessWindowHarness.key('i'), HeadlessWindowHarness.key('w'));
+            assertEquals("ALPHA\n  beta\n", window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void visualBlockYankPastesRectangularText() throws Exception {
+        Path path = tempDir.resolve("visual-block-paste.txt");
+        Files.writeString(path, "ab12\ncd34\n");
+        Copy.getInstance().clear();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            window.switchToMode(window.getVisualBlockMode());
+            buffer.getCursor().setPosition(2);
+            buffer.getCursors().get(1).setPosition(8);
+
+            HeadlessWindowHarness.dispatch(window.getVisualBlockMode(), HeadlessWindowHarness.key('y'));
+
+            assertTrue(Copy.getInstance().isBlock(null));
+            buffer.getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('P'));
+
+            assertEquals("12ab12\n34cd34\n", buffer.getString());
+        }
+    }
+
+    @Test
+    void replaceModeOverwritesUntilEscape() throws Exception {
+        Path path = tempDir.resolve("replace-mode.txt");
+        Files.writeString(path, "abcdef\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().getCursor().setPosition(2);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('R'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('X'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('Y'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
+
+            assertEquals("abXYef\n", window.getBufferContext().getBuffer().getString());
+            assertSame(window.getNormalMode(), window.getCurrentMode());
         }
     }
 

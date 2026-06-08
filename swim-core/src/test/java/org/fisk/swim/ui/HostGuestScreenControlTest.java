@@ -164,17 +164,17 @@ class HostGuestScreenControlTest {
     }
 
     @Test
-    void driveEditorInputBlocksMailKeyAtActionLayer() throws Exception {
+    void driveEditorInputBlocksMailCommandAtActionLayer() throws Exception {
         Path file = tempDir.resolve("mail-key.txt");
         Files.writeString(file, "alpha\n");
         try (var harness = HeadlessWindowHarness.create(file, 80, 24)) {
             Window window = harness.getWindow();
 
-            Window.EditorDriveResult result = window.driveEditorInput("e", 10);
+            Window.EditorDriveResult result = window.driveEditorInput(":mail<ENTER>", 50);
 
             assertFalse(result.accepted());
-            assertEquals(1, result.eventsProcessed());
-            assertTrue(result.message().contains("mail workspace"));
+            assertTrue(result.eventsProcessed() >= 1);
+            assertTrue(result.message().contains("Editor control blocked :mail"));
             assertFalse(window.isShowingMailWorkspace());
         }
     }

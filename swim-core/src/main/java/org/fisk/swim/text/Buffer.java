@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
@@ -54,6 +55,10 @@ public class Buffer {
         boolean contains(int position) {
             return position >= start && position < end;
         }
+    }
+
+    public interface CharacterTransform {
+        String apply(String text);
     }
 
     public Cursor getCursor() {
@@ -344,7 +349,7 @@ public class Buffer {
         if (position >= _string.length()) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(position, position + 1), false /* isLine */,
+        Copy.getInstance().setDelete(getSubstring(position, position + 1), false /* isLine */,
                 Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(position, position + 1);
         rawRemove(getCursor().getPosition(), getCursor().getPosition() + 1);
@@ -361,7 +366,7 @@ public class Buffer {
         if (start == -1 || end == -1) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */,
+        Copy.getInstance().setDelete(getSubstring(start, end), false /* isLine */,
                 Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
@@ -391,7 +396,7 @@ public class Buffer {
         if (end == -1) {
             return;
         }
-        Copy.getInstance().setText(getSubstring(start, end), false /* isLine */,
+        Copy.getInstance().setDelete(getSubstring(start, end), false /* isLine */,
                 Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
@@ -417,7 +422,7 @@ public class Buffer {
             // Last line is special
             start = Math.max(0, start - 1);
         }
-        Copy.getInstance().setText(getSubstring(start, end), true /* isLine */,
+        Copy.getInstance().setDelete(getSubstring(start, end), true /* isLine */,
                 Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
         _undoLog.recordRemove(start, end);
         rawRemove(start, end);
@@ -442,6 +447,484 @@ public class Buffer {
             start = Math.max(0, start - 1);
         }
         return getSubstring(start, end);
+    }
+
+    public int getLineStartPosition(int position) {
+        int safe = Math.max(0, Math.min(position, getLength()));
+        while (safe > 0 && _string.charAt(safe - 1) != '\n') {
+            safe--;
+        }
+        return safe;
+    }
+
+    public int getLineEndPosition(int position, boolean includeNewline) {
+        int safe = Math.max(0, Math.min(position, getLength()));
+        while (safe < getLength() && _string.charAt(safe) != '\n') {
+            safe++;
+        }
+        if (includeNewline && safe < getLength()) {
+            safe++;
+        }
+        return safe;
+    }
+
+    public int getLineIndexAt(int position) {
+        int safe = Math.max(0, Math.min(position, getLength()));
+        int line = 0;
+        for (int i = 0; i < safe; i++) {
+            if (_string.charAt(i) == '\n') {
+                line++;
+            }
+        }
+        return line;
+    }
+
+    public int getLineCount() {
+        int lines = 1;
+        for (int i = 0; i < getLength(); i++) {
+            if (_string.charAt(i) == '\n') {
+                lines++;
+            }
+        }
+        return lines;
+    }
+
+    public int getLineStartByIndex(int lineIndex) {
+        int target = Math.max(0, lineIndex);
+        if (target == 0) {
+            return 0;
+        }
+        int line = 0;
+        for (int i = 0; i < getLength(); i++) {
+            if (_string.charAt(i) == '\n') {
+                line++;
+                if (line == target) {
+                    return i + 1;
+                }
+            }
+        }
+        return getLength();
+    }
+
+    public int getLineEndByIndex(int lineIndex, boolean includeNewline) {
+        return getLineEndPosition(getLineStartByIndex(lineIndex), includeNewline);
+    }
+
+    public int getColumnAt(int position) {
+        return Math.max(0, Math.min(position, getLength()) - getLineStartPosition(position));
+    }
+
+    public int getPositionAtLineColumn(int lineIndex, int column) {
+        int start = getLineStartByIndex(lineIndex);
+        int end = getLineEndPosition(start, false);
+        return Math.max(start, Math.min(start + Math.max(0, column), end));
+    }
+
+    public int nextWordPosition(int position, int count, boolean bigWord) {
+        int result = Math.max(0, Math.min(position, getLength()));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            result = nextWordPositionOnce(result, bigWord);
+        }
+        return result;
+    }
+
+    public int previousWordPosition(int position, int count, boolean bigWord) {
+        int result = Math.max(0, Math.min(position, getLength()));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            result = previousWordPositionOnce(result, bigWord);
+        }
+        return result;
+    }
+
+    public int wordEndPosition(int position, int count, boolean bigWord) {
+        int result = Math.max(0, Math.min(position, Math.max(0, getLength() - 1)));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            result = wordEndPositionOnce(result, bigWord);
+        }
+        return result;
+    }
+
+    public int paragraphForwardPosition(int position, int count) {
+        int line = getLineIndexAt(position);
+        for (int i = 0; i < Math.max(1, count); i++) {
+            int current = line + 1;
+            while (current < getLineCount() && !lineText(current).isBlank()) {
+                current++;
+            }
+            while (current < getLineCount() && lineText(current).isBlank()) {
+                current++;
+            }
+            line = Math.min(current, getLineCount() - 1);
+        }
+        return getLineStartByIndex(line);
+    }
+
+    public int paragraphBackwardPosition(int position, int count) {
+        int line = getLineIndexAt(position);
+        for (int i = 0; i < Math.max(1, count); i++) {
+            int current = Math.max(0, line - 1);
+            while (current > 0 && lineText(current).isBlank()) {
+                current--;
+            }
+            while (current > 0 && !lineText(current - 1).isBlank()) {
+                current--;
+            }
+            line = current;
+        }
+        return getLineStartByIndex(line);
+    }
+
+    public int sentenceForwardPosition(int position, int count) {
+        int result = Math.max(0, Math.min(position, getLength()));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            int next = result + 1;
+            while (next < getLength()) {
+                char c = _string.charAt(next);
+                if ((c == '.' || c == '!' || c == '?') && (next + 1 == getLength() || Character.isWhitespace(_string.charAt(next + 1)))) {
+                    result = Math.min(getLength(), next + 1);
+                    break;
+                }
+                next++;
+            }
+            if (next >= getLength()) {
+                result = getLength();
+            }
+        }
+        return result;
+    }
+
+    public int sentenceBackwardPosition(int position, int count) {
+        int result = Math.max(0, Math.min(position, getLength()));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            int previous = Math.max(0, result - 2);
+            while (previous > 0) {
+                char c = _string.charAt(previous);
+                if ((c == '.' || c == '!' || c == '?') && Character.isWhitespace(_string.charAt(previous + 1))) {
+                    result = Math.min(getLength(), previous + 2);
+                    while (result < getLength() && Character.isWhitespace(_string.charAt(result))) {
+                        result++;
+                    }
+                    break;
+                }
+                previous--;
+            }
+            if (previous <= 0) {
+                result = 0;
+            }
+        }
+        return result;
+    }
+
+    public int matchingBracketPosition(int position) {
+        if (getLength() == 0) {
+            return -1;
+        }
+        int safe = Math.max(0, Math.min(position, getLength() - 1));
+        int lineEnd = getLineEndPosition(safe, false);
+        int candidate = safe;
+        while (candidate < lineEnd && bracketPartner(_string.charAt(candidate)) == 0) {
+            candidate++;
+        }
+        if (candidate >= getLength() || bracketPartner(_string.charAt(candidate)) == 0) {
+            return -1;
+        }
+        char openOrClose = _string.charAt(candidate);
+        char partner = bracketPartner(openOrClose);
+        int direction = isOpenBracket(openOrClose) ? 1 : -1;
+        int depth = 0;
+        for (int i = candidate; i >= 0 && i < getLength(); i += direction) {
+            char c = _string.charAt(i);
+            if (c == openOrClose) {
+                depth++;
+            } else if (c == partner) {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    public int findCharacterOnLine(int position, char character, boolean forward, boolean till, int count) {
+        int start = getLineStartPosition(position);
+        int end = getLineEndPosition(position, false);
+        int remaining = Math.max(1, count);
+        if (forward) {
+            for (int i = Math.min(position + 1, end); i < end; i++) {
+                if (_string.charAt(i) == character && --remaining == 0) {
+                    return till ? Math.max(position, i - 1) : i;
+                }
+            }
+        } else {
+            for (int i = Math.max(start, position - 1); i >= start; i--) {
+                if (_string.charAt(i) == character && --remaining == 0) {
+                    return till ? Math.min(position, i + 1) : i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    public Range lineRangeForPositions(int startPosition, int endPosition) {
+        int start = getLineStartPosition(Math.min(startPosition, endPosition));
+        int end = getLineEndPosition(Math.max(startPosition, endPosition), true);
+        if (end <= start && start > 0) {
+            start = Math.max(0, start - 1);
+        }
+        return Range.create(start, end);
+    }
+
+    public Range lineRangeForCount(int count) {
+        int startLine = getLineIndexAt(getCursor().getPosition());
+        int endLine = Math.min(getLineCount() - 1, startLine + Math.max(1, count) - 1);
+        int start = getLineStartByIndex(startLine);
+        int end = getLineEndByIndex(endLine, true);
+        return Range.create(start, end);
+    }
+
+    public void yankRange(int startPosition, int endPosition, boolean lineWise, Character register) {
+        var range = normalizedRange(startPosition, endPosition);
+        if (lineWise) {
+            range = lineRangeForPositions(range.getStart(), Math.max(range.getStart(), range.getEnd() - 1));
+        }
+        Copy.getInstance().setYank(getSubstring(range.getStart(), range.getEnd()), lineWise, register);
+    }
+
+    public void deleteRange(int startPosition, int endPosition, boolean lineWise, Character register) {
+        if (_readOnly) {
+            return;
+        }
+        var range = normalizedRange(startPosition, endPosition);
+        if (lineWise) {
+            range = lineRangeForPositions(range.getStart(), Math.max(range.getStart(), range.getEnd() - 1));
+        }
+        if (range.getLength() <= 0) {
+            return;
+        }
+        Copy.getInstance().setDelete(getSubstring(range.getStart(), range.getEnd()), lineWise, register);
+        _undoLog.recordRemove(range.getStart(), range.getEnd());
+        rawRemove(range.getStart(), range.getEnd());
+        getCursor().setPosition(Math.min(range.getStart(), getLength()));
+        _bufferContext.getTextLayout().calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public void changeRange(int startPosition, int endPosition, boolean lineWise, Character register) {
+        deleteRange(startPosition, endPosition, lineWise, register);
+    }
+
+    public void transformRange(int startPosition, int endPosition, boolean lineWise, CharacterTransform transform) {
+        if (_readOnly || transform == null) {
+            return;
+        }
+        var range = normalizedRange(startPosition, endPosition);
+        if (lineWise) {
+            range = lineRangeForPositions(range.getStart(), Math.max(range.getStart(), range.getEnd() - 1));
+        }
+        if (range.getLength() <= 0) {
+            return;
+        }
+        String original = getSubstring(range.getStart(), range.getEnd());
+        String transformed = transform.apply(original);
+        if (original.equals(transformed)) {
+            return;
+        }
+        _undoLog.recordRemove(range.getStart(), range.getEnd());
+        rawRemove(range.getStart(), range.getEnd());
+        _undoLog.recordInsert(range.getStart(), transformed);
+        rawInsert(range.getStart(), transformed);
+        getCursor().setPosition(Math.min(range.getStart(), getLength()));
+        _bufferContext.getTextLayout().calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public boolean replaceAtCursor(char character, int count) {
+        if (_readOnly) {
+            return false;
+        }
+        int start = getCursor().getPosition();
+        int end = Math.min(getLineEndPosition(start, false), start + Math.max(1, count));
+        if (end <= start) {
+            return false;
+        }
+        String replacement = Character.toString(character).repeat(end - start);
+        _undoLog.recordRemove(start, end);
+        rawRemove(start, end);
+        _undoLog.recordInsert(start, replacement);
+        rawInsert(start, replacement);
+        getCursor().setPosition(start);
+        _bufferContext.getTextLayout().calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
+        return true;
+    }
+
+    public boolean joinLines(int count) {
+        if (_readOnly) {
+            return false;
+        }
+        int joins = Math.max(1, count);
+        int position = getCursor().getPosition();
+        boolean changed = false;
+        for (int i = 0; i < joins; i++) {
+            int newline = _string.indexOf("\n", getLineStartPosition(position));
+            if (newline < 0 || newline >= getLength()) {
+                break;
+            }
+            int nextStart = newline + 1;
+            int nextNonWhitespace = nextStart;
+            while (nextNonWhitespace < getLength()
+                    && _string.charAt(nextNonWhitespace) != '\n'
+                    && Character.isWhitespace(_string.charAt(nextNonWhitespace))) {
+                nextNonWhitespace++;
+            }
+            _undoLog.recordRemove(newline, nextNonWhitespace);
+            rawRemove(newline, nextNonWhitespace);
+            _undoLog.recordInsert(newline, " ");
+            rawInsert(newline, " ");
+            changed = true;
+            position = newline;
+        }
+        if (changed) {
+            getCursor().setPosition(position);
+            _bufferContext.getTextLayout().calculate();
+            _bufferContext.getBufferView().adaptViewToCursor();
+        }
+        return changed;
+    }
+
+    public void indentLines(int startPosition, int endPosition, int levels) {
+        if (_readOnly || levels == 0) {
+            return;
+        }
+        var range = lineRangeForPositions(startPosition, Math.max(startPosition, endPosition - 1));
+        int startLine = getLineIndexAt(range.getStart());
+        int endLine = Math.max(startLine, getLineIndexAt(Math.max(range.getStart(), range.getEnd() - 1)));
+        String indent = getIndentationString();
+        if (levels > 0) {
+            for (int line = startLine; line <= endLine; line++) {
+                int position = getLineStartByIndex(line);
+                String text = indent.repeat(levels);
+                _undoLog.recordInsert(position, text);
+                rawInsert(position, text);
+            }
+        } else {
+            for (int line = endLine; line >= startLine; line--) {
+                int start = getLineStartByIndex(line);
+                int end = Math.min(getLineEndPosition(start, false), start + indent.length() * -levels);
+                int removeEnd = start;
+                while (removeEnd < end && (_string.charAt(removeEnd) == ' ' || _string.charAt(removeEnd) == '\t')) {
+                    removeEnd++;
+                }
+                if (removeEnd > start) {
+                    _undoLog.recordRemove(start, removeEnd);
+                    rawRemove(start, removeEnd);
+                }
+            }
+        }
+        _bufferContext.getTextLayout().calculate();
+        getCursor().setPosition(Math.min(getCursor().getPosition(), getLength()));
+        _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public void autoIndentLines(int startPosition, int endPosition) {
+        if (_readOnly) {
+            return;
+        }
+        var range = lineRangeForPositions(startPosition, Math.max(startPosition, endPosition - 1));
+        int startLine = getLineIndexAt(range.getStart());
+        int endLine = Math.max(startLine, getLineIndexAt(Math.max(range.getStart(), range.getEnd() - 1)));
+        String indent = getIndentationString();
+        int depth = indentationDepthBeforeLine(startLine);
+        for (int line = startLine; line <= endLine; line++) {
+            int start = getLineStartByIndex(line);
+            int end = getLineEndPosition(start, false);
+            String text = getSubstring(start, end).stripLeading();
+            int effectiveDepth = text.startsWith("}") || text.startsWith("]") || text.startsWith(")") ? Math.max(0, depth - 1) : depth;
+            int whitespaceEnd = start;
+            while (whitespaceEnd < end && (_string.charAt(whitespaceEnd) == ' ' || _string.charAt(whitespaceEnd) == '\t')) {
+                whitespaceEnd++;
+            }
+            String replacement = indent.repeat(effectiveDepth);
+            if (!getSubstring(start, whitespaceEnd).equals(replacement)) {
+                if (whitespaceEnd > start) {
+                    _undoLog.recordRemove(start, whitespaceEnd);
+                    rawRemove(start, whitespaceEnd);
+                }
+                if (!replacement.isEmpty()) {
+                    _undoLog.recordInsert(start, replacement);
+                    rawInsert(start, replacement);
+                }
+            }
+            depth = Math.max(0, effectiveDepth + netIndentDelta(text));
+        }
+        _bufferContext.getTextLayout().calculate();
+        getCursor().setPosition(Math.min(getCursor().getPosition(), getLength()));
+        _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public void insertBlock(List<String> lines, boolean after) {
+        if (_readOnly || lines == null || lines.isEmpty()) {
+            return;
+        }
+        int baseLine = getLineIndexAt(getCursor().getPosition());
+        int column = getColumnAt(getCursor().getPosition()) + (after ? 1 : 0);
+        ensureLineCount(baseLine + lines.size());
+        for (int i = 0; i < lines.size(); i++) {
+            int line = baseLine + i;
+            int start = getLineStartByIndex(line);
+            int end = getLineEndPosition(start, false);
+            int target = Math.min(start + column, end);
+            if (target < start + column) {
+                String padding = " ".repeat(start + column - target);
+                _undoLog.recordInsert(target, padding);
+                rawInsert(target, padding);
+                target += padding.length();
+            }
+            String text = lines.get(i);
+            _undoLog.recordInsert(target, text);
+            rawInsert(target, text);
+        }
+        getCursor().setPosition(getPositionAtLineColumn(baseLine, column));
+        _bufferContext.getTextLayout().calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public List<String> getBlockText(int startPosition, int endPosition) {
+        int startLine = getLineIndexAt(Math.min(startPosition, endPosition));
+        int endLine = getLineIndexAt(Math.max(startPosition, endPosition));
+        int startColumn = Math.min(getColumnAt(startPosition), getColumnAt(endPosition));
+        int endColumn = Math.max(getColumnAt(startPosition), getColumnAt(endPosition)) + 1;
+        var lines = new ArrayList<String>();
+        for (int line = startLine; line <= endLine; line++) {
+            int start = getPositionAtLineColumn(line, startColumn);
+            int end = getPositionAtLineColumn(line, endColumn);
+            lines.add(getSubstring(start, end));
+        }
+        return lines;
+    }
+
+    public void deleteBlock(int startPosition, int endPosition, Character register) {
+        if (_readOnly) {
+            return;
+        }
+        var lines = getBlockText(startPosition, endPosition);
+        Copy.getInstance().setBlock(lines, register);
+        int startLine = getLineIndexAt(Math.min(startPosition, endPosition));
+        int endLine = getLineIndexAt(Math.max(startPosition, endPosition));
+        int startColumn = Math.min(getColumnAt(startPosition), getColumnAt(endPosition));
+        int endColumn = Math.max(getColumnAt(startPosition), getColumnAt(endPosition)) + 1;
+        for (int line = endLine; line >= startLine; line--) {
+            int start = getPositionAtLineColumn(line, startColumn);
+            int end = getPositionAtLineColumn(line, endColumn);
+            if (end > start) {
+                _undoLog.recordRemove(start, end);
+                rawRemove(start, end);
+            }
+        }
+        getCursor().setPosition(getPositionAtLineColumn(startLine, startColumn));
+        _bufferContext.getTextLayout().calculate();
+        _bufferContext.getBufferView().adaptViewToCursor();
     }
 
     public List<Integer> findLiteralMatches(String text) {
@@ -633,6 +1116,197 @@ public class Buffer {
         getCursor().setPosition(Math.min(start + replaced.length(), getLength()));
         _bufferContext.getBufferView().adaptViewToCursor();
         return matches;
+    }
+
+    public int substitute(Pattern pattern, String replacement, boolean global, int startLine, int endLine) {
+        if (_readOnly || pattern == null) {
+            return 0;
+        }
+        int first = Math.max(0, Math.min(startLine, endLine));
+        int last = Math.min(getLineCount() - 1, Math.max(startLine, endLine));
+        int start = getLineStartByIndex(first);
+        int end = getLineEndByIndex(last, false);
+        String source = getSubstring(start, end);
+        var matcher = pattern.matcher(source);
+        int matches = 0;
+        while (matcher.find()) {
+            matches++;
+            if (!global) {
+                break;
+            }
+        }
+        if (matches == 0) {
+            return 0;
+        }
+        matcher = pattern.matcher(source);
+        String replaced = global ? matcher.replaceAll(replacement) : matcher.replaceFirst(replacement);
+        _undoLog.recordRemove(start, end);
+        rawRemove(start, end);
+        if (!replaced.isEmpty()) {
+            _undoLog.recordInsert(start, replaced);
+            rawInsert(start, replaced);
+        }
+        _bufferContext.getTextLayout().calculate();
+        getCursor().setPosition(Math.min(start + replaced.length(), getLength()));
+        _bufferContext.getBufferView().adaptViewToCursor();
+        return matches;
+    }
+
+    public int deleteMatchingLines(Pattern pattern, boolean invert) {
+        if (_readOnly || pattern == null) {
+            return 0;
+        }
+        int deleted = 0;
+        for (int line = getLineCount() - 1; line >= 0; line--) {
+            int start = getLineStartByIndex(line);
+            int end = getLineEndByIndex(line, true);
+            String text = getSubstring(start, getLineEndByIndex(line, false));
+            boolean matches = pattern.matcher(text).find();
+            if (matches == invert) {
+                continue;
+            }
+            _undoLog.recordRemove(start, end);
+            rawRemove(start, end);
+            deleted++;
+        }
+        if (deleted > 0) {
+            _bufferContext.getTextLayout().calculate();
+            getCursor().setPosition(Math.min(getCursor().getPosition(), getLength()));
+            _bufferContext.getBufferView().adaptViewToCursor();
+        }
+        return deleted;
+    }
+
+    private Range normalizedRange(int startPosition, int endPosition) {
+        int start = Math.max(0, Math.min(startPosition, endPosition));
+        int end = Math.max(0, Math.max(startPosition, endPosition));
+        return Range.create(Math.min(start, getLength()), Math.min(end, getLength()));
+    }
+
+    private void ensureLineCount(int desiredLineCount) {
+        while (getLineCount() < desiredLineCount) {
+            int position = getLength();
+            _undoLog.recordInsert(position, "\n");
+            rawInsert(position, "\n");
+        }
+        _bufferContext.getTextLayout().calculate();
+    }
+
+    private int indentationDepthBeforeLine(int lineIndex) {
+        int depth = 0;
+        for (int line = 0; line < lineIndex; line++) {
+            int start = getLineStartByIndex(line);
+            int end = getLineEndPosition(start, false);
+            depth = Math.max(0, depth + netIndentDelta(getSubstring(start, end).trim()));
+        }
+        return depth;
+    }
+
+    private static int netIndentDelta(String text) {
+        int delta = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char character = text.charAt(i);
+            if (character == '{' || character == '[' || character == '(') {
+                delta++;
+            } else if (character == '}' || character == ']' || character == ')') {
+                delta--;
+            }
+        }
+        return delta;
+    }
+
+    private int nextWordPositionOnce(int position, boolean bigWord) {
+        int length = getLength();
+        int current = Math.max(0, Math.min(position, length));
+        if (current >= length) {
+            return length;
+        }
+        WordClass startClass = wordClassAt(current, bigWord);
+        if (startClass != WordClass.WHITESPACE) {
+            while (current < length && wordClassAt(current, bigWord) == startClass) {
+                current++;
+            }
+        }
+        while (current < length && wordClassAt(current, bigWord) == WordClass.WHITESPACE) {
+            current++;
+        }
+        return Math.min(current, length);
+    }
+
+    private int previousWordPositionOnce(int position, boolean bigWord) {
+        int current = Math.max(0, Math.min(position - 1, Math.max(0, getLength() - 1)));
+        while (current > 0 && wordClassAt(current, bigWord) == WordClass.WHITESPACE) {
+            current--;
+        }
+        WordClass target = wordClassAt(current, bigWord);
+        while (current > 0 && wordClassAt(current - 1, bigWord) == target) {
+            current--;
+        }
+        return current;
+    }
+
+    private int wordEndPositionOnce(int position, boolean bigWord) {
+        int length = getLength();
+        int current = Math.max(0, Math.min(position, Math.max(0, length - 1)));
+        if (current >= length) {
+            return length;
+        }
+        WordClass currentClass = wordClassAt(current, bigWord);
+        if (currentClass == WordClass.WHITESPACE || (current + 1 < length && wordClassAt(current + 1, bigWord) != currentClass)) {
+            current++;
+            while (current < length && wordClassAt(current, bigWord) == WordClass.WHITESPACE) {
+                current++;
+            }
+            currentClass = current < length ? wordClassAt(current, bigWord) : WordClass.WHITESPACE;
+        }
+        while (current + 1 < length && wordClassAt(current + 1, bigWord) == currentClass) {
+            current++;
+        }
+        return current;
+    }
+
+    private WordClass wordClassAt(int position, boolean bigWord) {
+        if (position < 0 || position >= getLength()) {
+            return WordClass.WHITESPACE;
+        }
+        char character = _string.charAt(position);
+        if (Character.isWhitespace(character)) {
+            return WordClass.WHITESPACE;
+        }
+        if (bigWord) {
+            return WordClass.WORD;
+        }
+        if (Character.isLetterOrDigit(character) || character == '_') {
+            return WordClass.WORD;
+        }
+        return WordClass.PUNCTUATION;
+    }
+
+    private String lineText(int lineIndex) {
+        int start = getLineStartByIndex(lineIndex);
+        return getSubstring(start, getLineEndPosition(start, false));
+    }
+
+    private static char bracketPartner(char character) {
+        return switch (character) {
+        case '(' -> ')';
+        case ')' -> '(';
+        case '[' -> ']';
+        case ']' -> '[';
+        case '{' -> '}';
+        case '}' -> '{';
+        default -> 0;
+        };
+    }
+
+    private static boolean isOpenBracket(char character) {
+        return character == '(' || character == '[' || character == '{';
+    }
+
+    private enum WordClass {
+        WHITESPACE,
+        WORD,
+        PUNCTUATION
     }
 
     private Range wordRange(boolean around) {

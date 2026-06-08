@@ -25,17 +25,22 @@ public class MotionResponder implements EventResponder {
             @Override
             public Response processEvent(KeyStrokes events) {
                 _prefix = new StringBuffer();
+                boolean consumedDigit = false;
                 for (;;) {
                     var event = events.current();
                     if (event.getKeyType() != KeyType.Character) {
                         return Response.YES;
                     }
-                    int diff = '9' - event.getCharacter();
-                    if (diff >= 10 || diff < 0) {
+                    char character = event.getCharacter();
+                    if (!consumedDigit && (character < '1' || character > '9')) {
+                        return Response.YES;
+                    }
+                    if (consumedDigit && (character < '0' || character > '9')) {
                         return Response.YES;
                     }
                     
-                    _prefix.append(Character.toString(event.getCharacter()));
+                    consumedDigit = true;
+                    _prefix.append(Character.toString(character));
                     
                     if (!events.hasNext()) {
                         events.consume(1);

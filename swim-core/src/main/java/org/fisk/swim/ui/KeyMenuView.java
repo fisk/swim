@@ -200,7 +200,7 @@ public class KeyMenuView extends View {
         if (isDiscoverabilityActive()) {
             int bodyRows = _path.isEmpty()
                     ? 1
-                    : Math.min(MAX_DISCOVERY_ROWS, Math.max(1, discoveryState(width).rows().size()));
+                    : Math.min(MAX_DISCOVERY_ROWS, Math.max(1, formattedDiscoveryRows(width).size()));
             return Math.max(1, Math.min(1 + bodyRows, maxMenuHeight));
         }
         int preferred = 1 + passiveBodyLines(width).size();
@@ -259,6 +259,21 @@ public class KeyMenuView extends View {
     }
 
     private DiscoveryState discoveryState(int width) {
+        var formattedRows = formattedDiscoveryRows(width);
+        if (formattedRows.isEmpty()) {
+            return new DiscoveryState(List.of("No documented continuations for this prefix."), null);
+        }
+
+        int pageSize = Math.min(MAX_DISCOVERY_ROWS, Math.max(1, formattedRows.size()));
+        int pageCount = (formattedRows.size() + pageSize - 1) / pageSize;
+        int pageIndex = bouncingPage(pageCount, animationStep());
+        int start = pageIndex * pageSize;
+        int end = Math.min(formattedRows.size(), start + pageSize);
+        String pageLabel = pageCount > 1 ? "groups " + (pageIndex + 1) + "/" + pageCount : null;
+        return new DiscoveryState(formattedRows.subList(start, end), pageLabel);
+    }
+
+    private List<String> formattedDiscoveryRows(int width) {
         var rows = new ArrayList<GroupRow>();
         for (var entry : _currentNode.children().entrySet()) {
             MenuNode node = entry.getValue();
@@ -269,7 +284,7 @@ public class KeyMenuView extends View {
                     new DiscoveryEntry(UiTheme.displayKey(entry.getKey()), node.summary())));
         }
         if (rows.isEmpty()) {
-            return new DiscoveryState(List.of("No documented continuations for this prefix."), null);
+            return List.of();
         }
 
         var grouped = new LinkedHashMap<String, List<DiscoveryEntry>>();
@@ -282,13 +297,7 @@ public class KeyMenuView extends View {
             formattedRows.add(formatGroupRow(entry.getKey(), entry.getValue(), width));
         }
 
-        int pageSize = Math.min(MAX_DISCOVERY_ROWS, Math.max(1, formattedRows.size()));
-        int pageCount = (formattedRows.size() + pageSize - 1) / pageSize;
-        int pageIndex = bouncingPage(pageCount, animationStep());
-        int start = pageIndex * pageSize;
-        int end = Math.min(formattedRows.size(), start + pageSize);
-        String pageLabel = pageCount > 1 ? "groups " + (pageIndex + 1) + "/" + pageCount : null;
-        return new DiscoveryState(formattedRows.subList(start, end), pageLabel);
+        return formattedRows;
     }
 
     private String formatGroupRow(String group, List<DiscoveryEntry> entries, int width) {
@@ -389,10 +398,10 @@ public class KeyMenuView extends View {
 
     private String commandBodyText() {
         if ("/".equals(_commandPrompt)) {
-            return "Enter search forward  •  Esc cancel  •  matches are literal  •  n/N repeat after exit";
+            return "Enter search forward  •  Esc cancel  •  matches are regex  •  n/N repeat after exit";
         }
         if ("?".equals(_commandPrompt)) {
-            return "Enter search backward  •  Esc cancel  •  matches are literal  •  n/N repeat after exit";
+            return "Enter search backward  •  Esc cancel  •  matches are regex  •  n/N repeat after exit";
         }
         if (":".equals(_commandPrompt)) {
             if (_commandText != null && _commandText.startsWith("focus")) {
@@ -466,11 +475,29 @@ public class KeyMenuView extends View {
                 leaf("j", "Navigation", "down"),
                 leaf("k", "Navigation", "up"),
                 leaf("l", "Navigation", "right"),
-                leaf("^", "Navigation", "line start"),
+                leaf("0", "Navigation", "column zero"),
+                leaf("^", "Navigation", "first nonblank"),
+                leaf("_", "Navigation", "first nonblank"),
                 leaf("$", "Navigation", "line end"),
+                leaf("w", "Navigation", "word forward"),
+                leaf("W", "Navigation", "WORD forward"),
+                leaf("b", "Navigation", "word back"),
+                leaf("B", "Navigation", "WORD back"),
+                leaf("e", "Navigation", "word end"),
+                leaf("E", "Navigation", "WORD end"),
+                leaf("{", "Navigation", "paragraph back"),
+                leaf("}", "Navigation", "paragraph forward"),
+                leaf("(", "Navigation", "sentence back"),
+                leaf(")", "Navigation", "sentence forward"),
+                leaf("%", "Navigation", "matching bracket"),
+                leaf("H", "Navigation", "screen top"),
+                leaf("M", "Navigation", "screen middle"),
+                leaf("L", "Navigation", "screen bottom"),
                 leaf("G", "Navigation", "buffer end"),
                 branch("g", "Navigation", "goto, marks, multicursor, and code jumps"),
                 leaf("g g", "Navigation", "buffer start"),
+                branch("m", "Marks", "set mark"),
+                leaf("m <CHAR>", "Marks", "mark register"),
                 branch("g m", "Marks", "set mark"),
                 leaf("g m <CHAR>", "Marks", "mark register"),
                 leaf("g n", "Multicursor", "add next cursor"),
@@ -484,6 +511,16 @@ public class KeyMenuView extends View {
                 leaf("f <CHAR>", "Navigation", "next matching character"),
                 branch("F", "Navigation", "find previous character"),
                 leaf("F <CHAR>", "Navigation", "previous matching character"),
+                branch("t", "Navigation", "until next character"),
+                leaf("t <CHAR>", "Navigation", "before next matching character"),
+                branch("T", "Navigation", "until previous character"),
+                leaf("T <CHAR>", "Navigation", "after previous matching character"),
+                leaf(";", "Navigation", "repeat character find"),
+                leaf(",", "Navigation", "reverse character find"),
+                leaf("<CTRL>-d", "Navigation", "half page down"),
+                leaf("<CTRL>-u", "Navigation", "half page up"),
+                leaf("<CTRL>-f", "Navigation", "page down"),
+                leaf("<CTRL>-b", "Navigation", "page up"),
                 leaf("<CTRL>-o", "Navigation", "jump back"),
                 leaf("<TAB>", "Navigation", "jump forward"),
                 leaf("*", "Search", "search current word forward"),
@@ -544,6 +581,25 @@ public class KeyMenuView extends View {
                 leaf("y a '", "Editing", "around single quotes"),
                 leaf("y a p", "Editing", "around paragraph"),
                 leaf("x", "Editing", "delete character"),
+                leaf("D", "Editing", "delete to line end"),
+                leaf("C", "Editing", "change to line end"),
+                leaf("Y", "Editing", "yank line"),
+                leaf("J", "Editing", "join lines"),
+                branch("r", "Editing", "replace character"),
+                leaf("r <CHAR>", "Editing", "replace with character"),
+                leaf("R", "Editing", "replace mode"),
+                leaf("s", "Editing", "substitute character"),
+                leaf("S", "Editing", "substitute line"),
+                leaf("~", "Editing", "toggle case"),
+                branch(">", "Editing", "indent operator"),
+                leaf("> >", "Editing", "indent line"),
+                branch("<", "Editing", "outdent operator"),
+                leaf("< <", "Editing", "outdent line"),
+                branch("=", "Editing", "format operator"),
+                leaf("= =", "Editing", "format line"),
+                branch("g U", "Editing", "uppercase operator"),
+                branch("g u", "Editing", "lowercase operator"),
+                branch("g ~", "Editing", "toggle-case operator"),
                 leaf("p", "Editing", "paste after"),
                 leaf("P", "Editing", "paste before"),
                 leaf("u", "Editing", "undo"),
@@ -568,15 +624,9 @@ public class KeyMenuView extends View {
                 leaf("z M", "Folds", "close all"),
                 leaf("z R", "Folds", "open all"),
                 leaf("z f", "Folds", "fold selection"),
-                leaf("m", "Workspace", "project files"),
-                leaf("M", "Workspace", "project search"),
-                leaf("e", "Workspace", "email"),
-                leaf("s", "Workspace", "slack"),
-                leaf("t", "Workspace", "todo"),
                 leaf("<CTRL>-t", "Workspace", "quick todo"),
                 leaf(":", "Workspace", "command line"),
                 leaf("!", "Tools", "Nemo"),
-                leaf(">", "Tools", "shell panel"),
                 leaf("B", "Tools", "toggle breakpoint"),
                 branch("<CTRL>-w", "Panes", "split and focus panes"),
                 leaf("<CTRL>-w s", "Panes", "split below"),

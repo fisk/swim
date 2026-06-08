@@ -54,18 +54,20 @@ public class VisualMode extends Mode {
         });
         _rootResponder.addEventResponder("d", () -> {
             allow("buffer edit");
-            buffer.remove(minCursor().getPosition(), maxCursor().getPosition() + 1);
+            buffer.deleteRange(minCursor().getPosition(), maxCursor().getPosition() + 1, false,
+                    Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });
         _rootResponder.addEventResponder("c", () -> {
             allow("buffer edit");
-            buffer.remove(minCursor().getPosition(), maxCursor().getPosition() + 1);
+            buffer.changeRange(minCursor().getPosition(), maxCursor().getPosition() + 1, false,
+                    Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getInputMode());
         });
         _rootResponder.addEventResponder("y", () -> {
             allow("yank");
             var text = buffer.getSubstring(minCursor().getPosition(), maxCursor().getPosition() + 1);
-            Copy.getInstance().setText(text, false /* isLine */,
+            Copy.getInstance().setYank(text, false /* isLine */,
                     Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });

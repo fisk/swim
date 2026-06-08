@@ -1,12 +1,21 @@
 package org.fisk.swim.mode;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.function.BiConsumer;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+import com.googlecode.lanterna.input.KeyStroke;
+import com.googlecode.lanterna.input.KeyType;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.debug.DebuggerManager;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.fileindex.FileIndex;
+import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.mail.MailUiSupport;
@@ -15,6 +24,7 @@ import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.ProjectSearchUiSupport;
+import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.Window;
@@ -26,6 +36,9 @@ import org.fisk.swim.event.TextEventResponder;
 public class NormalMode extends Mode {
     private FancyJumpResponder _fancyWordJump;
     private FancyJumpResponder _fancyCharacterJump;
+    private Character _lastFindCharacter;
+    private boolean _lastFindForward;
+    private boolean _lastFindTill;
     
     public NormalMode(Window window) {
         super("NORMAL", window);
@@ -238,6 +251,12 @@ public class NormalMode extends Mode {
             var cursor = activeBuffer.getCursor();
             var value = Copy.getInstance().getValue(window.consumeSelectedRegister());
             window.beginRepeatRecording("p");
+            if (value.isBlock()) {
+                activeBuffer.insertBlock(value.blockLines(), true);
+                activeBuffer.getUndoLog().commit();
+                window.commitRepeatRecording();
+                return;
+            }
             if (value.isLine()) {
                 cursor.goEndOfLine();
                 cursor.goForward();
@@ -256,6 +275,12 @@ public class NormalMode extends Mode {
             var cursor = activeBuffer.getCursor();
             var value = Copy.getInstance().getValue(window.consumeSelectedRegister());
             window.beginRepeatRecording("P");
+            if (value.isBlock()) {
+                activeBuffer.insertBlock(value.blockLines(), false);
+                activeBuffer.getUndoLog().commit();
+                window.commitRepeatRecording();
+                return;
+            }
             if (value.isLine()) {
                 cursor.goStartOfLine();
                 activeBuffer.insert(value.text());
@@ -265,10 +290,57 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
+        _rootResponder.addEventResponder("D", () -> {
+            allow("buffer edit");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            int start = activeBuffer.getCursor().getPosition();
+            int end = activeBuffer.getLineEndPosition(start, false);
+            window.beginRepeatRecording("D");
+            activeBuffer.deleteRange(start, end, false, window.consumeSelectedRegister());
+            activeBuffer.getUndoLog().commit();
+            window.commitRepeatRecording();
+        });
+        _rootResponder.addEventResponder("C", () -> {
+            allow("buffer edit");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            int start = activeBuffer.getCursor().getPosition();
+            int end = activeBuffer.getLineEndPosition(start, false);
+            window.beginRepeatRecording("C");
+            activeBuffer.changeRange(start, end, false, window.consumeSelectedRegister());
+            window.switchToMode(window.getInputMode());
+        });
+        _rootResponder.addEventResponder("Y", () -> {
+            allow("yank");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            var range = activeBuffer.lineRangeForCount(1);
+            activeBuffer.yankRange(range.getStart(), range.getEnd(), true, window.consumeSelectedRegister());
+        });
+        _rootResponder.addEventResponder("J", () -> {
+            allow("buffer edit");
+            window.beginRepeatRecording("J");
+            if (window.getBufferContext().getBuffer().joinLines(1)) {
+                window.getBufferContext().getBuffer().getUndoLog().commit();
+            }
+            window.commitRepeatRecording();
+        });
+        _rootResponder.addEventResponder("S", () -> {
+            allow("buffer edit");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            var range = activeBuffer.lineRangeForCount(1);
+            window.beginRepeatRecording("S");
+            activeBuffer.changeRange(range.getStart(), range.getEnd(), true, window.consumeSelectedRegister());
+            window.switchToMode(window.getInputMode());
+        });
+        _rootResponder.addEventResponder(replaceCharacterResponder(window));
+        _rootResponder.addEventResponder("R", () -> {
+            allow("enter replace mode");
+            window.beginRepeatRecording("R");
+            window.switchToMode(window.getReplaceMode());
+        });
         _rootResponder.addEventResponder("y y", () -> {
             allow("yank");
             var text = window.getBufferContext().getBuffer().getCurrentLineText();
-            Copy.getInstance().setText(text, true /* isLine */, window.consumeSelectedRegister());
+            Copy.getInstance().setYank(text, true /* isLine */, window.consumeSelectedRegister());
         });
         installTextObjectResponder(window, "y i (", "(", false, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y a (", "(", true, TextObjectOperator.YANK);
@@ -371,6 +443,632 @@ public class NormalMode extends Mode {
             allow("search previous");
             window.getCommandView().searchPrevious();
         });
+        _rootResponder.addEventResponder("~", () -> {
+            allow("buffer edit");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            int start = activeBuffer.getCursor().getPosition();
+            int end = Math.min(activeBuffer.getLength(), start + 1);
+            activeBuffer.transformRange(start, end, false, NormalMode::toggleCase);
+            activeBuffer.getCursor().goRight();
+            activeBuffer.getUndoLog().commit();
+        });
+        _rootResponder.addEventResponder("s", () -> {
+            allow("buffer edit");
+            var activeBuffer = window.getBufferContext().getBuffer();
+            int start = activeBuffer.getCursor().getPosition();
+            int end = Math.min(activeBuffer.getLineEndPosition(start, false), start + 1);
+            window.beginRepeatRecording("s");
+            activeBuffer.changeRange(start, end, false, window.consumeSelectedRegister());
+            window.switchToMode(window.getInputMode());
+        });
+        _rootResponder.addEventResponder(characterFindResponder(window));
+        _rootResponder.addEventResponder(operatorResponder(window));
+        _rootResponder.addEventResponder(prefixCharacterResponder("m", (ignored, mark) -> {
+            allow("set mark");
+            window.setMark(mark);
+        }));
+    }
+
+    private EventResponder replaceCharacterResponder(Window window) {
+        return new EventResponder() {
+            private int _count;
+            private Character _character;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _count = 1;
+                _character = null;
+                var sequence = keySequence(events);
+                CountParse count = parseCount(sequence, 0);
+                int index = count.index();
+                if (index >= sequence.size() || !isCharacter(sequence.get(index), 'r')) {
+                    return Response.NO;
+                }
+                _count = count.count();
+                if (sequence.size() == index + 1) {
+                    return Response.MAYBE;
+                }
+                var character = sequence.get(index + 1);
+                if (character.getKeyType() != KeyType.Character || character.isCtrlDown() || character.isAltDown()) {
+                    return Response.NO;
+                }
+                _character = character.getCharacter();
+                return sequence.size() == index + 2 ? Response.YES : Response.NO;
+            }
+
+            @Override
+            public void respond() {
+                if (_character == null) {
+                    return;
+                }
+                window.allowEditorDriveAction("replace character");
+                window.beginRepeatRecording("r");
+                if (window.getBufferContext().getBuffer().replaceAtCursor(_character, _count)) {
+                    window.getBufferContext().getBuffer().getUndoLog().commit();
+                }
+                window.commitRepeatRecording();
+            }
+        };
+    }
+
+    private EventResponder characterFindResponder(Window window) {
+        return new EventResponder() {
+            private int _count;
+            private Character _character;
+            private boolean _forward;
+            private boolean _till;
+            private boolean _repeat;
+            private boolean _reverseRepeat;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _count = 1;
+                _character = null;
+                _repeat = false;
+                _reverseRepeat = false;
+                var sequence = keySequence(events);
+                CountParse count = parseCount(sequence, 0);
+                int index = count.index();
+                if (index >= sequence.size()) {
+                    return Response.NO;
+                }
+                var stroke = sequence.get(index);
+                if (isCharacter(stroke, ';') || isCharacter(stroke, ',')) {
+                    if (_lastFindCharacter == null) {
+                        return Response.NO;
+                    }
+                    _count = count.count();
+                    _character = _lastFindCharacter;
+                    _forward = _lastFindForward;
+                    _till = _lastFindTill;
+                    _repeat = true;
+                    _reverseRepeat = isCharacter(stroke, ',');
+                    return sequence.size() == index + 1 ? Response.YES : Response.NO;
+                }
+                if (!isCharacter(stroke, 'f') && !isCharacter(stroke, 'F')
+                        && !isCharacter(stroke, 't') && !isCharacter(stroke, 'T')) {
+                    return Response.NO;
+                }
+                _count = count.count();
+                _forward = isCharacter(stroke, 'f') || isCharacter(stroke, 't');
+                _till = isCharacter(stroke, 't') || isCharacter(stroke, 'T');
+                if (sequence.size() == index + 1) {
+                    return Response.MAYBE;
+                }
+                var character = sequence.get(index + 1);
+                if (character.getKeyType() != KeyType.Character || character.isCtrlDown() || character.isAltDown()) {
+                    return Response.NO;
+                }
+                _character = character.getCharacter();
+                return sequence.size() == index + 2 ? Response.YES : Response.NO;
+            }
+
+            @Override
+            public void respond() {
+                if (_character == null) {
+                    return;
+                }
+                boolean forward = _reverseRepeat ? !_forward : _forward;
+                window.allowEditorDriveAction("find motion");
+                var buffer = window.getBufferContext().getBuffer();
+                int position = buffer.findCharacterOnLine(buffer.getCursor().getPosition(), _character, forward, _till, _count);
+                if (position >= 0) {
+                    buffer.getCursor().setPosition(position);
+                    if (!_repeat) {
+                        _lastFindCharacter = _character;
+                        _lastFindForward = _forward;
+                        _lastFindTill = _till;
+                    }
+                }
+            }
+        };
+    }
+
+    private EventResponder operatorResponder(Window window) {
+        return new EventResponder() {
+            private OperatorExecution _execution;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _execution = null;
+                var sequence = keySequence(events);
+                CountParse operatorCount = parseCount(sequence, 0);
+                OperatorParse operator = parseOperator(sequence, operatorCount.index());
+                if (operator.status() != ParseStatus.YES) {
+                    return operator.status().response();
+                }
+                if (sequence.size() == operator.index()) {
+                    return Response.MAYBE;
+                }
+                var motion = parseOperatorMotion(window, sequence, operator.index(), operatorCount.count(), operator.operator());
+                if (motion.status() != ParseStatus.YES) {
+                    return motion.status().response();
+                }
+                if (sequence.size() != motion.index()) {
+                    return Response.NO;
+                }
+                _execution = new OperatorExecution(operator.operator(), motion.range(), motion.lineWise(),
+                        sequence.stream().map(RecordedKey::fromKeyStroke).toList());
+                return Response.YES;
+            }
+
+            @Override
+            public void respond() {
+                if (_execution == null) {
+                    return;
+                }
+                applyOperator(window, _execution);
+            }
+        };
+    }
+
+    private void applyOperator(Window window, OperatorExecution execution) {
+        var buffer = window.getBufferContext().getBuffer();
+        var range = execution.range();
+        Character register = window.consumeSelectedRegister();
+        switch (execution.operator()) {
+        case DELETE -> {
+            window.allowEditorDriveAction("buffer edit");
+            window.beginRepeatRecording(execution.keys());
+            buffer.deleteRange(range.getStart(), range.getEnd(), execution.lineWise(), register);
+            buffer.getUndoLog().commit();
+            window.commitRepeatRecording();
+        }
+        case CHANGE -> {
+            window.allowEditorDriveAction("buffer edit");
+            window.beginRepeatRecording(execution.keys());
+            buffer.changeRange(range.getStart(), range.getEnd(), execution.lineWise(), register);
+            window.switchToMode(window.getInputMode());
+        }
+        case YANK -> {
+            window.allowEditorDriveAction("yank");
+            buffer.yankRange(range.getStart(), range.getEnd(), execution.lineWise(), register);
+        }
+        case INDENT -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.indentLines(range.getStart(), range.getEnd(), 1);
+            buffer.getUndoLog().commit();
+        }
+        case OUTDENT -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.indentLines(range.getStart(), range.getEnd(), -1);
+            buffer.getUndoLog().commit();
+        }
+        case FORMAT -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.autoIndentLines(range.getStart(), range.getEnd());
+            buffer.getUndoLog().commit();
+        }
+        case UPPER -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.transformRange(range.getStart(), range.getEnd(), execution.lineWise(), text -> text.toUpperCase(Locale.ROOT));
+            buffer.getUndoLog().commit();
+        }
+        case LOWER -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.transformRange(range.getStart(), range.getEnd(), execution.lineWise(), text -> text.toLowerCase(Locale.ROOT));
+            buffer.getUndoLog().commit();
+        }
+        case TOGGLE_CASE -> {
+            window.allowEditorDriveAction("buffer edit");
+            buffer.transformRange(range.getStart(), range.getEnd(), execution.lineWise(), NormalMode::toggleCase);
+            buffer.getUndoLog().commit();
+        }
+        }
+    }
+
+    private OperatorMotionParse parseOperatorMotion(Window window, List<KeyStroke> sequence, int index,
+            int operatorCount, Operator operator) {
+        CountParse motionCount = parseCount(sequence, index);
+        int count = Math.max(1, operatorCount) * Math.max(1, motionCount.count());
+        int motionIndex = motionCount.index();
+        if (motionIndex >= sequence.size()) {
+            return OperatorMotionParse.maybe();
+        }
+        var buffer = window.getBufferContext().getBuffer();
+        int start = buffer.getCursor().getPosition();
+        KeyStroke first = sequence.get(motionIndex);
+
+        if (isRepeatedOperator(operator, first, sequence, motionIndex)) {
+            var range = buffer.lineRangeForCount(count);
+            return OperatorMotionParse.yes(motionIndex + repeatedOperatorLength(operator, sequence, motionIndex), range, true);
+        }
+
+        if (isCharacter(first, 'i') || isCharacter(first, 'a')) {
+            if (sequence.size() == motionIndex + 1) {
+                return OperatorMotionParse.maybe();
+            }
+            var object = sequence.get(motionIndex + 1);
+            if (object.getKeyType() != KeyType.Character || object.isCtrlDown() || object.isAltDown()) {
+                return OperatorMotionParse.no();
+            }
+            var range = buffer.textObjectRange(Character.toString(object.getCharacter()), isCharacter(first, 'a'));
+            if (range == null || range.getLength() <= 0) {
+                return OperatorMotionParse.no();
+            }
+            return OperatorMotionParse.yes(motionIndex + 2, range, false);
+        }
+
+        if (isCharacter(first, 'g')) {
+            if (sequence.size() == motionIndex + 1) {
+                return OperatorMotionParse.maybe();
+            }
+            var second = sequence.get(motionIndex + 1);
+            if (isCharacter(second, 'g')) {
+                var range = buffer.lineRangeForPositions(start, 0);
+                return OperatorMotionParse.yes(motionIndex + 2, range, true);
+            }
+            return OperatorMotionParse.no();
+        }
+
+        if (isCharacter(first, '/') || isCharacter(first, '?')) {
+            SearchMotion search = parseSearchMotion(sequence, motionIndex);
+            if (search.status() != ParseStatus.YES) {
+                return OperatorMotionParse.status(search.status());
+            }
+            int target = findSearchTarget(buffer.getString(), start, search.pattern(), isCharacter(first, '/'));
+            if (target < 0) {
+                return OperatorMotionParse.no();
+            }
+            return OperatorMotionParse.yes(search.index(), Range.create(start, target), false);
+        }
+
+        if (isCharacter(first, ';') || isCharacter(first, ',')) {
+            if (_lastFindCharacter == null) {
+                return OperatorMotionParse.no();
+            }
+            boolean forward = isCharacter(first, ',') ? !_lastFindForward : _lastFindForward;
+            int found = buffer.findCharacterOnLine(start, _lastFindCharacter, forward, _lastFindTill, count);
+            if (found < 0) {
+                return OperatorMotionParse.no();
+            }
+            int end = forward ? found + 1 : found;
+            return OperatorMotionParse.yes(motionIndex + 1,
+                    Range.create(Math.min(start, found), Math.max(start, end)), false);
+        }
+
+        if (isCharacter(first, 'f') || isCharacter(first, 'F') || isCharacter(first, 't') || isCharacter(first, 'T')) {
+            if (sequence.size() == motionIndex + 1) {
+                return OperatorMotionParse.maybe();
+            }
+            var character = sequence.get(motionIndex + 1);
+            if (character.getKeyType() != KeyType.Character || character.isCtrlDown() || character.isAltDown()) {
+                return OperatorMotionParse.no();
+            }
+            boolean forward = isCharacter(first, 'f') || isCharacter(first, 't');
+            boolean till = isCharacter(first, 't') || isCharacter(first, 'T');
+            int found = buffer.findCharacterOnLine(start, character.getCharacter(), forward, till, count);
+            if (found < 0) {
+                return OperatorMotionParse.no();
+            }
+            _lastFindCharacter = character.getCharacter();
+            _lastFindForward = forward;
+            _lastFindTill = till;
+            int begin = found;
+            int end = forward ? found + 1 : found;
+            return OperatorMotionParse.yes(motionIndex + 2,
+                    Range.create(Math.min(start, begin), Math.max(start, end)), false);
+        }
+
+        MotionTarget target = motionTarget(buffer, first, start, count);
+        if (target == null) {
+            return OperatorMotionParse.no();
+        }
+        return OperatorMotionParse.yes(motionIndex + target.consumed(), target.range(), target.lineWise());
+    }
+
+    private MotionTarget motionTarget(org.fisk.swim.text.Buffer buffer, KeyStroke stroke, int start, int count) {
+        int target;
+        if (isCharacter(stroke, 'h')) {
+            return MotionTarget.character(Range.create(Math.max(0, start - count), start), 1);
+        }
+        if (isCharacter(stroke, 'l')) {
+            return MotionTarget.character(Range.create(start, Math.min(buffer.getLength(), start + count)), 1);
+        }
+        if (isCharacter(stroke, 'j')) {
+            int line = Math.min(buffer.getLineCount() - 1, buffer.getLineIndexAt(start) + count);
+            return MotionTarget.line(buffer.lineRangeForPositions(start, buffer.getLineStartByIndex(line)), 1);
+        }
+        if (isCharacter(stroke, 'k')) {
+            int line = Math.max(0, buffer.getLineIndexAt(start) - count);
+            return MotionTarget.line(buffer.lineRangeForPositions(start, buffer.getLineStartByIndex(line)), 1);
+        }
+        if (isCharacter(stroke, '0')) {
+            return MotionTarget.character(Range.create(buffer.getLineStartPosition(start), start), 1);
+        }
+        if (isCharacter(stroke, '^') || isCharacter(stroke, '_')) {
+            int lineStart = buffer.getLineStartPosition(start);
+            int lineEnd = buffer.getLineEndPosition(start, false);
+            target = lineStart;
+            while (target < lineEnd && (buffer.getCharacter(target).equals(" ") || buffer.getCharacter(target).equals("\t"))) {
+                target++;
+            }
+            return MotionTarget.character(Range.create(Math.min(start, target), Math.max(start, target)), 1);
+        }
+        if (isCharacter(stroke, '$')) {
+            return MotionTarget.character(Range.create(start, buffer.getLineEndPosition(start, false)), 1);
+        }
+        if (isCharacter(stroke, 'w') || isCharacter(stroke, 'W')) {
+            target = buffer.nextWordPosition(start, count, isCharacter(stroke, 'W'));
+            return MotionTarget.character(Range.create(start, target), 1);
+        }
+        if (isCharacter(stroke, 'e') || isCharacter(stroke, 'E')) {
+            target = buffer.wordEndPosition(start, count, isCharacter(stroke, 'E'));
+            return MotionTarget.character(Range.create(start, Math.min(buffer.getLength(), target + 1)), 1);
+        }
+        if (isCharacter(stroke, 'b') || isCharacter(stroke, 'B')) {
+            target = buffer.previousWordPosition(start, count, isCharacter(stroke, 'B'));
+            return MotionTarget.character(Range.create(target, start), 1);
+        }
+        if (isCharacter(stroke, '}')) {
+            target = buffer.paragraphForwardPosition(start, count);
+            return MotionTarget.character(Range.create(start, target), 1);
+        }
+        if (isCharacter(stroke, '{')) {
+            target = buffer.paragraphBackwardPosition(start, count);
+            return MotionTarget.character(Range.create(target, start), 1);
+        }
+        if (isCharacter(stroke, ')')) {
+            target = buffer.sentenceForwardPosition(start, count);
+            return MotionTarget.character(Range.create(start, target), 1);
+        }
+        if (isCharacter(stroke, '(')) {
+            target = buffer.sentenceBackwardPosition(start, count);
+            return MotionTarget.character(Range.create(target, start), 1);
+        }
+        if (isCharacter(stroke, '%')) {
+            target = buffer.matchingBracketPosition(start);
+            if (target < 0) {
+                return null;
+            }
+            return MotionTarget.character(Range.create(Math.min(start, target), Math.min(buffer.getLength(), Math.max(start, target) + 1)), 1);
+        }
+        if (isCharacter(stroke, 'G')) {
+            int line = count <= 1 ? buffer.getLineCount() - 1 : Math.min(buffer.getLineCount() - 1, count - 1);
+            return MotionTarget.line(buffer.lineRangeForPositions(start, buffer.getLineStartByIndex(line)), 1);
+        }
+        if (isCharacter(stroke, 'f') || isCharacter(stroke, 'F') || isCharacter(stroke, 't') || isCharacter(stroke, 'T')) {
+            return null;
+        }
+        return null;
+    }
+
+    private SearchMotion parseSearchMotion(List<KeyStroke> sequence, int index) {
+        var query = new StringBuilder();
+        for (int i = index + 1; i < sequence.size(); i++) {
+            var stroke = sequence.get(i);
+            if (stroke.getKeyType() == KeyType.Enter) {
+                try {
+                    return new SearchMotion(ParseStatus.YES, i + 1, Pattern.compile(query.toString()));
+                } catch (PatternSyntaxException e) {
+                    return new SearchMotion(ParseStatus.NO, i + 1, null);
+                }
+            }
+            if (stroke.getKeyType() != KeyType.Character || stroke.isCtrlDown() || stroke.isAltDown()) {
+                return new SearchMotion(ParseStatus.NO, i + 1, null);
+            }
+            query.append(stroke.getCharacter());
+        }
+        return new SearchMotion(ParseStatus.MAYBE, sequence.size(), null);
+    }
+
+    private static int findSearchTarget(String text, int start, Pattern pattern, boolean forward) {
+        var matcher = pattern.matcher(text);
+        if (forward) {
+            return matcher.find(Math.min(text.length(), start + 1)) ? matcher.start() : -1;
+        }
+        int last = -1;
+        while (matcher.find()) {
+            if (matcher.start() < start) {
+                last = matcher.start();
+            } else {
+                break;
+            }
+        }
+        return last;
+    }
+
+    private OperatorParse parseOperator(List<KeyStroke> sequence, int index) {
+        if (index >= sequence.size()) {
+            return new OperatorParse(ParseStatus.NO, index, null);
+        }
+        var first = sequence.get(index);
+        if (isCharacter(first, 'd')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.DELETE);
+        }
+        if (isCharacter(first, 'c')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.CHANGE);
+        }
+        if (isCharacter(first, 'y')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.YANK);
+        }
+        if (isCharacter(first, '>')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.INDENT);
+        }
+        if (isCharacter(first, '<')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.OUTDENT);
+        }
+        if (isCharacter(first, '=')) {
+            return new OperatorParse(ParseStatus.YES, index + 1, Operator.FORMAT);
+        }
+        if (isCharacter(first, 'g')) {
+            if (sequence.size() == index + 1) {
+                return new OperatorParse(ParseStatus.MAYBE, index, null);
+            }
+            var second = sequence.get(index + 1);
+            if (isCharacter(second, 'U')) {
+                return new OperatorParse(ParseStatus.YES, index + 2, Operator.UPPER);
+            }
+            if (isCharacter(second, 'u')) {
+                return new OperatorParse(ParseStatus.YES, index + 2, Operator.LOWER);
+            }
+            if (isCharacter(second, '~')) {
+                return new OperatorParse(ParseStatus.YES, index + 2, Operator.TOGGLE_CASE);
+            }
+        }
+        return new OperatorParse(ParseStatus.NO, index, null);
+    }
+
+    private static boolean isRepeatedOperator(Operator operator, KeyStroke first, List<KeyStroke> sequence, int index) {
+        return switch (operator) {
+        case DELETE -> isCharacter(first, 'd');
+        case CHANGE -> isCharacter(first, 'c');
+        case YANK -> isCharacter(first, 'y');
+        case INDENT -> isCharacter(first, '>');
+        case OUTDENT -> isCharacter(first, '<');
+        case FORMAT -> isCharacter(first, '=');
+        case UPPER -> sequence.size() > index + 1 && isCharacter(first, 'g') && isCharacter(sequence.get(index + 1), 'U')
+                || isCharacter(first, 'U');
+        case LOWER -> sequence.size() > index + 1 && isCharacter(first, 'g') && isCharacter(sequence.get(index + 1), 'u')
+                || isCharacter(first, 'u');
+        case TOGGLE_CASE -> sequence.size() > index + 1 && isCharacter(first, 'g') && isCharacter(sequence.get(index + 1), '~')
+                || isCharacter(first, '~');
+        };
+    }
+
+    private static int repeatedOperatorLength(Operator operator, List<KeyStroke> sequence, int index) {
+        return switch (operator) {
+        case UPPER, LOWER, TOGGLE_CASE -> index < sequence.size() && isCharacter(sequence.get(index), 'g') ? 2 : 1;
+        default -> 1;
+        };
+    }
+
+    private static CountParse parseCount(List<KeyStroke> sequence, int index) {
+        int current = index;
+        int count = 0;
+        if (current < sequence.size() && isDigit(sequence.get(current), '1', '9')) {
+            while (current < sequence.size() && isDigit(sequence.get(current), '0', '9')) {
+                count = count * 10 + sequence.get(current).getCharacter() - '0';
+                current++;
+            }
+        }
+        return new CountParse(count == 0 ? 1 : count, current);
+    }
+
+    private static List<KeyStroke> keySequence(KeyStrokes events) {
+        var sequence = new ArrayList<KeyStroke>();
+        for (var keyStroke : events) {
+            sequence.add(keyStroke);
+        }
+        return sequence;
+    }
+
+    private static boolean isCharacter(KeyStroke stroke, char character) {
+        return stroke != null
+                && stroke.getKeyType() == KeyType.Character
+                && !stroke.isCtrlDown()
+                && !stroke.isAltDown()
+                && stroke.getCharacter() == character;
+    }
+
+    private static boolean isDigit(KeyStroke stroke, char first, char last) {
+        return stroke != null
+                && stroke.getKeyType() == KeyType.Character
+                && !stroke.isCtrlDown()
+                && !stroke.isAltDown()
+                && stroke.getCharacter() >= first
+                && stroke.getCharacter() <= last;
+    }
+
+    private static String toggleCase(String text) {
+        var result = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char character = text.charAt(i);
+            if (Character.isUpperCase(character)) {
+                result.append(Character.toLowerCase(character));
+            } else if (Character.isLowerCase(character)) {
+                result.append(Character.toUpperCase(character));
+            } else {
+                result.append(character);
+            }
+        }
+        return result.toString();
+    }
+
+    private enum Operator {
+        DELETE,
+        CHANGE,
+        YANK,
+        INDENT,
+        OUTDENT,
+        FORMAT,
+        UPPER,
+        LOWER,
+        TOGGLE_CASE
+    }
+
+    private enum ParseStatus {
+        YES,
+        MAYBE,
+        NO;
+
+        Response response() {
+            return switch (this) {
+            case YES -> Response.YES;
+            case MAYBE -> Response.MAYBE;
+            case NO -> Response.NO;
+            };
+        }
+    }
+
+    private record CountParse(int count, int index) {
+    }
+
+    private record OperatorParse(ParseStatus status, int index, Operator operator) {
+    }
+
+    private record OperatorExecution(Operator operator, Range range, boolean lineWise, List<RecordedKey> keys) {
+    }
+
+    private record OperatorMotionParse(ParseStatus status, int index, Range range, boolean lineWise) {
+        static OperatorMotionParse yes(int index, Range range, boolean lineWise) {
+            return new OperatorMotionParse(ParseStatus.YES, index, range, lineWise);
+        }
+
+        static OperatorMotionParse maybe() {
+            return new OperatorMotionParse(ParseStatus.MAYBE, -1, null, false);
+        }
+
+        static OperatorMotionParse no() {
+            return new OperatorMotionParse(ParseStatus.NO, -1, null, false);
+        }
+
+        static OperatorMotionParse status(ParseStatus status) {
+            return new OperatorMotionParse(status, -1, null, false);
+        }
+    }
+
+    private record MotionTarget(Range range, boolean lineWise, int consumed) {
+        static MotionTarget character(Range range, int consumed) {
+            return new MotionTarget(range, false, consumed);
+        }
+
+        static MotionTarget line(Range range, int consumed) {
+            return new MotionTarget(range, true, consumed);
+        }
+    }
+
+    private record SearchMotion(ParseStatus status, int index, Pattern pattern) {
     }
 
     private void announceIfUnmoved(boolean changed, String message) {
@@ -602,19 +1300,19 @@ public class NormalMode extends Mode {
         case DELETE -> {
             window.allowEditorDriveAction("buffer edit");
             window.beginRepeatRecording(pattern);
-            buffer.remove(range.getStart(), range.getEnd());
+            buffer.deleteRange(range.getStart(), range.getEnd(), false, window.consumeSelectedRegister());
             buffer.getUndoLog().commit();
             window.commitRepeatRecording();
         }
         case CHANGE -> {
             window.allowEditorDriveAction("buffer edit");
             window.beginRepeatRecording(pattern);
-            buffer.remove(range.getStart(), range.getEnd());
+            buffer.changeRange(range.getStart(), range.getEnd(), false, window.consumeSelectedRegister());
             window.switchToMode(window.getInputMode());
         }
         case YANK -> {
             window.allowEditorDriveAction("yank");
-            Copy.getInstance().setText(
+            Copy.getInstance().setYank(
                     buffer.getSubstring(range.getStart(), range.getEnd()),
                     false,
                     window.consumeSelectedRegister());

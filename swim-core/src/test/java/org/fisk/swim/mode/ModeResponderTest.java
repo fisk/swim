@@ -325,7 +325,7 @@ class Demo {
     }
 
     @Test
-    void todoBindingOpensFullscreenTodoWorkspace() throws IOException {
+    void todoCommandOpensFullscreenTodoWorkspace() throws IOException {
         Path first = writeFile("todo-binding.txt", "left\npane");
         String previousHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.resolve("home").toString());
@@ -333,7 +333,7 @@ class Demo {
         try (var harness = HeadlessWindowHarness.create(first, 24, 11)) {
             Window window = harness.getWindow();
 
-            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('t'));
+            window.getCommandView().execute("todo");
 
             assertTrue(window.isShowingTodoWorkspace());
             assertTrue(window.getActiveView() instanceof TodoWorkspaceView);

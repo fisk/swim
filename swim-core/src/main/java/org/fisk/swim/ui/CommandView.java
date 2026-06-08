@@ -73,7 +73,15 @@ public class CommandView extends View {
             new CommandSpec("vshell", List.of(), "", "open a shell in a split to the right"),
             new CommandSpec("hshell", List.of(), "", "open a shell in a split below"),
             new CommandSpec("upgrade", List.of(), "", "alias for :rebuild"),
-            new CommandSpec("w", List.of(), "", "write the current buffer"));
+            new CommandSpec("w", List.of(), "[path]", "write the current buffer"),
+            new CommandSpec("wq", List.of(), "", "write the current buffer and quit"),
+            new CommandSpec("x", List.of(), "", "write the current buffer and quit"),
+            new CommandSpec("q!", List.of(), "", "quit without checks"),
+            new CommandSpec("read", List.of("r"), "<path>", "read a file below the current line"),
+            new CommandSpec("set", List.of(), "[option=value]", "show or update editor options"),
+            new CommandSpec("normal", List.of("norm"), "<keys>", "run normal-mode keys"),
+            new CommandSpec("g", List.of(), "/pattern/d|s/.../.../[g]", "run a command on matching lines"),
+            new CommandSpec("v", List.of(), "/pattern/d|s/.../.../[g]", "run a command on non-matching lines"));
 
     private String _message = null;
     private String _prompt = null;
@@ -183,12 +191,12 @@ public class CommandView extends View {
     }
 
     public void runSearch(String string) {
-        var quotedString = Pattern.quote(string);
         _log.info("Searching for: " + string);
         Pattern pattern;
         try {
-          pattern = Pattern.compile(quotedString);
+          pattern = Pattern.compile(string);
         } catch (Throwable e) {
+            _message = "Invalid search pattern: " + e.getMessage();
             _log.error("Pattern threw exception: ", e);
             return;
         }
@@ -207,7 +215,13 @@ public class CommandView extends View {
         if (_searchString == null) {
             return;
         }
-        var pattern = Pattern.compile(Pattern.quote(_searchString));
+        Pattern pattern;
+        try {
+            pattern = Pattern.compile(_searchString);
+        } catch (Throwable e) {
+            _message = "Invalid search pattern: " + e.getMessage();
+            return;
+        }
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
             Window.getInstance().performJump(() -> cursor.goPrevious(pattern));
@@ -220,7 +234,13 @@ public class CommandView extends View {
         if (_searchString == null) {
             return;
         }
-        var pattern = Pattern.compile(Pattern.quote(_searchString));
+        Pattern pattern;
+        try {
+            pattern = Pattern.compile(_searchString);
+        } catch (Throwable e) {
+            _message = "Invalid search pattern: " + e.getMessage();
+            return;
+        }
         var cursor = Window.getInstance().getBufferContext().getBuffer().getCursor();
         if (!_searchForward) {
             Window.getInstance().performJump(() -> cursor.goNext(pattern));
@@ -244,6 +264,12 @@ public class CommandView extends View {
             _lastCommand = rawCommand;
             return;
         }
+        var global = parseGlobal(rawCommand);
+        if (global != null) {
+            runGlobal(global);
+            _lastCommand = rawCommand;
+            return;
+        }
         _lastCommand = rawCommand;
         int splitIndex = rawCommand.indexOf(' ');
         String command;
@@ -256,6 +282,9 @@ public class CommandView extends View {
         }
         switch (command) {
         case "q":
+            SwimRuntime.exit();
+            break;
+        case "q!":
             SwimRuntime.exit();
             break;
         case "e":
@@ -417,7 +446,23 @@ public class CommandView extends View {
             }
             break;
         case "w":
+            write(argument);
+            break;
+        case "wq":
+        case "x":
             Window.getInstance().getBufferContext().getBuffer().write();
+            SwimRuntime.exit();
+            break;
+        case "read":
+        case "r":
+            readFile(argument);
+            break;
+        case "set":
+            setOption(argument);
+            break;
+        case "normal":
+        case "norm":
+            runNormal(argument);
             break;
         default:
             _message = "Unknown command: " + command;
@@ -480,6 +525,9 @@ public class CommandView extends View {
             if (parseSubstitute(rawCommand) != null) {
                 return allowEditorDriveCommand(window, rawCommand);
             }
+            if (parseGlobal(rawCommand) != null) {
+                return allowEditorDriveCommand(window, rawCommand);
+            }
         } catch (IllegalArgumentException ignored) {
             return allowEditorDriveCommand(window, rawCommand);
         }
@@ -490,9 +538,11 @@ public class CommandView extends View {
                 "copen", "cclose", "cnext", "cn", "cprev", "cp",
                 "lopen", "lclose", "lnext", "ln", "lprev", "lp",
                 "lgrep", "multicursor", "mc", "grep", "search",
-                "h", "help", "tree", "registers", "reg", "marks", "jumps" -> allowEditorDriveCommand(window, rawCommand);
+                "h", "help", "tree", "registers", "reg", "marks", "jumps",
+                "set", "normal", "norm" -> allowEditorDriveCommand(window, rawCommand);
+        case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
         case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
-        case "q" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
+        case "q", "q!", "wq", "x" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
         case "mail", "todo", "slack", "nemo" -> blockEditorDriveCommand(window, rawCommand,
                 "opening host communication or assistant workspaces is not allowed");
         case "shell", "sh", "vshell", "hshell" -> blockEditorDriveCommand(window, rawCommand,
@@ -540,6 +590,23 @@ public class CommandView extends View {
             return blockEditorDriveCommand(window, rawCommand, block);
         }
         return allowEditorDriveCommand(window, rawCommand);
+    }
+
+    private String sandboxedEditorReadCommand(Window window, String rawCommand, String argument) {
+        if (argument.isBlank()) {
+            return blockEditorDriveCommand(window, rawCommand, ":read requires an existing workspace path");
+        }
+        Path path;
+        try {
+            path = window.resolveEditorDriveWorkspacePath(argument);
+        } catch (IllegalArgumentException e) {
+            return blockEditorDriveCommand(window, rawCommand, e.getMessage());
+        }
+        if (!Files.isRegularFile(path)) {
+            return blockEditorDriveCommand(window, rawCommand, "path is not an existing workspace file: " + argument);
+        }
+        window.allowEditorDriveAction(":read");
+        return "read " + path;
     }
 
     private String blockEditorDriveCommand(Window window, String rawCommand, String reason) {
@@ -785,8 +852,16 @@ public class CommandView extends View {
         }
         try {
             Pattern pattern = Pattern.compile(command.pattern());
-            int matches = window.getBufferContext().getBuffer()
-                    .substitute(pattern, command.replacement(), command.global(), command.wholeBuffer());
+            var buffer = window.getBufferContext().getBuffer();
+            int matches;
+            if (command.wholeBuffer()) {
+                matches = buffer.substitute(pattern, command.replacement(), command.global(), true);
+            } else if (command.rangePrefix() != null && !command.rangePrefix().isBlank()) {
+                LineRange range = resolveLineRange(buffer, command.rangePrefix());
+                matches = buffer.substitute(pattern, command.replacement(), command.global(), range.startLine(), range.endLine());
+            } else {
+                matches = buffer.substitute(pattern, command.replacement(), command.global(), false);
+            }
             if (matches == 0) {
                 _message = "Pattern not found: " + command.pattern();
                 return;
@@ -796,6 +871,142 @@ public class CommandView extends View {
         } catch (Exception e) {
             _message = e.getMessage() == null || e.getMessage().isBlank() ? "Invalid substitute command" : e.getMessage();
         }
+    }
+
+    private void runGlobal(GlobalCommand command) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        try {
+            Pattern pattern = Pattern.compile(command.pattern());
+            var buffer = window.getBufferContext().getBuffer();
+            String body = command.command().trim();
+            int affected;
+            if ("d".equals(body) || "delete".equals(body)) {
+                affected = buffer.deleteMatchingLines(pattern, command.invert());
+                buffer.getUndoLog().commit();
+                _message = "Deleted " + affected + " line" + (affected == 1 ? "" : "s");
+                return;
+            }
+            var substitution = parseSubstitute(body);
+            if (substitution != null) {
+                affected = 0;
+                int lines = buffer.getLineCount();
+                for (int line = lines - 1; line >= 0; line--) {
+                    String text = buffer.getSubstring(buffer.getLineStartByIndex(line), buffer.getLineEndByIndex(line, false));
+                    boolean matches = pattern.matcher(text).find();
+                    if (matches == command.invert()) {
+                        continue;
+                    }
+                    affected += buffer.substitute(Pattern.compile(substitution.pattern()), substitution.replacement(),
+                            substitution.global(), line, line);
+                }
+                buffer.getUndoLog().commit();
+                _message = "Substituted " + affected + " match" + (affected == 1 ? "" : "es");
+                return;
+            }
+            _message = "Unsupported global command: " + body;
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Invalid global command" : e.getMessage();
+        }
+    }
+
+    private void write(String argument) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        if (argument == null || argument.isBlank()) {
+            window.getBufferContext().getBuffer().write();
+            return;
+        }
+        try {
+            Path path = Paths.get(argument).toAbsolutePath();
+            Files.writeString(path, window.getBufferContext().getBuffer().getString());
+            _message = "Saved file: " + path;
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Write failed" : e.getMessage();
+        }
+    }
+
+    private void readFile(String argument) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        if (argument == null || argument.isBlank()) {
+            _message = "Wrong number of parameters";
+            return;
+        }
+        try {
+            Path path = Paths.get(argument).toAbsolutePath();
+            String text = Files.readString(path);
+            if (!text.endsWith("\n")) {
+                text += "\n";
+            }
+            var buffer = window.getBufferContext().getBuffer();
+            int insertAt = buffer.getLineEndPosition(buffer.getCursor().getPosition(), true);
+            buffer.insert(insertAt, text);
+            buffer.getUndoLog().commit();
+            _message = "Read file: " + path;
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Read failed" : e.getMessage();
+        }
+    }
+
+    private void setOption(String argument) {
+        if (argument == null || argument.isBlank()) {
+            _message = "tabstop=" + System.getProperty("swim.indent.default.size", "4")
+                    + " shiftwidth=" + System.getProperty("swim.indent.default.size", "4")
+                    + " expandtab";
+            return;
+        }
+        String[] parts = argument.split("=", 2);
+        if (parts.length != 2) {
+            _message = "Usage: :set tabstop=<n> or :set shiftwidth=<n>";
+            return;
+        }
+        String name = parts[0].trim();
+        String value = parts[1].trim();
+        try {
+            int width = Integer.parseInt(value);
+            if (width <= 0) {
+                throw new NumberFormatException();
+            }
+            if ("tabstop".equals(name) || "shiftwidth".equals(name)) {
+                System.setProperty("swim.indent.default.size", Integer.toString(width));
+                _message = name + "=" + width;
+            } else {
+                _message = "Unknown option: " + name;
+            }
+        } catch (NumberFormatException e) {
+            _message = "Invalid numeric option: " + value;
+        }
+    }
+
+    private void runNormal(String argument) {
+        var window = Window.getInstance();
+        if (window == null || argument == null || argument.isBlank()) {
+            _message = "Wrong number of parameters";
+            return;
+        }
+        var mode = window.getNormalMode();
+        var pending = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+        for (var stroke : parseNormalCommandKeys(argument)) {
+            pending.add(stroke);
+            var response = mode.processEvent(new KeyStrokes(List.copyOf(pending)));
+            if (response == Response.YES) {
+                mode.respond();
+                pending.clear();
+            } else if (response == Response.NO) {
+                pending.clear();
+            }
+        }
+        _message = pending.isEmpty() ? "Ran normal keys" : "Incomplete normal keys";
     }
 
     private void runLocationGrep(String query) {
@@ -828,6 +1039,7 @@ public class CommandView extends View {
 
     private static SubstituteCommand parseSubstitute(String rawCommand) {
         boolean wholeBuffer;
+        String rangePrefix = "";
         String remainder;
         if (rawCommand.startsWith("%s")) {
             wholeBuffer = true;
@@ -836,7 +1048,13 @@ public class CommandView extends View {
             wholeBuffer = false;
             remainder = rawCommand.substring(1);
         } else {
-            return null;
+            int commandIndex = substituteCommandIndex(rawCommand);
+            if (commandIndex < 0) {
+                return null;
+            }
+            rangePrefix = rawCommand.substring(0, commandIndex);
+            wholeBuffer = false;
+            remainder = rawCommand.substring(commandIndex + 1);
         }
         if (remainder.isEmpty()) {
             return null;
@@ -872,7 +1090,106 @@ public class CommandView extends View {
             throw new IllegalArgumentException("Usage: " + (wholeBuffer ? ":%s" : ":s") + "/pattern/replacement/[g]");
         }
         String options = parts.get(2);
-        return new SubstituteCommand(wholeBuffer, parts.get(0), parts.get(1), options.contains("g"));
+        return new SubstituteCommand(wholeBuffer, rangePrefix, parts.get(0), parts.get(1), options.contains("g"));
+    }
+
+    private static int substituteCommandIndex(String rawCommand) {
+        if (rawCommand == null || rawCommand.isBlank()) {
+            return -1;
+        }
+        for (int i = 0; i < rawCommand.length(); i++) {
+            char character = rawCommand.charAt(i);
+            if (character == 's') {
+                String prefix = rawCommand.substring(0, i);
+                return isLineRangePrefix(prefix) ? i : -1;
+            }
+            if (!(Character.isDigit(character) || character == ',' || character == '.' || character == '$')) {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isLineRangePrefix(String prefix) {
+        return prefix != null && prefix.matches("(\\d+|\\.|\\$)(,(\\d+|\\.|\\$))?");
+    }
+
+    private static GlobalCommand parseGlobal(String rawCommand) {
+        if (rawCommand == null || rawCommand.length() < 2) {
+            return null;
+        }
+        boolean invert;
+        if (rawCommand.startsWith("g")) {
+            invert = false;
+        } else if (rawCommand.startsWith("v")) {
+            invert = true;
+        } else {
+            return null;
+        }
+        String remainder = rawCommand.substring(1);
+        if (remainder.isEmpty()) {
+            return null;
+        }
+        char delimiter = remainder.charAt(0);
+        if (Character.isLetterOrDigit(delimiter) || Character.isWhitespace(delimiter)) {
+            return null;
+        }
+        var pattern = new StringBuilder();
+        boolean escaped = false;
+        for (int i = 1; i < remainder.length(); i++) {
+            char character = remainder.charAt(i);
+            if (escaped) {
+                pattern.append(character);
+                escaped = false;
+                continue;
+            }
+            if (character == '\\') {
+                pattern.append(character);
+                escaped = true;
+                continue;
+            }
+            if (character == delimiter) {
+                return new GlobalCommand(invert, pattern.toString(), remainder.substring(i + 1));
+            }
+            pattern.append(character);
+        }
+        return null;
+    }
+
+    private static LineRange resolveLineRange(org.fisk.swim.text.Buffer buffer, String prefix) {
+        String[] parts = prefix.split(",", -1);
+        int start = resolveLineAddress(buffer, parts[0]);
+        int end = parts.length > 1 ? resolveLineAddress(buffer, parts[1]) : start;
+        return new LineRange(Math.max(0, Math.min(start, end)), Math.min(buffer.getLineCount() - 1, Math.max(start, end)));
+    }
+
+    private static int resolveLineAddress(org.fisk.swim.text.Buffer buffer, String address) {
+        String value = address == null ? "." : address.trim();
+        if (value.isEmpty() || ".".equals(value)) {
+            return buffer.getLineIndexAt(buffer.getCursor().getPosition());
+        }
+        if ("$".equals(value)) {
+            return buffer.getLineCount() - 1;
+        }
+        return Math.max(0, Math.min(buffer.getLineCount() - 1, Integer.parseInt(value) - 1));
+    }
+
+    private static List<com.googlecode.lanterna.input.KeyStroke> parseNormalCommandKeys(String argument) {
+        var keys = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+        if (argument.contains("<") || argument.contains(" ")) {
+            try {
+                for (var key : org.fisk.swim.event.RecordedKey.parseSequence(argument)) {
+                    keys.add(key.toKeyStroke());
+                }
+                return keys;
+            } catch (IllegalArgumentException ignored) {
+                keys.clear();
+            }
+        }
+        for (int i = 0; i < argument.length(); i++) {
+            keys.add(new com.googlecode.lanterna.input.KeyStroke(argument.charAt(i), false, false));
+        }
+        return keys;
     }
 
     @Override
@@ -998,7 +1315,13 @@ public class CommandView extends View {
         COMPLETE_MATCH
     }
 
-    private record SubstituteCommand(boolean wholeBuffer, String pattern, String replacement, boolean global) {
+    private record SubstituteCommand(boolean wholeBuffer, String rangePrefix, String pattern, String replacement, boolean global) {
+    }
+
+    private record GlobalCommand(boolean invert, String pattern, String command) {
+    }
+
+    private record LineRange(int startLine, int endLine) {
     }
 
     public static record CommandSpec(

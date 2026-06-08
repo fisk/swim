@@ -1,9 +1,9 @@
 package org.fisk.swim.mode;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
+import org.fisk.swim.copy.Copy;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
@@ -39,11 +39,8 @@ public class VisualBlockMode extends VisualMode {
 
     private void deleteSelection() {
         var buffer = _window.getBufferContext().getBuffer();
-        var selection = getSelection();
-        Collections.reverse(selection);
-        for (var range: selection) {
-            buffer.remove(range.getStart(), range.getEnd());
-        }
+        buffer.deleteBlock(minCursor().getPosition(), maxCursor().getPosition(),
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
     }
 
     @Override
@@ -65,6 +62,17 @@ public class VisualBlockMode extends VisualMode {
             deleteSelection();
             window.switchToMode(window.getNormalMode());
         });
+        _rootResponder.addEventResponder("c", () -> {
+            allow("buffer edit");
+            deleteSelection();
+            window.switchToMode(window.getInputMode());
+        });
+        _rootResponder.addEventResponder("y", () -> {
+            allow("yank");
+            Copy.getInstance().setBlock(buffer.getBlockText(minCursor().getPosition(), maxCursor().getPosition()),
+                    Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
+            window.switchToMode(window.getNormalMode());
+        });
         _rootResponder.addEventResponder("I", () -> {
             allow("buffer edit");
             var selection = getSelection();
@@ -82,16 +90,6 @@ public class VisualBlockMode extends VisualMode {
                 buffer.addCursor(newCursor);
             }
         });
-//        _rootResponder.addEventResponder("c", () -> {
-//            deleteSelection();
-//            window.switchToMode(window.getInputMode());
-//        });
-//        _rootResponder.addEventResponder("y", () -> {
-//            var selection = getSelection();
-//            var text = buffer.getSubstring(selection.getStart(), selection.getEnd());
-//            Copy.getInstance().setText(text, true /* isLine */);
-//            window.switchToMode(window.getNormalMode());
-//        });
     }
 
     @Override

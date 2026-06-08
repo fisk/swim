@@ -29,7 +29,8 @@ public class VisualLineMode extends VisualMode {
     private void deleteSelection() {
         var buffer = _window.getBufferContext().getBuffer();
         var selection = getSelection();
-        buffer.remove(selection.getStart(), selection.getEnd());
+        buffer.deleteRange(selection.getStart(), selection.getEnd(), true,
+                Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
     }
 
     @Override
@@ -60,7 +61,7 @@ public class VisualLineMode extends VisualMode {
             allow("yank");
             var selection = getSelection();
             var text = buffer.getSubstring(selection.getStart(), selection.getEnd());
-            Copy.getInstance().setText(text, true /* isLine */,
+            Copy.getInstance().setYank(text, true /* isLine */,
                     Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });

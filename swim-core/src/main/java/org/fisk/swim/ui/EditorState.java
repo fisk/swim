@@ -30,8 +30,8 @@ final class EditorState {
     private boolean _playingKeys;
 
     void selectRegister(char register) {
-        if (register >= 'a' && register <= 'z' || register >= 'A' && register <= 'Z') {
-            _selectedRegister = Character.toLowerCase(register);
+        if (isTextRegister(register)) {
+            _selectedRegister = register;
         }
     }
 
@@ -229,5 +229,16 @@ final class EditorState {
                 && right != null
                 && java.util.Objects.equals(left.path(), right.path())
                 && left.position() == right.position();
+    }
+
+    private static boolean isTextRegister(char register) {
+        return register >= 'a' && register <= 'z'
+                || register >= 'A' && register <= 'Z'
+                || register >= '0' && register <= '9'
+                || register == '"'
+                || register == '-'
+                || register == '_'
+                || register == '+'
+                || register == '*';
     }
 }
