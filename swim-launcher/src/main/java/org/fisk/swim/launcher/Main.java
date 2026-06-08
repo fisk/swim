@@ -6,6 +6,7 @@ import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReference;
@@ -55,20 +56,27 @@ public class Main implements SwimHost {
     private final Rebuilder _rebuilder;
     private final TaskRunner _taskRunner;
     private final Supplier<Path> _launcherLocationSupplier;
+    private final PrintStream _out;
     private final CountDownLatch _exitLatch = new CountDownLatch(1);
     private final Map<String, SwimPanel> _panels = new ConcurrentHashMap<>();
     private volatile boolean _reloading;
     private Path _buildRoot;
 
     public Main() {
-        this(new PluginRegistry(), Main::rebuild, Main::startThread, Main::getLauncherLocation);
+        this(new PluginRegistry(), Main::rebuild, Main::startThread, Main::getLauncherLocation, System.out);
     }
 
     Main(PluginController plugins, Rebuilder rebuilder, TaskRunner taskRunner, Supplier<Path> launcherLocationSupplier) {
+        this(plugins, rebuilder, taskRunner, launcherLocationSupplier, System.out);
+    }
+
+    Main(PluginController plugins, Rebuilder rebuilder, TaskRunner taskRunner, Supplier<Path> launcherLocationSupplier,
+            PrintStream out) {
         _plugins = plugins;
         _rebuilder = rebuilder;
         _taskRunner = taskRunner;
         _launcherLocationSupplier = launcherLocationSupplier;
+        _out = out;
     }
 
     public static void main(String[] args) {
@@ -83,8 +91,8 @@ public class Main implements SwimHost {
                 return;
             }
         } else if (args.length > 1) {
-            System.out.println("swim: Wrong number of arguments: " + args.length + ".");
-            System.out.println("Try: swim <file_path>");
+            _out.println("swim: Wrong number of arguments: " + args.length + ".");
+            _out.println("Try: swim <file_path>");
             return;
         }
 
@@ -100,8 +108,8 @@ public class Main implements SwimHost {
 
     private Path checkArguments(String[] args) {
         if (args.length != 1) {
-            System.out.println("swim: Wrong number of arguments: " + args.length + ".");
-            System.out.println("Try: swim <file_path>");
+            _out.println("swim: Wrong number of arguments: " + args.length + ".");
+            _out.println("Try: swim <file_path>");
             return null;
         }
 
@@ -109,7 +117,7 @@ public class Main implements SwimHost {
             var path = Path.of(args[0]).toAbsolutePath();
             var file = path.toFile();
             if (!file.exists() && !file.createNewFile()) {
-                System.out.println("swim: No such file: " + path);
+                _out.println("swim: No such file: " + path);
                 return null;
             }
             return path;

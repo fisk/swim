@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -220,13 +222,18 @@ class MainTest {
 
     @Test
     void checkArgumentsRejectsWrongNumberOfArguments() throws Exception {
+        var output = new ByteArrayOutputStream();
         Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
-        }, () -> tempDir);
+        }, () -> tempDir, new PrintStream(output, true, StandardCharsets.UTF_8));
 
         Path result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class }, (Object) new String[] { "a", "b" });
 
         assertNull(result);
+        assertEquals("""
+                swim: Wrong number of arguments: 2.
+                Try: swim <file_path>
+                """.replace("\n", System.lineSeparator()), output.toString(StandardCharsets.UTF_8));
     }
 
     @Test
