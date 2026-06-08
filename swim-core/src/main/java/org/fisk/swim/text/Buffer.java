@@ -91,6 +91,10 @@ public class Buffer {
     private LanguageMode _languageMode;
 
     public Buffer(Path path, BufferContext bufferContext) {
+        this(path, bufferContext, null, false);
+    }
+
+    public Buffer(Path path, BufferContext bufferContext, String initialText, boolean readOnly) {
         _path = path == null ? null : path.toAbsolutePath();
         _uri = _path == null
                 ? URI.create("untitled:swim-buffer-" + UNTITLED_COUNTER.incrementAndGet())
@@ -100,15 +104,22 @@ public class Buffer {
         _undoLog = new UndoLog(bufferContext);
         if (_path != null) {
             try {
-                _string.append(Files.readString(_path));
-                var decoration = new Decoration();
-                decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-                decoration._version = _version;
-                _decorations.add(decoration);
+                setInitialString(Files.readString(_path));
             } catch (IOException e) {
             }
+        } else if (initialText != null) {
+            setInitialString(initialText);
         }
+        _readOnly = readOnly;
         _languageMode = LanguageModeProvider.getInstance().getLanguageMode(_path);
+    }
+
+    private void setInitialString(String string) {
+        _string.append(string);
+        var decoration = new Decoration();
+        decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        decoration._version = _version;
+        _decorations.add(decoration);
     }
 
     public String getCharacter(int position) {

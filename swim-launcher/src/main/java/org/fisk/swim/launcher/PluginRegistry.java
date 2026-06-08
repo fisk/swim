@@ -31,7 +31,8 @@ final class PluginRegistry implements Main.PluginController {
     private LoadedPlugins _loadedPlugins = LoadedPlugins.empty();
 
     @Override
-    public synchronized SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
+    public synchronized SwimApp reload(Path buildRoot, List<Path> paths, SwimHost host, ClassLoader parentLoader,
+            Runnable beforeLoad) {
         LoadedPlugins previous = _loadedPlugins;
         LoadedPlugins next = discover(buildRoot, parentLoader);
         try {
@@ -40,11 +41,11 @@ final class PluginRegistry implements Main.PluginController {
                 beforeLoad.run();
             }
             _loadedPlugins = next;
-            next.loadAll(path, host);
+            next.loadAll(paths, host);
             return next.app();
         } catch (RuntimeException | Error e) {
             try {
-                previous.loadAll(path, host);
+                previous.loadAll(paths, host);
                 _loadedPlugins = previous;
             } catch (RuntimeException | Error restoreFailure) {
                 e.addSuppressed(restoreFailure);
@@ -262,14 +263,14 @@ final class PluginRegistry implements Main.PluginController {
                     .toList();
         }
 
-        void loadAll(Path path, SwimHost host) {
+        void loadAll(List<Path> paths, SwimHost host) {
             var started = new ArrayList<PluginBinding>();
             try {
                 for (var binding : _bindings) {
                     if (!binding.loadOnStartup()) {
                         continue;
                     }
-                    binding.load(createContext(path, host, binding.id()));
+                    binding.load(createContext(paths, host, binding.id()));
                     started.add(binding);
                 }
                 SwimApp app = app();
@@ -310,13 +311,13 @@ final class PluginRegistry implements Main.PluginController {
 
         void loadPlugin(String id, Path path, SwimHost host) {
             if (CORE_PLUGIN_ID.equals(id)) {
-                findBinding(id).load(createContext(path, host, id));
+                findBinding(id).load(createContext(path == null ? List.of() : List.of(path), host, id));
                 return;
             }
             if (app() == null) {
                 throw new IllegalStateException("Core plugin must be loaded before loading " + id);
             }
-            findBinding(id).load(createContext(path, host, id));
+            findBinding(id).load(createContext(path == null ? List.of() : List.of(path), host, id));
         }
 
         void unloadPlugin(String id) {
@@ -330,7 +331,7 @@ final class PluginRegistry implements Main.PluginController {
         void reloadPlugin(String id, Path path, SwimHost host) {
             if (CORE_PLUGIN_ID.equals(id)) {
                 unloadAll();
-                loadAll(path, host);
+                loadAll(path == null ? List.of() : List.of(path), host);
                 return;
             }
             PluginBinding binding = findBinding(id);
@@ -345,14 +346,16 @@ final class PluginRegistry implements Main.PluginController {
                     .orElseThrow(() -> new IllegalArgumentException("Unknown plugin id: " + id));
         }
 
-        private DefaultPluginContext createContext(Path path, SwimHost host, String pluginId) {
-            return new DefaultPluginContext(pluginId, host, path, () -> {
+        private DefaultPluginContext createContext(List<Path> paths, SwimHost host, String pluginId) {
+            List<Path> initialPaths = paths == null ? List.of() : List.copyOf(paths);
+            Path initialPath = initialPaths.isEmpty() ? null : initialPaths.getFirst();
+            return new DefaultPluginContext(pluginId, host, initialPaths, () -> {
                 SwimApp app = app();
                 if (app == null) {
-                    return path;
+                    return initialPath;
                 }
                 Path currentPath = app.getCurrentPath();
-                return currentPath == null ? path : currentPath;
+                return currentPath == null ? initialPath : currentPath;
             });
         }
     }
@@ -360,13 +363,13 @@ final class PluginRegistry implements Main.PluginController {
     private static final class DefaultPluginContext implements SwimPluginContext {
         private final String _pluginId;
         private final SwimHost _host;
-        private final Path _initialPath;
+        private final List<Path> _initialPaths;
         private final Supplier<Path> _currentPathSupplier;
 
-        private DefaultPluginContext(String pluginId, SwimHost host, Path initialPath, Supplier<Path> currentPathSupplier) {
+        private DefaultPluginContext(String pluginId, SwimHost host, List<Path> initialPaths, Supplier<Path> currentPathSupplier) {
             _pluginId = pluginId;
             _host = host;
-            _initialPath = initialPath;
+            _initialPaths = initialPaths == null ? List.of() : List.copyOf(initialPaths);
             _currentPathSupplier = currentPathSupplier;
         }
 
@@ -382,13 +385,18 @@ final class PluginRegistry implements Main.PluginController {
 
         @Override
         public Path getInitialPath() {
-            return _initialPath;
+            return _initialPaths.isEmpty() ? null : _initialPaths.getFirst();
+        }
+
+        @Override
+        public List<Path> getInitialPaths() {
+            return _initialPaths;
         }
 
         @Override
         public Path getCurrentPath() {
             Path currentPath = _currentPathSupplier.get();
-            return currentPath == null ? _initialPath : currentPath;
+            return currentPath == null ? getInitialPath() : currentPath;
         }
     }
 
@@ -425,7 +433,7 @@ final class PluginRegistry implements Main.PluginController {
             SwimApp app = _provider.get();
             _app = app;
             try {
-                app.start(context.getInitialPath(), context.getHost());
+                app.start(context.getInitialPaths(), context.getHost());
                 _loaded = true;
             } catch (RuntimeException | Error e) {
                 _app = null;

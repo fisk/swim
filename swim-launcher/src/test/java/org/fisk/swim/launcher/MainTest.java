@@ -214,26 +214,41 @@ class MainTest {
         }, () -> tempDir);
         Path file = tempDir.resolve("new-file.txt");
 
-        Path result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class }, (Object) new String[] { file.toString() });
+        List<Path> result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class },
+                (Object) new String[] { file.toString() });
 
-        assertEquals(file.toAbsolutePath(), result);
+        assertEquals(List.of(file.toAbsolutePath()), result);
         assertTrue(Files.exists(file));
     }
 
     @Test
-    void checkArgumentsRejectsWrongNumberOfArguments() throws Exception {
+    void checkArgumentsAcceptsNoArguments() throws Exception {
         var output = new ByteArrayOutputStream();
         Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
             throw new AssertionError("tasks not expected");
         }, () -> tempDir, new PrintStream(output, true, StandardCharsets.UTF_8));
 
-        Path result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class }, (Object) new String[] { "a", "b" });
+        List<Path> result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class },
+                (Object) new String[0]);
 
-        assertNull(result);
-        assertEquals("""
-                swim: Wrong number of arguments: 2.
-                Try: swim <file_path>
-                """.replace("\n", System.lineSeparator()), output.toString(StandardCharsets.UTF_8));
+        assertEquals(List.of(), result);
+        assertEquals("", output.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void checkArgumentsCreatesMultipleMissingFiles() throws Exception {
+        Main main = new Main(new FakePluginController(), buildRoot -> false, (name, daemon, task) -> {
+            throw new AssertionError("tasks not expected");
+        }, () -> tempDir);
+        Path first = tempDir.resolve("first.txt");
+        Path second = tempDir.resolve("second.txt");
+
+        List<Path> result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class },
+                (Object) new String[] { first.toString(), second.toString() });
+
+        assertEquals(List.of(first.toAbsolutePath(), second.toAbsolutePath()), result);
+        assertTrue(Files.exists(first));
+        assertTrue(Files.exists(second));
     }
 
     @Test
@@ -243,9 +258,10 @@ class MainTest {
         }, () -> tempDir);
         Path directory = Files.createDirectories(tempDir.resolve("project-dir"));
 
-        Path result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class }, (Object) new String[] { directory.toString() });
+        List<Path> result = invokePrivate(main, "checkArguments", new Class<?>[] { String[].class },
+                (Object) new String[] { directory.toString() });
 
-        assertEquals(directory.toAbsolutePath(), result);
+        assertEquals(List.of(directory.toAbsolutePath()), result);
     }
 
     @Test
@@ -358,6 +374,28 @@ class MainTest {
         assertEquals(List.of("Loaded SWIM core"), next.messages);
         assertSame(next, main.getLoadedApp());
         assertNull(System.getProperty(Main.RELOAD_SESSION_PROPERTY));
+    }
+
+    @Test
+    void initialLoadPassesAllLaunchPathsToPluginController() throws Exception {
+        FakeApp next = new FakeApp();
+        FakePluginController plugins = new FakePluginController();
+        plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
+            next.start(path, host);
+            return next;
+        };
+        Main main = new Main(plugins, buildRoot -> {
+            throw new AssertionError("rebuild not expected");
+        }, (name, daemon, task) -> {
+            throw new AssertionError("tasks not expected");
+        }, () -> tempDir);
+        List<Path> paths = List.of(tempDir.resolve("one.txt"), tempDir.resolve("two.txt"));
+
+        invokePrivate(main, "reload", new Class<?>[] { List.class, String.class }, paths, "Loaded SWIM core");
+
+        assertEquals(paths, plugins.lastReloadPaths);
+        assertEquals(paths.getFirst(), next.startedPath);
+        assertEquals(List.of("Loaded SWIM core"), next.messages);
     }
 
     @Test
@@ -754,9 +792,12 @@ class MainTest {
         };
         private SwimApp currentApp;
         private boolean unloadAllCalled;
+        private List<Path> lastReloadPaths;
 
         @Override
-        public SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
+        public SwimApp reload(Path buildRoot, List<Path> paths, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
+            lastReloadPaths = paths == null ? List.of() : List.copyOf(paths);
+            Path path = lastReloadPaths.isEmpty() ? null : lastReloadPaths.getFirst();
             SwimApp reloaded = reloadAction.reload(buildRoot, path, host, parentLoader, beforeLoad);
             currentApp = reloaded;
             return reloaded;

@@ -1,6 +1,7 @@
 package org.fisk.swim;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -37,6 +38,9 @@ public class SwimAppImpl implements SwimApp {
     interface RuntimeBindings {
         void setHost(SwimHost host);
         WindowAccess createWindow(Path path);
+        default WindowAccess createWindow(List<Path> paths) {
+            return createWindow(paths == null || paths.isEmpty() ? null : paths.getFirst());
+        }
         WindowAccess getWindow();
         EventThreadAccess getEventThread();
         Thread createIoThread();
@@ -113,6 +117,17 @@ public class SwimAppImpl implements SwimApp {
         }
 
         @Override
+        public WindowAccess createWindow(List<Path> paths) {
+            Window.createInstance(paths);
+            if (paths != null) {
+                for (Path path : paths) {
+                    ClangdLspPluginSupport.ensureStartedForProject(path);
+                }
+            }
+            return WINDOW;
+        }
+
+        @Override
         public WindowAccess getWindow() {
             return Window.getInstance() == null ? null : WINDOW;
         }
@@ -177,9 +192,15 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void start(Path path, SwimHost host) {
+        start(path == null ? List.of() : List.of(path), host);
+    }
+
+    @Override
+    public void start(List<Path> paths, SwimHost host) {
         SwimLogging.setup();
         _bindings.setHost(host);
-        var window = _bindings.createWindow(path);
+        List<Path> launchPaths = paths == null ? List.of() : List.copyOf(paths);
+        var window = _bindings.createWindow(launchPaths);
         window.update(true);
         var eventThread = _bindings.getEventThread();
         eventThread.addOnEvent(() -> {
@@ -193,7 +214,7 @@ public class SwimAppImpl implements SwimApp {
         if (!_ioThread.isAlive()) {
             _ioThread.start();
         }
-        _bindings.preloadMailPlugin(path);
+        _bindings.preloadMailPlugin(launchPaths.isEmpty() ? null : launchPaths.getFirst());
         LOG.info("swim started");
     }
 

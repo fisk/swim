@@ -44,7 +44,11 @@ public class Main implements SwimHost {
     }
 
     interface PluginController {
-        SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad);
+        default SwimApp reload(Path buildRoot, Path path, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad) {
+            return reload(buildRoot, path == null ? List.of() : List.of(path), host, parentLoader, beforeLoad);
+        }
+
+        SwimApp reload(Path buildRoot, List<Path> paths, SwimHost host, ClassLoader parentLoader, Runnable beforeLoad);
         SwimApp currentApp();
         List<String> loadedPluginIds();
         void loadPlugin(String id, Path path, SwimHost host);
@@ -84,20 +88,13 @@ public class Main implements SwimHost {
     }
 
     private void run(String[] args) {
-        Path path = null;
-        if (args.length == 1) {
-            path = checkArguments(args);
-            if (path == null) {
-                return;
-            }
-        } else if (args.length > 1) {
-            _out.println("swim: Wrong number of arguments: " + args.length + ".");
-            _out.println("Try: swim <file_path>");
+        List<Path> paths = checkArguments(args);
+        if (paths == null) {
             return;
         }
 
         _buildRoot = determineBuildRoot();
-        reload(path, "Loaded SWIM core");
+        reload(paths, "Loaded SWIM core");
         try {
             _exitLatch.await();
         } catch (InterruptedException e) {
@@ -106,21 +103,19 @@ public class Main implements SwimHost {
         System.exit(0);
     }
 
-    private Path checkArguments(String[] args) {
-        if (args.length != 1) {
-            _out.println("swim: Wrong number of arguments: " + args.length + ".");
-            _out.println("Try: swim <file_path>");
-            return null;
-        }
-
+    private List<Path> checkArguments(String[] args) {
+        var paths = new ArrayList<Path>();
         try {
-            var path = Path.of(args[0]).toAbsolutePath();
-            var file = path.toFile();
-            if (!file.exists() && !file.createNewFile()) {
-                _out.println("swim: No such file: " + path);
-                return null;
+            for (String arg : args) {
+                var path = Path.of(arg).toAbsolutePath();
+                var file = path.toFile();
+                if (!file.exists() && !file.createNewFile()) {
+                    _out.println("swim: No such file: " + path);
+                    return null;
+                }
+                paths.add(path);
             }
-            return path;
+            return List.copyOf(paths);
         } catch (Throwable e) {
             return null;
         }
@@ -271,6 +266,10 @@ public class Main implements SwimHost {
     }
 
     private void reload(Path path, String successMessage) {
+        reload(path == null ? List.of() : List.of(path), successMessage);
+    }
+
+    private void reload(List<Path> paths, String successMessage) {
         synchronized (_reloadLock) {
             _reloading = true;
             boolean restoreSession = _plugins.currentApp() != null;
@@ -281,7 +280,7 @@ public class Main implements SwimHost {
             }
             try {
                 Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
-                SwimApp next = _plugins.reload(_buildRoot, path, this, getClass().getClassLoader(), beforeLoad);
+                SwimApp next = _plugins.reload(_buildRoot, paths, this, getClass().getClassLoader(), beforeLoad);
                 if (successMessage != null) {
                     next.showMessage(successMessage);
                 }

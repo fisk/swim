@@ -16,6 +16,18 @@ class HelpIndexTest {
 
         assertFalse(rendered.isEmpty());
         assertTrue(rendered.contains("SWIM tutorial"));
+        assertTrue(rendered.contains("Beginner tutorial: the two most important ideas"));
+        assertTrue(rendered.contains("  SWIM starts in NORMAL mode, where keys are commands instead of text."));
+        assertTrue(rendered.contains("  If you feel lost, press Esc a few times, then type :help and press Enter."));
+        assertTrue(rendered.contains("Beginner tutorial: opening and saving files"));
+        assertTrue(rendered.contains("  Launch with swim file.txt to open one file, or swim one.txt two.txt to open several files."));
+        assertTrue(rendered.contains("  When SWIM starts without a file, the welcome buffer tells you how to open help."));
+        assertTrue(rendered.contains("Beginner tutorial: your first edit"));
+        assertTrue(rendered.contains("  You can also use the arrow keys while learning."));
+        assertTrue(rendered.contains("Beginner tutorial: selecting, copying, and pasting"));
+        assertTrue(rendered.contains("  Press Ctrl-v for visual block selection when you need a rectangular selection."));
+        assertTrue(rendered.contains("Beginner tutorial: buffers and panes"));
+        assertTrue(rendered.contains("  Run :bnext and :bprev to move through open buffers."));
         assertTrue(rendered.contains("  :help shows this tutorial."));
         assertTrue(rendered.contains("  :slack opens the fullscreen Slack workspace."));
         assertTrue(rendered.contains("  :todo opens the Todo workspace."));

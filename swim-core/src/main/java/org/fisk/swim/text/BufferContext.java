@@ -17,6 +17,13 @@ public class BufferContext {
         _buffer.open();
     }
 
+    public BufferContext(Rect rect, String initialText, boolean readOnly) {
+        _buffer = new Buffer(null, this, initialText, readOnly);
+        _bufferView = new BufferView(rect, this);
+        _textLayout = new TextLayout(this);
+        _buffer.open();
+    }
+
     public Buffer getBuffer() {
         return _buffer;
     }

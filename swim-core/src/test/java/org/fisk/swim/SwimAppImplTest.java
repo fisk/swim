@@ -45,6 +45,7 @@ class SwimAppImplTest {
 
         assertSame(host, bindings.host);
         assertEquals(path, bindings.createdWindowPath);
+        assertEquals(List.of(path), bindings.createdWindowPaths);
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
@@ -61,14 +62,32 @@ class SwimAppImplTest {
         SwimAppImpl app = new SwimAppImpl(bindings);
         RecordingHost host = new RecordingHost();
 
-        app.start(null, host);
+        app.start((Path) null, host);
 
         assertSame(host, bindings.host);
         assertNull(bindings.createdWindowPath);
+        assertEquals(List.of(), bindings.createdWindowPaths);
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
         assertNull(bindings.preloadMailPluginPath);
+    }
+
+    @Test
+    void startPassesMultiplePathsToWindowAndPreloadsFirstPath() {
+        FakeBindings bindings = new FakeBindings();
+        SwimAppImpl app = new SwimAppImpl(bindings);
+        RecordingHost host = new RecordingHost();
+        Path first = Path.of("/tmp/first.txt");
+        Path second = Path.of("/tmp/second.txt");
+
+        app.start(List.of(first, second), host);
+
+        assertSame(host, bindings.host);
+        assertEquals(first, bindings.createdWindowPath);
+        assertEquals(List.of(first, second), bindings.createdWindowPaths);
+        assertEquals(first, bindings.preloadMailPluginPath);
+        assertEquals(List.of(true), bindings.window.updateCalls);
     }
 
     @Test
@@ -228,6 +247,7 @@ class SwimAppImplTest {
         private final FakeThread ioThread = new FakeThread();
         private SwimHost host;
         private Path createdWindowPath;
+        private List<Path> createdWindowPaths;
         private boolean shutdownJavaLspCalled;
         private boolean shutdownEventThreadCalled;
         private boolean shutdownTerminalContextCalled;
@@ -243,7 +263,16 @@ class SwimAppImplTest {
         @Override
         public SwimAppImpl.WindowAccess createWindow(Path path) {
             createdWindowPath = path;
+            createdWindowPaths = path == null ? List.of() : List.of(path);
             window.currentPath = path;
+            return window;
+        }
+
+        @Override
+        public SwimAppImpl.WindowAccess createWindow(List<Path> paths) {
+            createdWindowPaths = paths == null ? List.of() : List.copyOf(paths);
+            createdWindowPath = createdWindowPaths.isEmpty() ? null : createdWindowPaths.getFirst();
+            window.currentPath = createdWindowPath;
             return window;
         }
 

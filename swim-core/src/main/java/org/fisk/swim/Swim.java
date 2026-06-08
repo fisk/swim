@@ -2,6 +2,8 @@ package org.fisk.swim;
 
 import java.io.PrintStream;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -21,6 +23,9 @@ public class Swim {
 
     interface RuntimeBindings {
         WindowAccess createWindow(Path path);
+        default WindowAccess createWindow(List<Path> paths) {
+            return createWindow(paths == null || paths.isEmpty() ? null : paths.getFirst());
+        }
         EventThreadAccess getEventThread();
         Thread createIoThread();
     }
@@ -29,6 +34,13 @@ public class Swim {
         @Override
         public WindowAccess createWindow(Path path) {
             org.fisk.swim.ui.Window.createInstance(path);
+            var window = org.fisk.swim.ui.Window.getInstance();
+            return window::update;
+        }
+
+        @Override
+        public WindowAccess createWindow(List<Path> paths) {
+            org.fisk.swim.ui.Window.createInstance(paths);
             var window = org.fisk.swim.ui.Window.getInstance();
             return window::update;
         }
@@ -65,26 +77,36 @@ public class Swim {
     static Path checkArguments(String[] args, PrintStream out) {
         if (args.length != 1) {
             out.println("swim: Wrong number of arguments: " + args.length + ".");
-            out.println("Try: swim <file_path>");
+            out.println("Try: swim [file_path ...]");
             return null;
         }
 
+        List<Path> paths = checkArgumentPaths(args, out);
+        return paths == null || paths.isEmpty() ? null : paths.getFirst();
+    }
+
+    static List<Path> checkArgumentPaths(String[] args, PrintStream out) {
+        var paths = new ArrayList<Path>();
         try {
-            var path = Path.of(args[0]);
-            var file = path.toFile();
-            if (!file.exists()) {
-                try {
-                    if (file.createNewFile()) {
-                        return path;
+            for (String arg : args) {
+                var path = Path.of(arg);
+                var file = path.toFile();
+                if (!file.exists()) {
+                    try {
+                        if (file.createNewFile()) {
+                            paths.add(path);
+                            continue;
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
                     }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+                    out.println("swim: No such file: " + path.toString());
+                    return null;
+                } else {
+                    paths.add(path);
                 }
-                out.println("swim: No such file: " + path.toString());
-                return null;
-            } else {
-                return path;
             }
+            return List.copyOf(paths);
         } catch (Throwable e) {
             return null;
         }
@@ -93,20 +115,16 @@ public class Swim {
     static void run(String[] args, RuntimeBindings bindings, PrintStream out) {
         try {
             setupLogging();
-            Path path = null;
-            if (args.length == 1) {
-                path = checkArguments(args, out);
-                if (path == null) {
+            List<Path> paths = List.of();
+            if (args.length > 0) {
+                paths = checkArgumentPaths(args, out);
+                if (paths == null) {
                     out.println("Did not find file at path: " + args[0]);
                     return;
                 }
-            } else if (args.length > 1) {
-                out.println("swim: Wrong number of arguments: " + args.length + ".");
-                out.println("Try: swim <file_path>");
-                return;
             }
             _log.info("swim started");
-            var window = bindings.createWindow(path);
+            var window = bindings.createWindow(paths);
             window.update(true /* forced */);
             var eventThread = bindings.getEventThread();
             eventThread.addOnEvent(() -> {

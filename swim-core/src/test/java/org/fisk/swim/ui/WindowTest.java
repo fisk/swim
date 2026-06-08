@@ -36,6 +36,55 @@ class WindowTest {
     Path tempDir;
 
     @Test
+    void noArgumentLaunchShowsReadOnlyWelcomeBuffer() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        try {
+            Window.createInstance(List.of());
+            var window = Window.getInstance();
+
+            assertTrue(window.getBufferContext().getBuffer().getString().contains(":help"));
+            assertTrue(window.getBufferContext().getBuffer().getString().contains("swim file.txt other.txt"));
+            assertTrue(window.getBufferContext().getBuffer().isReadOnly());
+            String before = window.getBufferContext().getBuffer().getString();
+
+            window.getBufferContext().getBuffer().insert("x");
+
+            assertEquals(before, window.getBufferContext().getBuffer().getString());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
+    void multiFileLaunchOpensFirstFileAndQueuesRemainingBuffers() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path first = writeFile("launch-first.txt", "first");
+        Path second = writeFile("launch-second.txt", "second");
+        try {
+            Window.createInstance(List.of(first, second));
+            var window = Window.getInstance();
+
+            assertEquals(first.toAbsolutePath(), window.getBufferContext().getBuffer().getPath());
+            assertEquals(List.of(first.toAbsolutePath(), second.toAbsolutePath()),
+                    window.openBuffers().stream().map(Window.OpenBufferEntry::path).toList());
+
+            assertTrue(window.switchNextBuffer());
+
+            assertEquals(second.toAbsolutePath(), window.getBufferContext().getBuffer().getPath());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
     void closeActiveViewRefusesToCloseLastBuffer() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();

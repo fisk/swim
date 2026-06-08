@@ -58,6 +58,23 @@ import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
+    public static final String WELCOME_BUFFER_TEXT = """
+            SWIM
+
+            Type :help and press Enter to open the help pages.
+            Type :e path/to/file and press Enter to open a file.
+
+            First steps:
+              i       enter INSERT mode and type text
+              Esc     return to NORMAL mode
+              :w      write the current file
+              :q      quit
+
+            Start with files:
+              swim file.txt other.txt
+
+            This welcome buffer is read-only.
+            """;
 
     private enum WorkspaceKind {
         BUFFER,
@@ -173,15 +190,25 @@ public class Window implements Drawable {
         _instance = new Window(path);
     }
 
+    public static void createInstance(List<Path> paths) {
+        _instance = new Window(paths);
+    }
+
     public Window(Path path) {
+        this(path == null ? List.of() : List.of(path));
+    }
+
+    public Window(List<Path> paths) {
         boolean restoreOnReload = Boolean.getBoolean("swim.session.restore_on_reload");
+        List<Path> launchPaths = paths == null ? List.of() : List.copyOf(paths);
+        Path path = launchPaths.isEmpty() ? null : launchPaths.getFirst();
         _editorPaths = EditorPaths.fromUserHome();
         _editorConfig = EditorConfigStore.load(_editorPaths);
         _normalModeRemaps = compileRemaps(_editorConfig.normalModeRemaps());
         applyConfiguredOptions(_editorConfig);
         setupSplashScreen();
         Path initialPath = restoreOnReload ? null : path != null && path.toFile().isDirectory() ? null : path;
-        setupViews(initialPath);
+        setupViews(initialPath, !restoreOnReload && launchPaths.isEmpty() ? WELCOME_BUFFER_TEXT : null);
         setupBindings();
         setupModes();
         initializeWorkspaceHistory();
@@ -191,6 +218,9 @@ public class Window implements Drawable {
         }
         if (!restored && path != null && path.toFile().isDirectory()) {
             showDirectoryBrowser(path);
+        }
+        if (!restored && !restoreOnReload) {
+            openAdditionalLaunchWorkspaces(launchPaths);
         }
         if (!restored && restoreOnReload && path != null && !path.toFile().isDirectory()) {
             setBufferPath(path);
@@ -2917,6 +2947,10 @@ public class Window implements Drawable {
     }
 
     private void setupViews(Path path) {
+        setupViews(path, null);
+    }
+
+    private void setupViews(Path path, String initialText) {
         ensureLayoutState();
         var terminalContext = TerminalContext.getInstance();
         var terminalSize = terminalContext.getTerminalSize();
@@ -2924,8 +2958,11 @@ public class Window implements Drawable {
         _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
 
         int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.getRows());
-        _bufferContext = new BufferContext(Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
-                Math.max(0, terminalSize.getRows() - initialMenuHeight - 2)), path);
+        Rect bufferBounds = Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
+                Math.max(0, terminalSize.getRows() - initialMenuHeight - 2));
+        _bufferContext = initialText == null
+                ? new BufferContext(bufferBounds, path)
+                : new BufferContext(bufferBounds, initialText, true);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
 
         _rootView = new View(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
@@ -3557,6 +3594,23 @@ public class Window implements Drawable {
         workspace._bufferViewCounts.put(context, 1);
         initializeBufferWorkspaceModes(workspace);
         return workspace;
+    }
+
+    private void openAdditionalLaunchWorkspaces(List<Path> launchPaths) {
+        if (launchPaths == null || launchPaths.size() <= 1) {
+            return;
+        }
+        ensureLayoutState();
+        for (int i = 1; i < launchPaths.size(); i++) {
+            Path path = launchPaths.get(i);
+            if (path == null) {
+                continue;
+            }
+            WorkspaceState workspace = path.toFile().isDirectory()
+                    ? createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), path), WorkspaceKind.DIRECTORY)
+                    : createBufferWorkspace(path);
+            _workspaceHistory.add(workspace);
+        }
     }
 
     private WorkspaceState createViewWorkspace(View view, WorkspaceKind kind) {

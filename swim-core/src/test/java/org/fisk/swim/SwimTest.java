@@ -48,6 +48,7 @@ class SwimTest {
         Swim.run(new String[] { path.toString() }, bindings, new PrintStream(output, true));
 
         assertEquals(path, bindings.createdWindowPath);
+        assertEquals(List.of(path), bindings.createdWindowPaths);
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
@@ -71,6 +72,21 @@ class SwimTest {
     }
 
     @Test
+    void checkArgumentPathsCreatesMultipleMissingFiles() {
+        Path first = tempDir.resolve("first.txt");
+        Path second = tempDir.resolve("second.txt");
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        List<Path> result = Swim.checkArgumentPaths(new String[] { first.toString(), second.toString() },
+                new PrintStream(output, true));
+
+        assertEquals(List.of(first, second), result);
+        assertTrue(Files.exists(first));
+        assertTrue(Files.exists(second));
+        assertEquals("", output.toString());
+    }
+
+    @Test
     void runWithNoArgumentsStartsUntitledBuffer() {
         FakeBindings bindings = new FakeBindings();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -78,6 +94,23 @@ class SwimTest {
         Swim.run(new String[0], bindings, new PrintStream(output, true));
 
         assertNull(bindings.createdWindowPath);
+        assertEquals(List.of(), bindings.createdWindowPaths);
+        assertEquals(List.of(true), bindings.window.updateCalls);
+        assertTrue(bindings.eventThread.started);
+        assertTrue(output.toString().isEmpty());
+    }
+
+    @Test
+    void runWithMultipleArgumentsStartsWindowWithAllFiles() throws Exception {
+        FakeBindings bindings = new FakeBindings();
+        Path first = Files.createFile(tempDir.resolve("first.txt"));
+        Path second = Files.createFile(tempDir.resolve("second.txt"));
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+        Swim.run(new String[] { first.toString(), second.toString() }, bindings, new PrintStream(output, true));
+
+        assertEquals(first, bindings.createdWindowPath);
+        assertEquals(List.of(first, second), bindings.createdWindowPaths);
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(output.toString().isEmpty());
@@ -152,6 +185,7 @@ class SwimTest {
         private final FakeEventThread eventThread = new FakeEventThread();
         private final FakeThread ioThread = new FakeThread();
         private Path createdWindowPath;
+        private List<Path> createdWindowPaths;
         private boolean failCreateWindow;
 
         @Override
@@ -160,6 +194,17 @@ class SwimTest {
                 throw new IllegalStateException("boom");
             }
             createdWindowPath = path;
+            createdWindowPaths = path == null ? List.of() : List.of(path);
+            return window;
+        }
+
+        @Override
+        public Swim.WindowAccess createWindow(List<Path> paths) {
+            if (failCreateWindow) {
+                throw new IllegalStateException("boom");
+            }
+            createdWindowPaths = paths == null ? List.of() : List.copyOf(paths);
+            createdWindowPath = createdWindowPaths.isEmpty() ? null : createdWindowPaths.getFirst();
             return window;
         }
 
