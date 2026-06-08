@@ -158,6 +158,74 @@ class BufferTest {
         assertEquals(5, context.getTextLayout().getLogicalLineCount());
     }
 
+    @Test
+    void manualFoldsCanNestOpenCloseAndDeleteRecursively() throws IOException {
+        var context = createBufferContext("""
+                one
+                two
+                three
+                four
+                five
+                """, 80);
+        var buffer = context.getBuffer();
+        int two = buffer.getString().indexOf("two");
+        int three = buffer.getString().indexOf("three");
+        int five = buffer.getString().indexOf("five");
+
+        assertTrue(buffer.createFold(two, five));
+        assertTrue(buffer.openFoldAt(two));
+        assertTrue(buffer.createFold(three, five));
+        assertEquals(2, buffer.getFolds().size());
+
+        assertTrue(buffer.closeFoldRecursivelyAt(two));
+        assertTrue(buffer.getFolds().stream().allMatch(Buffer.Fold::collapsed));
+
+        assertTrue(buffer.openFoldRecursivelyAt(two));
+        assertTrue(buffer.getFolds().stream().noneMatch(Buffer.Fold::collapsed));
+        assertEquals(6, context.getTextLayout().getLogicalLineCount());
+
+        assertTrue(buffer.toggleFoldRecursivelyAt(two));
+        assertTrue(buffer.getFolds().stream().allMatch(Buffer.Fold::collapsed));
+        assertTrue(buffer.toggleFoldRecursivelyAt(two));
+        assertTrue(buffer.getFolds().stream().noneMatch(Buffer.Fold::collapsed));
+
+        assertTrue(buffer.deleteFoldRecursivelyAt(two));
+        assertTrue(buffer.getFolds().isEmpty());
+    }
+
+    @Test
+    void manualFoldRangesTrackEditsBeforeAndInsideFold() throws IOException {
+        var context = createBufferContext("""
+                one
+                two
+                three
+                four
+                """, 80);
+        var buffer = context.getBuffer();
+        int two = buffer.getString().indexOf("two");
+        int four = buffer.getString().indexOf("four");
+
+        assertTrue(buffer.createFold(two, four));
+        var fold = buffer.getFolds().getFirst();
+        int originalStart = fold.start();
+        int originalEnd = fold.end();
+
+        buffer.rawInsert(0, "zero\n");
+        fold = buffer.getFolds().getFirst();
+        assertEquals(originalStart + "zero\n".length(), fold.start());
+        assertEquals(originalEnd + "zero\n".length(), fold.end());
+
+        buffer.rawInsert(fold.start() + 1, "inner\n");
+        fold = buffer.getFolds().getFirst();
+        assertEquals(originalStart + "zero\n".length(), fold.start());
+        assertEquals(originalEnd + "zero\n".length() + "inner\n".length(), fold.end());
+
+        buffer.rawRemove(0, "zero\n".length());
+        fold = buffer.getFolds().getFirst();
+        assertEquals(originalStart, fold.start());
+        assertEquals(originalEnd + "inner\n".length(), fold.end());
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }

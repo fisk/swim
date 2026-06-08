@@ -132,12 +132,28 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder(new MotionResponder(".", count -> { allow("repeat edit"); window.repeatLastEdit(count); }));
         _rootResponder.addEventResponder(new MotionResponder("<CTRL>-o", count -> { allow("jump navigation"); repeat(count, window::jumpBack); }));
         _rootResponder.addEventResponder(new MotionResponder("<TAB>", count -> { allow("jump navigation"); repeat(count, window::jumpForward); }));
+        _rootResponder.addEventResponder(foldCreateResponder(window));
         _rootResponder.addEventResponder("z a", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z A", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
         _rootResponder.addEventResponder("z c", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
         _rootResponder.addEventResponder("z o", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z v", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z C", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldRecursivelyAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z O", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z d", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z D", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldRecursivelyAt(
+                window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
+        _rootResponder.addEventResponder("z E", allowed("fold", () -> { window.getBufferContext().getBuffer().deleteAllFolds(); }));
+        _rootResponder.addEventResponder(new MotionResponder("z j", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, true, count), "No next fold"); }));
+        _rootResponder.addEventResponder(new MotionResponder("z k", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, false, count), "No previous fold"); }));
         _rootResponder.addEventResponder("z M", allowed("fold", () -> { window.getBufferContext().getBuffer().closeAllFolds(); }));
         _rootResponder.addEventResponder("z R", allowed("fold", () -> { window.getBufferContext().getBuffer().openAllFolds(); }));
         _rootResponder.addEventResponder("u", allowed("undo", () -> { window.getBufferContext().getBuffer().undo(); }));
@@ -584,6 +600,60 @@ public class NormalMode extends Mode {
         };
     }
 
+    private EventResponder foldCreateResponder(Window window) {
+        return new EventResponder() {
+            private Range _range;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _range = null;
+                var sequence = keySequence(events);
+                CountParse count = parseCount(sequence, 0);
+                int index = count.index();
+                if (index >= sequence.size() || !isCharacter(sequence.get(index), 'z')) {
+                    return Response.NO;
+                }
+                if (sequence.size() == index + 1) {
+                    return Response.MAYBE;
+                }
+                var command = sequence.get(index + 1);
+                if (isCharacter(command, 'F')) {
+                    if (sequence.size() != index + 2) {
+                        return Response.NO;
+                    }
+                    _range = window.getBufferContext().getBuffer().lineRangeForCount(count.count());
+                    return Response.YES;
+                }
+                if (!isCharacter(command, 'f')) {
+                    return Response.NO;
+                }
+                if (sequence.size() == index + 2) {
+                    return Response.MAYBE;
+                }
+                var motion = parseOperatorMotion(window, sequence, index + 2, count.count(), null);
+                if (motion.status() != ParseStatus.YES) {
+                    return motion.status().response();
+                }
+                if (sequence.size() != motion.index()) {
+                    return Response.NO;
+                }
+                _range = motion.range();
+                return Response.YES;
+            }
+
+            @Override
+            public void respond() {
+                if (_range == null) {
+                    return;
+                }
+                window.allowEditorDriveAction("fold");
+                if (!window.getBufferContext().getBuffer().createFold(_range.getStart(), _range.getEnd())) {
+                    window.getCommandView().setMessage("Cannot create fold for that range");
+                }
+            }
+        };
+    }
+
     private EventResponder operatorResponder(Window window) {
         return new EventResponder() {
             private OperatorExecution _execution;
@@ -689,7 +759,7 @@ public class NormalMode extends Mode {
         int start = buffer.getCursor().getPosition();
         KeyStroke first = sequence.get(motionIndex);
 
-        if (isRepeatedOperator(operator, first, sequence, motionIndex)) {
+        if (operator != null && isRepeatedOperator(operator, first, sequence, motionIndex)) {
             var range = buffer.lineRangeForCount(count);
             return OperatorMotionParse.yes(motionIndex + repeatedOperatorLength(operator, sequence, motionIndex), range, true);
         }
@@ -1069,6 +1139,19 @@ public class NormalMode extends Mode {
     }
 
     private record SearchMotion(ParseStatus status, int index, Pattern pattern) {
+    }
+
+    private static boolean goFoldStart(Window window, boolean forward, int count) {
+        var buffer = window.getBufferContext().getBuffer();
+        int position = buffer.getCursor().getPosition();
+        int target = forward
+                ? buffer.nextFoldStartPosition(position, count)
+                : buffer.previousFoldStartPosition(position, count);
+        if (target < 0) {
+            return false;
+        }
+        buffer.getCursor().setPosition(target);
+        return true;
     }
 
     private void announceIfUnmoved(boolean changed, String message) {

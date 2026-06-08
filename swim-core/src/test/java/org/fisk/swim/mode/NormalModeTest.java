@@ -319,6 +319,91 @@ class NormalModeTest {
     }
 
     @Test
+    void normalModeCreatesFoldsWithMotionAndLineCount() throws Exception {
+        Path path = tempDir.resolve("normal-fold-create.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                five
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('f'), HeadlessWindowHarness.key('j'));
+
+            assertEquals(1, buffer.getFolds().size());
+            assertEquals(buffer.getString().indexOf("two"), buffer.getFolds().getFirst().start());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('E'));
+            buffer.getCursor().setPosition(0);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('F'));
+
+            assertEquals(1, buffer.getFolds().size());
+            assertEquals(0, buffer.getFolds().getFirst().start());
+            assertEquals(buffer.getString().indexOf("two"), buffer.getFolds().getFirst().end());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('E'));
+            buffer.getCursor().setPosition(0);
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('3'), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('F'));
+
+            assertEquals(1, buffer.getFolds().size());
+            assertEquals(0, buffer.getFolds().getFirst().start());
+            assertEquals(buffer.getString().indexOf("four"), buffer.getFolds().getFirst().end());
+        }
+    }
+
+    @Test
+    void normalModeNavigatesAndDeletesFolds() throws Exception {
+        Path path = tempDir.resolve("normal-fold-navigation.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                five
+                six
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            int two = buffer.getString().indexOf("two");
+            int four = buffer.getString().indexOf("four");
+            int six = buffer.getString().indexOf("six");
+            assertTrue(buffer.createFold(two, four));
+            assertTrue(buffer.createFold(four, six));
+
+            buffer.getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('j'));
+            assertEquals(two, buffer.getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('j'));
+            assertEquals(four, buffer.getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('k'));
+            assertEquals(two, buffer.getCursor().getPosition());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('d'));
+            assertEquals(1, buffer.getFolds().size());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('E'));
+            assertTrue(buffer.getFolds().isEmpty());
+        }
+    }
+
+    @Test
     void classicWordMotionsAndCountsWork() throws Exception {
         Path path = tempDir.resolve("word-motions.txt");
         Files.writeString(path, "alpha beta gamma\n");

@@ -281,10 +281,9 @@ class TmuxEditorModesIT {
             session.waitForText("four", STARTUP_TIMEOUT);
 
             session.sendLiteral("j");
-            session.sendLiteral("V");
-            session.sendLiteral("j");
             session.sendLiteral("z");
             session.sendLiteral("f");
+            session.sendLiteral("j");
             Thread.sleep(300);
             String folded = session.capturePane();
             org.junit.jupiter.api.Assertions.assertTrue(!folded.contains("three"),

@@ -169,6 +169,7 @@ public class Buffer {
         if (_readOnly) {
             return;
         }
+        adjustFoldsForInsert(position, str.length());
         _string.insert(position, str);
         _version++;
         var decoration = new Decoration();
@@ -185,7 +186,9 @@ public class Buffer {
         if (_readOnly) {
             return;
         }
+        adjustFoldsForRemove(startPosition, endPosition);
         _string.delete(startPosition, endPosition);
+        removeInvalidFolds();
         _version++;
         var decoration = new Decoration();
         decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
@@ -970,54 +973,74 @@ public class Buffer {
     }
 
     public boolean createFold(int selectionStart, int selectionEnd) {
-        var startLine = _bufferContext.getTextLayout().getPhysicalLineAt(selectionStart);
-        var endLine = _bufferContext.getTextLayout().getPhysicalLineAt(Math.max(selectionStart, selectionEnd - 1));
-        int start = startLine.getStartPosition();
-        int end = endLine.getEndPosition(true);
-        if (end <= start || startLine == endLine) {
+        var range = foldLineRange(selectionStart, selectionEnd);
+        int start = range.getStart();
+        int end = range.getEnd();
+        if (end <= start) {
             return false;
         }
-        _folds.removeIf(fold -> overlaps(fold.start(), fold.end(), start, end));
+        if (hasCrossingFold(start, end)) {
+            return false;
+        }
+        _folds.removeIf(fold -> fold.start() == start && fold.end() == end);
         _folds.add(new Fold(start, end, true));
-        _folds.sort(java.util.Comparator.comparingInt(Fold::start));
+        sortFolds();
         _bufferContext.getTextLayout().calculate();
         return true;
     }
 
+    public boolean createFoldForLineCount(int count) {
+        var range = lineRangeForCount(Math.max(1, count));
+        return createFold(range.getStart(), range.getEnd());
+    }
+
     public boolean toggleFoldAt(int position) {
-        for (int i = 0; i < _folds.size(); i++) {
-            var fold = _folds.get(i);
-            if (fold.contains(position)) {
-                _folds.set(i, new Fold(fold.start(), fold.end(), !fold.collapsed()));
-                _bufferContext.getTextLayout().calculate();
-                return true;
-            }
+        int index = foldIndexAt(position);
+        if (index >= 0) {
+            var fold = _folds.get(index);
+            _folds.set(index, new Fold(fold.start(), fold.end(), !fold.collapsed()));
+            _bufferContext.getTextLayout().calculate();
+            return true;
         }
         return false;
     }
 
     public boolean closeFoldAt(int position) {
-        for (int i = 0; i < _folds.size(); i++) {
-            var fold = _folds.get(i);
-            if (fold.contains(position)) {
-                _folds.set(i, new Fold(fold.start(), fold.end(), true));
-                _bufferContext.getTextLayout().calculate();
-                return true;
-            }
+        int index = foldIndexAt(position);
+        if (index >= 0) {
+            var fold = _folds.get(index);
+            _folds.set(index, new Fold(fold.start(), fold.end(), true));
+            _bufferContext.getTextLayout().calculate();
+            return true;
         }
         return false;
     }
 
     public boolean openFoldAt(int position) {
-        for (int i = 0; i < _folds.size(); i++) {
-            var fold = _folds.get(i);
-            if (fold.contains(position)) {
-                _folds.set(i, new Fold(fold.start(), fold.end(), false));
-                _bufferContext.getTextLayout().calculate();
-                return true;
-            }
+        int index = foldIndexAt(position);
+        if (index >= 0) {
+            var fold = _folds.get(index);
+            _folds.set(index, new Fold(fold.start(), fold.end(), false));
+            _bufferContext.getTextLayout().calculate();
+            return true;
         }
         return false;
+    }
+
+    public boolean closeFoldRecursivelyAt(int position) {
+        return setFoldTreeCollapsedAt(position, true);
+    }
+
+    public boolean openFoldRecursivelyAt(int position) {
+        return setFoldTreeCollapsedAt(position, false);
+    }
+
+    public boolean toggleFoldRecursivelyAt(int position) {
+        int index = foldIndexAt(position);
+        if (index < 0) {
+            return false;
+        }
+        return setFoldTreeCollapsedAt(position, !_folds.get(index).collapsed());
     }
 
     public void openAllFolds() {
@@ -1028,12 +1051,200 @@ public class Buffer {
         _bufferContext.getTextLayout().calculate();
     }
 
+    public boolean deleteFoldAt(int position) {
+        int index = foldIndexAt(position);
+        if (index < 0) {
+            return false;
+        }
+        _folds.remove(index);
+        _bufferContext.getTextLayout().calculate();
+        return true;
+    }
+
+    public boolean deleteFoldRecursivelyAt(int position) {
+        int index = foldIndexAt(position);
+        if (index < 0) {
+            return false;
+        }
+        var root = _folds.get(index);
+        _folds.removeIf(fold -> isContainedBy(fold, root));
+        _bufferContext.getTextLayout().calculate();
+        return true;
+    }
+
+    public void deleteAllFolds() {
+        if (_folds.isEmpty()) {
+            return;
+        }
+        _folds.clear();
+        _bufferContext.getTextLayout().calculate();
+    }
+
+    public int nextFoldStartPosition(int position, int count) {
+        int remaining = Math.max(1, count);
+        int last = -1;
+        for (var fold : _folds) {
+            if (fold.start() <= position || fold.start() == last) {
+                continue;
+            }
+            last = fold.start();
+            if (--remaining == 0) {
+                return fold.start();
+            }
+        }
+        return -1;
+    }
+
+    public int previousFoldStartPosition(int position, int count) {
+        int remaining = Math.max(1, count);
+        int last = -1;
+        for (int i = _folds.size() - 1; i >= 0; i--) {
+            var fold = _folds.get(i);
+            if (fold.start() >= position || fold.start() == last) {
+                continue;
+            }
+            last = fold.start();
+            if (--remaining == 0) {
+                return fold.start();
+            }
+        }
+        return -1;
+    }
+
     public void closeAllFolds() {
         for (int i = 0; i < _folds.size(); i++) {
             var fold = _folds.get(i);
             _folds.set(i, new Fold(fold.start(), fold.end(), true));
         }
         _bufferContext.getTextLayout().calculate();
+    }
+
+    private Range foldLineRange(int selectionStart, int selectionEnd) {
+        int startPosition = Math.min(selectionStart, selectionEnd);
+        int endPosition = Math.max(selectionStart, selectionEnd);
+        var startLine = _bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
+        var endLine = _bufferContext.getTextLayout().getPhysicalLineAt(Math.max(startPosition, endPosition - 1));
+        return Range.create(startLine.getStartPosition(), endLine.getEndPosition(true));
+    }
+
+    private boolean setFoldTreeCollapsedAt(int position, boolean collapsed) {
+        int index = foldIndexAt(position);
+        if (index < 0) {
+            return false;
+        }
+        var root = _folds.get(index);
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (isContainedBy(fold, root)) {
+                _folds.set(i, new Fold(fold.start(), fold.end(), collapsed));
+            }
+        }
+        _bufferContext.getTextLayout().calculate();
+        return true;
+    }
+
+    private int foldIndexAt(int position) {
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (fold.collapsed() && fold.start() == position) {
+                return i;
+            }
+        }
+        int bestIndex = -1;
+        int bestLength = Integer.MAX_VALUE;
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (fold.contains(position)) {
+                int length = fold.end() - fold.start();
+                if (length < bestLength) {
+                    bestLength = length;
+                    bestIndex = i;
+                }
+            }
+        }
+        return bestIndex;
+    }
+
+    private boolean hasCrossingFold(int start, int end) {
+        for (var fold : _folds) {
+            boolean overlaps = start < fold.end() && fold.start() < end;
+            boolean nested = isContainedBy(start, end, fold.start(), fold.end())
+                    || isContainedBy(fold.start(), fold.end(), start, end);
+            if (overlaps && !nested) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void adjustFoldsForInsert(int position, int length) {
+        if (length <= 0 || _folds.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            if (position < fold.start()) {
+                _folds.set(i, new Fold(fold.start() + length, fold.end() + length, fold.collapsed()));
+            } else if (position <= fold.end()) {
+                _folds.set(i, new Fold(fold.start(), fold.end() + length, fold.collapsed()));
+            }
+        }
+        sortFolds();
+    }
+
+    private void adjustFoldsForRemove(int start, int end) {
+        int length = end - start;
+        if (length <= 0 || _folds.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < _folds.size(); i++) {
+            var fold = _folds.get(i);
+            int newStart = translateFoldPositionAfterRemove(fold.start(), start, end);
+            int newEnd = translateFoldPositionAfterRemove(fold.end(), start, end);
+            _folds.set(i, new Fold(newStart, newEnd, fold.collapsed()));
+        }
+        sortFolds();
+    }
+
+    private int translateFoldPositionAfterRemove(int position, int start, int end) {
+        if (position <= start) {
+            return position;
+        }
+        if (position >= end) {
+            return position - (end - start);
+        }
+        return start;
+    }
+
+    private void removeInvalidFolds() {
+        _folds.removeIf(fold -> fold.end() <= fold.start() || hasCrossingFoldExcluding(fold));
+        sortFolds();
+    }
+
+    private boolean hasCrossingFoldExcluding(Fold target) {
+        for (var fold : _folds) {
+            if (fold == target || fold.start() == target.start() && fold.end() == target.end()) {
+                continue;
+            }
+            boolean overlaps = target.start() < fold.end() && fold.start() < target.end();
+            boolean nested = isContainedBy(target, fold) || isContainedBy(fold, target);
+            if (overlaps && !nested) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void sortFolds() {
+        _folds.sort(java.util.Comparator.comparingInt(Fold::start).thenComparing((left, right) -> right.end() - left.end()));
+    }
+
+    private static boolean isContainedBy(Fold fold, Fold container) {
+        return isContainedBy(fold.start(), fold.end(), container.start(), container.end());
+    }
+
+    private static boolean isContainedBy(int start, int end, int containerStart, int containerEnd) {
+        return start >= containerStart && end <= containerEnd;
     }
 
     public Range textObjectRange(String object, boolean around) {
@@ -1441,10 +1652,6 @@ public class Buffer {
             escapes++;
         }
         return escapes % 2 == 1;
-    }
-
-    private static boolean overlaps(int leftStart, int leftEnd, int rightStart, int rightEnd) {
-        return leftStart < rightEnd && rightStart < leftEnd;
     }
 
     static Pattern _wordPattern = Pattern.compile("\\w");
