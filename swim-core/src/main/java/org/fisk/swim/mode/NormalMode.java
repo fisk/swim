@@ -49,6 +49,9 @@ public class NormalMode extends Mode {
             if (window.exitShellBrowseToPrompt()) {
                 return;
             }
+            if (window.exitNemoBrowseToPrompt()) {
+                return;
+            }
             window.beginRepeatRecording("i");
             window.switchToMode(window.getInputMode());
         });

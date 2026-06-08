@@ -17,9 +17,12 @@ import org.fisk.swim.text.AttributedString;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 class ChatPanelViewTest {
     @TempDir
@@ -205,6 +208,36 @@ class ChatPanelViewTest {
         view.appendMessage("nemo", "world");
 
         assertEquals(List.of("me> hello", "nemo> world"), view.getDisplayLines());
+    }
+
+    @Test
+    void mouseWheelScrollsTranscript() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        for (int i = 0; i < 12; i++) {
+            view.appendMessage("nemo", "message " + i);
+        }
+        int bottom = view.getStartLine();
+
+        dispatch(view, new MouseAction(MouseActionType.SCROLL_UP, 5, new TerminalPosition(1, 1)));
+
+        assertTrue(view.getStartLine() < bottom);
+
+        dispatch(view, new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(1, 1)));
+
+        assertEquals(bottom, view.getStartLine());
+    }
+
+    @Test
+    void mouseClickInInputMovesDraftCursor() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        dispatch(view, new KeyStroke('a', false, false));
+        dispatch(view, new KeyStroke('b', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
+
+        dispatch(view, new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(3, 4)));
+        dispatch(view, new KeyStroke('x', false, false));
+
+        assertEquals("xabc", view.getInputText());
     }
 
     @Test

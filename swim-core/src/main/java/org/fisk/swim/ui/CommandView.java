@@ -66,7 +66,7 @@ public class CommandView extends View {
             new CommandSpec("marks", List.of(), "", "show marks"),
             new CommandSpec("jumps", List.of(), "", "show the jump list"),
             new CommandSpec("slack", List.of(), "", "open the Slack client"),
-            new CommandSpec("nemo", List.of(), "<question>", "ask Nemo about the current file"),
+            new CommandSpec("nemo", List.of(), "<question>", "open Nemo workspace and optionally ask a question"),
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
             new CommandSpec("shell", List.of("sh"), "", "open a shell workspace"),
@@ -391,7 +391,7 @@ public class CommandView extends View {
             SlackUiSupport.toggle(Window.getInstance());
             break;
         case "nemo":
-            org.fisk.swim.nemo.NemoClient.getInstance().run(Window.getInstance().getBufferContext(), argument);
+            org.fisk.swim.nemo.NemoClient.getInstance().runWorkspace(Window.getInstance().getBufferContext(), argument);
             break;
         case "reload":
             SwimRuntime.reload();

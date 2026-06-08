@@ -266,6 +266,14 @@ public class NemoClient {
     }
 
     public void run(BufferContext context, String question) {
+        run(context, question, false);
+    }
+
+    public void runWorkspace(BufferContext context, String question) {
+        run(context, question, true);
+    }
+
+    private void run(BufferContext context, String question, boolean workspaceMode) {
         question = question.trim();
         if (mailVisibleToNemo()) {
             Window window = Window.getInstance();
@@ -275,7 +283,7 @@ public class NemoClient {
             return;
         }
         Configuration configuration = loadConfiguration(getConfigPath());
-        var conversation = ensureConversation(context, configuration);
+        var conversation = ensureConversation(context, configuration, workspaceMode);
         if (question.startsWith(":")) {
             handleCommand(conversation, question);
         } else if (!question.equals("")) {
@@ -4360,11 +4368,18 @@ public class NemoClient {
     }
 
     private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration) {
+        return ensureConversation(context, configuration, false);
+    }
+
+    private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration, boolean workspaceMode) {
         ensureSessionsLoaded();
         Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
         Conversation conversation = currentVisibleConversation();
         if (conversation != null && conversation._workspaceRoot.equals(workspaceRoot)) {
             bindConversation(conversation, context, configuration);
+            if (workspaceMode) {
+                showConversationWorkspace(conversation);
+            }
             return conversation;
         }
 
@@ -4374,7 +4389,11 @@ public class NemoClient {
         }
 
         bindConversation(conversation, context, configuration);
-        showConversation(conversation);
+        if (workspaceMode) {
+            showConversationWorkspace(conversation);
+        } else {
+            showConversation(conversation);
+        }
         return conversation;
     }
 
@@ -4444,8 +4463,28 @@ public class NemoClient {
             window.hidePanel();
         }
 
-        conversation._panelView = createPanelView(conversation);
+        if (conversation._panelView == null) {
+            conversation._panelView = createPanelView(conversation);
+        }
         window.showPanel(conversation._panelView);
+        replayConversationIntoVisiblePanel(conversation);
+        _activeSessionId = conversation._id;
+        _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
+        persistSessions();
+    }
+
+    private synchronized void showConversationWorkspace(Conversation conversation) {
+        var window = Window.getInstance();
+        if (window == null) {
+            throw new IllegalStateException("No active window");
+        }
+        if (conversation._panelView == null) {
+            conversation._panelView = createPanelView(conversation);
+        }
+        if (!window.showNemoWorkspace(conversation._panelView)) {
+            showConversation(conversation);
+            return;
+        }
         replayConversationIntoVisiblePanel(conversation);
         _activeSessionId = conversation._id;
         _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);

@@ -13,6 +13,8 @@ import org.fisk.swim.terminal.TerminalContext;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
+import com.googlecode.lanterna.input.MouseAction;
+import com.googlecode.lanterna.input.MouseActionType;
 
 public class ChatPanelView extends View {
     private static final String HISTORY_ME_PREFIX = "me> ";
@@ -143,6 +145,15 @@ public class ChatPanelView extends View {
         _messages.add(new ChatMessage(speaker, text));
         scrollToBottom();
         setNeedsRedraw();
+    }
+
+    String buildBrowseText() {
+        var lines = new ArrayList<String>(getDisplayLines());
+        if (_input.length() > 0) {
+            lines.add("");
+            lines.add("draft> " + _input);
+        }
+        return String.join("\n", lines);
     }
 
     public void setMessages(List<ChatMessage> messages) {
@@ -281,7 +292,9 @@ public class ChatPanelView extends View {
     private void close() {
         var window = Window.getInstance();
         if (window != null) {
-            window.hidePanel();
+            if (!window.enterNemoBrowse(this)) {
+                window.hidePanel();
+            }
         }
     }
 
@@ -464,6 +477,25 @@ public class ChatPanelView extends View {
         setNeedsRedraw();
     }
 
+    private int visibleInputHeight() {
+        return Math.max(1, getBounds().getSize().getHeight() - 1 - bodyHeight());
+    }
+
+    private int visibleInputStart(List<String> inputLines) {
+        return Math.min(_inputScrollLine, Math.max(0, inputLines.size() - visibleInputHeight()));
+    }
+
+    private boolean canScrollInput() {
+        return inputLines().size() > visibleInputHeight();
+    }
+
+    private void scrollInput(int amount) {
+        var lines = inputLines();
+        int maxStart = Math.max(0, lines.size() - visibleInputHeight());
+        _inputScrollLine = Math.max(0, Math.min(maxStart, _inputScrollLine + amount));
+        setNeedsRedraw();
+    }
+
     @Override
     public Response processEvent(KeyStrokes events) {
         _responseAction = null;
@@ -477,6 +509,9 @@ public class ChatPanelView extends View {
         }
 
         var event = events.current();
+        if (event instanceof MouseAction mouseAction) {
+            return processMouseAction(mouseAction);
+        }
         if (event.getKeyType() == TerminalContext.BRACKETED_PASTE_START_KEY) {
             _responseAction = () -> _bracketedPasteActive = true;
             return Response.YES;
@@ -636,6 +671,85 @@ public class ChatPanelView extends View {
         }
     }
 
+    private Response processMouseAction(MouseAction action) {
+        if (action.getPosition() == null) {
+            return Response.NO;
+        }
+        Point origin = absoluteOrigin();
+        int localX = action.getPosition().getColumn() - origin.getX();
+        int localY = action.getPosition().getRow() - origin.getY();
+        int width = getBounds().getSize().getWidth();
+        int height = getBounds().getSize().getHeight();
+        if (localX < 0 || localY < 0 || localX >= width || localY >= height) {
+            return Response.NO;
+        }
+
+        if (action.getActionType() == MouseActionType.SCROLL_UP
+                || action.getActionType() == MouseActionType.SCROLL_DOWN) {
+            int delta = action.getActionType() == MouseActionType.SCROLL_DOWN ? 3 : -3;
+            _responseAction = () -> scrollForMouse(localY, delta);
+            return Response.YES;
+        }
+        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+            _responseAction = () -> {
+                var window = Window.getInstance();
+                if (window != null) {
+                    window.activateView(this);
+                }
+                moveCursorForMouse(localX, localY);
+            };
+            return Response.YES;
+        }
+        if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+            _responseAction = () -> {};
+            return Response.YES;
+        }
+        return Response.NO;
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (View parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
+    }
+
+    private void scrollForMouse(int localY, int delta) {
+        int inputTop = getBounds().getSize().getHeight() - visibleInputHeight();
+        if (localY >= inputTop && canScrollInput()) {
+            scrollInput(delta);
+        } else if (delta < 0) {
+            scrollUp(-delta);
+        } else {
+            scrollDown(delta);
+        }
+    }
+
+    private void moveCursorForMouse(int localX, int localY) {
+        int inputTop = getBounds().getSize().getHeight() - visibleInputHeight();
+        if (localY < inputTop) {
+            return;
+        }
+        var lines = inputLines();
+        int lineIndex = visibleInputStart(lines) + localY - inputTop;
+        if (lineIndex < 0 || lineIndex >= lines.size()) {
+            return;
+        }
+        int prefixLength = _promptStyle.inputPrefix().length() + 1;
+        int column = Math.max(0, localX - prefixLength);
+        int offset = 0;
+        for (int i = 0; i < lineIndex; i++) {
+            offset += lines.get(i).length();
+        }
+        offset += Math.min(column, lines.get(lineIndex).length());
+        _cursorOffset = Math.max(0, Math.min(_input.length(), offset));
+        ensureInputVisible();
+        refreshChrome();
+    }
+
     private static String pasteText(KeyStrokes events) {
         var text = new StringBuilder();
         for (var event : events) {
@@ -717,8 +831,8 @@ public class ChatPanelView extends View {
         }
 
         var inputLines = inputLines();
-        int inputHeight = Math.max(1, rect.getSize().getHeight() - 1 - bodyHeight);
-        int inputStart = Math.min(_inputScrollLine, Math.max(0, inputLines.size() - 1));
+        int inputHeight = visibleInputHeight();
+        int inputStart = visibleInputStart(inputLines);
         int inputY = rect.getPoint().getY() + rect.getSize().getHeight() - inputHeight;
         int cursorLine = cursorLine();
         int cursorColumn = cursorColumn(cursorLine);

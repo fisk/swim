@@ -122,9 +122,11 @@ public class HelpIndex {
                 "i shows the Inbox, a shows all open todos, and q returns to the previous workspace.",
                 "Todo items are stored in ~/.swim/todo/todos.mv.db.");
         addSection(items, "Nemo",
-                "Press ! or run :nemo <question> to open Nemo for the current workspace.",
+                "Press ! to open the Nemo popup, or run :nemo <question> to open Nemo as a workspace.",
                 "Inside Nemo, press Enter to send; Shift-Enter, Ctrl-Enter, Alt-Enter, or Ctrl-J insert newlines.",
                 "Pasted multiline text stays in the Nemo draft, so exception traces can be edited before sending.",
+                "Mouse wheel scrolling works in the Nemo popup and workspace.",
+                "In a Nemo workspace, Esc turns the chat into a read-only transcript buffer; press i to return to live input.",
                 "Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf.",
                 "Nemo supports stdio MCP servers configured in ~/.swim/nemo/nemo.conf.",
                 "MCP tools are exposed as mcp__server__tool, require approval unless full-access, and are hidden in read-only mode.",

@@ -464,6 +464,54 @@ class WindowTest {
     }
 
     @Test
+    void clickingNemoPanelRestoresFocusAfterBufferClick() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("nemo-mouse.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+            assertTrue(window.showPanel(chat));
+
+            Rect bufferBounds = absoluteScreenBounds(window.getBufferContext().getBufferView());
+            click(window, bufferBounds.getPoint().getX() + 2, bufferBounds.getPoint().getY() + 1);
+            assertInstanceOf(BufferView.class, window.getActiveView());
+
+            Rect chatBounds = absoluteScreenBounds(chat);
+            click(window, chatBounds.getPoint().getX() + 2, chatBounds.getPoint().getY() + 1);
+
+            assertSame(chat, window.getActiveView(), "chat=" + absoluteScreenBounds(chat)
+                    + " active=" + window.getActiveView().getBounds()
+                    + " subviews=" + rootSubviews(window).stream()
+                            .map(view -> view.getClass().getSimpleName() + ":" + absoluteScreenBounds(view))
+                            .toList());
+            assertSame(chat, HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+        }
+    }
+
+    @Test
+    void nemoWorkspaceEscapeEntersBrowseModeAndIReturnsToInput() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("nemo-workspace.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+            chat.appendMessage("me", "hello");
+            chat.appendMessage("nemo", "world");
+
+            assertTrue(window.showNemoWorkspace(chat));
+            assertSame(chat, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(chat, HeadlessWindowHarness.escape());
+
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals("NORMAL", window.modeNameForDisplay());
+            assertTrue(window.getBufferContext().getBuffer().isReadOnly());
+            assertTrue(window.getBufferContext().getBuffer().getString().contains("nemo> world"));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('i'));
+
+            assertSame(chat, window.getActiveView());
+            assertEquals("INPUT", window.modeNameForDisplay());
+        }
+    }
+
+    @Test
     void shellPanelOverlaysWorkspaceInsteadOfJoiningSplitTree() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();

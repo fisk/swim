@@ -65,6 +65,7 @@ public class Window implements Drawable {
         SLACK,
         PLUGIN,
         SHELL,
+        NEMO,
         TODO
     }
 
@@ -76,6 +77,8 @@ public class Window implements Drawable {
         private BufferContext _bufferContext;
         private ShellPanelView _shellView;
         private BufferContext _shellBrowseContext;
+        private ChatPanelView _nemoView;
+        private BufferContext _nemoBrowseContext;
         private IdentityHashMap<BufferView, BufferContext> _bufferContextsByView;
         private IdentityHashMap<BufferContext, Integer> _bufferViewCounts;
         private NormalMode _normalMode;
@@ -487,6 +490,35 @@ public class Window implements Drawable {
         return openShellWorkspace();
     }
 
+    public boolean showNemoWorkspace(ChatPanelView chatView) {
+        ensureLayoutState();
+        if (blockEditorDriveAction("Nemo workspace", "opening Nemo from editor control is not allowed")) {
+            return false;
+        }
+        if (chatView == null) {
+            return false;
+        }
+        if (_panelView != null && _panelView != chatView) {
+            hidePanel();
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.NEMO && workspace._nemoView == chatView) {
+                boolean activated = activateWorkspace(workspace);
+                if (activated && workspace._workspaceView != chatView) {
+                    exitNemoBrowseToPrompt();
+                }
+                return activated;
+            }
+        }
+        if (_panelView == chatView) {
+            _panelView = null;
+        }
+        chatView.removeFromParent();
+        WorkspaceState workspace = createViewWorkspace(chatView, WorkspaceKind.NEMO);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
     public boolean showShellSplitHorizontally() {
         if (blockEditorDriveAction("shell split", "opening shell input through drive_editor is not allowed")) {
             return false;
@@ -540,6 +572,48 @@ public class Window implements Drawable {
         return true;
     }
 
+    public boolean enterNemoBrowse(ChatPanelView chatView) {
+        ensureLayoutState();
+        if (_currentWorkspace == null || _currentWorkspace._kind != WorkspaceKind.NEMO || chatView == null
+                || _currentWorkspace._nemoView != chatView) {
+            return false;
+        }
+        if (_workspaceView != chatView) {
+            return true;
+        }
+        var browse = createNemoBrowseContext(chatView);
+        chatView.removeFromParent();
+        _currentWorkspace._nemoBrowseContext = browse;
+        _currentWorkspace._workspaceView = browse.getBufferView();
+        _currentWorkspace._activeView = browse.getBufferView();
+        _currentWorkspace._activeBufferView = browse.getBufferView();
+        _currentWorkspace._bufferContext = browse;
+        _currentWorkspace._bufferContextsByView = new IdentityHashMap<>();
+        _currentWorkspace._bufferContextsByView.put(browse.getBufferView(), browse);
+        _currentWorkspace._bufferViewCounts = new IdentityHashMap<>();
+        _currentWorkspace._bufferViewCounts.put(browse, 1);
+        initializeBufferWorkspaceModes(_currentWorkspace);
+        installWorkspaceBufferModes(_currentWorkspace);
+
+        _workspaceView = browse.getBufferView();
+        _activeView = browse.getBufferView();
+        _activeBufferView = browse.getBufferView();
+        _bufferContext = browse;
+        if (_workspaceView.getParent() == null) {
+            attachWorkspaceView();
+        }
+        applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
+        if (_currentMode != null) {
+            _activeBufferView.setFirstResponder(_currentMode);
+        }
+        if (_rootView != null) {
+            _rootView.setFirstResponder(_activeView);
+            _rootView.setNeedsRedraw();
+        }
+        refreshChromeState();
+        return true;
+    }
+
     public boolean exitShellBrowseToPrompt() {
         ensureLayoutState();
         if (_currentWorkspace == null || _currentWorkspace._kind != WorkspaceKind.SHELL || _currentWorkspace._shellView == null) {
@@ -553,6 +627,33 @@ public class Window implements Drawable {
         }
         _workspaceView = _currentWorkspace._shellView;
         _activeView = _currentWorkspace._shellView;
+        _currentWorkspace._workspaceView = _workspaceView;
+        _currentWorkspace._activeView = _activeView;
+        if (_workspaceView.getParent() == null) {
+            attachWorkspaceView();
+        }
+        applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
+        if (_rootView != null) {
+            _rootView.setFirstResponder(_activeView);
+            _rootView.setNeedsRedraw();
+        }
+        refreshChromeState();
+        return true;
+    }
+
+    public boolean exitNemoBrowseToPrompt() {
+        ensureLayoutState();
+        if (_currentWorkspace == null || _currentWorkspace._kind != WorkspaceKind.NEMO || _currentWorkspace._nemoView == null) {
+            return false;
+        }
+        if (_workspaceView == _currentWorkspace._nemoView) {
+            return true;
+        }
+        if (_workspaceView != null) {
+            _workspaceView.removeFromParent();
+        }
+        _workspaceView = _currentWorkspace._nemoView;
+        _activeView = _currentWorkspace._nemoView;
         _currentWorkspace._workspaceView = _workspaceView;
         _currentWorkspace._activeView = _activeView;
         if (_workspaceView.getParent() == null) {
@@ -807,6 +908,9 @@ public class Window implements Drawable {
         ensureLayoutState();
         if (_activeView instanceof ShellPanelView shellPanelView) {
             return shellPanelView.modeName();
+        }
+        if (_activeView instanceof ChatPanelView) {
+            return "INPUT";
         }
         return _currentMode == null ? "NORMAL" : _currentMode.getName();
     }
@@ -2273,6 +2377,7 @@ public class Window implements Drawable {
         if (panelView.getParent() == _rootView) {
             panelView.removeFromParent();
         }
+        attachWorkspaceView();
         int index = rootSubviews().size();
         if (_modeLineView != null && _modeLineView.getParent() == _rootView) {
             index = rootSubviews().indexOf(_modeLineView);
@@ -3453,6 +3558,7 @@ public class Window implements Drawable {
         workspace._workspaceView = view;
         workspace._activeView = view;
         workspace._shellView = view instanceof ShellPanelView shellPanelView ? shellPanelView : null;
+        workspace._nemoView = view instanceof ChatPanelView chatPanelView ? chatPanelView : null;
         workspace._bufferContextsByView = new IdentityHashMap<>();
         workspace._bufferViewCounts = new IdentityHashMap<>();
         return workspace;
@@ -3674,6 +3780,9 @@ public class Window implements Drawable {
         if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.TODO) {
             return WorkspaceKind.TODO;
         }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.NEMO) {
+            return WorkspaceKind.NEMO;
+        }
         if (_workspaceView instanceof MailPanelView) {
             return WorkspaceKind.MAIL;
         }
@@ -3685,6 +3794,9 @@ public class Window implements Drawable {
         }
         if (_workspaceView instanceof ShellPanelView) {
             return WorkspaceKind.SHELL;
+        }
+        if (_workspaceView instanceof ChatPanelView) {
+            return WorkspaceKind.NEMO;
         }
         if (_workspaceView instanceof PluginPanelView) {
             return WorkspaceKind.PLUGIN;
@@ -3750,6 +3862,10 @@ public class Window implements Drawable {
                 && workspace._shellView != workspace._workspaceView) {
             workspace._shellView.removeFromParent();
         }
+        if (workspace._kind == WorkspaceKind.NEMO && workspace._nemoView != null
+                && workspace._nemoView != workspace._workspaceView) {
+            workspace._nemoView.removeFromParent();
+        }
     }
 
     private List<String> recentWindowLabels() {
@@ -3769,6 +3885,7 @@ public class Window implements Drawable {
         case MAIL -> "mail";
         case SLACK -> "slack";
         case SHELL -> workspace._workspaceView instanceof ShellPanelView shellPanelView ? shellPanelView.getTitle() : "shell";
+        case NEMO -> workspace._nemoView instanceof ChatPanelView chatPanelView ? chatPanelView.getTitle() : "nemo";
         case TODO -> "todo";
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
@@ -3801,6 +3918,20 @@ public class Window implements Drawable {
         var bounds = shellView.getBounds();
         var context = new BufferContext(Rect.create(0, 0, bounds.getSize().getWidth(), bounds.getSize().getHeight()), null);
         String text = shellView.buildBrowseText();
+        if (!text.isEmpty()) {
+            context.getBuffer().rawInsert(0, text);
+        }
+        context.getBuffer().setReadOnly(true);
+        context.getTextLayout().calculate();
+        context.getBuffer().getCursor().setPosition(context.getBuffer().getLength());
+        context.getBufferView().adaptViewToCursor();
+        return context;
+    }
+
+    private static BufferContext createNemoBrowseContext(ChatPanelView chatView) {
+        var bounds = chatView.getBounds();
+        var context = new BufferContext(Rect.create(0, 0, bounds.getSize().getWidth(), bounds.getSize().getHeight()), null);
+        String text = chatView.buildBrowseText();
         if (!text.isEmpty()) {
             context.getBuffer().rawInsert(0, text);
         }

@@ -160,6 +160,9 @@ public class View implements Drawable, EventResponder {
     private Response processMouseAction(MouseAction action) {
         View target = findTopmostSubviewAt(action.getPosition());
         if (target != null) {
+            if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+                focusViewForMouse(target);
+            }
             var response = target.processEvent(new KeyStrokes(List.of(action)));
             if (response == Response.YES) {
                 _lastResponder = target;
@@ -167,9 +170,6 @@ public class View implements Drawable, EventResponder {
             }
             if (response == Response.MAYBE) {
                 return Response.MAYBE;
-            }
-            if (action.getActionType() == MouseActionType.CLICK_DOWN) {
-                focusViewForMouse(target);
             }
         }
         if (action.getActionType() == MouseActionType.CLICK_DOWN) {
@@ -219,7 +219,7 @@ public class View implements Drawable, EventResponder {
         if (window == null || view == null) {
             return;
         }
-        if (view instanceof BufferView || view instanceof ShellPanelView || view instanceof ListView
+        if (view instanceof BufferView || view instanceof ChatPanelView || view instanceof ShellPanelView || view instanceof ListView
                 || view instanceof ProjectSearchPanelView || view instanceof TextPanelView
                 || view instanceof PluginPanelView) {
             window.activateView(view);
