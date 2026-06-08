@@ -128,6 +128,7 @@ public class HelpIndex {
                 "Nemo's webSearch tool is enabled by default and can be disabled in ~/.swim/nemo/nemo.conf.",
                 "Nemo supports stdio MCP servers configured in ~/.swim/nemo/nemo.conf.",
                 "MCP tools are exposed as mcp__server__tool, require approval unless full-access, and are hidden in read-only mode.",
+                "Loaded plugins can expose Nemo tools as plugin__plugin__tool; read-only mode only shows plugin tools marked read-only.",
                 "Nemo's delegateTask tool starts focused work in parallel sub-agent workers with the same permissions.",
                 "Nemo can inspect delegated work with worker_status/read_worker, steer it with message_worker, and wait with bounded join_worker.",
                 "Type : commands for Nemo chat commands.",

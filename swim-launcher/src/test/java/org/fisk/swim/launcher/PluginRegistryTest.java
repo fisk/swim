@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -24,12 +25,19 @@ import javax.tools.ToolProvider;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimNemoToolRegistry;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class PluginRegistryTest {
     @TempDir
     Path tempDir;
+
+    @AfterEach
+    void tearDown() {
+        SwimNemoToolRegistry.clearForTests();
+    }
 
     @Test
     void registryLoadsExternalPluginsFromLibAndUnloadsCoreLast() throws Exception {
@@ -47,6 +55,7 @@ class PluginRegistryTest {
         assertEquals(List.of("core", "marker-plugin"), registry.availablePluginIds());
         assertEquals(List.of("core"), registry.loadedPluginIds());
         assertEquals(List.of("core-start"), Files.readAllLines(events));
+        assertTrue(SwimNemoToolRegistry.listTools().isEmpty());
 
         registry.unloadPlugin("marker-plugin");
 
@@ -57,22 +66,28 @@ class PluginRegistryTest {
 
         assertEquals(List.of("core", "marker-plugin"), registry.loadedPluginIds());
         assertEquals(List.of("core-start", "plugin-load"), Files.readAllLines(events));
+        assertEquals(List.of("plugin__marker_plugin__marker"),
+                SwimNemoToolRegistry.listTools().stream().map(tool -> tool.exposedName()).toList());
 
         registry.unloadPlugin("marker-plugin");
 
         assertEquals(List.of("core"), registry.loadedPluginIds());
         assertEquals(List.of("core-start", "plugin-load", "plugin-close"), Files.readAllLines(events));
+        assertTrue(SwimNemoToolRegistry.listTools().isEmpty());
 
         registry.loadPlugin("marker-plugin", file, host);
 
         assertEquals(List.of("core", "marker-plugin"), registry.loadedPluginIds());
         assertEquals(List.of("core-start", "plugin-load", "plugin-close", "plugin-load"), Files.readAllLines(events));
+        assertEquals(List.of("plugin__marker_plugin__marker"),
+                SwimNemoToolRegistry.listTools().stream().map(tool -> tool.exposedName()).toList());
 
         registry.unloadAll();
 
         assertNull(registry.currentApp());
         assertEquals(List.of("core-start", "plugin-load", "plugin-close", "plugin-load", "plugin-close", "core-close"),
                 Files.readAllLines(events));
+        assertTrue(SwimNemoToolRegistry.listTools().isEmpty());
     }
 
     @Test
@@ -175,6 +190,8 @@ class PluginRegistryTest {
                         import java.nio.file.StandardOpenOption;
                         import org.fisk.swim.api.SwimPlugin;
                         import org.fisk.swim.api.SwimPluginContext;
+                        import org.fisk.swim.api.SwimNemoTool;
+                        import org.fisk.swim.api.SwimNemoToolInvocation;
                         public final class MarkerPlugin implements SwimPlugin {
                             private Path events;
                             public String getId() {
@@ -184,7 +201,24 @@ class PluginRegistryTest {
                                 return false;
                             }
                             public void load(SwimPluginContext context) {
+                                if (!"marker-plugin".equals(context.getPluginId())) {
+                                    throw new IllegalStateException("wrong plugin id: " + context.getPluginId());
+                                }
                                 events = context.getHost().getBuildRoot().resolve("plugin-registry-events.txt");
+                                context.registerNemoTool(new SwimNemoTool() {
+                                    public String getName() {
+                                        return "marker";
+                                    }
+                                    public String getDescription() {
+                                        return "Marker plugin test tool.";
+                                    }
+                                    public String getInputSchemaJson() {
+                                        return "{\\"type\\":\\"object\\",\\"properties\\":{},\\"additionalProperties\\":false}";
+                                    }
+                                    public String execute(SwimNemoToolInvocation invocation) {
+                                        return "marker:" + invocation.pluginId();
+                                    }
+                                });
                                 append("plugin-load");
                             }
                             public void close() {

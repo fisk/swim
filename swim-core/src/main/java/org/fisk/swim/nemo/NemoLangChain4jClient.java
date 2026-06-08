@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.fisk.swim.api.SwimNemoToolDescriptor;
 import org.fisk.swim.text.BufferContext;
 
 import com.google.gson.Gson;
@@ -255,7 +256,7 @@ final class NemoLangChain4jClient {
         return new PathInfo(NemoClient.resolveWorkspaceRoot(configuration, context));
     }
 
-    private static List<ToolSpecification> buildToolSpecifications(NemoClient.Configuration configuration) {
+    static List<ToolSpecification> buildToolSpecifications(NemoClient.Configuration configuration) {
         var tools = new ArrayList<ToolSpecification>();
         if (configuration.toolWebSearch()) {
             tools.add(tool("web_search",
@@ -316,6 +317,9 @@ final class NemoLangChain4jClient {
         }
         for (NemoMcpClient.ToolDescriptor descriptor : NemoClient.mcpToolDescriptors(configuration)) {
             tools.add(mcpTool(descriptor));
+        }
+        for (SwimNemoToolDescriptor descriptor : NemoClient.pluginToolDescriptors(configuration)) {
+            tools.add(pluginTool(descriptor));
         }
         if (configuration.toolListFiles()) {
             tools.add(tool("list_files",
@@ -436,6 +440,22 @@ final class NemoLangChain4jClient {
             return ToolSpecification.builder()
                     .name(descriptor.exposedName())
                     .description(mcpToolDescription(descriptor))
+                    .parameters(JsonObjectSchema.builder().additionalProperties(true).build())
+                    .build();
+        }
+    }
+
+    private static ToolSpecification pluginTool(SwimNemoToolDescriptor descriptor) {
+        var tool = new JsonObject();
+        tool.addProperty("name", descriptor.exposedName());
+        tool.addProperty("description", NemoClient.pluginToolDescription(descriptor));
+        tool.add("parameters", NemoClient.pluginToolSchema(descriptor));
+        try {
+            return ToolSpecification.fromJson(tool.toString());
+        } catch (RuntimeException e) {
+            return ToolSpecification.builder()
+                    .name(descriptor.exposedName())
+                    .description(NemoClient.pluginToolDescription(descriptor))
                     .parameters(JsonObjectSchema.builder().additionalProperties(true).build())
                     .build();
         }

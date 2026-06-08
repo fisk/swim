@@ -134,6 +134,10 @@ final class NemoPromptBuilder {
         if (!configuration.mcpServers().isEmpty()) {
             lines.add("- MCP stdio servers are configured; tools named mcp__server__tool are discovered dynamically, may access external systems outside Nemo's workspace sandbox, and require approval unless the session is full-access.");
         }
+        var pluginTools = NemoClient.pluginToolDescriptors(configuration);
+        if (!pluginTools.isEmpty()) {
+            lines.add("- loaded plugins expose tools named plugin__plugin__tool; plugin tools run plugin code, may access plugin-managed systems, and require approval unless the session is full-access or the plugin marks the tool approval-free.");
+        }
         if (configuration.toolDelegateTask()) {
             lines.add("- delegate_task starts focused work in a separate Nemo sub-agent worker so this session can continue; sub-agents inherit these tools, permissions, sandbox, and approval policy.");
             lines.add("- use worker_status/read_worker to check sub-agent progress; use join_worker only when you need the sub-agent result before continuing.");

@@ -31,6 +31,9 @@ import java.util.stream.Stream;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.api.SwimNemoToolDescriptor;
+import org.fisk.swim.api.SwimNemoToolInvocation;
+import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.CommandView.CommandMenuState;
@@ -1680,7 +1683,7 @@ public class NemoClient {
 
     static ToolTrace toolTrace(ToolCall call, String output) {
         String detail;
-        if (isMcpToolName(call.name())) {
+        if (isMcpToolName(call.name()) || isPluginToolName(call.name())) {
             detail = withOutputStatus(argumentSummary(call.arguments()), output);
         } else {
             detail = switch (call.name()) {
@@ -1891,6 +1894,9 @@ public class NemoClient {
                 tools.add(functionTool(tool.exposedName(), mcpToolDescription(tool), tool.inputSchema()));
             }
         }
+        for (SwimNemoToolDescriptor tool : pluginToolDescriptors(configuration)) {
+            tools.add(functionTool(tool.exposedName(), pluginToolDescription(tool), pluginToolSchema(tool)));
+        }
         if (configuration.toolListFiles()) {
             tools.add(functionTool("list_files",
                     "List files in the workspace. Use this to inspect the project structure.",
@@ -1976,6 +1982,12 @@ public class NemoClient {
         return _instance._mcpClient.listTools(configuration.mcpServers());
     }
 
+    static List<SwimNemoToolDescriptor> pluginToolDescriptors(Configuration configuration) {
+        return SwimNemoToolRegistry.listTools().stream()
+                .filter(tool -> !"read_only".equals(configuration.toolPermissionMode()) || tool.availableInReadOnly())
+                .toList();
+    }
+
     static boolean isMcpAllowed(Configuration configuration) {
         return !configuration.mcpServers().isEmpty() && !"read_only".equals(configuration.toolPermissionMode());
     }
@@ -1991,6 +2003,38 @@ public class NemoClient {
         }
         parts.add("External MCP tools can access resources outside Nemo's workspace sandbox and require approval unless the session is full-access.");
         return String.join(" ", parts);
+    }
+
+    static String pluginToolDescription(SwimNemoToolDescriptor tool) {
+        var parts = new ArrayList<String>();
+        parts.add("Plugin tool " + tool.toolName() + " from plugin " + tool.pluginId() + ".");
+        if (!tool.description().isBlank()) {
+            parts.add(tool.description());
+        }
+        if (tool.availableInReadOnly()) {
+            parts.add("This tool is available in read-only mode.");
+        } else {
+            parts.add("This tool is hidden in read-only mode.");
+        }
+        if (tool.requiresApproval()) {
+            parts.add("Plugin tools run plugin code and require approval unless the session is full-access.");
+        }
+        return String.join(" ", parts);
+    }
+
+    static JsonObject pluginToolSchema(SwimNemoToolDescriptor tool) {
+        String schemaJson = tool.inputSchemaJson();
+        if (schemaJson != null && !schemaJson.isBlank()) {
+            try {
+                JsonElement parsed = JsonParser.parseString(schemaJson);
+                if (parsed != null && parsed.isJsonObject()) {
+                    return parsed.getAsJsonObject();
+                }
+            } catch (RuntimeException e) {
+                _log.warn("Ignoring invalid Nemo plugin tool schema for {}", tool.exposedName(), e);
+            }
+        }
+        return schema(List.of());
     }
 
     private static JsonObject functionTool(String name, String description, JsonObject parameters) {
@@ -2074,6 +2118,9 @@ public class NemoClient {
         if (isMcpToolName(call.name())) {
             return _instance.callMcpTool(configuration, context, call, executionSession);
         }
+        if (isPluginToolName(call.name())) {
+            return _instance.callPluginTool(configuration, context, call, executionSession);
+        }
         return switch (call.name()) {
         case "web_search" -> webSearch(call.arguments());
         case "delegate_task" -> _instance.delegateTask(configuration, context, call.arguments());
@@ -2148,6 +2195,14 @@ public class NemoClient {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow MCP tools. "
                     + "Use :permissions workspace-write to allow configured MCP servers.";
         }
+        if (isPluginToolName(toolName)) {
+            SwimNemoToolDescriptor descriptor = SwimNemoToolRegistry.findTool(toolName);
+            if (descriptor != null && descriptor.availableInReadOnly()) {
+                return null;
+            }
+            return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow plugin tools "
+                    + "unless the plugin marks them read-only. Use :permissions workspace-write to allow plugin tools.";
+        }
         if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
@@ -2208,6 +2263,10 @@ public class NemoClient {
         return toolName != null && toolName.startsWith("mcp__");
     }
 
+    static boolean isPluginToolName(String toolName) {
+        return toolName != null && toolName.startsWith("plugin__");
+    }
+
     private String callMcpTool(Configuration configuration, BufferContext context, ToolCall call,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
         if (!isMcpAllowed(configuration)) {
@@ -2232,6 +2291,49 @@ public class NemoClient {
         }
         return _mcpClient.callTool(configuration.mcpServers(), call.name(), call.arguments(),
                 configuration.toolMaxOutputChars());
+    }
+
+    private String callPluginTool(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws InterruptedException {
+        SwimNemoToolDescriptor descriptor = SwimNemoToolRegistry.findTool(call.name());
+        if (descriptor == null) {
+            return "Plugin tool " + call.name() + " is unavailable in this session.";
+        }
+        if (!"full_access".equals(configuration.toolPermissionMode()) && descriptor.requiresApproval()) {
+            Path root = resolveWorkspaceRoot(configuration, context);
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    root,
+                    new ToolApprovalRequest(
+                            call.name(),
+                            "plugin tool call",
+                            "call plugin tool " + descriptor.toolName() + " from plugin " + descriptor.pluginId()
+                                    + "\nArguments: " + compactArgumentValue(call.arguments()),
+                            "plugin:" + call.name() + ":" + compactArgumentValue(call.arguments()),
+                            true),
+                    "Tool " + call.name() + " blocked by Nemo approval: plugin tool calls require approval.");
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
+        }
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path currentPath = context.getBuffer().getPath();
+        var invocation = new SwimNemoToolInvocation(
+                call.name(),
+                descriptor.pluginId(),
+                descriptor.toolName(),
+                call.arguments().toString(),
+                currentPath,
+                root);
+        try {
+            String output = SwimNemoToolRegistry.execute(call.name(), invocation);
+            return truncateOutput(configuration, output == null ? "" : output);
+        } catch (Exception e) {
+            _log.warn("Nemo plugin tool {} failed", call.name(), e);
+            String message = e.getMessage();
+            return "Plugin tool " + call.name() + " failed" + (message == null || message.isBlank() ? "." : ": " + message);
+        }
     }
 
     private String delegateTask(Configuration configuration, BufferContext context, JsonObject arguments) {
@@ -4189,7 +4291,7 @@ public class NemoClient {
         case ":help":
             appendAssistantNote(conversation,
                     "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker.");
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch and delegateTask tools are enabled by default unless disabled in nemo.conf. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker.");
             return;
         case ":q":
         case ":quit":
@@ -4252,6 +4354,10 @@ public class NemoClient {
         lines.add("- OS sandbox: " + formatOsSandbox(configuration));
         lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-'));
         lines.add("- MCP servers: " + configuration.mcpServers().size());
+        int registeredPluginTools = SwimNemoToolRegistry.listTools().size();
+        int availablePluginTools = pluginToolDescriptors(configuration).size();
+        lines.add("- plugin tools: " + availablePluginTools
+                + (registeredPluginTools == availablePluginTools ? "" : " available of " + registeredPluginTools + " registered"));
         lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit");
         return String.join("\n", lines);
     }

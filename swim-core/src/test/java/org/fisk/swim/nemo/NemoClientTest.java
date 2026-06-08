@@ -11,7 +11,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
+import org.fisk.swim.api.SwimNemoTool;
+import org.fisk.swim.api.SwimNemoToolInvocation;
+import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
@@ -29,6 +33,7 @@ class NemoClientTest {
     @AfterEach
     void tearDown() {
         NemoClient.getInstance().resetForTests();
+        SwimNemoToolRegistry.clearForTests();
     }
 
     @Test
@@ -506,6 +511,104 @@ class NemoClientTest {
         assertEquals(1, approvalCount.get());
         assertEquals("mcp__mock__echo", approvalTool.get());
         assertEquals("echo: hello", output);
+    }
+
+    @Test
+    void buildToolsIncludesRegisteredPluginTools() {
+        registerPluginTool("sample-plugin", "echo", "Sample plugin echo.", false, true,
+                invocation -> "unused");
+
+        var tools = NemoClient.buildTools(NemoClient.Configuration.builder().build());
+
+        String toolJson = tools.toString();
+        assertTrue(toolJson.contains("\"name\":\"plugin__sample_plugin__echo\""));
+        assertTrue(toolJson.contains("Sample plugin echo."));
+        assertTrue(toolJson.contains("\"message\""));
+    }
+
+    @Test
+    void langChainToolsIncludeRegisteredPluginTools() {
+        registerPluginTool("sample-plugin", "echo", "Sample plugin echo.", false, true,
+                invocation -> "unused");
+
+        var names = NemoLangChain4jClient.buildToolSpecifications(NemoClient.Configuration.builder().build()).stream()
+                .map(tool -> tool.name())
+                .toList();
+
+        assertTrue(names.contains("plugin__sample_plugin__echo"));
+    }
+
+    @Test
+    void executesPluginToolAfterApproval() throws Exception {
+        Path project = tempDir.resolve("plugin-workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var invocationRef = new AtomicReference<SwimNemoToolInvocation>();
+        registerPluginTool("sample-plugin", "echo", "Sample plugin echo.", false, true, invocation -> {
+            invocationRef.set(invocation);
+            JsonObject arguments = com.google.gson.JsonParser.parseString(invocation.argumentsJson()).getAsJsonObject();
+            return "plugin echo: " + arguments.get("message").getAsString();
+        });
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String denied = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("plugin-denied", "plugin__sample_plugin__echo", json(Map.of("message", "hello"))));
+        assertTrue(denied.contains("plugin tool calls require approval"));
+
+        var approvalCount = new AtomicInteger();
+        var approvalTool = new AtomicReference<String>();
+        NemoClient.ToolExecutionSession approvalSession = (workspaceRoot, request) -> {
+            approvalCount.incrementAndGet();
+            approvalTool.set(request.toolName());
+            return new NemoClient.ApprovalResult(true, false);
+        };
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("plugin-approved", "plugin__sample_plugin__echo", json(Map.of("message", "hello"))),
+                approvalSession);
+
+        assertEquals(1, approvalCount.get());
+        assertEquals("plugin__sample_plugin__echo", approvalTool.get());
+        assertEquals("plugin echo: hello", output);
+        assertEquals("sample-plugin", invocationRef.get().pluginId());
+        assertEquals("echo", invocationRef.get().toolName());
+        assertEquals(file, invocationRef.get().currentPath());
+        assertEquals(project, invocationRef.get().workspaceRoot());
+    }
+
+    @Test
+    void readOnlyModeOmitsAndBlocksMutatingPluginToolsButAllowsReadOnlyPluginTools() throws Exception {
+        Path project = tempDir.resolve("plugin-read-only");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        registerPluginTool("sample-plugin", "mutate", "Mutates something.", false, true,
+                invocation -> "mutated");
+        registerPluginTool("sample-plugin", "inspect", "Inspects something.", true, false,
+                invocation -> "inspect ok");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .build();
+
+        String tools = NemoClient.buildTools(configuration).toString();
+        assertFalse(tools.contains("plugin__sample_plugin__mutate"));
+        assertTrue(tools.contains("plugin__sample_plugin__inspect"));
+
+        String blocked = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("plugin-read-only-blocked", "plugin__sample_plugin__mutate",
+                        json(Map.of("message", "hello"))));
+        assertTrue(blocked.contains("does not allow plugin tools"));
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("plugin-read-only-allowed", "plugin__sample_plugin__inspect",
+                        json(Map.of("message", "hello"))));
+        assertEquals("inspect ok", output);
     }
 
 
@@ -1357,6 +1460,54 @@ class NemoClientTest {
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {
         return com.google.gson.JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
+    }
+
+    private static AutoCloseable registerPluginTool(String pluginId, String name, String description,
+            boolean availableInReadOnly, boolean requiresApproval,
+            Function<SwimNemoToolInvocation, String> executor) {
+        return SwimNemoToolRegistry.register(pluginId, new SwimNemoTool() {
+            @Override
+            public String getName() {
+                return name;
+            }
+
+            @Override
+            public String getDescription() {
+                return description;
+            }
+
+            @Override
+            public String getInputSchemaJson() {
+                return """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "message": {
+                              "type": "string",
+                              "description": "Message for the plugin tool."
+                            }
+                          },
+                          "required": ["message"],
+                          "additionalProperties": false
+                        }
+                        """;
+            }
+
+            @Override
+            public boolean availableInReadOnly() {
+                return availableInReadOnly;
+            }
+
+            @Override
+            public boolean requiresApproval() {
+                return requiresApproval;
+            }
+
+            @Override
+            public String execute(SwimNemoToolInvocation invocation) {
+                return executor.apply(invocation);
+            }
+        });
     }
 
 
