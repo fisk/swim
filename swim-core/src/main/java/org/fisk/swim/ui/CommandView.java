@@ -19,7 +19,6 @@ import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
-import org.fisk.swim.help.HelpIndex;
 import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.terminal.TerminalContext;
@@ -395,7 +394,9 @@ public class CommandView extends View {
             break;
         case "h":
         case "help":
-            Window.getInstance().showList(HelpIndex.createHelpList(), "SWIM Help");
+            if (!Window.getInstance().showHelpWorkspace()) {
+                _message = "Failed to open help";
+            }
             break;
         case "mail":
             MailUiSupport.toggle(Window.getInstance());

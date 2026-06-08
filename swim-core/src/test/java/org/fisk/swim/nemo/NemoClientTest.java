@@ -569,6 +569,7 @@ class NemoClientTest {
                 .map(tool -> tool.name())
                 .toList();
 
+        assertTrue(names.contains("swim_help"));
         assertTrue(names.contains("plugin__sample_plugin__echo"));
     }
 
@@ -850,7 +851,7 @@ class NemoClientTest {
 
         var tools = NemoClient.buildTools(configuration);
 
-        assertEquals(20, tools.size());
+        assertEquals(21, tools.size());
         assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
         assertEquals("delegate_task", tools.get(1).getAsJsonObject().get("name").getAsString());
         assertEquals("worker_status", tools.get(2).getAsJsonObject().get("name").getAsString());
@@ -861,6 +862,7 @@ class NemoClientTest {
         assertEquals("screen_snapshot", tools.get(7).getAsJsonObject().get("name").getAsString());
         assertEquals("drive_editor", tools.get(8).getAsJsonObject().get("name").getAsString());
         assertEquals("finish_editor_control", tools.get(9).getAsJsonObject().get("name").getAsString());
+        assertEquals("swim_help", tools.get(10).getAsJsonObject().get("name").getAsString());
     }
 
     @Test
@@ -1306,6 +1308,29 @@ class NemoClientTest {
         assertTrue(read.contains("2: beta"));
         assertTrue(read.contains("3: alpha"));
         assertTrue(searched.contains("src/Main.txt:1: alpha"));
+    }
+
+    @Test
+    void executesSwimHelpToolInReadOnlyMode() throws Exception {
+        Path project = tempDir.resolve("help-tool");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .build();
+
+        String index = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("help-index", "swim_help", json(Map.of())));
+        String chapter = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("help-files", "swim_help", json(Map.of("topic", "files"))));
+
+        assertTrue(index.contains("SWIM Help Index"));
+        assertTrue(index.contains("files - Files, Buffers, and Panes"));
+        assertTrue(chapter.contains("Files, Buffers, and Panes"));
+        assertTrue(chapter.contains(":bnext and :bprev cycle through buffers"));
     }
 
     @Test

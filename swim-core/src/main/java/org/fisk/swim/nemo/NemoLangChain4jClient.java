@@ -346,6 +346,12 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
+        tools.add(tool("swim_help",
+                "Read SWIM editor help chapters. Use with no topic for the index, or pass a chapter id, chapter title, or search topic to learn how to operate the editor.",
+                JsonObjectSchema.builder()
+                        .addStringProperty("topic", "Optional chapter id, chapter title, or search text. Examples: start, movement, files, nemo.")
+                        .additionalProperties(false)
+                        .build()));
         for (NemoMcpClient.ToolDescriptor descriptor : NemoClient.mcpToolDescriptors(configuration)) {
             tools.add(mcpTool(descriptor));
         }

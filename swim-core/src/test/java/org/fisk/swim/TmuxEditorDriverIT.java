@@ -138,7 +138,7 @@ class TmuxEditorDriverIT {
 
     @Test
     @Timeout(45)
-    void installedLauncherBinaryCanCompleteHelpCommandAndFilterResultsInTmux() throws Exception {
+    void installedLauncherBinaryCanCompleteHelpCommandAndNavigateWorkspaceInTmux() throws Exception {
         Path file = tempDir.resolve("help.txt");
         Files.writeString(file, "help buffer\n");
 
@@ -149,11 +149,11 @@ class TmuxEditorDriverIT {
             session.sendLiteral("he");
             session.sendKey("Tab");
             session.sendEnter();
-            session.waitForText("SWIM tutorial", UI_TIMEOUT);
-            session.waitForText("Getting started", UI_TIMEOUT);
+            session.waitForText("SWIM Help", UI_TIMEOUT);
+            session.waitForText("Start Here", UI_TIMEOUT);
 
-            session.sendLiteral("grep");
-            session.waitForText(":grep <text> searches project contents", UI_TIMEOUT);
+            session.sendLiteral("]");
+            session.waitForText("Movement, Search, and Jumps", UI_TIMEOUT);
 
             session.sendEscape();
             session.waitForText("help buffer", UI_TIMEOUT);

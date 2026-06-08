@@ -32,6 +32,7 @@ import java.util.stream.Stream;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.help.HelpDocument;
 import org.fisk.swim.api.SwimNemoToolDescriptor;
 import org.fisk.swim.api.SwimNemoToolInvocation;
 import org.fisk.swim.api.SwimNemoToolRegistry;
@@ -1977,6 +1978,11 @@ public class NemoClient {
                     "Finish the active editor-control session, release the single-control lock, and reopen the Nemo chat conversation that invoked these tools so you can report findings to the user.",
                     schema(List.of())));
         }
+        tools.add(functionTool("swim_help",
+                "Read SWIM editor help chapters. Use with no topic for the index, or pass a chapter id, chapter title, or search topic to learn how to operate the editor.",
+                schema(List.of(
+                        property("topic", stringSchema("Optional chapter id, chapter title, or search text. Examples: start, movement, files, nemo."))),
+                        List.of())));
         if (isMcpAllowed(configuration)) {
             for (NemoMcpClient.ToolDescriptor tool : mcpToolDescriptors(configuration)) {
                 tools.add(functionTool(tool.exposedName(), mcpToolDescription(tool), tool.inputSchema()));
@@ -2220,6 +2226,7 @@ public class NemoClient {
         case "screen_snapshot" -> screenSnapshot(configuration, context, call.arguments(), executionSession);
         case "drive_editor" -> driveEditor(configuration, context, call.arguments(), executionSession);
         case "finish_editor_control" -> finishEditorControl(executionSession);
+        case "swim_help" -> HelpDocument.renderForNemo(stringArgument(call.arguments(), "topic", ""));
         case "list_files" -> listFiles(configuration, context, call.arguments());
         case "read_file" -> readFile(configuration, context, call.arguments());
         case "search_files" -> searchFiles(configuration, context, call.arguments());
@@ -4628,6 +4635,7 @@ public class NemoClient {
             new CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
             new CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
             new CommandSpec("unapprove", List.of(), "<rule-id|all>", "remove saved Nemo approval rules"),
+            new CommandSpec("swim-help", List.of(), "[topic]", "read SWIM editor help chapters"),
             new CommandSpec("help", List.of(), "", "list Nemo chat commands"),
             new CommandSpec("q", List.of("quit"), "", "close the Nemo pane"));
 
@@ -4747,10 +4755,13 @@ public class NemoClient {
         case ":unapprove":
             handleUnapproveCommand(conversation, argument);
             return;
+        case ":swim-help":
+            appendAssistantNote(conversation, HelpDocument.renderForNemo(argument));
+            return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The webSearch, delegateTask, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
+                    "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. The webSearch, delegateTask, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
         case ":quit":

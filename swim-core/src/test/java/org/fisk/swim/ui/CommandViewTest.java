@@ -249,6 +249,20 @@ class CommandViewTest {
     }
 
     @Test
+    void helpCommandOpensHelpWorkspace() throws Exception {
+        Path path = tempDir.resolve("help-command.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 14)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "help");
+
+            assertInstanceOf(HelpWorkspaceView.class, window.getActiveView());
+        }
+    }
+
+    @Test
     void closeCommandRefusesToCloseLastBufferView() throws Exception {
         Path path = tempDir.resolve("close-command.txt");
         Files.writeString(path, "abc");

@@ -85,6 +85,50 @@ class WindowTest {
     }
 
     @Test
+    void helpWorkspaceShowsChaptersAndReturnsToPreviousWorkspace() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("help-workspace.txt", "abc"), 70, 16)) {
+            var window = harness.getWindow();
+            var originalView = window.getActiveView();
+
+            assertTrue(window.showHelpWorkspace());
+            var help = assertInstanceOf(HelpWorkspaceView.class, window.getActiveView());
+
+            assertEquals("start", help.selectedChapterId());
+            assertTrue(help.articleText().contains("Normal mode and Insert mode"));
+
+            Rect helpBounds = absoluteScreenBounds(help);
+            HeadlessWindowHarness.dispatch(help,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1,
+                            new TerminalPosition(helpBounds.getPoint().getX() + 2, helpBounds.getPoint().getY() + 4)));
+            assertEquals("start", help.selectedChapterId());
+            assertTrue(help.articleStartLine() > 0);
+
+            int sectionStart = help.articleStartLine();
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('k'));
+            assertEquals(sectionStart - 1, help.articleStartLine());
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('j'));
+            assertEquals(sectionStart, help.articleStartLine());
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('G'));
+            assertTrue(help.articleStartLine() > sectionStart);
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('g'));
+            assertEquals(0, help.articleStartLine());
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key(']'));
+            assertEquals("movement", help.selectedChapterId());
+            assertEquals(0, help.articleStartLine());
+
+            HeadlessWindowHarness.dispatch(help, new com.googlecode.lanterna.input.KeyStroke(com.googlecode.lanterna.input.KeyType.PageDown));
+            assertTrue(help.articleStartLine() > 0);
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('q'));
+            assertSame(originalView, window.getActiveView());
+        }
+    }
+
+    @Test
     void closeActiveViewRefusesToCloseLastBuffer() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();

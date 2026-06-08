@@ -84,7 +84,8 @@ public class Window implements Drawable {
         PLUGIN,
         SHELL,
         NEMO,
-        TODO
+        TODO,
+        HELP
     }
 
     private static final class WorkspaceState {
@@ -401,6 +402,21 @@ public class Window implements Drawable {
             }
         }
         return openTodoWorkspace(store);
+    }
+
+    public boolean showHelpWorkspace() {
+        ensureLayoutState();
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.HELP) {
+            moveWorkspaceToFront(_currentWorkspace);
+            activateView(_workspaceView);
+            return true;
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.HELP) {
+                return activateWorkspace(workspace);
+            }
+        }
+        return openHelpWorkspace();
     }
 
     public boolean showTodoQuickCapture(TodoStore store) {
@@ -2542,6 +2558,9 @@ public class Window implements Drawable {
         if (responder instanceof TodoWorkspaceView) {
             return KeyMenuView.FocusContext.PANEL;
         }
+        if (responder instanceof HelpWorkspaceView) {
+            return KeyMenuView.FocusContext.PANEL;
+        }
         if (responder instanceof BufferView) {
             return KeyMenuView.FocusContext.BUFFER;
         }
@@ -2593,6 +2612,9 @@ public class Window implements Drawable {
         }
         if (responder instanceof TodoWorkspaceView todoWorkspaceView) {
             return todoWorkspaceView.getTitle();
+        }
+        if (responder instanceof HelpWorkspaceView helpWorkspaceView) {
+            return helpWorkspaceView.getTitle();
         }
         if (responder instanceof ChatPanelView chatPanelView) {
             return chatPanelView.getTitle();
@@ -3664,6 +3686,13 @@ public class Window implements Drawable {
         return activateWorkspace(workspace);
     }
 
+    private boolean openHelpWorkspace() {
+        WorkspaceState workspace = createViewWorkspace(new HelpWorkspaceView(Rect.create(0, 0, 0, 0)),
+                WorkspaceKind.HELP);
+        _workspaceHistory.add(0, workspace);
+        return activateWorkspace(workspace);
+    }
+
     private WorkspaceState createMailWorkspace(org.fisk.swim.mail.MailClient client) {
         var workspace = new WorkspaceState();
         workspace._kind = WorkspaceKind.MAIL;
@@ -3848,6 +3877,9 @@ public class Window implements Drawable {
         if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.TODO) {
             return WorkspaceKind.TODO;
         }
+        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.HELP) {
+            return WorkspaceKind.HELP;
+        }
         if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.NEMO) {
             return WorkspaceKind.NEMO;
         }
@@ -3859,6 +3891,9 @@ public class Window implements Drawable {
         }
         if (_workspaceView instanceof TodoWorkspaceView) {
             return WorkspaceKind.TODO;
+        }
+        if (_workspaceView instanceof HelpWorkspaceView) {
+            return WorkspaceKind.HELP;
         }
         if (_workspaceView instanceof ShellPanelView) {
             return WorkspaceKind.SHELL;
@@ -3957,6 +3992,7 @@ public class Window implements Drawable {
         case SHELL -> workspace._workspaceView instanceof ShellPanelView shellPanelView ? shellPanelView.getTitle() : "shell";
         case NEMO -> workspace._nemoView instanceof ChatPanelView chatPanelView ? chatPanelView.getTitle() : "nemo";
         case TODO -> "todo";
+        case HELP -> "help";
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {
