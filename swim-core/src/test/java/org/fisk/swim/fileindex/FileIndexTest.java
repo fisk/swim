@@ -20,12 +20,20 @@ class FileIndexTest {
     void fileIndexIncludesVisibleFilesAndSortsThem() throws IOException {
         Path root = tempDir.resolve("workspace");
         Files.createDirectories(root);
-        Files.createDirectory(root.resolve(".swim"));
+        Files.writeString(root.resolve(".swim"), """
+                docs/
+                *.log
+                !keep.log
+                """);
         Files.createDirectories(root.resolve("src"));
+        Files.createDirectories(root.resolve("docs"));
         Files.createDirectories(root.resolve(".git"));
         Files.writeString(root.resolve("zeta.txt"), "z");
         Files.writeString(root.resolve("alpha.txt"), "a");
+        Files.writeString(root.resolve("debug.log"), "l");
+        Files.writeString(root.resolve("keep.log"), "k");
         Files.writeString(root.resolve("src").resolve("beta.txt"), "b");
+        Files.writeString(root.resolve("docs").resolve("manual.txt"), "d");
         Files.writeString(root.resolve(".hidden.txt"), "h");
         Files.createDirectories(root.resolve(".secret"));
         Files.writeString(root.resolve(".secret").resolve("ignored.txt"), "x");
@@ -43,7 +51,7 @@ class FileIndexTest {
         }
 
         assertEquals(
-                java.util.List.of("alpha.txt", "src/beta.txt", "zeta.txt"),
+                java.util.List.of("alpha.txt", "keep.log", "src/beta.txt", "zeta.txt"),
                 items.stream().map(item -> item.displayString()).collect(Collectors.toList()));
     }
 }

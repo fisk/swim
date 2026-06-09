@@ -186,6 +186,40 @@ class CommandViewTest {
     }
 
     @Test
+    void grepCommandTypingUpdatesProjectSearchPanelForEachCharacter() throws IOException {
+        Path root = tempDir.resolve("live-grep-workspace");
+        Files.createDirectories(root.resolve(".git"));
+        Files.createDirectories(root.resolve("src"));
+        Path current = root.resolve("src/current.txt");
+        Path alpha = root.resolve("src/Alpha.java");
+        Path beta = root.resolve("src/Beta.java");
+        Files.writeString(current, "buffer\n");
+        Files.writeString(alpha, "needle in alpha\n");
+        Files.writeString(beta, "needle in beta\n");
+
+        try (var harness = HeadlessWindowHarness.create(current, 72, 16)) {
+            var window = harness.getWindow();
+            var commandView = window.getCommandView();
+
+            commandView.activate(":");
+            for (char character : "grep n".toCharArray()) {
+                HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key(character));
+            }
+
+            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+            var panel = (ProjectSearchPanelView) window.getPanelView();
+            assertEquals("n", panel.getQuery());
+            assertEquals(2, panel.getResults().size());
+            assertFalse(window.getCommandMenuView().getState().visible());
+            assertSame(commandView, HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
+
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('e'));
+            assertEquals("ne", panel.getQuery());
+            assertEquals(2, panel.getResults().size());
+        }
+    }
+
+    @Test
     void tabCompletesSelectedCommandAndPreservesArguments() throws IOException {
         Path path = tempDir.resolve("command-complete.txt");
         Files.writeString(path, "abc");

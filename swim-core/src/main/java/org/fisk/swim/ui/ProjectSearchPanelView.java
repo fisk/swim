@@ -143,13 +143,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
             if (index >= _results.size()) {
                 continue;
             }
-            var line = new AttributedString();
-            var match = _results.get(index);
-            line.append(selected ? "▌ " : "  ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE,
-                    background);
-            line.append(match.displayString(),
-                    selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
-                    background);
+            var line = resultRow(width, index, selected, background);
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), y), width, line, UiTheme.TEXT_MUTED,
                     background);
         }
@@ -165,6 +159,80 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
                             UiTheme.SURFACE_BACKGROUND),
                     UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND);
         }
+    }
+
+    AttributedString buildResultRowForTest(int width, int index, boolean selected) {
+        TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND : UiTheme.SURFACE_BACKGROUND;
+        return resultRow(width, index, selected, background);
+    }
+
+    private AttributedString resultRow(int width, int index, boolean selected, TextColor background) {
+        var line = new AttributedString();
+        if (index < 0 || index >= _results.size()) {
+            return line;
+        }
+        var match = _results.get(index);
+        TextColor primary = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
+        TextColor muted = selected ? UiTheme.TEXT_ON_ACCENT : UiTheme.TEXT_MUTED;
+        TextColor pathColor = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.ACCENT_BLUE;
+        TextColor lineColor = selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.ACCENT_GOLD;
+        TextColor hitColor = selected ? UiTheme.TEXT_ON_ACCENT : UiTheme.ACCENT_GREEN;
+        line.append(selected ? "▌" : " ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE,
+                background);
+        line.append(" " + leftPad(Integer.toString(match.lineNumber()), lineNumberWidth()) + " ",
+                lineColor, background);
+        line.append(" " + match.relativePath(), pathColor, background);
+        line.append(":" + match.lineNumber() + ":" + match.columnNumber() + "  ", muted, background);
+        appendPreview(line, match, primary, muted, hitColor, background);
+        if (line.length() < width) {
+            line.append(UiTheme.repeat(" ", width - line.length()), muted, background);
+        }
+        return line.length() > width ? line.slice(0, width) : line;
+    }
+
+    private void appendPreview(AttributedString line, ProjectSearch.Match match, TextColor primary,
+            TextColor muted, TextColor hitColor, TextColor background) {
+        String preview = match.previewText();
+        String needle = _query.toString();
+        if (needle.isBlank()) {
+            line.append(preview, primary, background);
+            return;
+        }
+        int start = previewIndex(preview, needle);
+        if (start < 0) {
+            line.append(preview, primary, background);
+            return;
+        }
+        if (start > 0) {
+            line.append(preview.substring(0, start), muted, background);
+        }
+        int end = Math.min(preview.length(), start + needle.length());
+        line.append(preview.substring(start, end), hitColor, background);
+        if (end < preview.length()) {
+            line.append(preview.substring(end), primary, background);
+        }
+    }
+
+    private int previewIndex(String preview, String needle) {
+        if (needle.equals(needle.toLowerCase(java.util.Locale.ROOT))) {
+            return preview.toLowerCase(java.util.Locale.ROOT).indexOf(needle.toLowerCase(java.util.Locale.ROOT));
+        }
+        return preview.indexOf(needle);
+    }
+
+    private int lineNumberWidth() {
+        int max = 1;
+        for (var result : _results) {
+            max = Math.max(max, result.lineNumber());
+        }
+        return Math.max(3, Integer.toString(max).length());
+    }
+
+    private static String leftPad(String text, int width) {
+        if (text.length() >= width) {
+            return text;
+        }
+        return " ".repeat(width - text.length()) + text;
     }
 
     private void refreshResults() {

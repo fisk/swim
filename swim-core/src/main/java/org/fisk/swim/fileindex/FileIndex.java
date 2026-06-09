@@ -40,6 +40,7 @@ public class FileIndex {
             if (root == null) {
                 return list;
             }
+            var filter = ProjectFileFilter.load(root);
             Files.find(root,
                        Integer.MAX_VALUE,
                        (filePath, fileAttr) -> fileAttr.isRegularFile())
@@ -47,13 +48,9 @@ public class FileIndex {
                 _log.info("Menu path: " + path);
                 var relative = root.relativize(path);
                 _log.info("Relative menu path: " + relative);
-                for (int i = 0; i < relative.getNameCount(); ++i) {
-                    var name = relative.getName(i);
-                    _log.info("Menu path component: " + name);
-                    if (name.toString().substring(0, 1).equals(".")) {
-                        _log.info("Invisible component");
-                        return;
-                    }
+                if (!filter.isIncluded(relative, false)) {
+                    _log.info("Excluded project file: " + relative);
+                    return;
                 }
                 list.add(new FileIndexItem(root, path));
             });

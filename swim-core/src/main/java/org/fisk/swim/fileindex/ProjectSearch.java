@@ -8,12 +8,8 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Pattern;
 
 public final class ProjectSearch {
-    private static final List<String> IGNORED_DIRECTORIES = List.of("target", "build", "out", "node_modules");
-    private static final Pattern IGNORED_FILE_PATTERN = Pattern.compile(".*\\.(class|jar)$", Pattern.CASE_INSENSITIVE);
-
     public record Match(Path path, Path relativePath, int lineNumber, int columnNumber, String lineText) {
         public String displayString() {
             return relativePath + ":" + lineNumber + ":" + columnNumber + "  " + previewText();
@@ -25,9 +21,11 @@ public final class ProjectSearch {
     }
 
     private final Path _root;
+    private final ProjectFileFilter _fileFilter;
 
     public ProjectSearch(Path startPath) {
         _root = ProjectPaths.getSourceRootPath(startPath);
+        _fileFilter = ProjectFileFilter.load(_root);
     }
 
     public boolean isAvailable() {
@@ -49,7 +47,7 @@ public final class ProjectSearch {
         var matches = new ArrayList<Match>();
         try {
             var files = Files.find(_root, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())
-                    .filter(path -> isSearchablePath(_root.relativize(path)))
+                    .filter(path -> _fileFilter.isIncluded(_root.relativize(path), false))
                     .sorted(Comparator.comparing(path -> _root.relativize(path).toString()))
                     .toList();
             for (var path : files) {
@@ -84,17 +82,4 @@ public final class ProjectSearch {
         return matches;
     }
 
-    private static boolean isSearchablePath(Path relativePath) {
-        for (int i = 0; i < relativePath.getNameCount(); i++) {
-            String component = relativePath.getName(i).toString();
-            if (component.startsWith(".")) {
-                return false;
-            }
-            if (IGNORED_DIRECTORIES.contains(component)) {
-                return false;
-            }
-        }
-        String fileName = relativePath.getFileName() == null ? "" : relativePath.getFileName().toString();
-        return !IGNORED_FILE_PATTERN.matcher(fileName).matches();
-    }
 }

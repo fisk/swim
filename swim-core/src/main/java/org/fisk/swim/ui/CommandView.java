@@ -89,6 +89,8 @@ public class CommandView extends View {
     private int _commandSelection;
     private String _lastCommand = null;
     private boolean _editorDriveOwned;
+    private ProjectSearchPanelView _liveGrepPreviewPanel;
+    private boolean _liveGrepPreviewOwned;
     private ListEventResponder _responders = new ListEventResponder();
     private boolean _searchForward;
     private String _searchString;
@@ -113,7 +115,7 @@ public class CommandView extends View {
                 runCommand(_command.toString());
             }
             if (Window.getInstance() != null) {
-                deactivate();
+                deactivate(true);
             }
         });
         _responders.addEventResponder("<BACKSPACE>", () -> {
@@ -121,6 +123,7 @@ public class CommandView extends View {
             if (_command.length() > 0) {
                 _command.delete(_command.length() - 1, _command.length());
                 resetCommandSelection();
+                syncLiveGrepPreview();
                 refreshChrome();
             }
         });
@@ -185,6 +188,7 @@ public class CommandView extends View {
                 allowEditorDrivePromptAction("edit prompt");
                 _command.append(_character);
                 resetCommandSelection();
+                syncLiveGrepPreview();
                 refreshChrome();
             }
         });
@@ -506,6 +510,7 @@ public class CommandView extends View {
     private void applyCommandSpec(CommandSpec spec) {
         if (spec.replaceEntireInput()) {
             _command = new StringBuilder(spec.replacement());
+            syncLiveGrepPreview();
             return;
         }
         String current = _command == null ? "" : _command.toString();
@@ -525,6 +530,69 @@ public class CommandView extends View {
             replacement += " ";
         }
         _command = new StringBuilder(before).append(replacement).append(after);
+        syncLiveGrepPreview();
+    }
+
+    private void syncLiveGrepPreview() {
+        var window = Window.getInstance();
+        if (window == null || _command == null || !isCommandPrompt()) {
+            return;
+        }
+        LiveGrepCommand liveGrep = parseLiveGrepCommand(_command.toString());
+        if (liveGrep == null) {
+            cancelLiveGrepPreview();
+            return;
+        }
+        boolean alreadyShowingSearch = window.getPanelView() instanceof ProjectSearchPanelView;
+        ProjectSearchPanelView panel = ProjectSearchUiSupport.openPreview(window, liveGrep.query());
+        if (panel == null) {
+            return;
+        }
+        _liveGrepPreviewPanel = panel;
+        if (!alreadyShowingSearch) {
+            _liveGrepPreviewOwned = true;
+        }
+        window.getRootView().setFirstResponder(this);
+    }
+
+    private void cancelLiveGrepPreview() {
+        var window = Window.getInstance();
+        if (window == null) {
+            clearLiveGrepPreview();
+            return;
+        }
+        if (_liveGrepPreviewOwned && _liveGrepPreviewPanel != null && window.getPanelView() == _liveGrepPreviewPanel) {
+            window.hidePanel();
+            if (_command != null && window.getRootView() != null) {
+                window.getRootView().setFirstResponder(this);
+            }
+        }
+        clearLiveGrepPreview();
+    }
+
+    private void clearLiveGrepPreview() {
+        _liveGrepPreviewPanel = null;
+        _liveGrepPreviewOwned = false;
+    }
+
+    private static LiveGrepCommand parseLiveGrepCommand(String text) {
+        if (text == null) {
+            return null;
+        }
+        int start = 0;
+        while (start < text.length() && Character.isWhitespace(text.charAt(start))) {
+            start++;
+        }
+        int end = start;
+        while (end < text.length() && !Character.isWhitespace(text.charAt(end))) {
+            end++;
+        }
+        String command = text.substring(start, end).toLowerCase(Locale.ROOT);
+        if (!"grep".equals(command) && !"search".equals(command)) {
+            return null;
+        }
+        String query = end >= text.length() ? "" : text.substring(end + 1).trim();
+        return new LiveGrepCommand(query);
     }
 
     private String editorDriveSandboxedCommand(String rawCommand) {
@@ -1416,6 +1484,9 @@ public class CommandView extends View {
         if (_command == null || !isCommandPrompt()) {
             return CommandMenuState.hidden();
         }
+        if (parseLiveGrepCommand(_command.toString()) != null) {
+            return CommandMenuState.hidden();
+        }
         var matches = matchingCommandSpecs().stream()
                 .map(this::withDiscoveredShortcut)
                 .toList();
@@ -1434,6 +1505,7 @@ public class CommandView extends View {
         _message = null;
         _prompt = prompt;
         _command = new StringBuilder();
+        clearLiveGrepPreview();
         resetCommandSelection();
         var window = Window.getInstance();
         _editorDriveOwned = window != null && window.isEditorDriveInputActive();
@@ -1453,6 +1525,15 @@ public class CommandView extends View {
     }
 
     public void deactivate() {
+        deactivate(false);
+    }
+
+    private void deactivate(boolean submitted) {
+        if (submitted) {
+            clearLiveGrepPreview();
+        } else {
+            cancelLiveGrepPreview();
+        }
         _command = null;
         _prompt = null;
         _editorDriveOwned = false;
@@ -1485,6 +1566,9 @@ public class CommandView extends View {
     }
 
     private record LineRange(int startLine, int endLine) {
+    }
+
+    private record LiveGrepCommand(String query) {
     }
 
     public static record CommandSpec(

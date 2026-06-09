@@ -16,13 +16,21 @@ public final class ProjectSearchUiSupport {
     }
 
     public static void open(Window window, String initialQuery) {
+        openPanel(window, initialQuery);
+    }
+
+    static ProjectSearchPanelView openPreview(Window window, String initialQuery) {
+        return openPanel(window, initialQuery);
+    }
+
+    private static ProjectSearchPanelView openPanel(Window window, String initialQuery) {
         if (window == null) {
-            return;
+            return null;
         }
         if (window.getPanelView() instanceof ProjectSearchPanelView panelView) {
             panelView.setQuery(initialQuery);
             window.activateView(panelView);
-            return;
+            return panelView;
         }
         if (window.isShowingPanel()) {
             window.hidePanel();
@@ -32,12 +40,14 @@ public final class ProjectSearchUiSupport {
                 window.getBufferContext().getBuffer().getPath());
         if (panelView == null) {
             window.getCommandView().setMessage("Project search unavailable");
-            return;
+            return null;
         }
         panelView.setQuery(initialQuery);
         window.showPanel(panelView);
         if (window.getPanelView() != panelView) {
             window.getCommandView().setMessage("Unable to open project search");
+            return null;
         }
+        return panelView;
     }
 }
