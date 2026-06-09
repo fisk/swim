@@ -107,3 +107,7 @@ Inside a running editor:
 - `:upgrade` is an alias for `:rebuild`.
 
 When changing Nemo editor-control behavior, read `AGENTS.md` first. It documents the sandboxing boundary and the expectation that commands, key actions, workspace actions, and plugin actions explicitly decide whether they are allowed during Nemo-driven editor control.
+
+## License
+
+SWIM is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE). Third-party dependencies remain under their own licenses.
