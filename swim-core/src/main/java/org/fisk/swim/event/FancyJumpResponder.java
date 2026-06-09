@@ -11,7 +11,7 @@ import org.fisk.swim.ui.Window;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class FancyJumpResponder implements EventResponder {
+public class FancyJumpResponder implements EventResponder, KeyBindingHintProvider {
     private static final String HINT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     public enum TargetKind {
@@ -22,6 +22,7 @@ public class FancyJumpResponder implements EventResponder {
     private final BufferContext _bufferContext;
     private final TextEventResponder _prefixResponder;
     private final TargetKind _targetKind;
+    private final String _prefix;
 
     private List<HintTarget> _activeTargets = List.of();
     private String _typedHint = "";
@@ -33,6 +34,7 @@ public class FancyJumpResponder implements EventResponder {
 
     public FancyJumpResponder(BufferContext bufferContext, String prefix, TargetKind targetKind) {
         _bufferContext = bufferContext;
+        _prefix = prefix;
         _prefixResponder = new TextEventResponder(prefix, () -> {
         });
         _targetKind = targetKind;
@@ -125,6 +127,13 @@ public class FancyJumpResponder implements EventResponder {
             }
         }
         return character;
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return List.of(KeyBindingHint.of(_prefix + " <CHAR>",
+                _targetKind == TargetKind.CHARACTER ? "Navigation" : "Navigation",
+                _targetKind == TargetKind.CHARACTER ? "jump to visible character" : "jump to visible word start"));
     }
 
     private void clearState() {

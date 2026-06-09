@@ -1,12 +1,20 @@
 package org.fisk.swim.event;
 
-public class TextEventResponder implements EventResponder {
-    private String[] _keyStrokes;
-    private Runnable _action;
+import java.util.List;
+
+public class TextEventResponder implements EventResponder, KeyBindingHintProvider {
+    private final String[] _keyStrokes;
+    private final Runnable _action;
+    private final KeyBindingHint _hint;
 
     public TextEventResponder(String string, Runnable action) {
+        this(string, action, null);
+    }
+
+    public TextEventResponder(String string, Runnable action, KeyBindingHint hint) {
         _keyStrokes = string.split(" ");
         _action = action;
+        _hint = hint;
     }
 
     @Override
@@ -121,6 +129,11 @@ public class TextEventResponder implements EventResponder {
 	public void respond() {
       _action.run();
 	}
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _hint == null ? List.of() : List.of(_hint);
+    }
 
     private static boolean matchesCharacter(String token, Character character, boolean ctrlModified) {
         if (token.length() != 1 || character == null) {

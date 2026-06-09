@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -13,7 +15,7 @@ import org.fisk.swim.terminal.TerminalContext;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class TextPanelView extends View {
+public class TextPanelView extends View implements KeyBindingHintProvider {
     private final String _title;
     private final String _text;
     private final ListEventResponder _responders = new ListEventResponder();
@@ -25,12 +27,12 @@ public class TextPanelView extends View {
         _text = text;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
 
-        _responders.addEventResponder("<ESC>", this::close);
-        _responders.addEventResponder("q", this::close);
-        _responders.addEventResponder("<DOWN>", () -> scrollDown(1));
-        _responders.addEventResponder("j", () -> scrollDown(1));
-        _responders.addEventResponder("<UP>", () -> scrollUp(1));
-        _responders.addEventResponder("k", () -> scrollUp(1));
+        _responders.addEventResponder("<ESC>", "Panel", "close", this::close);
+        _responders.addEventResponder("q", "Panel", "close", this::close);
+        _responders.addEventResponder("<DOWN>", "Scroll", "down", () -> scrollDown(1));
+        _responders.addEventResponder("j", "Scroll", "down", () -> scrollDown(1));
+        _responders.addEventResponder("<UP>", "Scroll", "up", () -> scrollUp(1));
+        _responders.addEventResponder("k", "Scroll", "up", () -> scrollUp(1));
     }
 
     int getStartLine() {
@@ -39,6 +41,16 @@ public class TextPanelView extends View {
 
     String getTitle() {
         return _title;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "text panel";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _responders.keyBindingHints();
     }
 
     static List<String> wrapText(String text, int width) {
@@ -106,7 +118,6 @@ public class TextPanelView extends View {
 
         var title = new AttributedString();
         title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        title.append(" j/k scroll  q close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var lines = getWrappedLines();
@@ -123,7 +134,6 @@ public class TextPanelView extends View {
             String footerText = " " + visibleEnd + "/" + lines.size() + " lines";
             var footer = new AttributedString();
             footer.append(footerText, UiTheme.ACCENT_BLUE, UiTheme.SURFACE_MUTED);
-            footer.append("  Esc dismiss", UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(),
                     rect.getPoint().getY() + rect.getSize().getHeight() - 1), width, footer, UiTheme.TEXT_MUTED,
                     UiTheme.SURFACE_MUTED);

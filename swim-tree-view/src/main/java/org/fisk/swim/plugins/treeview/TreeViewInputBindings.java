@@ -1,9 +1,12 @@
 package org.fisk.swim.plugins.treeview;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+
+import org.fisk.swim.api.SwimKeyBindingHint;
 
 public final class TreeViewInputBindings {
     private final Map<String, TreeViewCommand> _bindings;
@@ -37,7 +40,45 @@ public final class TreeViewInputBindings {
         return _bindings;
     }
 
+    public List<SwimKeyBindingHint> keyBindingHints() {
+        return _bindings.entrySet().stream()
+                .map(entry -> new SwimKeyBindingHint(displayKey(entry.getKey()), group(entry.getValue()),
+                        summary(entry.getValue())))
+                .toList();
+    }
+
     private static String normalize(String input) {
         return input.strip().toLowerCase();
+    }
+
+    private static String displayKey(String input) {
+        return switch (normalize(input)) {
+        case "up" -> "<UP>";
+        case "down" -> "<DOWN>";
+        case "left" -> "<LEFT>";
+        case "right" -> "<RIGHT>";
+        case "enter" -> "<ENTER>";
+        case "space" -> "<SPACE>";
+        default -> input;
+        };
+    }
+
+    private static String group(TreeViewCommand command) {
+        return switch (command) {
+        case MOVE_UP, MOVE_DOWN, EXPAND, COLLAPSE -> "Navigation";
+        case ACTIVATE -> "Files";
+        case REFRESH -> "Tree";
+        };
+    }
+
+    private static String summary(TreeViewCommand command) {
+        return switch (command) {
+        case MOVE_UP -> "move up";
+        case MOVE_DOWN -> "move down";
+        case EXPAND -> "expand directory";
+        case COLLAPSE -> "collapse directory";
+        case ACTIVATE -> "open or toggle";
+        case REFRESH -> "refresh";
+        };
     }
 }

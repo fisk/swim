@@ -54,6 +54,7 @@ public class CommandView extends View {
             new CommandSpec("lprev", List.of("lp"), "", "jump to the previous location-list entry"),
             new CommandSpec("lgrep", List.of(), "<text>", "search the current buffer into the location list"),
             new CommandSpec("multicursor", List.of("mc"), "<text>", "place cursors on each literal match in the current buffer"),
+            new CommandSpec("move", List.of("m"), "{address}", "move the current line or range"),
             new CommandSpec("s", List.of(), "/pattern/replacement/[g]", "substitute in the current line"),
             new CommandSpec("%s", List.of(), "/pattern/replacement/[g]", "substitute in the whole buffer"),
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
@@ -266,6 +267,18 @@ public class CommandView extends View {
         var global = parseGlobal(rawCommand);
         if (global != null) {
             runGlobal(global);
+            _lastCommand = rawCommand;
+            return;
+        }
+        MoveCommand move;
+        try {
+            move = parseMove(rawCommand);
+        } catch (IllegalArgumentException e) {
+            _message = e.getMessage();
+            return;
+        }
+        if (move != null) {
+            runMove(move);
             _lastCommand = rawCommand;
             return;
         }
@@ -527,6 +540,9 @@ public class CommandView extends View {
                 return allowEditorDriveCommand(window, rawCommand);
             }
             if (parseGlobal(rawCommand) != null) {
+                return allowEditorDriveCommand(window, rawCommand);
+            }
+            if (parseMove(rawCommand) != null) {
                 return allowEditorDriveCommand(window, rawCommand);
             }
         } catch (IllegalArgumentException ignored) {
@@ -914,6 +930,31 @@ public class CommandView extends View {
         }
     }
 
+    private void runMove(MoveCommand command) {
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        try {
+            var buffer = window.getBufferContext().getBuffer();
+            LineRange range = command.rangePrefix().isBlank()
+                    ? currentLineRange(buffer)
+                    : resolveMoveLineRange(buffer, command.rangePrefix());
+            int destination = resolveMoveDestination(buffer, command.destination());
+            var result = buffer.moveLineRangeAfter(range.startLine(), range.endLine(), destination);
+            if (result == null) {
+                _message = "Cannot move lines";
+                return;
+            }
+            buffer.getUndoLog().commit();
+            _message = "Moved " + (result.endLine() - result.startLine() + 1) + " line"
+                    + (result.endLine() == result.startLine() ? "" : "s");
+        } catch (Exception e) {
+            _message = e.getMessage() == null || e.getMessage().isBlank() ? "Invalid move command" : e.getMessage();
+        }
+    }
+
     private void write(String argument) {
         var window = Window.getInstance();
         if (window == null || window.getBufferContext() == null) {
@@ -1157,11 +1198,119 @@ public class CommandView extends View {
         return null;
     }
 
+    private static MoveCommand parseMove(String rawCommand) {
+        if (rawCommand == null || rawCommand.isBlank()) {
+            return null;
+        }
+        String command = rawCommand.trim();
+        for (int i = 0; i < command.length(); i++) {
+            if (startsWithMoveCommand(command, i, "move")) {
+                String prefix = command.substring(0, i).trim();
+                if (!isMoveLineRangePrefix(prefix)) {
+                    continue;
+                }
+                String destination = command.substring(i + "move".length()).trim();
+                if (destination.isBlank()) {
+                    throw new IllegalArgumentException("Usage: :[range]m {address}");
+                }
+                return new MoveCommand(prefix, destination);
+            }
+            if (command.charAt(i) == 'm' && isMoveShortCommand(command, i)) {
+                String prefix = command.substring(0, i).trim();
+                if (!isMoveLineRangePrefix(prefix)) {
+                    continue;
+                }
+                String destination = command.substring(i + 1).trim();
+                if (destination.isBlank()) {
+                    throw new IllegalArgumentException("Usage: :[range]m {address}");
+                }
+                return new MoveCommand(prefix, destination);
+            }
+        }
+        return null;
+    }
+
+    private static boolean startsWithMoveCommand(String command, int index, String name) {
+        if (!command.startsWith(name, index)) {
+            return false;
+        }
+        int after = index + name.length();
+        return after == command.length() || Character.isWhitespace(command.charAt(after)) || isMoveAddressStart(command.charAt(after));
+    }
+
+    private static boolean isMoveShortCommand(String command, int index) {
+        int after = index + 1;
+        return after == command.length() || Character.isWhitespace(command.charAt(after)) || isMoveAddressStart(command.charAt(after));
+    }
+
+    private static boolean isMoveAddressStart(char character) {
+        return Character.isDigit(character) || character == '.' || character == '$' || character == '+' || character == '-';
+    }
+
+    private static boolean isMoveLineRangePrefix(String prefix) {
+        if (prefix == null || prefix.isBlank()) {
+            return true;
+        }
+        if ("%".equals(prefix)) {
+            return true;
+        }
+        return prefix.matches("[0-9.$+\\-]+(,[0-9.$+\\-]+)?");
+    }
+
     private static LineRange resolveLineRange(org.fisk.swim.text.Buffer buffer, String prefix) {
         String[] parts = prefix.split(",", -1);
         int start = resolveLineAddress(buffer, parts[0]);
         int end = parts.length > 1 ? resolveLineAddress(buffer, parts[1]) : start;
         return new LineRange(Math.max(0, Math.min(start, end)), Math.min(buffer.getLineCount() - 1, Math.max(start, end)));
+    }
+
+    private static LineRange currentLineRange(org.fisk.swim.text.Buffer buffer) {
+        int line = buffer.getLineIndexAt(buffer.getCursor().getPosition());
+        return new LineRange(line, line);
+    }
+
+    private static LineRange resolveMoveLineRange(org.fisk.swim.text.Buffer buffer, String prefix) {
+        if ("%".equals(prefix)) {
+            return new LineRange(0, buffer.getLineCount() - 1);
+        }
+        String[] parts = prefix.split(",", -1);
+        int start = resolveMoveLineAddress(buffer, parts[0], false);
+        int end = parts.length > 1 ? resolveMoveLineAddress(buffer, parts[1], false) : start;
+        return new LineRange(Math.max(0, Math.min(start, end)),
+                Math.min(buffer.getLineCount() - 1, Math.max(start, end)));
+    }
+
+    private static int resolveMoveDestination(org.fisk.swim.text.Buffer buffer, String address) {
+        return resolveMoveLineAddress(buffer, address, true);
+    }
+
+    private static int resolveMoveLineAddress(org.fisk.swim.text.Buffer buffer, String address, boolean destination) {
+        String value = address == null ? "." : address.trim();
+        if (value.isEmpty() || ".".equals(value)) {
+            return buffer.getLineIndexAt(buffer.getCursor().getPosition());
+        }
+        int base;
+        String offset = "";
+        if (value.charAt(0) == '$') {
+            base = buffer.getLineCount() - 1;
+            offset = value.substring(1);
+        } else if (value.charAt(0) == '.') {
+            base = buffer.getLineIndexAt(buffer.getCursor().getPosition());
+            offset = value.substring(1);
+        } else if (value.charAt(0) == '+' || value.charAt(0) == '-') {
+            base = buffer.getLineIndexAt(buffer.getCursor().getPosition());
+            offset = value;
+        } else {
+            int lineNumber = Integer.parseInt(value);
+            if (destination && lineNumber == 0) {
+                return -1;
+            }
+            return Math.max(0, Math.min(buffer.getLineCount() - 1, lineNumber - 1));
+        }
+        if (!offset.isBlank()) {
+            base += Integer.parseInt(offset);
+        }
+        return Math.max(destination ? -1 : 0, Math.min(buffer.getLineCount() - 1, base));
     }
 
     private static int resolveLineAddress(org.fisk.swim.text.Buffer buffer, String address) {
@@ -1267,8 +1416,18 @@ public class CommandView extends View {
         if (_command == null || !isCommandPrompt()) {
             return CommandMenuState.hidden();
         }
-        var matches = matchingCommandSpecs();
+        var matches = matchingCommandSpecs().stream()
+                .map(this::withDiscoveredShortcut)
+                .toList();
         return new CommandMenuState(true, commandPrefix(), List.copyOf(matches), normalizeSelection(matches.size()));
+    }
+
+    private CommandSpec withDiscoveredShortcut(CommandSpec spec) {
+        var window = Window.getInstance();
+        if (window == null) {
+            return spec;
+        }
+        return spec.withShortcutLabel(window.shortcutForCommand(spec.primaryName()));
     }
 
     public void activate(String prompt) {
@@ -1322,6 +1481,9 @@ public class CommandView extends View {
     private record GlobalCommand(boolean invert, String pattern, String command) {
     }
 
+    private record MoveCommand(String rangePrefix, String destination) {
+    }
+
     private record LineRange(int startLine, int endLine) {
     }
 
@@ -1332,14 +1494,30 @@ public class CommandView extends View {
             String description,
             String replacementText,
             boolean replaceEntireInput,
-            String displayLabel) {
+            String displayLabel,
+            String shortcutLabel) {
         public CommandSpec(String primaryName, List<String> aliases, String arguments, String description) {
-            this(primaryName, aliases, arguments, description, primaryName, false, "");
+            this(primaryName, aliases, arguments, description, primaryName, false, "", "");
+        }
+
+        public CommandSpec(String primaryName, List<String> aliases, String arguments, String description,
+                String shortcutLabel) {
+            this(primaryName, aliases, arguments, description, primaryName, false, "", shortcutLabel);
         }
 
         public CommandSpec(String primaryName, List<String> aliases, String arguments, String description,
                 String replacementText, boolean replaceEntireInput) {
-            this(primaryName, aliases, arguments, description, replacementText, replaceEntireInput, "");
+            this(primaryName, aliases, arguments, description, replacementText, replaceEntireInput, "", "");
+        }
+
+        public CommandSpec(String primaryName, List<String> aliases, String arguments, String description,
+                String replacementText, boolean replaceEntireInput, String displayLabel) {
+            this(primaryName, aliases, arguments, description, replacementText, replaceEntireInput, displayLabel, "");
+        }
+
+        CommandSpec withShortcutLabel(String shortcutLabel) {
+            return new CommandSpec(primaryName, aliases, arguments, description, replacementText, replaceEntireInput,
+                    displayLabel, shortcutLabel == null ? "" : shortcutLabel);
         }
 
         static CommandSpec lastCommand(String command) {

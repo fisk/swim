@@ -8,8 +8,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
@@ -25,7 +28,7 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 
-public class ShellPanelView extends View {
+public class ShellPanelView extends View implements KeyBindingHintProvider {
     private static final class TerminalCursor extends Cursor {
         private final ShellPanelView _owner;
 
@@ -177,6 +180,56 @@ public class ShellPanelView extends View {
                                 "browse terminal output as a read-only buffer"),
                         new CommandView.CommandSpec("w", List.of("window", "workspace"), "<number>", "switch workspace"),
                         new CommandView.CommandSpec("help", List.of("h"), "", "show shell terminal help")));
+    }
+
+    @Override
+    public String keyHintContext() {
+        return _commandMode ? "shell command mode" : "shell input";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        if (_commandMode) {
+            return commandModeKeyHints();
+        }
+        return shellInputKeyHints();
+    }
+
+    private List<KeyBindingHint> commandModeKeyHints() {
+        return List.of(
+                KeyBindingHint.of("q", "Shell", "close"),
+                KeyBindingHint.of("c w", "Shell", "new workspace"),
+                KeyBindingHint.of("c v", "Shell", "split right"),
+                KeyBindingHint.of("c h", "Shell", "split below"),
+                KeyBindingHint.of("e", "Shell", "return to editor"),
+                KeyBindingHint.of("v", "Shell", "browse output"),
+                KeyBindingHint.of("w <number>", "Shell", "switch workspace"),
+                KeyBindingHint.of("h", "Shell", "help"),
+                KeyBindingHint.of("<ENTER>", "Command", "run"),
+                KeyBindingHint.of("<BACKSPACE>", "Command", "delete character"),
+                KeyBindingHint.of("<ESC>", "Command", "browse output or cancel"));
+    }
+
+    private List<KeyBindingHint> shellInputKeyHints() {
+        var hints = new java.util.ArrayList<KeyBindingHint>();
+        hints.add(KeyBindingHint.of("<CTRL>-g", "Shell", "command mode"));
+        hints.add(KeyBindingHint.of("<CHAR>", "Terminal", "send input"));
+        if (isPanelShell()) {
+            hints.add(KeyBindingHint.of("<ESC>", "Panel", "close"));
+        }
+        return List.copyOf(hints);
+    }
+
+    private static String formatHints(List<KeyBindingHint> hints) {
+        return hints.stream()
+                .map(hint -> displayHintKey(hint.key()) + " " + hint.summary())
+                .collect(Collectors.joining("  •  "));
+    }
+
+    private static String displayHintKey(String pattern) {
+        return List.of(pattern.split(" ")).stream()
+                .map(UiTheme::displayKey)
+                .collect(Collectors.joining(" "));
     }
 
     @Override
@@ -386,8 +439,7 @@ public class ShellPanelView extends View {
             } else if (command.startsWith("w")) {
                 switchWorkspace(command);
             } else if ("h".equals(command) || "help".equals(command)) {
-                Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c w new shell ws  •  Ctrl-g c v/h split shell  •  Ctrl-g q close");
+                Window.getInstance().getCommandView().setMessage(formatHints(commandModeKeyHints()));
             }
             Window.getInstance().refreshChromeState();
             setNeedsRedraw();
@@ -438,8 +490,7 @@ public class ShellPanelView extends View {
             } else if (_command.length() == 0 && character == 'h') {
                 _commandMode = false;
                 _command.setLength(0);
-                Window.getInstance().getCommandView()
-                        .setMessage("Ctrl-g Esc browse output  •  Ctrl-g w <n> Enter switch workspace  •  Ctrl-g e editor  •  Ctrl-g c w new shell ws  •  Ctrl-g c v/h split shell  •  Ctrl-g q close");
+                Window.getInstance().getCommandView().setMessage(formatHints(commandModeKeyHints()));
             } else if (_command.length() == 0 && character == 'w') {
                 _command.append(event.getCharacter());
                 Window.getInstance().refreshChromeState();
@@ -702,7 +753,7 @@ public class ShellPanelView extends View {
         }
         String digits = command.substring(1).trim();
         if (digits.isEmpty()) {
-            window.getCommandView().setMessage("Usage: Ctrl-g w <number> Enter");
+            window.getCommandView().setMessage("Usage: w <number>");
             return;
         }
         try {
@@ -711,7 +762,7 @@ public class ShellPanelView extends View {
                 window.getCommandView().setMessage("No such workspace: " + index);
             }
         } catch (NumberFormatException e) {
-            window.getCommandView().setMessage("Usage: Ctrl-g w <number> Enter");
+            window.getCommandView().setMessage("Usage: w <number>");
         }
     }
 }

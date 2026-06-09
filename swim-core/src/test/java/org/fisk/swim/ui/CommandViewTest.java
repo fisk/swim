@@ -127,6 +127,40 @@ class CommandViewTest {
     }
 
     @Test
+    void commandMenuShowsKeyboardShortcutOnRightSide() throws IOException {
+        Path path = tempDir.resolve("command-shortcut.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 48, 10)) {
+            var commandView = harness.getWindow().getCommandView();
+            commandView.activate(":");
+
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('s'));
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('p'));
+
+            var state = commandView.getMenuState();
+            assertTrue(state.visible());
+            assertEquals("split", state.selectedMatch().primaryName());
+            assertEquals("C-w s", state.selectedMatch().shortcutLabel());
+
+            var row = new CommandMenuView(Rect.create(0, 0, 48, 4))
+                    .buildMatchRowForTest(48, state.selectedMatch(), false)
+                    .toString();
+            assertEquals(48, row.length());
+            assertTrue(row.endsWith("  C-w s"));
+
+            commandView.activate(":");
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('g'));
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('i'));
+
+            state = commandView.getMenuState();
+            assertTrue(state.visible());
+            assertEquals("git", state.selectedMatch().primaryName());
+            assertEquals("SPC g", state.selectedMatch().shortcutLabel());
+        }
+    }
+
+    @Test
     void commandMenuArrowsMoveSelectionAcrossMatches() throws IOException {
         Path path = tempDir.resolve("command-selection.txt");
         Files.writeString(path, "abc");
@@ -223,7 +257,7 @@ class CommandViewTest {
             invokeRunCommand(window.getCommandView(), "vsplit");
 
             assertTrue(window.getActiveView() instanceof ShellPanelView);
-            assertEquals("{16, 0, 16, 2}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
             assertEquals(2, leafViews(window).size());
             assertTrue(leafViews(window).stream().allMatch(view -> view instanceof ShellPanelView));
         }
@@ -500,6 +534,56 @@ class CommandViewTest {
                     alpha
                     beta
                     beta
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void moveCommandMovesCurrentLineLikeVim() throws Exception {
+        Path path = tempDir.resolve("move-current.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
+
+            invokeRunCommand(window.getCommandView(), "m +1");
+
+            assertEquals("""
+                    one
+                    three
+                    two
+                    four
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
+    void moveCommandAcceptsRangesAndZeroDestination() throws Exception {
+        Path path = tempDir.resolve("move-range.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "2,3m0");
+
+            assertEquals("""
+                    two
+                    three
+                    one
+                    four
                     """, window.getBufferContext().getBuffer().getString());
         }
     }

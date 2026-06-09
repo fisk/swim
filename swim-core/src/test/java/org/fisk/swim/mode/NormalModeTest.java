@@ -12,12 +12,15 @@ import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.MailPanelView;
+import org.fisk.swim.ui.PluginPanelView;
 import org.fisk.swim.ui.ProjectSearchPanelView;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.mail.MailClient;
@@ -27,7 +30,9 @@ import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.slack.SlackPluginRegistry;
+import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.SlackPanelView;
+import org.fisk.swim.ui.TodoWorkspaceView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -273,6 +278,33 @@ class NormalModeTest {
     }
 
     @Test
+    void ztZzAndZbAlignViewportLikeVim() throws Exception {
+        Path path = tempDir.resolve("viewport-align.txt");
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            text.append("line ").append(i).append('\n');
+        }
+        Files.writeString(path, text.toString());
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            var view = window.getBufferContext().getBufferView();
+            int cursorLine = 14;
+            buffer.getCursor().setPosition(buffer.getLineStartByIndex(cursorLine));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('t'));
+            assertEquals(cursorLine, view.getStartLine());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('z'));
+            assertEquals(Math.max(0, cursorLine - view.getViewportHeight() / 2), view.getStartLine());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('z'), HeadlessWindowHarness.key('b'));
+            assertEquals(Math.max(0, cursorLine - view.getViewportHeight() + 1), view.getStartLine());
+        }
+    }
+
+    @Test
     void gwStartsFancyJumpPrefixHandling() throws Exception {
         Path path = tempDir.resolve("fancy-jump.txt");
         Files.writeString(path, "alpha beta gamma\n");
@@ -443,6 +475,169 @@ class NormalModeTest {
     }
 
     @Test
+    void leaderMovesAndIndentsCurrentLine() throws Exception {
+        Path path = tempDir.resolve("leader-move-line.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('j'));
+            assertEquals("""
+                    one
+                    three
+                    two
+                    """, buffer.getString());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('k'));
+            assertEquals("""
+                    one
+                    two
+                    three
+                    """, buffer.getString());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('l'));
+            assertEquals("""
+                    one
+                        two
+                    three
+                    """, buffer.getString());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('h'));
+            assertEquals("""
+                    one
+                    two
+                    three
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
+    void leaderMoveCountOperatesOnMultipleLines() throws Exception {
+        Path path = tempDir.resolve("leader-move-count.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                five
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('3'),
+                    HeadlessWindowHarness.key(' '), HeadlessWindowHarness.key('j'));
+
+            assertEquals("""
+                    one
+                    five
+                    two
+                    three
+                    four
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
+    void leaderIndentCountOperatesOnMultipleLines() throws Exception {
+        Path path = tempDir.resolve("leader-indent-count.txt");
+        Files.writeString(path, """
+                one
+                two
+                three
+                four
+                """);
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('2'),
+                    HeadlessWindowHarness.key(' '), HeadlessWindowHarness.key('l'));
+
+            assertEquals("""
+                    one
+                        two
+                        three
+                    four
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
+    void classicUppercaseJStillJoinsLines() throws Exception {
+        Path path = tempDir.resolve("classic-join.txt");
+        Files.writeString(path, "one\ntwo\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('J'));
+
+            assertEquals("one two\n", window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void leaderOpensMailSlackAndTodoWorkspaces() throws Exception {
+        Path path = tempDir.resolve("leader-apps.txt");
+        Files.writeString(path, "abc\n");
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.resolve("home").toString());
+        var host = new RecordingHost();
+        host.panel = new FakeGitPanel();
+        SwimRuntime.setHost(host);
+        MailPluginRegistry.register(new FakeMailClient(tempDir.resolve(".swim/email")));
+        SlackPluginRegistry.register(new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json")));
+        TodoUiSupport.shutdownInstance();
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('m'));
+            assertTrue(window.isShowingMailWorkspace());
+            assertTrue(window.getActiveView() instanceof MailPanelView);
+            window.hideCurrentWorkspaceWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('s'));
+            assertTrue(window.isShowingSlackWorkspace());
+            window.hideCurrentWorkspaceWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('t'));
+            assertTrue(window.isShowingTodoWorkspace());
+            assertTrue(window.getActiveView() instanceof TodoWorkspaceView);
+            window.hideCurrentWorkspaceWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('g'));
+            assertEquals("swim-git", host.pluginId);
+            assertTrue(window.getActiveView() instanceof PluginPanelView);
+        } finally {
+            MailPluginRegistry.clear();
+            SlackPluginRegistry.clear();
+            TodoUiSupport.shutdownInstance();
+            SwimRuntime.clear();
+            System.setProperty("user.home", previousHome);
+        }
+    }
+
+    @Test
     void visualBlockYankPastesRectangularText() throws Exception {
         Path path = tempDir.resolve("visual-block-paste.txt");
         Files.writeString(path, "ab12\ncd34\n");
@@ -494,6 +689,7 @@ class NormalModeTest {
 
     private static final class RecordingHost implements SwimHost {
         private String pluginId;
+        private SwimPanel panel;
 
         @Override
         public void requestReload(Path path) {
@@ -513,8 +709,35 @@ class NormalModeTest {
         }
 
         @Override
+        public SwimPanel getPanel(String pluginId) {
+            return panel;
+        }
+
+        @Override
         public Path getBuildRoot() {
             return Path.of("/tmp");
+        }
+    }
+
+    private static final class FakeGitPanel implements SwimPanel {
+        @Override
+        public String getId() {
+            return "swim-git";
+        }
+
+        @Override
+        public String getTitle() {
+            return "Git";
+        }
+
+        @Override
+        public List<String> render(int width, int height) {
+            return List.of("Git", "> v Staged (0)", "  v Unstaged (0)");
+        }
+
+        @Override
+        public SwimPanelResult handleInput(String input, int width, int height) {
+            return SwimPanelResult.success();
         }
     }
 

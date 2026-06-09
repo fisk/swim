@@ -61,6 +61,9 @@ public class Buffer {
         String apply(String text);
     }
 
+    public record LineMoveResult(int startLine, int endLine) {
+    }
+
     public Cursor getCursor() {
         return _cursors.get(0);
     }
@@ -839,6 +842,82 @@ public class Buffer {
         _bufferContext.getTextLayout().calculate();
         getCursor().setPosition(Math.min(getCursor().getPosition(), getLength()));
         _bufferContext.getBufferView().adaptViewToCursor();
+    }
+
+    public LineMoveResult moveLineRangeAfter(int startLine, int endLine, int destinationLine) {
+        if (_readOnly) {
+            return null;
+        }
+        String original = getString();
+        boolean trailingNewline = original.endsWith("\n");
+        var lines = new ArrayList<>(List.of(original.split("\n", -1)));
+        if (trailingNewline && lines.size() > 1) {
+            lines.remove(lines.size() - 1);
+        }
+        int lineCount = lines.size();
+        if (lineCount <= 1) {
+            return null;
+        }
+        int first = Math.max(0, Math.min(startLine, endLine));
+        int last = Math.min(lineCount - 1, Math.max(startLine, endLine));
+        int destination = Math.max(-1, Math.min(destinationLine, lineCount - 1));
+        if (first >= lineCount) {
+            return null;
+        }
+        if ((destination >= first && destination <= last) || destination == first - 1) {
+            return null;
+        }
+
+        var moved = new ArrayList<String>(lines.subList(first, last + 1));
+        lines.subList(first, last + 1).clear();
+        int insertionIndex = destination < first
+                ? destination + 1
+                : destination - moved.size() + 1;
+        insertionIndex = Math.max(0, Math.min(insertionIndex, lines.size()));
+        lines.addAll(insertionIndex, moved);
+
+        String updated = String.join("\n", lines);
+        if (trailingNewline) {
+            updated += "\n";
+        }
+        if (updated.equals(original)) {
+            return null;
+        }
+
+        int column = getColumnAt(getCursor().getPosition());
+        if (!original.isEmpty()) {
+            _undoLog.recordRemove(0, original.length());
+            rawRemove(0, original.length());
+        }
+        if (!updated.isEmpty()) {
+            _undoLog.recordInsert(0, updated);
+            rawInsert(0, updated);
+        }
+        _bufferContext.getTextLayout().calculate();
+        getCursor().setPosition(getPositionAtLineColumn(insertionIndex, column));
+        _bufferContext.getBufferView().adaptViewToCursor();
+        return new LineMoveResult(insertionIndex, insertionIndex + moved.size() - 1);
+    }
+
+    public LineMoveResult moveLineRangeBy(int startLine, int endLine, int delta) {
+        if (delta == 0) {
+            return null;
+        }
+        int first = Math.max(0, Math.min(startLine, endLine));
+        int last = Math.min(getLineCount() - 1, Math.max(startLine, endLine));
+        int destination = delta < 0 ? first - 2 : last + 1;
+        LineMoveResult result = null;
+        for (int i = 0; i < Math.abs(delta); i++) {
+            var next = moveLineRangeAfter(first, last, destination);
+            if (next == null) {
+                return result;
+            }
+            result = next;
+            first = result.startLine();
+            last = result.endLine();
+            destination = delta < 0 ? first - 2 : last + 1;
+        }
+        return result;
     }
 
     public void autoIndentLines(int startPosition, int endPosition) {

@@ -3,6 +3,7 @@ package org.fisk.swim.plugins.git;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.api.SwimPluginContext;
 
@@ -24,6 +25,10 @@ final class GitPluginSession implements AutoCloseable {
 
     SwimPanelResult handleInput(String input, int width, int height) {
         return _controller.handleInput(input, width, height);
+    }
+
+    List<SwimKeyBindingHint> keyBindingHints() {
+        return _controller.keyBindingHints();
     }
 
     void syncToPath(Path path) {

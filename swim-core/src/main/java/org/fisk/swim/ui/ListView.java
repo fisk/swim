@@ -5,6 +5,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -18,7 +20,7 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 
-public class ListView extends View {
+public class ListView extends View implements KeyBindingHintProvider {
     public static abstract class ListItem {
         public abstract void onClick();
         public abstract String displayString();
@@ -64,25 +66,25 @@ public class ListView extends View {
         _title = title;
         _selection = 0;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
-        _responders.addEventResponder("<DOWN>", () -> {
+        _responders.addEventResponder("<DOWN>", "List", "move down", () -> {
             if (_selection >= _filteredList.size() - 1) {
                 return;
             }
             ++_selection;
             ListView.this.setNeedsRedraw();
         });
-        _responders.addEventResponder("<UP>", () -> {
+        _responders.addEventResponder("<UP>", "List", "move up", () -> {
             if (_selection <= 0) {
                 return;
             }
             --_selection;
             ListView.this.setNeedsRedraw();
         });
-        _responders.addEventResponder("<ESC>", () -> {
+        _responders.addEventResponder("<ESC>", "List", "close", () -> {
             ListView.this.getParent().setNeedsRedraw();
             Window.getInstance().hidePanel();
         });
-        _responders.addEventResponder("<ENTER>", () -> {
+        _responders.addEventResponder("<ENTER>", "List", "open selected", () -> {
             if (_selection >= _filteredList.size()) {
                 return;
             }
@@ -91,12 +93,13 @@ public class ListView extends View {
             item.onClick();
             Window.getInstance().hidePanel();
         });
-        _responders.addEventResponder("<BACKSPACE>", () -> {
+        _responders.addEventResponder("<BACKSPACE>", "Filter", "delete character", () -> {
             if (_filter.length() > 0) {
                 _filter.delete(_filter.length() - 1, _filter.length());
                 filterList();
             }
         });
+        _responders.addKeyBindingHint("<CHAR>", "Filter", "type to filter");
         _responders.addEventResponder(new EventResponder() {
             private char _character;
 
@@ -186,6 +189,16 @@ public class ListView extends View {
     }
 
     @Override
+    public String keyHintContext() {
+        return "list navigation";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _responders.keyBindingHints();
+    }
+
+    @Override
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
@@ -195,7 +208,6 @@ public class ListView extends View {
         var title = new AttributedString();
         title.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         title.append(" " + _filteredList.size() + "/" + _list.size() + " ", UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
-        title.append(" enter open  esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var search = new AttributedString();

@@ -199,6 +199,27 @@ public class BufferView extends View {
         }
     }
 
+    public void alignCursorLine(ViewportAnchor anchor) {
+        if (anchor == null) {
+            return;
+        }
+        int cursorY = getCursor().getYAbsolute();
+        int height = Math.max(1, getBounds().getSize().getHeight());
+        int targetStart = switch (anchor) {
+        case TOP -> cursorY;
+        case MIDDLE -> cursorY - height / 2;
+        case BOTTOM -> cursorY - height + 1;
+        };
+        _startLine = Math.max(0, Math.min(targetStart, maxStartLine(_bufferContext.getTextLayout())));
+        setNeedsRedraw();
+    }
+
+    public enum ViewportAnchor {
+        TOP,
+        MIDDLE,
+        BOTTOM
+    }
+
     private AttributedString applyDiagnosticBackground(org.fisk.swim.text.TextLayout.Glyph glyph, AttributedString character) {
         if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
             return character;

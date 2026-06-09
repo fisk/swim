@@ -3,6 +3,7 @@ package org.fisk.swim.plugins.git;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
 
@@ -31,6 +32,11 @@ final class GitSwimPanel implements SwimPanel {
     @Override
     public SwimPanelResult handleInput(String input, int width, int height) {
         return _session.handleInput(input, width, height);
+    }
+
+    @Override
+    public List<SwimKeyBindingHint> keyBindingHints() {
+        return _session.keyBindingHints();
     }
 
     @Override

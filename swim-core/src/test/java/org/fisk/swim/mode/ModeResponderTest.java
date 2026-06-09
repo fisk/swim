@@ -289,6 +289,76 @@ class Demo {
     }
 
     @Test
+    void leaderMovesAndIndentsVisualLineSelection() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("visual-leader.txt", """
+                one
+                two
+                three
+                four
+                """), 30, 10)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('V'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('j'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('j'));
+
+            assertSame(window.getVisualLineMode(), window.getCurrentMode());
+            assertEquals("""
+                    three
+                    one
+                    two
+                    four
+                    """, buffer.getString());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('l'));
+            assertEquals("""
+                    three
+                        one
+                        two
+                    four
+                    """, buffer.getString());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('h'));
+            assertEquals("""
+                    three
+                    one
+                    two
+                    four
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
+    void leaderMoveCountMovesVisualSelectionMultipleRows() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("visual-leader-count.txt", """
+                one
+                two
+                three
+                four
+                """), 30, 10)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('V'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('j'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('2'),
+                    HeadlessWindowHarness.key(' '), HeadlessWindowHarness.key('j'));
+
+            assertSame(window.getVisualLineMode(), window.getCurrentMode());
+            assertEquals("""
+                    three
+                    four
+                    one
+                    two
+                    """, buffer.getString());
+        }
+    }
+
+    @Test
     void ctrlWPaneBindingsSplitFocusAndTargetTheFocusedBuffer() throws IOException {
         Path first = writeFile("pane-left.txt", "left\npane");
         Path second = writeFile("pane-right.txt", "right\npane");

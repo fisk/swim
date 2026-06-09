@@ -126,6 +126,28 @@ class GitPluginSessionTest {
         assertTrue(lines.stream().anyMatch(line -> line.contains("second.txt")));
     }
 
+    @Test
+    void exposesProgrammaticKeyHintsForCurrentGitView() throws Exception {
+        Path repo = tempDir.resolve("hint-repo");
+        Files.createDirectories(repo);
+        Path file = Files.writeString(repo.resolve("note.txt"), "one\n");
+        try (var git = Git.init().setDirectory(repo.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit()
+                    .setMessage("initial")
+                    .setAuthor("Test", "test@example.com")
+                    .setCommitter("Test", "test@example.com")
+                    .call();
+        }
+
+        GitPluginSession session = new GitPluginSession(new TestPluginContext(repo, file));
+
+        assertTrue(session.keyBindingHints().stream()
+                .anyMatch(hint -> "p".equals(hint.key()) && hint.summary().contains("pull requests")));
+        assertTrue(session.keyBindingHints().stream()
+                .anyMatch(hint -> "r".equals(hint.key()) && hint.summary().contains("refresh")));
+    }
+
     private record TestPluginContext(Path initialPath, Path currentPath) implements SwimPluginContext {
         @Override
         public Path getInitialPath() {

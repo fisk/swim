@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
+import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
 
@@ -43,6 +44,11 @@ final class TreeViewSwimPanel implements SwimPanel {
         } catch (IOException e) {
             return SwimPanelResult.successMessage("Tree view refresh failed");
         }
+    }
+
+    @Override
+    public List<SwimKeyBindingHint> keyBindingHints() {
+        return _session.getInputBindings().keyBindingHints();
     }
 
     @Override

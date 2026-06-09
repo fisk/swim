@@ -21,6 +21,8 @@ import org.fisk.swim.config.NormalModeRemap;
 import org.fisk.swim.config.SessionLayoutNode;
 import org.fisk.swim.config.SessionWorkspace;
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.KeyStrokeEvent;
 import org.fisk.swim.event.RecordedKey;
@@ -179,6 +181,7 @@ public class Window implements Drawable {
     private final EditorPaths _editorPaths;
     private final EditorConfig _editorConfig;
     private final List<CompiledRemap> _normalModeRemaps;
+    private List<KeyBindingHint> _globalNormalModeHints = List.of();
     private boolean _replayingRemap;
     private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
     private SearchLocationList _locationList = SearchLocationList.empty("Location");
@@ -2355,6 +2358,9 @@ public class Window implements Drawable {
         if (_modeLineView != null) {
             _modeLineView.close();
         }
+        if (_keyMenuView != null) {
+            _keyMenuView.close();
+        }
         MailStatusService.shutdownInstance();
         TodoUiSupport.shutdownInstance();
         _instance = null;
@@ -2385,6 +2391,7 @@ public class Window implements Drawable {
             _keyMenuView.setBufferFocused(_activeBufferView != null && responder == _activeBufferView);
             _keyMenuView.setFocusContext(focusContextFor(responder));
             _keyMenuView.setContextLabel(contextLabelFor(responder));
+            _keyMenuView.setContextKeyHints(contextHintFor(responder), keyBindingHintsFor(responder));
             _keyMenuView.setCommandState(_commandView == null || !_commandView.isActive() ? null : _commandView.getPrompt(),
                     _commandView == null ? "" : _commandView.getCommandText());
             _keyMenuView.setChatPending(responder instanceof ChatPanelView chatPanelView && chatPanelView.isPending());
@@ -2623,6 +2630,89 @@ public class Window implements Drawable {
             return pluginPanelView.getTitle();
         }
         return null;
+    }
+
+    private String contextHintFor(EventResponder responder) {
+        if (responder == _activeBufferView && _currentMode instanceof KeyBindingHintProvider provider) {
+            return provider.keyHintContext();
+        }
+        if (responder instanceof KeyBindingHintProvider provider) {
+            return provider.keyHintContext();
+        }
+        return null;
+    }
+
+    private List<KeyBindingHint> keyBindingHintsFor(EventResponder responder) {
+        if (responder == _activeBufferView && _currentMode instanceof KeyBindingHintProvider provider) {
+            return modeKeyBindingHints(provider);
+        }
+        if (responder instanceof KeyBindingHintProvider provider) {
+            return provider.keyBindingHints();
+        }
+        return List.of();
+    }
+
+    String shortcutForCommand(String commandName) {
+        if (commandName == null || commandName.isBlank()) {
+            return "";
+        }
+        for (var hint : modeKeyBindingHints(_normalMode)) {
+            if (commandName.equals(hint.commandName())) {
+                return displayKeySequence(hint.key());
+            }
+        }
+        return "";
+    }
+
+    private List<KeyBindingHint> modeKeyBindingHints(KeyBindingHintProvider provider) {
+        if (provider == null) {
+            return List.of();
+        }
+        var providedHints = provider.keyBindingHints();
+        var hints = new ArrayList<KeyBindingHint>(providedHints == null ? List.of() : providedHints);
+        if (provider == _normalMode) {
+            if (_globalNormalModeHints != null) {
+                hints.addAll(_globalNormalModeHints);
+            }
+            return normalModeHintsWithRemaps(hints);
+        }
+        return List.copyOf(hints);
+    }
+
+    private List<KeyBindingHint> normalModeHintsWithRemaps(List<KeyBindingHint> baseHints) {
+        if (_normalModeRemaps == null || _normalModeRemaps.isEmpty() || baseHints == null || baseHints.isEmpty()) {
+            return baseHints == null ? List.of() : List.copyOf(baseHints);
+        }
+        var hints = new ArrayList<KeyBindingHint>();
+        for (var remap : _normalModeRemaps) {
+            for (var hint : baseHints) {
+                if (matchesKeySequence(hint.key(), remap.rhs())) {
+                    hints.add(hint.withKey(remap.lhsText()));
+                }
+            }
+        }
+        hints.addAll(baseHints);
+        return List.copyOf(hints);
+    }
+
+    private static boolean matchesKeySequence(String notation, List<RecordedKey> keys) {
+        try {
+            return RecordedKey.parseSequence(notation).equals(keys);
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+    }
+
+    private static String displayKeySequence(String sequence) {
+        if (sequence == null || sequence.isBlank()) {
+            return "";
+        }
+        var tokens = sequence.trim().split("\\s+");
+        var parts = new ArrayList<String>();
+        for (var token : tokens) {
+            parts.add(UiTheme.displayKey(token));
+        }
+        return String.join(" ", parts);
     }
 
     public void update(boolean forced) {
@@ -3037,12 +3127,13 @@ public class Window implements Drawable {
         var responders = eventThread.getResponder();
         var prefixLayer = responders.addLayer();
         var quickCaptureLayer = responders.addLayer();
-        quickCaptureLayer.addEventResponder("<CTRL>-t", () -> {
+        quickCaptureLayer.addEventResponder("<CTRL>-t", "Workspace", "quick todo", () -> {
             if (blockEditorDriveAction("Todo quick capture", "Todo is outside the editor-control sandbox")) {
                 return;
             }
             TodoUiSupport.quickCapture(Window.this);
         });
+        _globalNormalModeHints = quickCaptureLayer.keyBindingHints();
         prefixLayer.addEventResponder(new EventResponder() {
             private CompiledRemap _matched;
 

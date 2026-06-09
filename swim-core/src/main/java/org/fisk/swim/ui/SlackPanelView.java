@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.slack.SlackChannelSummary;
 import org.fisk.swim.slack.SlackClient;
@@ -27,7 +29,7 @@ import org.fisk.swim.text.BufferContext;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class SlackPanelView extends View {
+public class SlackPanelView extends View implements KeyBindingHintProvider {
     private static final int MESSAGE_PAGE_SIZE = 120;
     private static final int MESSAGE_PREFETCH_THRESHOLD = 20;
 
@@ -111,6 +113,38 @@ public class SlackPanelView extends View {
 
     boolean isComposeActive() {
         return _mode == Mode.COMPOSE;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return _mode == Mode.COMPOSE ? "slack compose" : "slack browse";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        if (_mode == Mode.COMPOSE) {
+            return List.of(
+                    KeyBindingHint.of("<CTRL>-s", "Compose", "send"),
+                    KeyBindingHint.of("<ESC>", "Compose", "cancel"),
+                    KeyBindingHint.of("q", "Compose", "cancel"));
+        }
+        return List.of(
+                KeyBindingHint.of("j", "Navigation", "move down"),
+                KeyBindingHint.of("k", "Navigation", "move up"),
+                KeyBindingHint.of("<DOWN>", "Navigation", "move down"),
+                KeyBindingHint.of("<UP>", "Navigation", "move up"),
+                KeyBindingHint.of("h", "Navigation", "sidebar"),
+                KeyBindingHint.of("l", "Navigation", "messages"),
+                KeyBindingHint.of("<LEFT>", "Navigation", "sidebar"),
+                KeyBindingHint.of("<RIGHT>", "Navigation", "messages"),
+                KeyBindingHint.of("g", "Navigation", "top"),
+                KeyBindingHint.of("G", "Navigation", "bottom"),
+                KeyBindingHint.of("<ENTER>", "Messages", "open buffer"),
+                KeyBindingHint.of("c", "Compose", "new message"),
+                KeyBindingHint.of("r", "Compose", "reply"),
+                KeyBindingHint.of("e", "Workspace", "refresh"),
+                KeyBindingHint.of("q", "Workspace", "close"),
+                KeyBindingHint.of("<ESC>", "Workspace", "close"));
     }
 
     void triggerSend() {
@@ -231,7 +265,10 @@ public class SlackPanelView extends View {
         var header = new AttributedString();
         header.append(_mode == Mode.COMPOSE ? " Slack Compose " : " Slack ",
                 UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(headerMessage(), UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        String status = headerStatus();
+        if (!status.isBlank()) {
+            header.append(status, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
+        }
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         int bodyTop = rect.getPoint().getY() + 1;
@@ -254,15 +291,14 @@ public class SlackPanelView extends View {
         drawMessageTable(graphics, messagesX, bodyTop, messagesWidth, bodyHeight);
     }
 
-    private String headerMessage() {
+    private String headerStatus() {
         String status = _statusMessage == null ? "" : _statusMessage;
         if (_mode == Mode.COMPOSE) {
             String target = selectedConversationLabel();
             String suffix = _composeThreadTs.isBlank() ? "" : " thread";
-            return "Ctrl-s send  Esc cancel  target " + target + suffix + joinStatus(status);
+            return " target " + target + suffix + joinStatus(status);
         }
-        return "j/k select  h/l switch pane  Enter open buffer  c compose  r reply  e refresh  q close"
-                + joinStatus(status);
+        return joinStatus(status).stripLeading();
     }
 
     private static String joinStatus(String status) {

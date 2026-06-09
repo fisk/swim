@@ -136,18 +136,24 @@ public final class UiTheme {
     }
 
     static String displayKey(String token) {
+        if (token != null && token.startsWith("<CTRL>-")) {
+            String rest = token.substring("<CTRL>-".length());
+            if (rest.length() == 1) {
+                return "C-" + rest;
+            }
+            return "C-" + displayKey(rest);
+        }
         return switch (token) {
         case "<SPACE>" -> "SPC";
-        case "<CTRL>-g" -> "C-g";
-        case "<CTRL>-v" -> "C-v";
-        case "<CTRL>-r" -> "C-r";
-        case "<CTRL>-t" -> "C-t";
-        case "<CTRL>-y" -> "C-y";
-        case "<CTRL>-e" -> "C-e";
         case "<CHAR>" -> "char";
         case "<ESC>" -> "Esc";
         case "<ENTER>" -> "Enter";
+        case "<SHIFT>-<ENTER>" -> "S-Enter";
         case "<BACKSPACE>" -> "Bksp";
+        case "<REVERSE-TAB>" -> "S-Tab";
+        case "<TAB>" -> "Tab";
+        case "<PAGEUP>" -> "PgUp";
+        case "<PAGEDOWN>" -> "PgDn";
         case "<UP>" -> "Up";
         case "<DOWN>" -> "Down";
         case "<LEFT>" -> "Left";

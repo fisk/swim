@@ -3,6 +3,8 @@ package org.fisk.swim.ui;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -14,7 +16,7 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 
-public class HelpWorkspaceView extends View {
+public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     private record NavRow(int chapterIndex, String text, boolean section, String sectionTitle) {
     }
 
@@ -29,32 +31,44 @@ public class HelpWorkspaceView extends View {
         super(bounds);
         _chapters = HelpDocument.chapters();
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
-        _responders.addEventResponder("<ESC>", this::hideWorkspace);
-        _responders.addEventResponder("q", this::hideWorkspace);
-        _responders.addEventResponder("<DOWN>", () -> scrollArticle(1));
-        _responders.addEventResponder("j", () -> scrollArticle(1));
-        _responders.addEventResponder("<UP>", () -> scrollArticle(-1));
-        _responders.addEventResponder("k", () -> scrollArticle(-1));
-        _responders.addEventResponder("<RIGHT>", () -> moveChapter(1));
-        _responders.addEventResponder("]", () -> moveChapter(1));
-        _responders.addEventResponder("J", () -> moveChapter(1));
-        _responders.addEventResponder("<LEFT>", () -> moveChapter(-1));
-        _responders.addEventResponder("[", () -> moveChapter(-1));
-        _responders.addEventResponder("K", () -> moveChapter(-1));
-        _responders.addEventResponder("g g", this::scrollArticleToStart);
-        _responders.addEventResponder("G", this::scrollArticleToEnd);
-        _responders.addEventResponder("<SPACE>", () -> scrollArticle(pageStep()));
-        _responders.addEventResponder("<BACKSPACE>", () -> scrollArticle(-pageStep()));
-        _responders.addEventResponder("<PAGEDOWN>", () -> scrollArticle(pageStep()));
-        _responders.addEventResponder("<PAGEUP>", () -> scrollArticle(-pageStep()));
-        _responders.addEventResponder("<CTRL>-d", () -> scrollArticle(Math.max(1, pageStep() / 2)));
-        _responders.addEventResponder("<CTRL>-u", () -> scrollArticle(-Math.max(1, pageStep() / 2)));
-        _responders.addEventResponder("<CTRL>-f", () -> scrollArticle(pageStep()));
-        _responders.addEventResponder("<CTRL>-b", () -> scrollArticle(-pageStep()));
+        _responders.addEventResponder("<ESC>", "Help", "return", this::hideWorkspace);
+        _responders.addEventResponder("q", "Help", "return", this::hideWorkspace);
+        _responders.addEventResponder("<DOWN>", "Article", "scroll down", () -> scrollArticle(1));
+        _responders.addEventResponder("j", "Article", "scroll down", () -> scrollArticle(1));
+        _responders.addEventResponder("<UP>", "Article", "scroll up", () -> scrollArticle(-1));
+        _responders.addEventResponder("k", "Article", "scroll up", () -> scrollArticle(-1));
+        _responders.addEventResponder("<RIGHT>", "Chapters", "next chapter", () -> moveChapter(1));
+        _responders.addEventResponder("]", "Chapters", "next chapter", () -> moveChapter(1));
+        _responders.addEventResponder("J", "Chapters", "next chapter", () -> moveChapter(1));
+        _responders.addEventResponder("<LEFT>", "Chapters", "previous chapter", () -> moveChapter(-1));
+        _responders.addEventResponder("[", "Chapters", "previous chapter", () -> moveChapter(-1));
+        _responders.addEventResponder("K", "Chapters", "previous chapter", () -> moveChapter(-1));
+        _responders.addEventResponder("g g", "Article", "top", this::scrollArticleToStart);
+        _responders.addEventResponder("G", "Article", "bottom", this::scrollArticleToEnd);
+        _responders.addEventResponder("<SPACE>", "Article", "page down", () -> scrollArticle(pageStep()));
+        _responders.addEventResponder("<BACKSPACE>", "Article", "page up", () -> scrollArticle(-pageStep()));
+        _responders.addEventResponder("<PAGEDOWN>", "Article", "page down", () -> scrollArticle(pageStep()));
+        _responders.addEventResponder("<PAGEUP>", "Article", "page up", () -> scrollArticle(-pageStep()));
+        _responders.addEventResponder("<CTRL>-d", "Article", "half page down",
+                () -> scrollArticle(Math.max(1, pageStep() / 2)));
+        _responders.addEventResponder("<CTRL>-u", "Article", "half page up",
+                () -> scrollArticle(-Math.max(1, pageStep() / 2)));
+        _responders.addEventResponder("<CTRL>-f", "Article", "page down", () -> scrollArticle(pageStep()));
+        _responders.addEventResponder("<CTRL>-b", "Article", "page up", () -> scrollArticle(-pageStep()));
     }
 
     String getTitle() {
         return "SWIM Help";
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "help workspace";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _responders.keyBindingHints();
     }
 
     String selectedChapterId() {
@@ -200,8 +214,6 @@ public class HelpWorkspaceView extends View {
     private void drawHeader(Rect rect, int width) {
         var line = new AttributedString();
         line.append(" SWIM Help ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        line.append(" j/k scroll  ]/[ chapters  gg/G top/bottom  q return ",
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), rect.getPoint(), width, line,
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
     }

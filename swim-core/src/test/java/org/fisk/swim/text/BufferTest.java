@@ -226,6 +226,54 @@ class BufferTest {
         assertEquals(originalEnd + "inner\n".length(), fold.end());
     }
 
+    @Test
+    void moveLineRangeAfterMovesTextLinesWithoutCreatingTrailingBlankLines() throws IOException {
+        var buffer = createBuffer("""
+                one
+                two
+                three
+                """, 80);
+        buffer.getCursor().setPosition(buffer.getString().indexOf("one") + 1);
+
+        var result = buffer.moveLineRangeAfter(0, 0, buffer.getLineCount() - 1);
+        buffer.getUndoLog().commit();
+
+        assertEquals("""
+                two
+                three
+                one
+                """, buffer.getString());
+        assertEquals(2, result.startLine());
+
+        buffer.undo();
+        assertEquals("""
+                one
+                two
+                three
+                """, buffer.getString());
+    }
+
+    @Test
+    void moveLineRangeAfterMovesRangesBeforeFirstLine() throws IOException {
+        var buffer = createBuffer("""
+                one
+                two
+                three
+                four
+                """, 80);
+
+        var result = buffer.moveLineRangeAfter(1, 2, -1);
+
+        assertEquals("""
+                two
+                three
+                one
+                four
+                """, buffer.getString());
+        assertEquals(0, result.startLine());
+        assertEquals(1, result.endLine());
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }

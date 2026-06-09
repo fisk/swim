@@ -2,6 +2,8 @@ package org.fisk.swim.ui;
 
 import java.util.List;
 
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -9,7 +11,7 @@ import org.fisk.swim.lsp.java.JavaDefinitionMenuSession;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-public class JavaDefinitionPopupView extends View {
+public class JavaDefinitionPopupView extends View implements KeyBindingHintProvider {
     private static final int MIN_WIDTH = 28;
     private static final int MAX_WIDTH = 88;
 
@@ -25,16 +27,26 @@ public class JavaDefinitionPopupView extends View {
     public JavaDefinitionPopupView(Rect bounds) {
         super(bounds);
         setBackgroundColour(UiTheme.SURFACE_ELEVATED);
-        _responders.addEventResponder("j", () -> moveSelection(1));
-        _responders.addEventResponder("k", () -> moveSelection(-1));
-        _responders.addEventResponder("<DOWN>", () -> moveSelection(1));
-        _responders.addEventResponder("<UP>", () -> moveSelection(-1));
-        _responders.addEventResponder("<ENTER>", () -> _onAccept.run());
-        _responders.addEventResponder("<ESC>", () -> _onCancel.run());
+        _responders.addEventResponder("j", "Definitions", "move down", () -> moveSelection(1));
+        _responders.addEventResponder("k", "Definitions", "move up", () -> moveSelection(-1));
+        _responders.addEventResponder("<DOWN>", "Definitions", "move down", () -> moveSelection(1));
+        _responders.addEventResponder("<UP>", "Definitions", "move up", () -> moveSelection(-1));
+        _responders.addEventResponder("<ENTER>", "Definitions", "jump", () -> _onAccept.run());
+        _responders.addEventResponder("<ESC>", "Definitions", "cancel", () -> _onCancel.run());
     }
 
     public String getTitle() {
         return _title;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "definitions";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _session == null || _session.isEmpty() ? List.of() : _responders.keyBindingHints();
     }
 
     public void setSession(JavaDefinitionMenuSession session) {
@@ -104,7 +116,6 @@ public class JavaDefinitionPopupView extends View {
         header.append(" " + getTitle() + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         header.append(" " + (session.getSelection() + 1) + "/" + session.size() + " ",
                 UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
-        header.append(" enter jump  esc cancel ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, Point.create(x, y), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         int rowY = y + 1;

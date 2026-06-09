@@ -14,6 +14,8 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.debug.DebuggerManager;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.FancyJumpResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
@@ -23,6 +25,7 @@ import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
+import org.fisk.swim.ui.BufferView;
 import org.fisk.swim.ui.ProjectSearchUiSupport;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.ShellPanelView;
@@ -57,7 +60,9 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder(_fancyCharacterJump);
         JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
         ClangdLspPluginSupport.installNormalModeBindings(this, window);
-        _rootResponder.addEventResponder("i", () -> {
+        installLeaderMoveBindings(window, leader);
+        installLeaderWorkspaceBindings(window, leader);
+        _rootResponder.addEventResponder("i", "Editing", "insert", () -> {
             allow("enter input mode");
             if (window.exitShellBrowseToPrompt()) {
                 return;
@@ -68,28 +73,28 @@ public class NormalMode extends Mode {
             window.beginRepeatRecording("i");
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder("v", allowed("enter visual mode", () -> { window.switchToMode(window.getVisualMode()); }));
-        _rootResponder.addEventResponder("V", allowed("enter visual line mode", () -> { window.switchToMode(window.getVisualLineMode()); }));
-        _rootResponder.addEventResponder("<CTRL>-v", allowed("enter visual block mode", () -> { window.switchToMode(window.getVisualBlockMode()); }));
-        _rootResponder.addEventResponder("<CTRL>-w s", allowed("split buffer", () -> { window.splitActiveBufferVertically(); }));
-        _rootResponder.addEventResponder("<CTRL>-w v", allowed("split buffer", () -> { window.splitActiveBufferHorizontally(); }));
-        _rootResponder.addEventResponder("<CTRL>-w h", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.LEFT), "No pane to the left"); }));
-        _rootResponder.addEventResponder("<CTRL>-w j", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.DOWN), "No pane below"); }));
-        _rootResponder.addEventResponder("<CTRL>-w k", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.UP), "No pane above"); }));
-        _rootResponder.addEventResponder("<CTRL>-w l", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.RIGHT), "No pane to the right"); }));
-        _rootResponder.addEventResponder("<CTRL>-w w", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusNextView(), "No other pane"); }));
-        _rootResponder.addEventResponder("<CTRL>-w W", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); }));
-        _rootResponder.addEventResponder("<CTRL>-w q", allowed("close buffer split", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); }));
-        _rootResponder.addEventResponder("<CTRL>-w o", allowed("close buffer splits", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); }));
-        _rootResponder.addEventResponder(ctrlWMotion(">", count ->
+        _rootResponder.addEventResponder("v", "Selection", "visual", allowed("enter visual mode", () -> { window.switchToMode(window.getVisualMode()); }));
+        _rootResponder.addEventResponder("V", "Selection", "visual line", allowed("enter visual line mode", () -> { window.switchToMode(window.getVisualLineMode()); }));
+        _rootResponder.addEventResponder("<CTRL>-v", "Selection", "visual block", allowed("enter visual block mode", () -> { window.switchToMode(window.getVisualBlockMode()); }));
+        _rootResponder.addEventResponder("<CTRL>-w s", "Panes", "split below", "split", allowed("split buffer", () -> { window.splitActiveBufferVertically(); }));
+        _rootResponder.addEventResponder("<CTRL>-w v", "Panes", "split right", "vsplit", allowed("split buffer", () -> { window.splitActiveBufferHorizontally(); }));
+        _rootResponder.addEventResponder("<CTRL>-w h", "Panes", "focus left", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.LEFT), "No pane to the left"); }));
+        _rootResponder.addEventResponder("<CTRL>-w j", "Panes", "focus down", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.DOWN), "No pane below"); }));
+        _rootResponder.addEventResponder("<CTRL>-w k", "Panes", "focus up", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.UP), "No pane above"); }));
+        _rootResponder.addEventResponder("<CTRL>-w l", "Panes", "focus right", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusView(Window.Direction.RIGHT), "No pane to the right"); }));
+        _rootResponder.addEventResponder("<CTRL>-w w", "Panes", "next pane", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusNextView(), "No other pane"); }));
+        _rootResponder.addEventResponder("<CTRL>-w W", "Panes", "previous pane", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); }));
+        _rootResponder.addEventResponder("<CTRL>-w q", "Panes", "close pane", "close", allowed("close buffer split", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); }));
+        _rootResponder.addEventResponder("<CTRL>-w o", "Panes", "only pane", "only", allowed("close buffer splits", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); }));
+        _rootResponder.addEventResponder(ctrlWMotion(">", "wider", count ->
                 { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewWidth(4 * count), "No vertical split to resize"); }));
-        _rootResponder.addEventResponder(ctrlWMotion("<", count ->
+        _rootResponder.addEventResponder(ctrlWMotion("<", "narrower", count ->
                 { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewWidth(-4 * count), "No vertical split to resize"); }));
-        _rootResponder.addEventResponder(ctrlWMotion("+", count ->
+        _rootResponder.addEventResponder(ctrlWMotion("+", "taller", count ->
                 { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewHeight(2 * count), "No horizontal split to resize"); }));
-        _rootResponder.addEventResponder(ctrlWMotion("-", count ->
+        _rootResponder.addEventResponder(ctrlWMotion("-", "shorter", count ->
                 { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewHeight(-2 * count), "No horizontal split to resize"); }));
-        _rootResponder.addEventResponder(ctrlWMotion("=", ignored ->
+        _rootResponder.addEventResponder(ctrlWMotion("=", "equalize", ignored ->
                 { allow("resize buffer split"); announceIfUnmoved(window.equalizeSplits(), "No split to equalize"); }));
         _rootResponder.addEventResponder("<CTRL>-s", () -> {
             if (window.blockEditorDriveAction("<CTRL>-s", "sending mail or Slack messages is not allowed")) {
@@ -102,24 +107,29 @@ public class NormalMode extends Mode {
                 return;
             }
         });
-        _rootResponder.addEventResponder("<CTRL>-g c w", () -> { startShell(window, ShellTarget.WORKSPACE); });
-        _rootResponder.addEventResponder("<CTRL>-g c v", () -> { startShell(window, ShellTarget.VERTICAL_SPLIT); });
-        _rootResponder.addEventResponder("<CTRL>-g c h", () -> { startShell(window, ShellTarget.HORIZONTAL_SPLIT); });
-        _rootResponder.addEventResponder(registerResponder((ignored, register) -> { allow("select register"); window.selectRegister(register); }));
-        _rootResponder.addEventResponder(prefixCharacterResponder("g m", (ignored, mark) -> { allow("set mark"); window.setMark(mark); }));
-        _rootResponder.addEventResponder(markJumpResponder("'", true, window));
-        _rootResponder.addEventResponder(markJumpResponder("`", false, window));
-        _rootResponder.addEventResponder(macroResponder(window));
-        _rootResponder.addEventResponder("g n", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); }));
-        _rootResponder.addEventResponder("g N", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); }));
-        _rootResponder.addEventResponder("g C", allowed("multicursor", window::clearAdditionalCursors));
-        _rootResponder.addEventResponder("g ]", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, false); }));
-        _rootResponder.addEventResponder("g [", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, false); }));
-        _rootResponder.addEventResponder("g }", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, true); }));
-        _rootResponder.addEventResponder("g {", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, true); }));
-        _rootResponder.addEventResponder("g x", allowed("diagnostic popup", () -> { window.showDiagnosticsForCurrentLine(true); }));
-        _rootResponder.addEventResponder("g a", allowed("code actions", () -> { window.showCodeActionsForCurrentLine(); }));
-        _rootResponder.addEventResponder(prefixCharacterResponder("@", (ignored, register) -> {
+        _rootResponder.addEventResponder("<CTRL>-g c w", "Shell", "new shell workspace", "shell", () -> { startShell(window, ShellTarget.WORKSPACE); });
+        _rootResponder.addEventResponder("<CTRL>-g c v", "Shell", "shell in split right", "vshell", () -> { startShell(window, ShellTarget.VERTICAL_SPLIT); });
+        _rootResponder.addEventResponder("<CTRL>-g c h", "Shell", "shell in split below", "hshell", () -> { startShell(window, ShellTarget.HORIZONTAL_SPLIT); });
+        _rootResponder.addEventResponder(hinted(registerResponder((ignored, register) -> { allow("select register"); window.selectRegister(register); }),
+                KeyBindingHint.of("\" <CHAR>", "Registers", "select register")));
+        _rootResponder.addEventResponder(hinted(prefixCharacterResponder("g m", (ignored, mark) -> { allow("set mark"); window.setMark(mark); }),
+                KeyBindingHint.of("g m <CHAR>", "Marks", "set mark")));
+        _rootResponder.addEventResponder(hinted(markJumpResponder("'", true, window),
+                KeyBindingHint.of("' <CHAR>", "Marks", "jump to line mark")));
+        _rootResponder.addEventResponder(hinted(markJumpResponder("`", false, window),
+                KeyBindingHint.of("` <CHAR>", "Marks", "jump to exact mark")));
+        _rootResponder.addEventResponder(hinted(macroResponder(window),
+                KeyBindingHint.of("q <CHAR>", "Macros", "record macro")));
+        _rootResponder.addEventResponder("g n", "Multicursor", "add next cursor", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(true), "No next match for multicursor"); }));
+        _rootResponder.addEventResponder("g N", "Multicursor", "add previous cursor", allowed("multicursor", () -> { announceIfUnmoved(window.addNextCursorForCurrentWord(false), "No previous match for multicursor"); }));
+        _rootResponder.addEventResponder("g C", "Multicursor", "clear extra cursors", allowed("multicursor", window::clearAdditionalCursors));
+        _rootResponder.addEventResponder("g ]", "Diagnostics", "next warning or error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, false); }));
+        _rootResponder.addEventResponder("g [", "Diagnostics", "previous warning or error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, false); }));
+        _rootResponder.addEventResponder("g }", "Diagnostics", "next error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, true); }));
+        _rootResponder.addEventResponder("g {", "Diagnostics", "previous error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, true); }));
+        _rootResponder.addEventResponder("g x", "Diagnostics", "show diagnostics", allowed("diagnostic popup", () -> { window.showDiagnosticsForCurrentLine(true); }));
+        _rootResponder.addEventResponder("g a", "Code", "suggested fixes", allowed("code actions", () -> { window.showCodeActionsForCurrentLine(); }));
+        _rootResponder.addEventResponder(hinted(prefixCharacterResponder("@", (ignored, register) -> {
             if (window.blockEditorDriveAction("macro playback", "macros are outside the editor-control sandbox")) {
                 return;
             }
@@ -128,37 +138,45 @@ public class NormalMode extends Mode {
             } else {
                 window.playMacro(register, 1);
             }
-        }));
-        _rootResponder.addEventResponder(new MotionResponder(".", count -> { allow("repeat edit"); window.repeatLastEdit(count); }));
-        _rootResponder.addEventResponder(new MotionResponder("<CTRL>-o", count -> { allow("jump navigation"); repeat(count, window::jumpBack); }));
-        _rootResponder.addEventResponder(new MotionResponder("<TAB>", count -> { allow("jump navigation"); repeat(count, window::jumpForward); }));
-        _rootResponder.addEventResponder(foldCreateResponder(window));
-        _rootResponder.addEventResponder("z a", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldAt(
+        }), KeyBindingHint.of("@ <CHAR>", "Macros", "play macro")));
+        _rootResponder.addEventResponder(new MotionResponder(".", "Macros", "repeat last edit", count -> { allow("repeat edit"); window.repeatLastEdit(count); }));
+        _rootResponder.addEventResponder(new MotionResponder("<CTRL>-o", "Navigation", "jump back", count -> { allow("jump navigation"); repeat(count, window::jumpBack); }));
+        _rootResponder.addEventResponder(new MotionResponder("<TAB>", "Navigation", "jump forward", count -> { allow("jump navigation"); repeat(count, window::jumpForward); }));
+        _rootResponder.addEventResponder(hinted(foldCreateResponder(window),
+                KeyBindingHint.of("z f", "Folds", "fold motion"),
+                KeyBindingHint.of("z F", "Folds", "fold lines")));
+        _rootResponder.addEventResponder("z a", "Folds", "toggle fold", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z A", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldRecursivelyAt(
+        _rootResponder.addEventResponder("z A", "Folds", "toggle recursive", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().toggleFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z c", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldAt(
+        _rootResponder.addEventResponder("z c", "Folds", "close fold", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z o", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldAt(
+        _rootResponder.addEventResponder("z o", "Folds", "open fold", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z v", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
+        _rootResponder.addEventResponder("z v", "Folds", "open at cursor", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z C", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldRecursivelyAt(
+        _rootResponder.addEventResponder("z C", "Folds", "close recursive", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().closeFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z O", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
+        _rootResponder.addEventResponder("z O", "Folds", "open recursive", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().openFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z d", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldAt(
+        _rootResponder.addEventResponder("z d", "Folds", "delete fold", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z D", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldRecursivelyAt(
+        _rootResponder.addEventResponder("z D", "Folds", "delete recursive", allowed("fold", () -> { announceIfUnmoved(window.getBufferContext().getBuffer().deleteFoldRecursivelyAt(
                 window.getBufferContext().getBuffer().getCursor().getPosition()), "No fold at cursor"); }));
-        _rootResponder.addEventResponder("z E", allowed("fold", () -> { window.getBufferContext().getBuffer().deleteAllFolds(); }));
-        _rootResponder.addEventResponder(new MotionResponder("z j", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, true, count), "No next fold"); }));
-        _rootResponder.addEventResponder(new MotionResponder("z k", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, false, count), "No previous fold"); }));
-        _rootResponder.addEventResponder("z M", allowed("fold", () -> { window.getBufferContext().getBuffer().closeAllFolds(); }));
-        _rootResponder.addEventResponder("z R", allowed("fold", () -> { window.getBufferContext().getBuffer().openAllFolds(); }));
-        _rootResponder.addEventResponder("u", allowed("undo", () -> { window.getBufferContext().getBuffer().undo(); }));
-        _rootResponder.addEventResponder("<CTRL>-r", allowed("redo", () -> {window.getBufferContext().getBuffer().redo(); }));
-        _rootResponder.addEventResponder("d i w", () -> {
+        _rootResponder.addEventResponder("z E", "Folds", "delete all folds", allowed("fold", () -> { window.getBufferContext().getBuffer().deleteAllFolds(); }));
+        _rootResponder.addEventResponder(new MotionResponder("z j", "Folds", "next fold", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, true, count), "No next fold"); }));
+        _rootResponder.addEventResponder(new MotionResponder("z k", "Folds", "previous fold", count -> { allow("fold navigation"); announceIfUnmoved(goFoldStart(window, false, count), "No previous fold"); }));
+        _rootResponder.addEventResponder("z M", "Folds", "close all", allowed("fold", () -> { window.getBufferContext().getBuffer().closeAllFolds(); }));
+        _rootResponder.addEventResponder("z R", "Folds", "open all", allowed("fold", () -> { window.getBufferContext().getBuffer().openAllFolds(); }));
+        _rootResponder.addEventResponder("z t", "Viewport", "cursor line to top", allowed("scroll buffer",
+                () -> { window.getBufferContext().getBufferView().alignCursorLine(BufferView.ViewportAnchor.TOP); }));
+        _rootResponder.addEventResponder("z z", "Viewport", "cursor line to middle", allowed("scroll buffer",
+                () -> { window.getBufferContext().getBufferView().alignCursorLine(BufferView.ViewportAnchor.MIDDLE); }));
+        _rootResponder.addEventResponder("z b", "Viewport", "cursor line to bottom", allowed("scroll buffer",
+                () -> { window.getBufferContext().getBufferView().alignCursorLine(BufferView.ViewportAnchor.BOTTOM); }));
+        _rootResponder.addEventResponder("u", "Editing", "undo", allowed("undo", () -> { window.getBufferContext().getBuffer().undo(); }));
+        _rootResponder.addEventResponder("<CTRL>-r", "Editing", "redo", allowed("redo", () -> {window.getBufferContext().getBuffer().redo(); }));
+        _rootResponder.addEventResponder("d i w", "Editing", "inner word", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d i w");
@@ -178,7 +196,7 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "d a '", "'", true, TextObjectOperator.DELETE);
         installTextObjectResponder(window, "d i p", "p", false, TextObjectOperator.DELETE);
         installTextObjectResponder(window, "d a p", "p", true, TextObjectOperator.DELETE);
-        _rootResponder.addEventResponder("d w", () -> {
+        _rootResponder.addEventResponder("d w", "Editing", "word", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d w");
@@ -186,7 +204,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("d d", () -> {
+        _rootResponder.addEventResponder("d d", "Editing", "line", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("d d");
@@ -194,7 +212,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("x", () -> {
+        _rootResponder.addEventResponder("x", "Editing", "delete character", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             window.beginRepeatRecording("x");
@@ -202,7 +220,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("c i w", () -> {
+        _rootResponder.addEventResponder("c i w", "Editing", "inner word", () -> {
             allow("buffer edit");
             window.beginRepeatRecording("c i w");
             window.getBufferContext().getBuffer().deleteInnerWord();
@@ -220,25 +238,25 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "c a '", "'", true, TextObjectOperator.CHANGE);
         installTextObjectResponder(window, "c i p", "p", false, TextObjectOperator.CHANGE);
         installTextObjectResponder(window, "c a p", "p", true, TextObjectOperator.CHANGE);
-        _rootResponder.addEventResponder("c w", () -> {
+        _rootResponder.addEventResponder("c w", "Editing", "word", () -> {
             allow("buffer edit");
             window.beginRepeatRecording("c w");
             window.getBufferContext().getBuffer().deleteWord();
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder("a", () -> {
+        _rootResponder.addEventResponder("a", "Editing", "append", () -> {
             allow("enter input mode");
             window.beginRepeatRecording("a");
             window.switchToMode(window.getInputMode());
             window.getBufferContext().getBuffer().getCursor().goRight();
         });
-        _rootResponder.addEventResponder("A", () -> {
+        _rootResponder.addEventResponder("A", "Editing", "append line end", () -> {
             allow("enter input mode");
             window.beginRepeatRecording("A");
             window.switchToMode(window.getInputMode());
             window.getBufferContext().getBuffer().getCursor().goEndOfLine();
         });
-        _rootResponder.addEventResponder("o", () -> {
+        _rootResponder.addEventResponder("o", "Editing", "open below", () -> {
             allow("buffer edit");
             var cursor = window.getBufferContext().getBuffer().getCursor();
             var activeBuffer = window.getBufferContext().getBuffer();
@@ -247,7 +265,7 @@ public class NormalMode extends Mode {
             window.switchToMode(window.getInputMode());
             activeBuffer.insert("\n");
         });
-        _rootResponder.addEventResponder("O", () -> {
+        _rootResponder.addEventResponder("O", "Editing", "open above", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
@@ -261,7 +279,7 @@ public class NormalMode extends Mode {
                 cursor.goBack();
             }
         });
-        _rootResponder.addEventResponder("p", () -> {
+        _rootResponder.addEventResponder("p", "Editing", "paste after", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
@@ -285,7 +303,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("P", () -> {
+        _rootResponder.addEventResponder("P", "Editing", "paste before", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var cursor = activeBuffer.getCursor();
@@ -306,7 +324,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("D", () -> {
+        _rootResponder.addEventResponder("D", "Editing", "delete to line end", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             int start = activeBuffer.getCursor().getPosition();
@@ -316,7 +334,7 @@ public class NormalMode extends Mode {
             activeBuffer.getUndoLog().commit();
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("C", () -> {
+        _rootResponder.addEventResponder("C", "Editing", "change to line end", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             int start = activeBuffer.getCursor().getPosition();
@@ -325,13 +343,13 @@ public class NormalMode extends Mode {
             activeBuffer.changeRange(start, end, false, window.consumeSelectedRegister());
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder("Y", () -> {
+        _rootResponder.addEventResponder("Y", "Editing", "yank line", () -> {
             allow("yank");
             var activeBuffer = window.getBufferContext().getBuffer();
             var range = activeBuffer.lineRangeForCount(1);
             activeBuffer.yankRange(range.getStart(), range.getEnd(), true, window.consumeSelectedRegister());
         });
-        _rootResponder.addEventResponder("J", () -> {
+        _rootResponder.addEventResponder("J", "Editing", "join lines", () -> {
             allow("buffer edit");
             window.beginRepeatRecording("J");
             if (window.getBufferContext().getBuffer().joinLines(1)) {
@@ -339,7 +357,7 @@ public class NormalMode extends Mode {
             }
             window.commitRepeatRecording();
         });
-        _rootResponder.addEventResponder("S", () -> {
+        _rootResponder.addEventResponder("S", "Editing", "substitute line", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             var range = activeBuffer.lineRangeForCount(1);
@@ -347,13 +365,14 @@ public class NormalMode extends Mode {
             activeBuffer.changeRange(range.getStart(), range.getEnd(), true, window.consumeSelectedRegister());
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder(replaceCharacterResponder(window));
-        _rootResponder.addEventResponder("R", () -> {
+        _rootResponder.addEventResponder(hinted(replaceCharacterResponder(window),
+                KeyBindingHint.of("r <CHAR>", "Editing", "replace character")));
+        _rootResponder.addEventResponder("R", "Editing", "replace mode", () -> {
             allow("enter replace mode");
             window.beginRepeatRecording("R");
             window.switchToMode(window.getReplaceMode());
         });
-        _rootResponder.addEventResponder("y y", () -> {
+        _rootResponder.addEventResponder("y y", "Editing", "yank line", () -> {
             allow("yank");
             var text = window.getBufferContext().getBuffer().getCurrentLineText();
             Copy.getInstance().setYank(text, true /* isLine */, window.consumeSelectedRegister());
@@ -370,7 +389,7 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "y a '", "'", true, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y i p", "p", false, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y a p", "p", true, TextObjectOperator.YANK);
-        _rootResponder.addEventResponder("m", () -> {
+        _rootResponder.addEventResponder("m", "Workspace", "project files", () -> {
             allow("project file list");
             if (window.isShowingList()) {
                 window.hideList();
@@ -378,11 +397,11 @@ public class NormalMode extends Mode {
                 window.showList(FileIndex.createFileList(), "Project Files");
             }
         });
-        _rootResponder.addEventResponder("M", () -> {
+        _rootResponder.addEventResponder("M", "Search", "project search", () -> {
             allow("project search panel");
             ProjectSearchUiSupport.toggle(window);
         });
-        _rootResponder.addEventResponder("B", () -> {
+        _rootResponder.addEventResponder("B", "Debug", "toggle breakpoint", () -> {
             if (window.blockEditorDriveAction("debug breakpoint", "debugger actions are outside the editor-control sandbox")) {
                 return;
             }
@@ -410,16 +429,16 @@ public class NormalMode extends Mode {
             }
             TodoUiSupport.toggle(window);
         });
-        _rootResponder.addEventResponder(":", () -> {
+        _rootResponder.addEventResponder(":", "Workspace", "command line", () -> {
             window.getCommandView().activate(":");
         });
-        _rootResponder.addEventResponder("!", () -> {
+        _rootResponder.addEventResponder("!", "Tools", "Nemo", "nemo", () -> {
             if (window.blockEditorDriveAction("Nemo chat", "opening Nemo from editor control is not allowed")) {
                 return;
             }
             NemoClient.getInstance().run(window.getBufferContext(), "");
         });
-        _rootResponder.addEventResponder(">", () -> {
+        _rootResponder.addEventResponder(">", "Tools", "shell panel", () -> {
             if (window.blockEditorDriveAction("shell panel", "opening shell input through drive_editor is not allowed")) {
                 return;
             }
@@ -427,7 +446,7 @@ public class NormalMode extends Mode {
                 window.getCommandView().setMessage("Failed to start shell");
             }
         });
-        _rootResponder.addEventResponder("*", () -> {
+        _rootResponder.addEventResponder("*", "Search", "search current word forward", () -> {
             allow("search current word");
             var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
@@ -436,7 +455,7 @@ public class NormalMode extends Mode {
                 window.getCommandView().deactivate();
             }
         });
-        _rootResponder.addEventResponder("#", () -> {
+        _rootResponder.addEventResponder("#", "Search", "search current word backward", () -> {
             allow("search current word");
             var word = window.getBufferContext().getBuffer().getInnerWord();
             if (word != null && !word.equals("")) {
@@ -445,21 +464,21 @@ public class NormalMode extends Mode {
                 window.getCommandView().deactivate();
             }
         });
-        _rootResponder.addEventResponder("/", () -> {
+        _rootResponder.addEventResponder("/", "Search", "forward search", () -> {
             window.getCommandView().activate("/");
         });
-        _rootResponder.addEventResponder("?", () -> {
+        _rootResponder.addEventResponder("?", "Search", "backward search", () -> {
             window.getCommandView().activate("?");
         });
-        _rootResponder.addEventResponder("n", () -> {
+        _rootResponder.addEventResponder("n", "Search", "next match", () -> {
             allow("search next");
             window.getCommandView().searchNext();
         });
-        _rootResponder.addEventResponder("N", () -> {
+        _rootResponder.addEventResponder("N", "Search", "previous match", () -> {
             allow("search previous");
             window.getCommandView().searchPrevious();
         });
-        _rootResponder.addEventResponder("~", () -> {
+        _rootResponder.addEventResponder("~", "Editing", "toggle case", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             int start = activeBuffer.getCursor().getPosition();
@@ -468,7 +487,7 @@ public class NormalMode extends Mode {
             activeBuffer.getCursor().goRight();
             activeBuffer.getUndoLog().commit();
         });
-        _rootResponder.addEventResponder("s", () -> {
+        _rootResponder.addEventResponder("s", "Editing", "substitute character", () -> {
             allow("buffer edit");
             var activeBuffer = window.getBufferContext().getBuffer();
             int start = activeBuffer.getCursor().getPosition();
@@ -477,12 +496,87 @@ public class NormalMode extends Mode {
             activeBuffer.changeRange(start, end, false, window.consumeSelectedRegister());
             window.switchToMode(window.getInputMode());
         });
-        _rootResponder.addEventResponder(characterFindResponder(window));
-        _rootResponder.addEventResponder(operatorResponder(window));
-        _rootResponder.addEventResponder(prefixCharacterResponder("m", (ignored, mark) -> {
+        _rootResponder.addEventResponder(hinted(characterFindResponder(window),
+                KeyBindingHint.of("f <CHAR>", "Navigation", "next matching character"),
+                KeyBindingHint.of("F <CHAR>", "Navigation", "previous matching character"),
+                KeyBindingHint.of("t <CHAR>", "Navigation", "before next matching character"),
+                KeyBindingHint.of("T <CHAR>", "Navigation", "after previous matching character"),
+                KeyBindingHint.of(";", "Navigation", "repeat character find"),
+                KeyBindingHint.of(",", "Navigation", "reverse character find")));
+        _rootResponder.addEventResponder(hinted(operatorResponder(window),
+                KeyBindingHint.of("d", "Editing", "delete operator"),
+                KeyBindingHint.of("c", "Editing", "change operator"),
+                KeyBindingHint.of("y", "Editing", "yank operator"),
+                KeyBindingHint.of(">", "Editing", "indent operator"),
+                KeyBindingHint.of("<", "Editing", "outdent operator"),
+                KeyBindingHint.of("=", "Editing", "format operator"),
+                KeyBindingHint.of("g U", "Editing", "uppercase operator"),
+                KeyBindingHint.of("g u", "Editing", "lowercase operator"),
+                KeyBindingHint.of("g ~", "Editing", "toggle-case operator")));
+        _rootResponder.addEventResponder(hinted(prefixCharacterResponder("m", (ignored, mark) -> {
             allow("set mark");
             window.setMark(mark);
-        }));
+        }), KeyBindingHint.of("m <CHAR>", "Marks", "set mark")));
+    }
+
+    private void installLeaderMoveBindings(Window window, String leader) {
+        _rootResponder.addEventResponder(new MotionResponder(leader + " h",
+                count -> indentCurrentLines(window, -1, count)));
+        _rootResponder.addEventResponder(new MotionResponder(leader + " j",
+                count -> moveCurrentLines(window, 1, count)));
+        _rootResponder.addEventResponder(new MotionResponder(leader + " k",
+                count -> moveCurrentLines(window, -1, count)));
+        _rootResponder.addEventResponder(new MotionResponder(leader + " l",
+                count -> indentCurrentLines(window, 1, count)));
+        _rootResponder.addKeyBindingHint(leader + " h", "Editing", "outdent line");
+        _rootResponder.addKeyBindingHint(leader + " j", "Editing", "move line down");
+        _rootResponder.addKeyBindingHint(leader + " k", "Editing", "move line up");
+        _rootResponder.addKeyBindingHint(leader + " l", "Editing", "indent line");
+    }
+
+    private void installLeaderWorkspaceBindings(Window window, String leader) {
+        _rootResponder.addEventResponder(leader + " m", "Workspace", "mail", "mail", () -> {
+            if (window.blockEditorDriveAction("mail workspace", "email is confidential and unavailable to Nemo")) {
+                return;
+            }
+            MailUiSupport.toggle(window);
+        });
+        _rootResponder.addEventResponder(leader + " g", "Workspace", "Git", "git", () -> {
+            window.getCommandView().execute("git");
+        });
+        _rootResponder.addEventResponder(leader + " s", "Workspace", "Slack", "slack", () -> {
+            if (window.blockEditorDriveAction("Slack workspace", "Slack is outside the editor-control sandbox")) {
+                return;
+            }
+            SlackUiSupport.toggle(window);
+        });
+        _rootResponder.addEventResponder(leader + " t", "Workspace", "Todo", "todo", () -> {
+            if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
+                return;
+            }
+            TodoUiSupport.toggle(window);
+        });
+    }
+
+    private void moveCurrentLines(Window window, int delta, int lineCount) {
+        allow("buffer edit");
+        var buffer = window.getBufferContext().getBuffer();
+        int startLine = buffer.getLineIndexAt(buffer.getCursor().getPosition());
+        int endLine = Math.min(buffer.getLineCount() - 1, startLine + Math.max(1, lineCount) - 1);
+        var result = buffer.moveLineRangeBy(startLine, endLine, delta);
+        if (result == null) {
+            window.getCommandView().setMessage(delta > 0 ? "Cannot move lines down" : "Cannot move lines up");
+            return;
+        }
+        buffer.getUndoLog().commit();
+    }
+
+    private void indentCurrentLines(Window window, int levels, int lineCount) {
+        allow("buffer edit");
+        var buffer = window.getBufferContext().getBuffer();
+        var range = buffer.lineRangeForCount(Math.max(1, lineCount));
+        buffer.indentLines(range.getStart(), range.getEnd(), levels);
+        buffer.getUndoLog().commit();
     }
 
     private EventResponder replaceCharacterResponder(Window window) {
@@ -1299,8 +1393,8 @@ public class NormalMode extends Mode {
         };
     }
 
-    private static EventResponder ctrlWMotion(String motion, MotionResponder.Responder responder) {
-        return new EventResponder() {
+    private static EventResponder ctrlWMotion(String motion, String summary, MotionResponder.Responder responder) {
+        EventResponder delegate = new EventResponder() {
             private final TextEventResponder _prefix = new TextEventResponder("<CTRL>-w", () -> {
             });
             private final MotionResponder _motion = new MotionResponder(motion, responder);
@@ -1328,6 +1422,29 @@ public class NormalMode extends Mode {
                 }
             }
         };
+        return hinted(delegate, KeyBindingHint.of("<CTRL>-w " + motion, "Panes", summary));
+    }
+
+    private static EventResponder hinted(EventResponder delegate, KeyBindingHint... hints) {
+        return new HintedResponder(delegate, List.of(hints));
+    }
+
+    private record HintedResponder(EventResponder delegate, List<KeyBindingHint> hints)
+            implements EventResponder, KeyBindingHintProvider {
+        @Override
+        public Response processEvent(KeyStrokes events) {
+            return delegate.processEvent(events);
+        }
+
+        @Override
+        public void respond() {
+            delegate.respond();
+        }
+
+        @Override
+        public List<KeyBindingHint> keyBindingHints() {
+            return hints;
+        }
     }
 
     private enum ShellTarget {
@@ -1369,7 +1486,21 @@ public class NormalMode extends Mode {
     }
 
     private void installTextObjectResponder(Window window, String pattern, String object, boolean around, TextObjectOperator operator) {
-        _rootResponder.addEventResponder(pattern, () -> applyTextObject(window, pattern, object, around, operator));
+        _rootResponder.addEventResponder(pattern, "Editing", textObjectSummary(object, around),
+                () -> applyTextObject(window, pattern, object, around, operator));
+    }
+
+    private static String textObjectSummary(String object, boolean around) {
+        String name = switch (object) {
+        case "(" -> "parentheses";
+        case "[" -> "brackets";
+        case "{" -> "braces";
+        case "\"" -> "double quotes";
+        case "'" -> "single quotes";
+        case "p" -> "paragraph";
+        default -> object;
+        };
+        return (around ? "around " : "inside ") + name;
     }
 
     private void applyTextObject(Window window, String pattern, String object, boolean around, TextObjectOperator operator) {

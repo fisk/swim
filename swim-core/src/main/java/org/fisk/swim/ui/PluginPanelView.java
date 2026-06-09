@@ -4,6 +4,8 @@ import java.util.List;
 
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
@@ -12,7 +14,7 @@ import org.fisk.swim.text.AttributedString;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class PluginPanelView extends View {
+public class PluginPanelView extends View implements KeyBindingHintProvider {
     private final String _pluginId;
     private final SwimPanel _panel;
     private final boolean _workspaceClose;
@@ -36,6 +38,28 @@ public class PluginPanelView extends View {
 
     public String getTitle() {
         return _panel.getTitle();
+    }
+
+    @Override
+    public String keyHintContext() {
+        String title = _panel.getTitle();
+        return title == null || title.isBlank() ? "plugin panel" : title;
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        var panelHints = _panel.keyBindingHints().stream()
+                .map(hint -> KeyBindingHint.of(hint.key(), hint.group(), hint.summary()))
+                .toList();
+        if (!panelHints.isEmpty()) {
+            return panelHints;
+        }
+        return List.of(
+                KeyBindingHint.of("<UP>", "Plugin", "send up"),
+                KeyBindingHint.of("<DOWN>", "Plugin", "send down"),
+                KeyBindingHint.of("<ENTER>", "Plugin", "send enter"),
+                KeyBindingHint.of("q", "Panel", "close if unhandled"),
+                KeyBindingHint.of("<ESC>", "Panel", "close if unhandled"));
     }
 
     @Override

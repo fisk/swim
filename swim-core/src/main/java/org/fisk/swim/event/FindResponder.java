@@ -1,5 +1,6 @@
 package org.fisk.swim.event;
 
+import java.util.List;
 import java.util.regex.Pattern;
 
 import org.fisk.swim.text.BufferContext;
@@ -9,7 +10,7 @@ import org.slf4j.Logger;
 
 import com.googlecode.lanterna.input.KeyType;
 
-public class FindResponder implements EventResponder {
+public class FindResponder implements EventResponder, KeyBindingHintProvider {
     private static final Logger _log = LogFactory.createLog();
 
     private final MotionResponder _prefix;
@@ -61,5 +62,12 @@ public class FindResponder implements EventResponder {
             Window.getInstance().allowEditorDriveAction("find motion");
         }
         respond(_count, Character.toString(_character));
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return List.of(KeyBindingHint.of(_forward ? "f <CHAR>" : "F <CHAR>",
+                "Navigation",
+                _forward ? "next matching character" : "previous matching character"));
     }
 }

@@ -1,7 +1,10 @@
 package org.fisk.swim.ui;
 
 import java.util.function.Consumer;
+import java.util.List;
 
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
@@ -10,7 +13,7 @@ import org.fisk.swim.text.AttributedString;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
-public class TodoQuickCaptureView extends View {
+public class TodoQuickCaptureView extends View implements KeyBindingHintProvider {
     private static final int MIN_WIDTH = 36;
     private static final int MAX_WIDTH = 76;
     private static final int HEIGHT = 5;
@@ -48,6 +51,20 @@ public class TodoQuickCaptureView extends View {
 
     public String getMessage() {
         return _message;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "todo capture";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return List.of(
+                KeyBindingHint.of("<ENTER>", "Capture", "add to inbox"),
+                KeyBindingHint.of("<ESC>", "Capture", "cancel"),
+                KeyBindingHint.of("<BACKSPACE>", "Capture", "delete character"),
+                KeyBindingHint.of("<CHAR>", "Capture", "type todo"));
     }
 
     public void syncBounds() {
@@ -117,7 +134,7 @@ public class TodoQuickCaptureView extends View {
 
         if (height >= 5) {
             var footer = new AttributedString();
-            String message = _message == null || _message.isBlank() ? "Enter add  Esc cancel" : _message;
+            String message = _message == null ? "" : _message;
             footer.append(" " + UiTheme.fit(message, Math.max(0, width - 2)), footerColour(), UiTheme.SURFACE_ELEVATED);
             UiTheme.drawLine(graphics, Point.create(x, y + 4), width, footer, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ELEVATED);
         }

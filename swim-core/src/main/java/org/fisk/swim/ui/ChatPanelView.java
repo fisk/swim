@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
@@ -16,7 +18,7 @@ import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 
-public class ChatPanelView extends View {
+public class ChatPanelView extends View implements KeyBindingHintProvider {
     private static final String HISTORY_ME_PREFIX = "me> ";
     private static final String INPUT_PREFIX = "! ";
     private static final String NEMO_PREFIX = "nemo> ";
@@ -114,6 +116,34 @@ public class ChatPanelView extends View {
 
     boolean isPending() {
         return _pending;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return _pending ? "chat pending" : "chat input";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        var hints = new ArrayList<KeyBindingHint>();
+        hints.add(KeyBindingHint.of("<ENTER>", "Input", "send"));
+        hints.add(KeyBindingHint.of("<CTRL>-j", "Input", "newline"));
+        hints.add(KeyBindingHint.of("<SHIFT>-<ENTER>", "Input", "newline"));
+        hints.add(KeyBindingHint.of("<BACKSPACE>", "Input", "delete character"));
+        hints.add(KeyBindingHint.of("<LEFT>", "Input", "cursor left"));
+        hints.add(KeyBindingHint.of("<RIGHT>", "Input", "cursor right"));
+        hints.add(KeyBindingHint.of("<CTRL>-a", "Input", "start of input"));
+        hints.add(KeyBindingHint.of("<CTRL>-e", "Input", "end of input"));
+        hints.add(KeyBindingHint.of("<CHAR>", "Input", "type text"));
+        hints.add(KeyBindingHint.of("<UP>", "History", "scroll up"));
+        hints.add(KeyBindingHint.of("<DOWN>", "History", "scroll down"));
+        hints.add(KeyBindingHint.of("<TAB>", "Commands", "complete command"));
+        hints.add(KeyBindingHint.of("<REVERSE-TAB>", "Commands", "previous match"));
+        if (_pending) {
+            hints.add(KeyBindingHint.of(":abort", "Commands", "stop pending work"));
+        }
+        hints.add(KeyBindingHint.of("<ESC>", "Panel", "close"));
+        return List.copyOf(hints);
     }
 
     Integer getContextUsagePercent() {
@@ -819,7 +849,6 @@ public class ChatPanelView extends View {
             title.append(" ctx " + _contextUsagePercent + "% ", contextUsageColour(_contextUsagePercent),
                     UiTheme.SURFACE_ACCENT);
         }
-        title.append(" esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var lines = getDisplayLines();

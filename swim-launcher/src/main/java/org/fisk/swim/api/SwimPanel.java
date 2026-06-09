@@ -9,6 +9,10 @@ public interface SwimPanel {
     List<String> render(int width, int height);
     SwimPanelResult handleInput(String input, int width, int height);
 
+    default List<SwimKeyBindingHint> keyBindingHints() {
+        return List.of();
+    }
+
     default void syncToCurrentPath(Path path) {
     }
 }

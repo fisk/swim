@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
@@ -19,7 +21,7 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
-public class TodoWorkspaceView extends View {
+public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     private enum FilterKind {
         INBOX,
         ALL,
@@ -138,8 +140,42 @@ public class TodoWorkspaceView extends View {
 
         drawHeader(rect, width);
         drawSidebar(rect, sidebarWidth, height);
-        drawItems(Point.create(mainX, rect.getPoint().getY() + 2), mainWidth, Math.max(0, height - 3));
+        drawItems(Point.create(mainX, rect.getPoint().getY() + 1), mainWidth, Math.max(0, height - 2));
         drawFooter(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + height - 1), width);
+    }
+
+    @Override
+    public String keyHintContext() {
+        return _prompt == null ? "todo workspace" : "todo prompt";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        if (_prompt != null) {
+            return List.of(
+                    KeyBindingHint.of("<ENTER>", "Prompt", "submit"),
+                    KeyBindingHint.of("<ESC>", "Prompt", "cancel"),
+                    KeyBindingHint.of("<BACKSPACE>", "Prompt", "delete character"),
+                    KeyBindingHint.of("<CHAR>", "Prompt", "type text"));
+        }
+        return List.of(
+                KeyBindingHint.of("j", "Navigation", "move down"),
+                KeyBindingHint.of("k", "Navigation", "move up"),
+                KeyBindingHint.of("<DOWN>", "Navigation", "move down"),
+                KeyBindingHint.of("<UP>", "Navigation", "move up"),
+                KeyBindingHint.of("<TAB>", "Navigation", "switch sidebar/items"),
+                KeyBindingHint.of("<ENTER>", "Items", "toggle or open filter"),
+                KeyBindingHint.of("n", "Items", "new inbox todo"),
+                KeyBindingHint.of("p", "Items", "assign project"),
+                KeyBindingHint.of("g", "Items", "edit tags"),
+                KeyBindingHint.of("c", "Items", "toggle done"),
+                KeyBindingHint.of("x", "Items", "delete"),
+                KeyBindingHint.of("D", "Items", "delete"),
+                KeyBindingHint.of("i", "Filters", "inbox"),
+                KeyBindingHint.of("a", "Filters", "all open"),
+                KeyBindingHint.of("r", "Workspace", "refresh"),
+                KeyBindingHint.of("q", "Workspace", "return"),
+                KeyBindingHint.of("<ESC>", "Workspace", "return"));
     }
 
     private Runnable promptAction(KeyStroke event) {
@@ -453,19 +489,13 @@ public class TodoWorkspaceView extends View {
         UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), rect.getPoint(), width, title,
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
-        var help = new AttributedString();
-        help.append(" n new  p project  g tags  c done  x delete  tab focus  i inbox  a all  q back ",
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(),
-                Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width, help,
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
     }
 
     private void drawSidebar(Rect rect, int sidebarWidth, int height) {
         var graphics = TerminalContext.getInstance().getGraphics();
         int x = rect.getPoint().getX();
-        int y = rect.getPoint().getY() + 2;
-        int rows = Math.max(0, height - 3);
+        int y = rect.getPoint().getY() + 1;
+        int rows = Math.max(0, height - 2);
         for (int row = 0; row < rows; row++) {
             int index = row;
             TextColor background = index == _sidebarSelection && _sidebarFocused

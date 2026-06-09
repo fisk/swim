@@ -8,6 +8,8 @@ import java.util.Comparator;
 import java.util.List;
 
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -17,7 +19,7 @@ import org.fisk.swim.text.AttributedString;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class DirectoryBrowserView extends View {
+public class DirectoryBrowserView extends View implements KeyBindingHintProvider {
     record Entry(Path path, String label, boolean directory, boolean parent) {
     }
 
@@ -30,19 +32,19 @@ public class DirectoryBrowserView extends View {
     public DirectoryBrowserView(Rect bounds, Path directory) {
         super(bounds);
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
-        _responders.addEventResponder("<DOWN>", () -> moveSelection(1));
-        _responders.addEventResponder("j", () -> moveSelection(1));
-        _responders.addEventResponder("<UP>", () -> moveSelection(-1));
-        _responders.addEventResponder("k", () -> moveSelection(-1));
-        _responders.addEventResponder("<ENTER>", this::activateSelection);
-        _responders.addEventResponder("l", this::activateSelection);
-        _responders.addEventResponder("<RIGHT>", this::activateSelection);
-        _responders.addEventResponder("h", this::goParent);
-        _responders.addEventResponder("<LEFT>", this::goParent);
-        _responders.addEventResponder("<BACKSPACE>", this::goParent);
-        _responders.addEventResponder("r", this::refreshEntries);
-        _responders.addEventResponder("q", this::close);
-        _responders.addEventResponder("<ESC>", this::close);
+        _responders.addEventResponder("<DOWN>", "Browse", "move down", () -> moveSelection(1));
+        _responders.addEventResponder("j", "Browse", "move down", () -> moveSelection(1));
+        _responders.addEventResponder("<UP>", "Browse", "move up", () -> moveSelection(-1));
+        _responders.addEventResponder("k", "Browse", "move up", () -> moveSelection(-1));
+        _responders.addEventResponder("<ENTER>", "Browse", "open selected", this::activateSelection);
+        _responders.addEventResponder("l", "Browse", "open selected", this::activateSelection);
+        _responders.addEventResponder("<RIGHT>", "Browse", "open selected", this::activateSelection);
+        _responders.addEventResponder("h", "Browse", "parent directory", this::goParent);
+        _responders.addEventResponder("<LEFT>", "Browse", "parent directory", this::goParent);
+        _responders.addEventResponder("<BACKSPACE>", "Browse", "parent directory", this::goParent);
+        _responders.addEventResponder("r", "Browse", "refresh", this::refreshEntries);
+        _responders.addEventResponder("q", "Browse", "close", this::close);
+        _responders.addEventResponder("<ESC>", "Browse", "close", this::close);
         setDirectory(directory);
     }
 
@@ -57,6 +59,16 @@ public class DirectoryBrowserView extends View {
 
     List<Entry> getEntries() {
         return _entries;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "directory browser";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _responders.keyBindingHints();
     }
 
     void setDirectory(Path directory) {
@@ -89,18 +101,11 @@ public class DirectoryBrowserView extends View {
                 UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
-        var help = new AttributedString();
-        help.append(" browse ", UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
-        help.append(" j/k move  enter open  h parent  r refresh  q close ",
-                UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
-        UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width, help,
-                UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
-
-        int listHeight = Math.max(0, rect.getSize().getHeight() - 2);
+        int listHeight = Math.max(0, rect.getSize().getHeight() - 1);
         clampSelection(listHeight);
         for (int row = 0; row < listHeight; row++) {
             int index = _start + row;
-            int y = rect.getPoint().getY() + 2 + row;
+            int y = rect.getPoint().getY() + 1 + row;
             boolean selected = index == _selection && index < _entries.size();
             TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
                     : row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
@@ -121,7 +126,7 @@ public class DirectoryBrowserView extends View {
         }
 
         if (_entries.isEmpty() && listHeight > 0) {
-            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 2), width,
+            UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1), width,
                     AttributedString.create("  directory is empty", UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND),
                     UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND);
         }

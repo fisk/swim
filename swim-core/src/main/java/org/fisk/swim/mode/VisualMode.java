@@ -2,6 +2,7 @@ package org.fisk.swim.mode;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.event.FancyJumpResponder;
+import org.fisk.swim.event.MotionResponder;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
@@ -71,6 +72,53 @@ public class VisualMode extends Mode {
                     Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });
+        installSelectionMoveResponders();
+    }
+
+    protected void installSelectionMoveResponders() {
+        _rootResponder.addEventResponder(new MotionResponder("<SPACE> h", count -> indentSelectedLines(-count)));
+        _rootResponder.addEventResponder(new MotionResponder("<SPACE> j", count -> moveSelectedLines(count)));
+        _rootResponder.addEventResponder(new MotionResponder("<SPACE> k", count -> moveSelectedLines(-count)));
+        _rootResponder.addEventResponder(new MotionResponder("<SPACE> l", count -> indentSelectedLines(count)));
+        _rootResponder.addKeyBindingHint("<SPACE> h", "Selection", "outdent selection");
+        _rootResponder.addKeyBindingHint("<SPACE> j", "Selection", "move selection down");
+        _rootResponder.addKeyBindingHint("<SPACE> k", "Selection", "move selection up");
+        _rootResponder.addKeyBindingHint("<SPACE> l", "Selection", "indent selection");
+    }
+
+    protected void moveSelectedLines(int delta) {
+        allow("buffer edit");
+        var buffer = _window.getBufferContext().getBuffer();
+        int startLine = buffer.getLineIndexAt(minCursor().getPosition());
+        int endLine = buffer.getLineIndexAt(maxCursor().getPosition());
+        var result = buffer.moveLineRangeBy(startLine, endLine, delta);
+        if (result == null) {
+            _window.getCommandView().setMessage(delta > 0 ? "Cannot move selection down" : "Cannot move selection up");
+            return;
+        }
+        buffer.getUndoLog().commit();
+        selectLineRange(result.startLine(), result.endLine());
+    }
+
+    protected void indentSelectedLines(int levels) {
+        allow("buffer edit");
+        var buffer = _window.getBufferContext().getBuffer();
+        int startLine = buffer.getLineIndexAt(minCursor().getPosition());
+        int endLine = buffer.getLineIndexAt(maxCursor().getPosition());
+        int start = buffer.getLineStartByIndex(startLine);
+        int end = buffer.getLineEndByIndex(endLine, true);
+        buffer.indentLines(start, end, levels);
+        buffer.getUndoLog().commit();
+        selectLineRange(startLine, endLine);
+    }
+
+    protected void selectLineRange(int startLine, int endLine) {
+        var buffer = _window.getBufferContext().getBuffer();
+        int start = buffer.getLineStartByIndex(startLine);
+        int end = Math.max(start, buffer.getLineEndByIndex(endLine, false) - 1);
+        getOtherCursor().setPosition(start);
+        buffer.getCursor().setPosition(end);
+        _window.getBufferContext().getBufferView().adaptViewToCursor();
     }
 
     @Override

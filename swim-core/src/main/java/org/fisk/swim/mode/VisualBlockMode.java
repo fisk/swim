@@ -90,6 +90,7 @@ public class VisualBlockMode extends VisualMode {
                 buffer.addCursor(newCursor);
             }
         });
+        installSelectionMoveResponders();
     }
 
     @Override

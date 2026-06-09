@@ -155,7 +155,7 @@ class WindowTest {
     }
 
     @Test
-    void narrowWindowExpandsTopMenuHeight() throws Exception {
+    void narrowWindowKeepsTopMenuToSingleBodyRow() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("narrow-menu.txt", "abc"), 18, 11)) {
             var window = harness.getWindow();
             window.getKeyMenuView().setModeName("NORMAL");
@@ -165,7 +165,7 @@ class WindowTest {
 
             invoke(window, "applyLayout", new Class<?>[] { Size.class }, Size.create(18, 11));
 
-            assertTrue(window.getKeyMenuView().getBounds().getSize().getHeight() > 2);
+            assertEquals(2, window.getKeyMenuView().getBounds().getSize().getHeight());
             assertEquals(window.getKeyMenuView().getBounds().getSize().getHeight(),
                     window.getBufferContext().getBufferView().getBounds().getPoint().getY());
         }

@@ -1,10 +1,14 @@
 package org.fisk.swim.copy;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import org.fisk.swim.event.RecordedKey;
+import org.fisk.swim.ui.Window;
 
 public class Copy {
     public record RegisterValue(String text, boolean isLine, boolean isBlock, List<String> blockLines) {
@@ -21,6 +25,7 @@ public class Copy {
     private final Map<Character, RegisterValue> _registers = new LinkedHashMap<>();
     private final Map<Character, List<RecordedKey>> _macros = new LinkedHashMap<>();
     private Character _lastMacroRegister;
+    private ClipboardBridge _clipboardBridge = new CommandClipboardBridge();
 
     private static Copy _instance = new Copy();
 
@@ -71,6 +76,12 @@ public class Copy {
 
     public RegisterValue getValue(Character register) {
         Character normalized = normalizeRegister(register);
+        if (normalized == null || normalized == '"' || normalized == '+' || normalized == '*') {
+            if (!systemClipboardAccessAllowed()) {
+                return inProcessSystemValue(normalized);
+            }
+            return clipboardBackedValue(normalized);
+        }
         if (normalized != null && _registers.containsKey(normalized)) {
             return _registers.get(normalized);
         }
@@ -113,6 +124,10 @@ public class Copy {
         _lastMacroRegister = null;
     }
 
+    static void setClipboardBridgeForTests(ClipboardBridge clipboardBridge) {
+        getInstance()._clipboardBridge = clipboardBridge == null ? new CommandClipboardBridge() : clipboardBridge;
+    }
+
     private static Character normalizeRegister(Character register) {
         if (register == null) {
             return null;
@@ -138,7 +153,12 @@ public class Copy {
         if (normalized != null && normalized == '_') {
             return;
         }
-        _registers.put('"', value);
+        if (isSystemClipboardRegister(normalized)) {
+            _registers.put('"', value);
+            if (systemClipboardAccessAllowed()) {
+                writeSystemClipboard(value);
+            }
+        }
         if (kind == StoreKind.YANK) {
             _registers.put('0', value);
         } else if (kind == StoreKind.DELETE) {
@@ -147,6 +167,10 @@ public class Copy {
         if (normalized != null && normalized != '"') {
             putSelectedRegister(normalized, value);
         }
+    }
+
+    private static boolean isSystemClipboardRegister(Character register) {
+        return register == null || register == '"' || register == '+' || register == '*';
     }
 
     private void storeDeleteRegister(RegisterValue value) {
@@ -171,9 +195,19 @@ public class Copy {
                 value = append(existing, value);
             }
             _registers.put(lower, value);
+            if (lower == '+' || lower == '*') {
+                if (systemClipboardAccessAllowed()) {
+                    writeSystemClipboard(value);
+                }
+            }
             return;
         }
         _registers.put(register, value);
+        if (register == '+' || register == '*') {
+            if (systemClipboardAccessAllowed()) {
+                writeSystemClipboard(value);
+            }
+        }
     }
 
     private static RegisterValue append(RegisterValue existing, RegisterValue value) {
@@ -184,6 +218,138 @@ public class Copy {
             return new RegisterValue(String.join("\n", merged), false, true, merged);
         }
         return new RegisterValue(existing.text() + value.text(), existing.isLine() || value.isLine());
+    }
+
+    private RegisterValue inProcessSystemValue(Character register) {
+        RegisterValue fallback = _registers.get(register == null ? '"' : register);
+        if (fallback == null && (register == null || register == '"' || register == '+' || register == '*')) {
+            fallback = _registers.get('"');
+        }
+        return fallback == null ? new RegisterValue("", false) : fallback;
+    }
+
+    private RegisterValue clipboardBackedValue(Character register) {
+        RegisterValue fallback = inProcessSystemValue(register);
+        String text = readSystemClipboard();
+        if (text == null) {
+            return fallback;
+        }
+        if (fallback.text().equals(text)) {
+            return fallback;
+        }
+        return new RegisterValue(text, false);
+    }
+
+    private static boolean systemClipboardAccessAllowed() {
+        Window window = Window.getInstance();
+        return window == null || !window.isEditorDriveSandboxActive();
+    }
+
+    private String readSystemClipboard() {
+        try {
+            return _clipboardBridge.getText();
+        } catch (Exception | LinkageError e) {
+            return null;
+        }
+    }
+
+    private void writeSystemClipboard(RegisterValue value) {
+        try {
+            _clipboardBridge.setText(value.text());
+        } catch (Exception | LinkageError ignored) {
+        }
+    }
+
+    interface ClipboardBridge {
+        String getText() throws Exception;
+        void setText(String text) throws Exception;
+    }
+
+    private static final class CommandClipboardBridge implements ClipboardBridge {
+        private static final long TIMEOUT_SECONDS = 2L;
+
+        @Override
+        public String getText() throws Exception {
+            for (var command : readCommands()) {
+                var result = run(command, null);
+                if (result.success()) {
+                    return result.output();
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public void setText(String text) throws Exception {
+            Exception failure = null;
+            for (var command : writeCommands()) {
+                try {
+                    if (run(command, text == null ? "" : text).success()) {
+                        return;
+                    }
+                } catch (Exception e) {
+                    failure = e;
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        private static List<List<String>> readCommands() {
+            String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+            if (os.contains("mac")) {
+                return List.of(List.of("pbpaste"));
+            }
+            if (os.contains("win")) {
+                return List.of(List.of("powershell.exe", "-NoProfile", "-Command", "Get-Clipboard -Raw"));
+            }
+            return List.of(
+                    List.of("wl-paste"),
+                    List.of("xclip", "-selection", "clipboard", "-out"),
+                    List.of("xsel", "--clipboard", "--output"));
+        }
+
+        private static List<List<String>> writeCommands() {
+            String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+            if (os.contains("mac")) {
+                return List.of(List.of("pbcopy"));
+            }
+            if (os.contains("win")) {
+                return List.of(List.of("powershell.exe", "-NoProfile", "-Command",
+                        "Set-Clipboard -Value ([Console]::In.ReadToEnd())"));
+            }
+            return List.of(
+                    List.of("wl-copy"),
+                    List.of("xclip", "-selection", "clipboard"),
+                    List.of("xsel", "--clipboard", "--input"));
+        }
+
+        private static CommandResult run(List<String> command, String input) throws Exception {
+            Process process;
+            try {
+                process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
+            } catch (IOException e) {
+                return new CommandResult(false, "");
+            }
+            if (input != null) {
+                try (var output = process.getOutputStream()) {
+                    output.write(input.getBytes(StandardCharsets.UTF_8));
+                }
+            } else {
+                process.getOutputStream().close();
+            }
+            byte[] output = process.getInputStream().readAllBytes();
+            boolean finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return new CommandResult(false, "");
+            }
+            return new CommandResult(process.exitValue() == 0, new String(output, StandardCharsets.UTF_8));
+        }
+    }
+
+    private record CommandResult(boolean success, String output) {
     }
 
     private enum StoreKind {

@@ -51,35 +51,35 @@ public final class JavaLspPluginSupport {
         }
 
         var layer = mode.addKeybindingLayer();
-        layer.addEventResponder("g d", () -> {
+        layer.addEventResponder("g d", "LSP", "go to definition", () -> {
             window.allowEditorDriveAction("lsp definition");
             withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext()));
         });
-        layer.addEventResponder("g r", () -> {
+        layer.addEventResponder("g r", "LSP", "find references", () -> {
             window.allowEditorDriveAction("lsp references");
             withLoadedClient(window, client -> client.findReferences(window.getBufferContext()));
         });
-        layer.addEventResponder(leader + " e i", () -> {
+        layer.addEventResponder(leader + " e i", "LSP", "organize imports", () -> {
             window.allowEditorDriveAction("lsp code action");
             organizeImports(window);
         });
-        layer.addEventResponder(leader + " e f", () -> {
+        layer.addEventResponder(leader + " e f", "LSP", "make field final", () -> {
             window.allowEditorDriveAction("lsp code action");
             withLoadedClient(window, client -> client.makeFinal(window.getBufferContext()));
         });
-        layer.addEventResponder(leader + " e a", () -> {
+        layer.addEventResponder(leader + " e a", "LSP", "generate accessors", () -> {
             window.allowEditorDriveAction("lsp code action");
             withLoadedClient(window, client -> client.generateAccessors(window.getBufferContext()));
         });
-        layer.addEventResponder(leader + " e s", () -> {
+        layer.addEventResponder(leader + " e s", "LSP", "generate toString", () -> {
             window.allowEditorDriveAction("lsp code action");
             withLoadedClient(window, client -> client.generateToString(window.getBufferContext()));
         });
-        layer.addEventResponder(leader + " e l", () -> {
+        layer.addEventResponder(leader + " e l", "LSP", "code lens", () -> {
             window.allowEditorDriveAction("lsp code lens");
             withLoadedClient(window, client -> client.codeLens(window.getBufferContext()));
         });
-        layer.addEventResponder("o", () -> {
+        layer.addEventResponder("o", "LSP", "organize imports", () -> {
             window.allowEditorDriveAction("lsp code action");
             organizeImports(window);
         });

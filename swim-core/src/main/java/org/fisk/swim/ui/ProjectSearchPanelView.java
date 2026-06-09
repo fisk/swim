@@ -4,6 +4,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
@@ -14,7 +16,7 @@ import org.fisk.swim.text.AttributedString;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
-public class ProjectSearchPanelView extends View {
+public class ProjectSearchPanelView extends View implements KeyBindingHintProvider {
     private final ProjectSearch _projectSearch;
     private final StringBuilder _query = new StringBuilder();
     private final ListEventResponder _responders = new ListEventResponder();
@@ -34,17 +36,18 @@ public class ProjectSearchPanelView extends View {
         super(bounds);
         _projectSearch = projectSearch;
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
-        _responders.addEventResponder("<DOWN>", () -> moveSelection(1));
-        _responders.addEventResponder("<UP>", () -> moveSelection(-1));
-        _responders.addEventResponder("<ESC>", this::close);
-        _responders.addEventResponder("<ENTER>", this::openSelection);
-        _responders.addEventResponder("<BACKSPACE>", () -> {
+        _responders.addEventResponder("<DOWN>", "Results", "move down", () -> moveSelection(1));
+        _responders.addEventResponder("<UP>", "Results", "move up", () -> moveSelection(-1));
+        _responders.addEventResponder("<ESC>", "Search", "close", this::close);
+        _responders.addEventResponder("<ENTER>", "Results", "open selected", this::openSelection);
+        _responders.addEventResponder("<BACKSPACE>", "Search", "delete character", () -> {
             if (_query.length() == 0) {
                 return;
             }
             _query.delete(_query.length() - 1, _query.length());
             refreshResults();
         });
+        _responders.addKeyBindingHint("<CHAR>", "Search", "type to search project");
         _responders.addEventResponder(new EventResponder() {
             private char _character;
 
@@ -71,6 +74,16 @@ public class ProjectSearchPanelView extends View {
 
     String getTitle() {
         return "Project Search";
+    }
+
+    @Override
+    public String keyHintContext() {
+        return "project search";
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return _responders.keyBindingHints();
     }
 
     String getQuery() {
@@ -108,7 +121,6 @@ public class ProjectSearchPanelView extends View {
         var header = new AttributedString();
         header.append(" project search ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         header.append(" " + _results.size() + " matches ", UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
-        header.append(" enter open  esc close ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var queryLine = new AttributedString();

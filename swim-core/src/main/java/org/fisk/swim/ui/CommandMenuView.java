@@ -67,10 +67,11 @@ public class CommandMenuView extends View {
         int startIndex = visibleStartIndex();
         int contentWidth = rect.getSize().getWidth();
         int labelWidth = preferredLabelWidth(contentWidth, visibleMatches);
+        int shortcutWidth = preferredShortcutWidth(visibleMatches);
         for (int i = 0; i < visibleMatches.size(); ++i) {
             boolean selected = startIndex + i == _state.selection();
             drawMatchRow(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i),
-                    contentWidth, labelWidth, visibleMatches.get(i), selected);
+                    contentWidth, labelWidth, shortcutWidth, visibleMatches.get(i), selected);
         }
     }
 
@@ -89,16 +90,42 @@ public class CommandMenuView extends View {
             Point point,
             int width,
             int labelWidth,
+            int shortcutWidth,
+            CommandView.CommandSpec match,
+            boolean selected) {
+        AttributedString row = matchRow(width, labelWidth, shortcutWidth, match, selected);
+        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), point, width, row,
+                selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
+                selected ? UiTheme.PANEL_SELECTION_BACKGROUND : UiTheme.SURFACE_ELEVATED);
+    }
+
+    AttributedString buildMatchRowForTest(int width, CommandView.CommandSpec match, boolean selected) {
+        return matchRow(width, preferredLabelWidth(width, List.of(match)), preferredShortcutWidth(List.of(match)),
+                match, selected);
+    }
+
+    private AttributedString matchRow(
+            int width,
+            int labelWidth,
+            int shortcutWidth,
             CommandView.CommandSpec match,
             boolean selected) {
         var row = new AttributedString();
         var background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND : UiTheme.SURFACE_ELEVATED;
         var foreground = selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY;
         var detailColor = selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_MUTED;
+        var shortcutColor = selected ? UiTheme.TEXT_ON_ACCENT : UiTheme.ACCENT_BLUE;
 
         row.append(" " + UiTheme.padRight(match.label(), labelWidth), foreground, background);
-        row.append("  " + UiTheme.fit(match.detail(), Math.max(0, width - labelWidth - 3)), detailColor, background);
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), point, width, row, foreground, background);
+        int shortcutSegmentWidth = shortcutWidth > 0 ? shortcutWidth + 2 : 0;
+        int detailWidth = Math.max(0, width - row.length() - shortcutSegmentWidth);
+        if (detailWidth > 0) {
+            row.append(UiTheme.padRight("  " + match.detail(), detailWidth), detailColor, background);
+        }
+        if (shortcutWidth > 0) {
+            row.append("  " + leftPad(match.shortcutLabel(), shortcutWidth), shortcutColor, background);
+        }
+        return row;
     }
 
     private List<CommandView.CommandSpec> visibleMatches() {
@@ -141,19 +168,20 @@ public class CommandMenuView extends View {
             return MIN_BODY_ROWS;
         }
         int desiredBodyRows = Math.min(CommandView.MAX_VISIBLE_COMMANDS, _state.matches().size());
-        if (maxBodyRows <= desiredBodyRows) {
+        if (_state.matches().size() > CommandView.MAX_VISIBLE_COMMANDS || maxBodyRows <= desiredBodyRows) {
             return desiredBodyRows;
         }
 
         int labelWidth = preferredLabelWidth(width, _state.matches());
-        int detailWidth = Math.max(1, width - labelWidth - 3);
+        int shortcutWidth = preferredShortcutWidth(_state.matches());
+        int detailWidth = Math.max(1, width - labelWidth - 3 - (shortcutWidth > 0 ? shortcutWidth + 2 : 0));
         if (detailWidth >= MIN_DETAIL_WIDTH) {
             return desiredBodyRows;
         }
 
         int totalRows = 0;
         for (var match : _state.matches()) {
-            totalRows += rowsNeeded(width, labelWidth, match);
+            totalRows += rowsNeeded(width, labelWidth, shortcutWidth, match);
             if (totalRows >= maxBodyRows) {
                 return maxBodyRows;
             }
@@ -161,8 +189,8 @@ public class CommandMenuView extends View {
         return Math.max(desiredBodyRows, totalRows);
     }
 
-    private int rowsNeeded(int width, int labelWidth, CommandView.CommandSpec match) {
-        int detailWidth = Math.max(1, width - labelWidth - 3);
+    private int rowsNeeded(int width, int labelWidth, int shortcutWidth, CommandView.CommandSpec match) {
+        int detailWidth = Math.max(1, width - labelWidth - 3 - (shortcutWidth > 0 ? shortcutWidth + 2 : 0));
         int detailLength = match.detail().length();
         int wrappedDetailRows = Math.max(1, (detailLength + detailWidth - 1) / detailWidth);
         return Math.max(1, wrappedDetailRows);
@@ -174,5 +202,24 @@ public class CommandMenuView extends View {
             labelWidth = Math.max(labelWidth, match.label().length());
         }
         return Math.min(Math.max(12, labelWidth), Math.max(12, contentWidth / 3));
+    }
+
+    private int preferredShortcutWidth(List<CommandView.CommandSpec> visibleMatches) {
+        int shortcutWidth = 0;
+        for (var match : visibleMatches) {
+            String shortcut = match.shortcutLabel();
+            if (shortcut != null && !shortcut.isBlank()) {
+                shortcutWidth = Math.max(shortcutWidth, shortcut.length());
+            }
+        }
+        return shortcutWidth;
+    }
+
+    private static String leftPad(String text, int width) {
+        String value = text == null ? "" : text;
+        if (value.length() >= width) {
+            return UiTheme.fit(value, width);
+        }
+        return " ".repeat(width - value.length()) + value;
     }
 }

@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.event.KeyBindingHint;
+import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
@@ -28,7 +30,7 @@ import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.input.KeyType;
 
-public class MailPanelView extends View {
+public class MailPanelView extends View implements KeyBindingHintProvider {
     private static final int THREAD_PAGE_SIZE = 100;
     private static final int THREAD_PREFETCH_THRESHOLD = 10;
 
@@ -173,6 +175,63 @@ public class MailPanelView extends View {
 
     boolean isComposeActive() {
         return _mode == Mode.COMPOSE;
+    }
+
+    @Override
+    public String keyHintContext() {
+        return switch (_mode) {
+        case BROWSE -> "mail browse";
+        case SEARCH -> "mail search";
+        case COMPOSE -> "mail compose";
+        };
+    }
+
+    @Override
+    public List<KeyBindingHint> keyBindingHints() {
+        return switch (_mode) {
+        case BROWSE -> List.of(
+                KeyBindingHint.of("j", "Navigation", "move down"),
+                KeyBindingHint.of("k", "Navigation", "move up"),
+                KeyBindingHint.of("<DOWN>", "Navigation", "move down"),
+                KeyBindingHint.of("<UP>", "Navigation", "move up"),
+                KeyBindingHint.of("<LEFT>", "Navigation", "sidebar"),
+                KeyBindingHint.of("<RIGHT>", "Navigation", "threads"),
+                KeyBindingHint.of("g", "Navigation", "top"),
+                KeyBindingHint.of("G", "Navigation", "bottom"),
+                KeyBindingHint.of("1-9 g", "Navigation", "jump sidebar"),
+                KeyBindingHint.of("<ENTER>", "Message", "open buffer"),
+                KeyBindingHint.of("d", "Message", "scroll body down"),
+                KeyBindingHint.of("u", "Message", "scroll body up"),
+                KeyBindingHint.of("o", "Links", "open link"),
+                KeyBindingHint.of("y", "Links", "copy link"),
+                KeyBindingHint.of("/", "Search", "search mail"),
+                KeyBindingHint.of("?", "Search", "search mail"),
+                KeyBindingHint.of("c", "Compose", "new message"),
+                KeyBindingHint.of("r", "Compose", "reply"),
+                KeyBindingHint.of("R", "Compose", "reply all"),
+                KeyBindingHint.of("e", "Workspace", "refresh"),
+                KeyBindingHint.of("q", "Workspace", "close"),
+                KeyBindingHint.of("<ESC>", "Workspace", "close"));
+        case SEARCH -> List.of(
+                KeyBindingHint.of("<ENTER>", "Search", "apply"),
+                KeyBindingHint.of("<ESC>", "Search", "cancel"),
+                KeyBindingHint.of("<BACKSPACE>", "Search", "delete character"),
+                KeyBindingHint.of("<LEFT>", "Search", "cursor left"),
+                KeyBindingHint.of("<RIGHT>", "Search", "cursor right"),
+                KeyBindingHint.of("<CHAR>", "Search", "type query"));
+        case COMPOSE -> List.of(
+                KeyBindingHint.of("<CTRL>-s", "Compose", "send"),
+                KeyBindingHint.of("<ESC>", "Compose", "cancel"),
+                KeyBindingHint.of("<TAB>", "Compose", "next field"),
+                KeyBindingHint.of("<REVERSE-TAB>", "Compose", "previous field"),
+                KeyBindingHint.of("<ENTER>", "Compose", "newline"),
+                KeyBindingHint.of("<BACKSPACE>", "Compose", "delete character"),
+                KeyBindingHint.of("<UP>", "Compose", "move up"),
+                KeyBindingHint.of("<DOWN>", "Compose", "move down"),
+                KeyBindingHint.of("<LEFT>", "Compose", "cursor left"),
+                KeyBindingHint.of("<RIGHT>", "Compose", "cursor right"),
+                KeyBindingHint.of("<CHAR>", "Compose", "type text"));
+        };
     }
 
     void triggerSend() {
@@ -579,8 +638,7 @@ public class MailPanelView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             int width,
             int height) {
-        drawMailHeader(graphics, rect.getPoint(), width, "Mail",
-                "j/k select  / search  c compose  r reply  R reply-all  e refresh  d/u scroll body  o open-link  y copy-link  q close");
+        drawMailHeader(graphics, rect.getPoint(), width, "Mail");
 
         BrowseLayout layout = browseLayout(width, height);
         int bodyTop = rect.getPoint().getY() + layout.bodyTop();
@@ -607,8 +665,7 @@ public class MailPanelView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             int width,
             int height) {
-        drawMailHeader(graphics, rect.getPoint(), width, "Compose",
-                "Tab next  Shift-Tab prev  Ctrl-s send  Esc cancel");
+        drawMailHeader(graphics, rect.getPoint(), width, "Compose");
 
         var lines = buildComposeLines(width);
         int row = 0;
@@ -631,15 +688,13 @@ public class MailPanelView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             Point point,
             int width,
-            String title,
-            String help) {
+            String title) {
         var header = new AttributedString();
         header.append(" " + title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND);
         if (_allUnreadCount > 0) {
             header.append(" " + _allUnreadCount + " unread ", UiTheme.MAIL_UNREAD_FOREGROUND,
                     UiTheme.MAIL_HEADER_BACKGROUND);
         }
-        header.append(" " + help + " ", UiTheme.TEXT_MUTED, UiTheme.MAIL_HEADER_BACKGROUND);
         UiTheme.drawLine(graphics, point, width, header, UiTheme.TEXT_MUTED, UiTheme.MAIL_HEADER_BACKGROUND);
     }
 
@@ -649,7 +704,6 @@ public class MailPanelView extends View {
             line.append(" Search ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
             line.append(withCursor(_searchInput.toString(), _searchCursor), UiTheme.TEXT_PRIMARY,
                     UiTheme.MAIL_STATUS_BACKGROUND);
-            line.append("  Enter apply  Esc cancel", UiTheme.TEXT_MUTED, UiTheme.MAIL_STATUS_BACKGROUND);
         } else {
             line.append(" Filter ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
             line.append(_searchQuery, UiTheme.MAIL_UNREAD_FOREGROUND, UiTheme.MAIL_STATUS_BACKGROUND);

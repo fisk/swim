@@ -71,6 +71,7 @@ public class VisualLineMode extends VisualMode {
                 window.switchToMode(window.getNormalMode());
             }
         });
+        installSelectionMoveResponders();
     }
 
     @Override

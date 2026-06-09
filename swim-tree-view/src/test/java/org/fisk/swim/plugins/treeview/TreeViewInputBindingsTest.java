@@ -16,4 +16,14 @@ class TreeViewInputBindingsTest {
         assertEquals(TreeViewCommand.EXPAND, bindings.lookup("RIGHT").orElseThrow());
         assertTrue(bindings.lookup("unknown").isEmpty());
     }
+
+    @Test
+    void exposesKeyHintsFromDefaultBindings() {
+        TreeViewInputBindings bindings = TreeViewInputBindings.defaults();
+
+        assertTrue(bindings.keyBindingHints().stream()
+                .anyMatch(hint -> "<ENTER>".equals(hint.key()) && hint.summary().contains("open")));
+        assertTrue(bindings.keyBindingHints().stream()
+                .anyMatch(hint -> "r".equals(hint.key()) && hint.summary().contains("refresh")));
+    }
 }
