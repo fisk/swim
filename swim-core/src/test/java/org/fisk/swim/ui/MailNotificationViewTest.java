@@ -1,7 +1,9 @@
 package org.fisk.swim.ui;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.List;
@@ -53,6 +55,31 @@ class MailNotificationViewTest {
         }
     }
 
+    @Test
+    void hidesNotificationDuringGuestObservation() throws Exception {
+        var terminal = TerminalContextTestSupport.install(60, 12);
+        MailPluginRegistry.register(new FakeMailClient(
+                snapshot(2, "alpha", "Initial sync"),
+                snapshot(3, "secret@example.com", "Confidential report")));
+
+        try (var harness = HeadlessWindowHarness.create(tempDir.resolve("mail-private.txt"), 60, 12)) {
+            var service = MailStatusService.getInstance();
+            service.pollNow();
+            service.pollNow();
+            Window window = harness.getWindow();
+
+            window.getRootView().update(Rect.create(0, 0, 60, 12), true);
+            assertTrue(terminal.drawCalls().stream().anyMatch(call -> call.text().contains("secret@example.com")));
+
+            terminal.drawCalls().clear();
+            setBooleanField(window, "_guestObservationActive", true);
+            window.getRootView().update(Rect.create(0, 0, 60, 12), true);
+
+            assertFalse(terminal.drawCalls().stream().anyMatch(call -> call.text().contains("secret@example.com")));
+            assertFalse(terminal.drawCalls().stream().anyMatch(call -> call.text().contains("Confidential report")));
+        }
+    }
+
     private static MailSnapshot snapshot(int unreadCount, String sender, String subject) {
         return new MailSnapshot(
                 List.of(new MailAccountSummary("account", "Inbox", "imap", unreadCount, unreadCount, "", "")),
@@ -90,5 +117,11 @@ class MailNotificationViewTest {
         public Path getDataPath() {
             return Path.of(".");
         }
+    }
+
+    private static void setBooleanField(Object target, String name, boolean value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.setBoolean(target, value);
     }
 }

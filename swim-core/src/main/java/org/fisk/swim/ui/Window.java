@@ -119,6 +119,9 @@ public class Window implements Drawable {
             String beforeSnapshot, String afterSnapshot) {
     }
 
+    public record CurrentEditingSnapshot(String workspaceKind, Path currentFile, Path projectRoot) {
+    }
+
     private record CompiledRemap(List<RecordedKey> lhs, List<RecordedKey> rhs, String lhsText) {
     }
 
@@ -156,6 +159,7 @@ public class Window implements Drawable {
     private EventResponder _hostApprovalReturnResponder;
     private boolean _editorDriveInputActive;
     private boolean _editorDriveCommandSandboxActive;
+    private boolean _guestObservationActive;
     private Path _editorDriveWorkspaceRoot;
     private String _editorDriveCommandBlock;
     private boolean _editorDriveActionAllowed;
@@ -966,35 +970,62 @@ public class Window implements Drawable {
 
     public String guestScreenSnapshot() {
         ensureLayoutState();
-        String block = guestScreenSnapshotBlockReason();
-        if (block != null) {
-            return "screen_snapshot blocked: " + block;
+        boolean previousGuestObservationActive = _guestObservationActive;
+        _guestObservationActive = true;
+        try {
+            String block = guestScreenSnapshotBlockReason();
+            if (block != null) {
+                return "screen_snapshot blocked: " + block;
+            }
+            var lines = new ArrayList<String>();
+            Size size = _rootView == null ? _size : _rootView.getBounds().getSize();
+            if (size != null) {
+                lines.add("screen: " + size.getWidth() + "x" + size.getHeight());
+            }
+            lines.add("mode: " + modeNameForDisplay());
+            EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+            lines.add("focus: " + guestFocusLabel(responder));
+            if (_commandView != null && _commandView.isActive()) {
+                lines.add("command: " + _commandView.getPrompt() + _commandView.getCommandText());
+            }
+            if (_panelView instanceof ChatPanelView chatPanelView) {
+                lines.add("panel: " + chatPanelView.getTitle() + " (content omitted)");
+            } else if (_panelView instanceof ShellPanelView) {
+                lines.add("panel: shell (content omitted)");
+            } else if (_panelView instanceof TextPanelView textPanelView) {
+                lines.add("panel: " + textPanelView.getTitle());
+            } else if (_panelView instanceof ListView listView) {
+                lines.add("panel: " + listView.getTitle());
+            }
+            if (_currentWorkspace != null) {
+                lines.add("workspace: " + _currentWorkspace._kind.name().toLowerCase());
+            }
+            appendBufferSnapshot(lines, _activeBufferView, _bufferContext, "active-buffer");
+            return String.join("\n", lines);
+        } finally {
+            _guestObservationActive = previousGuestObservationActive;
         }
-        var lines = new ArrayList<String>();
-        Size size = _rootView == null ? _size : _rootView.getBounds().getSize();
-        if (size != null) {
-            lines.add("screen: " + size.getWidth() + "x" + size.getHeight());
+    }
+
+    public CurrentEditingSnapshot currentEditingSnapshot() {
+        ensureLayoutState();
+        String workspaceKind = _currentWorkspace == null || _currentWorkspace._kind == null
+                ? "buffer"
+                : _currentWorkspace._kind.name().toLowerCase();
+        if (_currentWorkspace != null && _currentWorkspace._kind != WorkspaceKind.BUFFER) {
+            return new CurrentEditingSnapshot(workspaceKind, null, null);
         }
-        lines.add("mode: " + modeNameForDisplay());
-        EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
-        lines.add("focus: " + guestFocusLabel(responder));
-        if (_commandView != null && _commandView.isActive()) {
-            lines.add("command: " + _commandView.getPrompt() + _commandView.getCommandText());
+        BufferContext activeContext = getBufferContextFor(_activeBufferView);
+        if (activeContext == null) {
+            activeContext = _bufferContext;
         }
-        if (_panelView instanceof ChatPanelView chatPanelView) {
-            lines.add("panel: " + chatPanelView.getTitle() + " (content omitted)");
-        } else if (_panelView instanceof ShellPanelView) {
-            lines.add("panel: shell (content omitted)");
-        } else if (_panelView instanceof TextPanelView textPanelView) {
-            lines.add("panel: " + textPanelView.getTitle());
-        } else if (_panelView instanceof ListView listView) {
-            lines.add("panel: " + listView.getTitle());
-        }
-        if (_currentWorkspace != null) {
-            lines.add("workspace: " + _currentWorkspace._kind.name().toLowerCase());
-        }
-        appendBufferSnapshot(lines, _activeBufferView, _bufferContext, "active-buffer");
-        return String.join("\n", lines);
+        Path path = activeContext == null ? null : activeContext.getBuffer().getPath();
+        Path normalizedPath = path == null ? null : path.toAbsolutePath().normalize();
+        Path projectRoot = normalizedPath == null ? null : ProjectPaths.getProjectRootPath(normalizedPath);
+        return new CurrentEditingSnapshot(
+                workspaceKind,
+                normalizedPath,
+                projectRoot == null ? null : projectRoot.toAbsolutePath().normalize());
     }
 
     public String guestScreenSnapshotBlockReason() {
@@ -1096,6 +1127,10 @@ public class Window implements Drawable {
 
     boolean isEditorDriveInputActive() {
         return _editorDriveInputActive;
+    }
+
+    boolean isGuestObservationActive() {
+        return _guestObservationActive || _editorDriveInputActive;
     }
 
     boolean isEditorDriveCommandSandboxActive() {
@@ -1777,6 +1812,31 @@ public class Window implements Drawable {
         return List.copyOf(ordered.values());
     }
 
+    public boolean refreshOpenBuffersForPath(Path path, String content) {
+        if (path == null) {
+            return false;
+        }
+        ensureLayoutState();
+        Path normalized = path.toAbsolutePath().normalize();
+        boolean refreshed = false;
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (!bufferPathEquals(context, normalized)) {
+                continue;
+            }
+            replaceBufferContents(context, content == null ? "" : content);
+            refreshed = true;
+        }
+        if (refreshed) {
+            if (_rootView != null) {
+                _rootView.setNeedsRedraw();
+            }
+            if (_modeLineView != null) {
+                _modeLineView.setNeedsRedraw();
+            }
+        }
+        return refreshed;
+    }
+
     public void showBufferList() {
         var items = new ArrayList<ListView.ListItem>();
         for (OpenBufferEntry entry : openBuffers()) {
@@ -2007,6 +2067,70 @@ public class Window implements Drawable {
             }
         }
         return false;
+    }
+
+    private List<BufferContext> openBufferContextsSnapshot() {
+        var seen = new IdentityHashMap<BufferContext, Boolean>();
+        var contexts = new ArrayList<BufferContext>();
+        addBufferContextSnapshot(contexts, seen, _bufferContext);
+        if (_bufferContextsByView != null) {
+            for (BufferContext context : _bufferContextsByView.values()) {
+                addBufferContextSnapshot(contexts, seen, context);
+            }
+        }
+        if (_workspaceHistory != null) {
+            for (var workspace : _workspaceHistory) {
+                if (workspace == null) {
+                    continue;
+                }
+                addBufferContextSnapshot(contexts, seen, workspace._bufferContext);
+                if (workspace._bufferContextsByView != null) {
+                    for (BufferContext context : workspace._bufferContextsByView.values()) {
+                        addBufferContextSnapshot(contexts, seen, context);
+                    }
+                }
+            }
+        }
+        return contexts;
+    }
+
+    private static void addBufferContextSnapshot(List<BufferContext> contexts,
+            IdentityHashMap<BufferContext, Boolean> seen, BufferContext context) {
+        if (context == null || seen.containsKey(context)) {
+            return;
+        }
+        seen.put(context, Boolean.TRUE);
+        contexts.add(context);
+    }
+
+    private static boolean bufferPathEquals(BufferContext context, Path normalizedPath) {
+        if (context == null || context.getBuffer() == null || context.getBuffer().getPath() == null) {
+            return false;
+        }
+        return context.getBuffer().getPath().toAbsolutePath().normalize().equals(normalizedPath);
+    }
+
+    private static void replaceBufferContents(BufferContext context, String content) {
+        var buffer = context.getBuffer();
+        boolean readOnly = buffer.isReadOnly();
+        buffer.setReadOnly(false);
+        try {
+            int cursorPosition = Math.min(buffer.getCursor().getPosition(), content.length());
+            int length = buffer.getLength();
+            if (length > 0) {
+                buffer.remove(0, length);
+            }
+            if (!content.isEmpty()) {
+                buffer.insert(0, content);
+            }
+            buffer.getUndoLog().commit();
+            buffer.getCursor().setPosition(cursorPosition);
+            context.getTextLayout().calculate();
+            context.getBufferView().adaptViewToCursor();
+            context.getBufferView().setNeedsRedraw();
+        } finally {
+            buffer.setReadOnly(readOnly);
+        }
     }
 
     private void addBufferEntry(Map<String, OpenBufferEntry> ordered, BufferContext context) {

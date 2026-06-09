@@ -29,6 +29,10 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.eclipse.jgit.diff.DiffAlgorithm;
+import org.eclipse.jgit.diff.Edit;
+import org.eclipse.jgit.diff.RawText;
+import org.eclipse.jgit.diff.RawTextComparator;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
@@ -66,6 +70,7 @@ public class NemoClient {
     private static final int _defaultMaxResults = 200;
     private static final int _defaultMaxOutputChars = 12_000;
     private static final int _defaultCommandTimeoutSeconds = 20;
+    private static final int _diffContextLines = 3;
     private static final String _defaultCommandPolicy = "restricted";
     private static final String _defaultPermissionMode = "workspace_write";
     private static final String _defaultOsSandbox = "auto";
@@ -97,7 +102,6 @@ public class NemoClient {
 
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
     private final NemoMcpClient _mcpClient = new NemoMcpClient();
-    private final HttpClient _httpClient = HttpClient.newHttpClient();
     private static final HttpClient _webSearchHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -160,7 +164,16 @@ public class NemoClient {
     private record DuckDuckGoResultAnchor(int start, int end, String href, String titleHtml) {
     }
 
-    record ToolTrace(String text) {
+    record ToolExecutionResult(String output, String displayPatch) {
+        ToolExecutionResult(String output) {
+            this(output, "");
+        }
+    }
+
+    record ToolTrace(String text, String displayText) {
+        ToolTrace(String text) {
+            this(text, text);
+        }
     }
 
     record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
@@ -892,8 +905,6 @@ public class NemoClient {
                     || "responses".equals(_provider)
                     || "openai-responses".equals(_provider);
         }
-        URI responsesUri() { return buildResponsesUri("", _baseUrl); }
-
         static String normalizeToolPermissionMode(String toolPermissionMode) {
             if (toolPermissionMode == null || toolPermissionMode.isBlank()) {
                 return _defaultPermissionMode;
@@ -1558,22 +1569,6 @@ public class NemoClient {
         return values;
     }
 
-    static URI buildResponsesUri(String explicitResponsesUrl, String baseUrl) {
-        if (!explicitResponsesUrl.equals("")) {
-            return URI.create(explicitResponsesUrl);
-        }
-        if (baseUrl.equals("")) {
-            baseUrl = _defaultBaseUrl;
-        }
-        while (baseUrl.endsWith("/")) {
-            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
-        }
-        if (baseUrl.endsWith("/responses")) {
-            return URI.create(baseUrl);
-        }
-        return URI.create(baseUrl + "/responses");
-    }
-
     static String headerName(String rawName) {
         return rawName.toLowerCase().replace('_', '-');
     }
@@ -1584,69 +1579,12 @@ public class NemoClient {
             return new ResponseResult("Nemo is unavailable while mail is visible; switch away from mail and retry.",
                     null, List.of());
         }
-        if (usesResponsesApi(configuration)) {
-            return requestResponses(configuration, context, turns, executionSession);
-        }
         return _langChain4jClient.request(configuration, context, turns, executionSession);
     }
 
     private static boolean mailVisibleToNemo() {
         Window window = Window.getInstance();
         return window != null && window.isMailVisibleToGuest();
-    }
-
-    private static boolean usesResponsesApi(Configuration configuration) {
-        String provider = configuration.provider();
-        return "chatgpt".equals(provider)
-                || "responses".equals(provider)
-                || "openai-responses".equals(provider);
-    }
-
-    private static boolean isChatGptResponsesProvider(Configuration configuration) {
-        return "chatgpt".equals(configuration.provider());
-    }
-
-    private ResponseResult requestResponses(Configuration configuration, BufferContext context, List<ChatTurn> turns,
-            ToolExecutionSession executionSession)
-            throws IOException, InterruptedException {
-        Path workspaceRoot = resolveWorkspaceRoot(configuration, context);
-        List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, workspaceRoot, configuration);
-        JsonArray inputHistory = new JsonArray();
-        inputHistory.add(createUserInputMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
-        var toolTraces = new ArrayList<ToolTrace>();
-
-        while (true) {
-            appendQueuedTurnsToResponsesInput(inputHistory, drainQueuedTurns(executionSession));
-            JsonObject request = buildResponsesRequest(configuration, inputHistory);
-            HttpResponse<String> response = _httpClient.send(
-                    HttpRequest.newBuilder(configuration.responsesUri())
-                            .timeout(Duration.ofSeconds(configuration.timeoutSeconds()))
-                            .header("Content-Type", "application/json")
-                            .headers(responseHeaders(configuration))
-                            .POST(HttpRequest.BodyPublishers.ofString(request.toString(), StandardCharsets.UTF_8))
-                            .build(),
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() >= 400) {
-                throw new IOException(extractErrorMessage(response.body(), response.statusCode()));
-            }
-
-            JsonObject responseBody = parseResponsesBody(response.body());
-            JsonArray toolOutputs = new JsonArray();
-            for (ToolCall call : extractToolCalls(responseBody)) {
-                String output = executeToolSafely(configuration, context, call, executionSession);
-                toolTraces.add(toolTrace(call, output));
-                JsonObject toolOutput = new JsonObject();
-                toolOutput.addProperty("type", "function_call_output");
-                toolOutput.addProperty("call_id", call.callId());
-                toolOutput.addProperty("output", output);
-                toolOutputs.add(toolOutput);
-            }
-            if (toolOutputs.isEmpty()) {
-                return new ResponseResult(extractOutputText(responseBody.toString()), extractContextUsagePercent(responseBody),
-                        List.copyOf(toolTraces));
-            }
-            appendToolRound(inputHistory, responseBody, toolOutputs);
-        }
     }
 
     static List<ChatTurn> drainQueuedTurns(ToolExecutionSession executionSession) {
@@ -1663,70 +1601,6 @@ public class NemoClient {
         return String.join("\n", lines);
     }
 
-    private static void appendQueuedTurnsToResponsesInput(JsonArray inputHistory, List<ChatTurn> turns) {
-        if (!turns.isEmpty()) {
-            inputHistory.add(createUserInputMessage(queuedWorkerMessage(turns)));
-        }
-    }
-
-    private static JsonObject buildResponsesRequest(Configuration configuration, JsonArray inputHistory) {
-        JsonObject request = new JsonObject();
-        request.addProperty("model", configuration.model());
-        request.addProperty("instructions", configuration.systemPrompt());
-        request.add("input", inputHistory.deepCopy());
-        JsonArray tools = buildTools(configuration);
-        if (!tools.isEmpty()) {
-            request.add("tools", tools);
-        }
-        request.addProperty("store", false);
-        request.addProperty("stream", true);
-        if (configuration.temperature() != null) {
-            request.addProperty("temperature", configuration.temperature());
-        }
-        if (configuration.topP() != null) {
-            request.addProperty("top_p", configuration.topP());
-        }
-        if (configuration.maxOutputTokens() != null && !isChatGptResponsesProvider(configuration)) {
-            request.addProperty("max_output_tokens", configuration.maxOutputTokens());
-        }
-        if (!configuration.reasoningEffort().isBlank()) {
-            JsonObject reasoning = new JsonObject();
-            reasoning.addProperty("effort", configuration.reasoningEffort());
-            request.add("reasoning", reasoning);
-        }
-        for (var entry : configuration.customParameters().entrySet()) {
-            request.add(entry.getKey(), JsonParser.parseString(_gson.toJson(entry.getValue())));
-        }
-        return request;
-    }
-
-    private static String[] responseHeaders(Configuration configuration) {
-        var headers = new ArrayList<String>();
-        if (!configuration.apiKey().isBlank()) {
-            headers.add("Authorization");
-            headers.add("Bearer " + configuration.apiKey());
-        }
-        if (!configuration.organization().isBlank()) {
-            headers.add("OpenAI-Organization");
-            headers.add(configuration.organization());
-        }
-        if (!configuration.project().isBlank()) {
-            headers.add("OpenAI-Project");
-            headers.add(configuration.project());
-        }
-        for (var entry : configuration.headers().entrySet()) {
-            String key = entry.getKey();
-            if ("Authorization".equalsIgnoreCase(key)
-                    || "Content-Type".equalsIgnoreCase(key)
-                    || "OpenAI-Organization".equalsIgnoreCase(key)
-                    || "OpenAI-Project".equalsIgnoreCase(key)) {
-                continue;
-            }
-            headers.add(key);
-            headers.add(entry.getValue());
-        }
-        return headers.toArray(String[]::new);
-    }
 
     static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call)
             throws InterruptedException {
@@ -1735,15 +1609,25 @@ public class NemoClient {
 
     static String executeToolSafely(Configuration configuration, BufferContext context, ToolCall call,
             ToolExecutionSession executionSession) throws InterruptedException {
+        return executeToolDetailedSafely(configuration, context, call, executionSession).output();
+    }
+
+    static ToolExecutionResult executeToolDetailedSafely(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws InterruptedException {
         try {
-            return executeTool(configuration, context, call, executionSession);
+            return executeToolDetailed(configuration, context, call, executionSession);
         } catch (IOException e) {
             _log.warn("Nemo tool {} failed", call.name(), e);
-            return formatToolError(call, e);
+            return new ToolExecutionResult(formatToolError(call, e));
         }
     }
 
     static ToolTrace toolTrace(ToolCall call, String output) {
+        return toolTrace(call, new ToolExecutionResult(output));
+    }
+
+    static ToolTrace toolTrace(ToolCall call, ToolExecutionResult result) {
+        String output = result.output();
         String detail;
         if (isMcpToolName(call.name()) || isPluginToolName(call.name())) {
             detail = withOutputStatus(argumentSummary(call.arguments()), output);
@@ -1758,6 +1642,7 @@ public class NemoClient {
         case "screen_snapshot" -> withOutputStatus("", output);
         case "drive_editor" -> withOutputStatus(argumentSummary(call.arguments(), "input", "max_events"), output);
         case "finish_editor_control" -> firstOutputLine(output);
+        case "current_editor_context" -> firstOutputLine(output);
         case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
         case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
         case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
@@ -1770,9 +1655,11 @@ public class NemoClient {
         default -> argumentSummary(call.arguments());
         };
         }
-        return detail.isBlank()
-                ? new ToolTrace(call.name())
-                : new ToolTrace(call.name() + ": " + detail);
+        String text = detail.isBlank() ? call.name() : call.name() + ": " + detail;
+        String displayPatch = result.displayPatch() == null ? "" : result.displayPatch().stripTrailing();
+        return displayPatch.isBlank()
+                ? new ToolTrace(text)
+                : new ToolTrace(text, text + "\n" + displayPatch);
     }
 
     private static String withOutputStatus(String detail, String output) {
@@ -1869,206 +1756,6 @@ public class NemoClient {
         return message.toString();
     }
 
-    static void appendToolRound(JsonArray inputHistory, JsonObject response, JsonArray toolOutputs) {
-        JsonArray output = response.getAsJsonArray("output");
-        if (output != null) {
-            for (var item : output) {
-                inputHistory.add(item.deepCopy());
-            }
-        }
-        for (var item : toolOutputs) {
-            inputHistory.add(item.deepCopy());
-        }
-    }
-
-    static JsonObject createUserInputMessage(String text) {
-        var message = new JsonObject();
-        message.addProperty("type", "message");
-        message.addProperty("role", "user");
-        var content = new JsonArray();
-        var inputText = new JsonObject();
-        inputText.addProperty("type", "input_text");
-        inputText.addProperty("text", text);
-        content.add(inputText);
-        message.add("content", content);
-        return message;
-    }
-
-    static List<ToolCall> extractToolCalls(JsonObject response) {
-        var calls = new ArrayList<ToolCall>();
-        JsonArray output = response.getAsJsonArray("output");
-        if (output == null) {
-            return calls;
-        }
-        for (var item : output) {
-            JsonObject object = item.getAsJsonObject();
-            if (!"function_call".equals(object.get("type").getAsString())) {
-                continue;
-            }
-            JsonObject arguments = JsonParser.parseString(object.get("arguments").getAsString()).getAsJsonObject();
-            calls.add(new ToolCall(
-                    object.get("call_id").getAsString(),
-                    object.get("name").getAsString(),
-                    arguments));
-        }
-        return calls;
-    }
-
-    static JsonArray buildTools(Configuration configuration) {
-        var tools = new JsonArray();
-        if (configuration.toolWebSearch()) {
-            var tool = new JsonObject();
-            tool.addProperty("type", "web_search");
-            tools.add(tool);
-        }
-        if (configuration.toolDelegateTask()) {
-            tools.add(functionTool("delegate_task",
-                    "Start a focused workspace task in a separate Nemo sub-agent worker and return immediately with the new session id. Use this to split investigation, review, or implementation work that can run in parallel. The sub-agent inherits this session's tools, permissions, sandbox, and approval policy, but cannot delegate again.",
-                    schema(List.of(
-                            property("task", stringSchema("Detailed work request for the sub-agent.")),
-                            property("title", stringSchema("Optional short label for the delegated task.")),
-                            property("focus_paths", stringArraySchema("Optional workspace-relative paths the sub-agent should focus on."))),
-                            List.of("task"))));
-            tools.add(functionTool("worker_status",
-                    "List delegated Nemo workers and sessions for this workspace, or inspect one session's running/idle status.",
-                    schema(List.of(
-                            property("session_id", stringSchema("Optional session id or title to inspect."))))));
-            tools.add(functionTool("read_worker",
-                    "Read a delegated Nemo worker/session transcript without waiting for it to finish.",
-                    schema(List.of(
-                            property("session_id", stringSchema("Session id or unique title to read.")),
-                            property("max_turns", integerSchema("Maximum transcript turns to include.")),
-                            property("max_output_chars", integerSchema("Maximum characters to return."))),
-                            List.of("session_id"))));
-            tools.add(functionTool("join_worker",
-                    "Wait for a delegated Nemo worker/session to finish, bounded by timeout_seconds, then return its transcript.",
-                    schema(List.of(
-                            property("session_id", stringSchema("Session id or unique title to join.")),
-                            property("timeout_seconds", integerSchema("Maximum seconds to wait.")),
-                            property("max_turns", integerSchema("Maximum transcript turns to include.")),
-                            property("max_output_chars", integerSchema("Maximum characters to return."))),
-                            List.of("session_id"))));
-            tools.add(functionTool("message_worker",
-                    "Send an additional user message to a delegated Nemo worker/session without switching to it. If the worker is running, the message is queued and delivered at the next safe request boundary; if it is idle, it starts a new turn in that session.",
-                    schema(List.of(
-                            property("session_id", stringSchema("Session id or unique title to message.")),
-                            property("message", stringSchema("User message or correction for the worker."))),
-                            List.of("session_id", "message"))));
-        }
-        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
-            tools.add(functionTool("start_editor_control",
-                    "Request host approval to start an explicit editor-control session. Only one Nemo session can hold control at a time; call this before screen_snapshot or drive_editor, then finish_editor_control when done.",
-                    schema(List.of())));
-        }
-        if (configuration.toolScreenSnapshot()) {
-            tools.add(functionTool("screen_snapshot",
-                    "Return a host-filtered structured text snapshot of the current editor screen during an active editor-control session. Host-only approval overlays and Nemo's own chat contents are not included.",
-                    schema(List.of())));
-        }
-        if (configuration.toolDriveEditor() && isToolAllowedByPermission(configuration, "drive_editor")) {
-            tools.add(functionTool("drive_editor",
-                    "Send a bounded stream of text editor input to the active buffer during the active editor-control session and return before/after snapshots. Literal text is typed as characters; supported tokens include <ESC>, <ENTER>, <TAB>, <BACKSPACE>, <UP>, <DOWN>, <LEFT>, <RIGHT>, <PAGE-UP>, <PAGE-DOWN>, <SPACE>, <LT>, <GT>, and <CTRL-x>. Editor actions assess sandbox permissions at execution time: workspace-local navigation, editing, search, and saves are allowed when permitted; host overlays, shell, Nemo, mail, Slack, Todo, external workspaces, and other boundary-crossing actions are blocked.",
-                    schema(List.of(
-                            property("input", stringSchema("Literal text plus optional key tokens to send to the editor.")),
-                            property("max_events", integerSchema("Optional maximum parsed key events to process, capped at 500."))),
-                            List.of("input"))));
-        }
-        if (configuration.toolScreenSnapshot() || configuration.toolDriveEditor()) {
-            tools.add(functionTool("finish_editor_control",
-                    "Finish the active editor-control session, release the single-control lock, and reopen the Nemo chat conversation that invoked these tools so you can report findings to the user.",
-                    schema(List.of())));
-        }
-        tools.add(functionTool("swim_help",
-                "Read SWIM editor help chapters. Use with no topic for the index, or pass a chapter id, chapter title, or search topic to learn how to operate the editor.",
-                schema(List.of(
-                        property("topic", stringSchema("Optional chapter id, chapter title, or search text. Examples: start, movement, files, nemo."))),
-                        List.of())));
-        if (isMcpAllowed(configuration)) {
-            for (NemoMcpClient.ToolDescriptor tool : mcpToolDescriptors(configuration)) {
-                tools.add(functionTool(tool.exposedName(), mcpToolDescription(tool), tool.inputSchema()));
-            }
-        }
-        for (SwimNemoToolDescriptor tool : pluginToolDescriptors(configuration)) {
-            tools.add(functionTool(tool.exposedName(), pluginToolDescription(tool), pluginToolSchema(tool)));
-        }
-        if (configuration.toolListFiles()) {
-            tools.add(functionTool("list_files",
-                    "List files in the workspace. Use this to inspect the project structure.",
-                    schema(
-                            property("path", stringSchema("Path relative to the workspace root.")),
-                            property("max_results", integerSchema("Maximum number of files to return.")))));
-        }
-        if (configuration.toolReadFile()) {
-            tools.add(functionTool("read_file",
-                    "Read a file from the workspace. Use start_line/end_line to limit output.",
-                    schema(List.of(
-                            property("path", stringSchema("Path relative to the workspace root.")),
-                            property("start_line", integerSchema("Optional 1-based start line.")),
-                            property("end_line", integerSchema("Optional 1-based end line."))),
-                            List.of("path"))));
-        }
-        if (configuration.toolSearchFiles()) {
-            tools.add(functionTool("search_files",
-                    "Search text across workspace files and return matching lines.",
-                    schema(List.of(
-                            property("query", stringSchema("Text to search for.")),
-                            property("path", stringSchema("Optional path relative to the workspace root.")),
-                            property("max_results", integerSchema("Maximum number of matches to return."))),
-                            List.of("query"))));
-        }
-        if (configuration.toolRunCommand() && isToolAllowedByPermission(configuration, "run_command")) {
-            tools.add(functionTool("run_command",
-                    "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables. Nemo applies an OS filesystem-write sandbox outside full-access mode when available.",
-                    schema(List.of(
-                            property("command", stringSchema("Shell command to execute.")),
-                            property("cwd", stringSchema("Optional working directory relative to the workspace root."))),
-                            List.of("command"))));
-        }
-        if (configuration.toolWriteFile() && isToolAllowedByPermission(configuration, "write_file")) {
-            tools.add(functionTool("write_file",
-                    "Create or overwrite a real file in the workspace. Successful writes are saved to disk and persist across Nemo/editor runs. Use this to apply code changes after reading the file you want to edit.",
-                    schema(List.of(
-                            property("path", stringSchema("Path relative to the workspace root.")),
-                            property("content", stringSchema("Full file contents to write."))),
-                            List.of("path", "content"))));
-        }
-        if (configuration.toolApplyPatch() && isToolAllowedByPermission(configuration, "apply_patch")) {
-            tools.add(functionTool("apply_patch",
-                    "Apply a targeted unified diff patch inside the workspace. Successful patches are saved to disk and persist across Nemo/editor runs. Prefer this for small edits instead of rewriting whole files.",
-                    schema(List.of(
-                            property("patch", stringSchema("Unified diff patch text to apply."))),
-                            List.of("patch"))));
-        }
-        if (configuration.toolGitStatus()) {
-            tools.add(functionTool("git_status",
-                    "Show git status for the workspace or a subdirectory.",
-                    schema(List.of(
-                            property("path", stringSchema("Optional path relative to the workspace root."))))));
-        }
-        if (configuration.toolGitDiff()) {
-            tools.add(functionTool("git_diff",
-                    "Show git diff for the workspace or a subdirectory.",
-                    schema(List.of(
-                            property("path", stringSchema("Optional path relative to the workspace root."))),
-                            List.of())));
-        }
-        if (configuration.toolGitAdd() && isToolAllowedByPermission(configuration, "git_add")) {
-            tools.add(functionTool("git_add",
-                    "Stage files in git. Use this before git_commit when the user asks you to commit changes.",
-                    schema(List.of(
-                            property("path", stringSchema("Optional file or directory path relative to the workspace root. Defaults to the whole workspace."))),
-                            List.of())));
-        }
-        if (configuration.toolGitCommit() && isToolAllowedByPermission(configuration, "git_commit")) {
-            tools.add(functionTool("git_commit",
-                    "Create a git commit from the staged changes.",
-                    schema(List.of(
-                            property("message", stringSchema("Commit message to use."))),
-                            List.of("message"))));
-        }
-        return tools;
-    }
-
     static List<NemoMcpClient.ToolDescriptor> mcpToolDescriptors(Configuration configuration) {
         if (!isMcpAllowed(configuration)) {
             return List.of();
@@ -2084,19 +1771,6 @@ public class NemoClient {
 
     static boolean isMcpAllowed(Configuration configuration) {
         return !configuration.mcpServers().isEmpty() && !"read_only".equals(configuration.toolPermissionMode());
-    }
-
-    private static String mcpToolDescription(NemoMcpClient.ToolDescriptor tool) {
-        var parts = new ArrayList<String>();
-        parts.add("MCP tool " + tool.toolName() + " from server " + tool.serverName() + ".");
-        if (!tool.title().isBlank()) {
-            parts.add("Title: " + tool.title() + ".");
-        }
-        if (!tool.description().isBlank()) {
-            parts.add(tool.description());
-        }
-        parts.add("External MCP tools can access resources outside Nemo's workspace sandbox and require approval unless the session is full-access.");
-        return String.join(" ", parts);
     }
 
     static String pluginToolDescription(SwimNemoToolDescriptor tool) {
@@ -2131,24 +1805,7 @@ public class NemoClient {
         return schema(List.of());
     }
 
-    private static JsonObject functionTool(String name, String description, JsonObject parameters) {
-        var tool = new JsonObject();
-        tool.addProperty("type", "function");
-        tool.addProperty("name", name);
-        tool.addProperty("description", description);
-        tool.add("parameters", parameters);
-        return tool;
-    }
-
-    private static JsonObject schema(Map.Entry<String, JsonObject>... properties) {
-        return schema(List.of(properties));
-    }
-
     private static JsonObject schema(List<Map.Entry<String, JsonObject>> properties) {
-        return schema(properties, List.of());
-    }
-
-    private static JsonObject schema(List<Map.Entry<String, JsonObject>> properties, List<String> required) {
         var schema = new JsonObject();
         schema.addProperty("type", "object");
         var propertyObject = new JsonObject();
@@ -2156,42 +1813,7 @@ public class NemoClient {
             propertyObject.add(entry.getKey(), entry.getValue());
         }
         schema.add("properties", propertyObject);
-        if (!required.isEmpty()) {
-            var requiredArray = new JsonArray();
-            for (var name : required) {
-                requiredArray.add(name);
-            }
-            schema.add("required", requiredArray);
-        }
         schema.addProperty("additionalProperties", false);
-        return schema;
-    }
-
-    private static Map.Entry<String, JsonObject> property(String name, JsonObject schema) {
-        return Map.entry(name, schema);
-    }
-
-    private static JsonObject stringSchema(String description) {
-        var schema = new JsonObject();
-        schema.addProperty("type", "string");
-        schema.addProperty("description", description);
-        return schema;
-    }
-
-    private static JsonObject stringArraySchema(String description) {
-        var schema = new JsonObject();
-        schema.addProperty("type", "array");
-        schema.addProperty("description", description);
-        var items = new JsonObject();
-        items.addProperty("type", "string");
-        schema.add("items", items);
-        return schema;
-    }
-
-    private static JsonObject integerSchema(String description) {
-        var schema = new JsonObject();
-        schema.addProperty("type", "integer");
-        schema.addProperty("description", description);
         return schema;
     }
 
@@ -2201,43 +1823,49 @@ public class NemoClient {
 
     static String executeTool(Configuration configuration, BufferContext context, ToolCall call,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        return executeToolDetailed(configuration, context, call, executionSession).output();
+    }
+
+    static ToolExecutionResult executeToolDetailed(Configuration configuration, BufferContext context, ToolCall call,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
         String permissionBlock = permissionBlock(configuration, call.name());
         if (permissionBlock != null) {
-            return permissionBlock;
+            return new ToolExecutionResult(permissionBlock);
         }
         String approvalBlock = requestActionApprovalIfNeeded(configuration, context, call, executionSession);
         if (approvalBlock != null) {
-            return approvalBlock;
+            return new ToolExecutionResult(approvalBlock);
         }
         if (isMcpToolName(call.name())) {
-            return _instance.callMcpTool(configuration, context, call, executionSession);
+            return new ToolExecutionResult(_instance.callMcpTool(configuration, context, call, executionSession));
         }
         if (isPluginToolName(call.name())) {
-            return _instance.callPluginTool(configuration, context, call, executionSession);
+            return new ToolExecutionResult(_instance.callPluginTool(configuration, context, call, executionSession));
         }
         return switch (call.name()) {
-        case "web_search" -> webSearch(call.arguments());
-        case "delegate_task" -> _instance.delegateTask(configuration, context, call.arguments());
-        case "worker_status" -> _instance.workerStatus(configuration, context, call.arguments());
-        case "read_worker" -> _instance.readWorker(configuration, context, call.arguments());
-        case "join_worker" -> _instance.joinWorker(configuration, context, call.arguments());
-        case "message_worker" -> _instance.messageWorker(configuration, context, call.arguments());
-        case "start_editor_control" -> startEditorControl(configuration, context, executionSession);
-        case "screen_snapshot" -> screenSnapshot(configuration, context, call.arguments(), executionSession);
-        case "drive_editor" -> driveEditor(configuration, context, call.arguments(), executionSession);
-        case "finish_editor_control" -> finishEditorControl(executionSession);
-        case "swim_help" -> HelpDocument.renderForNemo(stringArgument(call.arguments(), "topic", ""));
-        case "list_files" -> listFiles(configuration, context, call.arguments());
-        case "read_file" -> readFile(configuration, context, call.arguments());
-        case "search_files" -> searchFiles(configuration, context, call.arguments());
-        case "run_command" -> runCommand(configuration, context, call.arguments(), executionSession);
-        case "write_file" -> writeFile(configuration, context, call.arguments());
-        case "apply_patch" -> applyPatch(configuration, context, call.arguments(), executionSession);
-        case "git_status" -> gitStatus(configuration, context, call.arguments());
-        case "git_diff" -> gitDiff(configuration, context, call.arguments());
-        case "git_add" -> gitAdd(configuration, context, call.arguments(), executionSession);
-        case "git_commit" -> gitCommit(configuration, context, call.arguments(), executionSession);
-        default -> "Unknown tool: " + call.name();
+        case "web_search" -> new ToolExecutionResult(webSearch(call.arguments()));
+        case "delegate_task" -> new ToolExecutionResult(_instance.delegateTask(configuration, context, call.arguments()));
+        case "worker_status" -> new ToolExecutionResult(_instance.workerStatus(configuration, context, call.arguments()));
+        case "read_worker" -> new ToolExecutionResult(_instance.readWorker(configuration, context, call.arguments()));
+        case "join_worker" -> new ToolExecutionResult(_instance.joinWorker(configuration, context, call.arguments()));
+        case "message_worker" -> new ToolExecutionResult(_instance.messageWorker(configuration, context, call.arguments()));
+        case "start_editor_control" -> new ToolExecutionResult(startEditorControl(configuration, context, executionSession));
+        case "screen_snapshot" -> new ToolExecutionResult(screenSnapshot(configuration, context, call.arguments(), executionSession));
+        case "drive_editor" -> new ToolExecutionResult(driveEditor(configuration, context, call.arguments(), executionSession));
+        case "finish_editor_control" -> new ToolExecutionResult(finishEditorControl(executionSession));
+        case "swim_help" -> new ToolExecutionResult(HelpDocument.renderForNemo(stringArgument(call.arguments(), "topic", "")));
+        case "current_editor_context" -> new ToolExecutionResult(currentEditorContext(configuration, context));
+        case "list_files" -> new ToolExecutionResult(listFiles(configuration, context, call.arguments()));
+        case "read_file" -> new ToolExecutionResult(readFile(configuration, context, call.arguments()));
+        case "search_files" -> new ToolExecutionResult(searchFiles(configuration, context, call.arguments()));
+        case "run_command" -> new ToolExecutionResult(runCommand(configuration, context, call.arguments(), executionSession));
+        case "write_file" -> writeFileDetailed(configuration, context, call.arguments());
+        case "apply_patch" -> applyPatchDetailed(configuration, context, call.arguments(), executionSession);
+        case "git_status" -> new ToolExecutionResult(gitStatus(configuration, context, call.arguments()));
+        case "git_diff" -> new ToolExecutionResult(gitDiff(configuration, context, call.arguments()));
+        case "git_add" -> new ToolExecutionResult(gitAdd(configuration, context, call.arguments(), executionSession));
+        case "git_commit" -> new ToolExecutionResult(gitCommit(configuration, context, call.arguments(), executionSession));
+        default -> new ToolExecutionResult("Unknown tool: " + call.name());
         };
     }
 
@@ -2583,6 +2211,59 @@ public class NemoClient {
             lines.add(result.afterSnapshot());
         }
         return String.join("\n", lines);
+    }
+
+    private static String currentEditorContext(Configuration configuration, BufferContext context)
+            throws InterruptedException {
+        Window.CurrentEditingSnapshot snapshot = runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            return window == null ? null : window.currentEditingSnapshot();
+        }, null);
+        Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        Path currentFile = snapshot == null ? context.getBuffer().getPath() : snapshot.currentFile();
+        currentFile = currentFile == null ? null : currentFile.toAbsolutePath().normalize();
+        Path projectRoot = snapshot == null ? null : snapshot.projectRoot();
+        if (projectRoot == null) {
+            projectRoot = ProjectPaths.getProjectRootPath(currentFile == null ? workspaceRoot : currentFile);
+        }
+        projectRoot = projectRoot == null ? workspaceRoot : projectRoot.toAbsolutePath().normalize();
+        String workspaceKind = snapshot == null ? "buffer" : snapshot.workspaceKind();
+
+        var lines = new ArrayList<String>();
+        lines.add("workspace: " + workspaceKind);
+        lines.add("workspace_root: " + workspaceRoot);
+        if (currentFile == null) {
+            lines.add("current_file: (none)");
+        } else {
+            lines.add("current_file: " + currentFile);
+            String relativeToWorkspace = relativePathIfInside(workspaceRoot, currentFile);
+            if (relativeToWorkspace != null) {
+                lines.add("current_file_relative_to_workspace: " + relativeToWorkspace);
+            }
+        }
+        if (projectRoot == null) {
+            lines.add("project_root: (none)");
+        } else {
+            lines.add("project_root: " + projectRoot);
+            if (currentFile != null) {
+                String relativeToProject = relativePathIfInside(projectRoot, currentFile);
+                if (relativeToProject != null) {
+                    lines.add("current_file_relative_to_project: " + relativeToProject);
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String relativePathIfInside(Path root, Path path) {
+        if (root == null || path == null) {
+            return null;
+        }
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        Path normalizedPath = path.toAbsolutePath().normalize();
+        return normalizedPath.startsWith(normalizedRoot)
+                ? normalizedRoot.relativize(normalizedPath).toString()
+                : null;
     }
 
     private static <T> T runOnEditorThread(Callable<T> callable, T fallback) throws InterruptedException {
@@ -3238,25 +2919,40 @@ public class NemoClient {
         return null;
     }
 
-    private static String writeFile(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+    private static String writeFile(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
+        return writeFileDetailed(configuration, context, arguments).output();
+    }
+
+    private static ToolExecutionResult writeFileDetailed(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
         String content = stringArgument(arguments, "content", "");
+        boolean existed = Files.exists(path);
+        String before = readFileForDisplayDiff(context, path);
         Path parent = path.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
         }
 
-        if (isCurrentBufferPath(context, path)) {
+        Files.writeString(path, content, StandardCharsets.UTF_8);
+        boolean refreshedOpenBuffer = refreshOpenBuffersForPath(path, content);
+        if (!refreshedOpenBuffer && isCurrentBufferPath(context, path)) {
             writeOpenBuffer(context, content);
-        } else {
-            Files.writeString(path, content, StandardCharsets.UTF_8);
         }
 
-        return truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
+        String output = truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
+        String displayPatch = unifiedDiff(root.relativize(path), before, content, existed, true);
+        return new ToolExecutionResult(output, truncateOutput(configuration, displayPatch));
     }
 
     private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        return applyPatchDetailed(configuration, context, arguments, executionSession).output();
+    }
+
+    private static ToolExecutionResult applyPatchDetailed(Configuration configuration, BufferContext context, JsonObject arguments,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String patch = stringArgument(arguments, "patch", "");
@@ -3266,12 +2962,107 @@ public class NemoClient {
         Path marker = Files.createTempFile(root, "nemo-patch-", ".diff");
         Files.writeString(marker, patch, StandardCharsets.UTF_8);
         try {
-            return runShellCommand(configuration, root, root,
+            String output = runShellCommand(configuration, root, root,
                     "git apply --whitespace=nowarn " + shellQuote(root.relativize(marker).toString()),
                     executionSession);
+            String displayPatch = firstOutputLine(output).contains("exit_code: 0")
+                    ? truncateOutput(configuration, patch)
+                    : "";
+            return new ToolExecutionResult(output, displayPatch);
         } finally {
             Files.deleteIfExists(marker);
         }
+    }
+
+    private static String readFileForDisplayDiff(BufferContext context, Path path) throws IOException {
+        if (isCurrentBufferPath(context, path)) {
+            return context.getBuffer().getString();
+        }
+        return Files.exists(path) ? Files.readString(path, StandardCharsets.UTF_8) : "";
+    }
+
+    static String unifiedDiff(Path relativePath, String before, String after, boolean existedBefore, boolean existsAfter) {
+        before = before == null ? "" : before;
+        after = after == null ? "" : after;
+        if (before.equals(after)) {
+            return "";
+        }
+        String displayPath = relativePath == null ? "file" : relativePath.toString();
+        RawText oldText = new RawText(before.getBytes(StandardCharsets.UTF_8));
+        RawText newText = new RawText(after.getBytes(StandardCharsets.UTF_8));
+        var edits = DiffAlgorithm.getAlgorithm(DiffAlgorithm.SupportedAlgorithm.HISTOGRAM)
+                .diff(RawTextComparator.DEFAULT, oldText, newText);
+        if (edits.isEmpty()) {
+            return "";
+        }
+
+        var builder = new StringBuilder();
+        builder.append("diff --git a/").append(displayPath).append(" b/").append(displayPath).append('\n');
+        builder.append(existedBefore ? "--- a/" + displayPath : "--- /dev/null").append('\n');
+        builder.append(existsAfter ? "+++ b/" + displayPath : "+++ /dev/null").append('\n');
+        int editIndex = 0;
+        while (editIndex < edits.size()) {
+            var hunkEdits = new ArrayList<Edit>();
+            Edit first = edits.get(editIndex++);
+            hunkEdits.add(first);
+            int startA = Math.max(0, first.getBeginA() - _diffContextLines);
+            int startB = Math.max(0, first.getBeginB() - _diffContextLines);
+            int endA = Math.min(oldText.size(), first.getEndA() + _diffContextLines);
+            int endB = Math.min(newText.size(), first.getEndB() + _diffContextLines);
+            while (editIndex < edits.size()) {
+                Edit next = edits.get(editIndex);
+                if (next.getBeginA() > endA + _diffContextLines
+                        || next.getBeginB() > endB + _diffContextLines) {
+                    break;
+                }
+                hunkEdits.add(next);
+                endA = Math.min(oldText.size(), next.getEndA() + _diffContextLines);
+                endB = Math.min(newText.size(), next.getEndB() + _diffContextLines);
+                editIndex++;
+            }
+            appendUnifiedHunk(builder, oldText, newText, hunkEdits, startA, endA, startB, endB);
+        }
+        return builder.toString().stripTrailing();
+    }
+
+    private static void appendUnifiedHunk(StringBuilder builder, RawText oldText, RawText newText, List<Edit> edits,
+            int startA, int endA, int startB, int endB) {
+        builder.append("@@ -")
+                .append(diffRange(startA, endA - startA))
+                .append(" +")
+                .append(diffRange(startB, endB - startB))
+                .append(" @@\n");
+        int oldLine = startA;
+        int newLine = startB;
+        for (Edit edit : edits) {
+            while (oldLine < edit.getBeginA() && newLine < edit.getBeginB()) {
+                appendDiffLine(builder, ' ', oldText.getString(oldLine));
+                oldLine++;
+                newLine++;
+            }
+            while (oldLine < edit.getEndA()) {
+                appendDiffLine(builder, '-', oldText.getString(oldLine));
+                oldLine++;
+            }
+            while (newLine < edit.getEndB()) {
+                appendDiffLine(builder, '+', newText.getString(newLine));
+                newLine++;
+            }
+        }
+        while (oldLine < endA && newLine < endB) {
+            appendDiffLine(builder, ' ', oldText.getString(oldLine));
+            oldLine++;
+            newLine++;
+        }
+    }
+
+    private static String diffRange(int start, int count) {
+        int lineNumber = count == 0 ? start : start + 1;
+        return lineNumber + "," + count;
+    }
+
+    private static void appendDiffLine(StringBuilder builder, char prefix, String line) {
+        builder.append(prefix).append(line == null ? "" : line).append('\n');
     }
 
     private static String gitStatus(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
@@ -3663,6 +3454,13 @@ public class NemoClient {
                 && currentPath.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize());
     }
 
+    private static boolean refreshOpenBuffersForPath(Path path, String content) throws InterruptedException {
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            return window != null && window.refreshOpenBuffersForPath(path, content);
+        }, false);
+    }
+
     private static void writeOpenBuffer(BufferContext context, String content) throws IOException {
         var eventThread = EventThread.getInstance();
         if (!eventThread.isAlive() || Thread.currentThread() == eventThread) {
@@ -3742,180 +3540,6 @@ public class NemoClient {
             }
         }
         return values;
-    }
-
-    static String extractOutputText(String responseBody) {
-        JsonObject root = parseJsonObject(responseBody);
-        JsonArray output = root.getAsJsonArray("output");
-        if (output == null) {
-            return "Nemo returned no output.";
-        }
-        StringBuilder builder = new StringBuilder();
-        for (var item : output) {
-            JsonObject itemObject = item.getAsJsonObject();
-            JsonArray content = itemObject.getAsJsonArray("content");
-            if (content == null) {
-                continue;
-            }
-            for (var contentItem : content) {
-                JsonObject contentObject = contentItem.getAsJsonObject();
-                if (!"output_text".equals(contentObject.get("type").getAsString())) {
-                    continue;
-                }
-                if (!builder.isEmpty()) {
-                    builder.append("\n");
-                }
-                builder.append(contentObject.get("text").getAsString());
-            }
-        }
-        if (builder.isEmpty()) {
-            return "Nemo returned no text.";
-        }
-        return builder.toString();
-    }
-
-    static JsonObject parseResponsesBody(String responseBody) {
-        String trimmed = responseBody == null ? "" : responseBody.stripLeading();
-        if (trimmed.startsWith("event:") || trimmed.startsWith("data:")) {
-            return parseResponsesSse(responseBody);
-        }
-        return parseJsonObject(responseBody);
-    }
-
-    private static JsonObject parseResponsesSse(String responseBody) {
-        JsonObject completed = null;
-        JsonArray output = new JsonArray();
-        StringBuilder data = new StringBuilder();
-        try (var reader = new java.io.BufferedReader(new java.io.StringReader(responseBody == null ? "" : responseBody))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isEmpty()) {
-                    completed = processResponsesSsePayload(data, completed, output);
-                    data.setLength(0);
-                    continue;
-                }
-                if (!line.startsWith("data:")) {
-                    continue;
-                }
-                if (!data.isEmpty()) {
-                    data.append('\n');
-                }
-                data.append(line.substring("data:".length()).trim());
-            }
-            completed = processResponsesSsePayload(data, completed, output);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-        JsonObject root = completed == null ? new JsonObject() : completed.deepCopy();
-        JsonArray existingOutput = root.getAsJsonArray("output");
-        if (existingOutput == null || existingOutput.isEmpty()) {
-            root.add("output", output);
-        }
-        return root;
-    }
-
-    private static JsonObject processResponsesSsePayload(StringBuilder data, JsonObject completed, JsonArray output) {
-        if (data.isEmpty()) {
-            return completed;
-        }
-        String payload = data.toString().trim();
-        if (payload.isEmpty() || "[DONE]".equals(payload)) {
-            return completed;
-        }
-        JsonObject event = JsonParser.parseString(payload).getAsJsonObject();
-        String type = event.has("type") && !event.get("type").isJsonNull() ? event.get("type").getAsString() : "";
-        if ("response.output_item.done".equals(type) && event.has("item")) {
-            output.add(event.getAsJsonObject("item").deepCopy());
-        }
-        if ("response.completed".equals(type) && event.has("response")) {
-            return event.getAsJsonObject("response").deepCopy();
-        }
-        return completed;
-    }
-
-    static Integer extractContextUsagePercent(JsonObject response) {
-        Integer inputTokens = firstIntAnywhere(response,
-                "input_tokens",
-                "prompt_tokens",
-                "total_input_tokens",
-                "inputTokens",
-                "promptTokens",
-                "totalInputTokens");
-        Integer maxTokens = firstIntAnywhere(response,
-                "input_tokens_limit",
-                "max_input_tokens",
-                "context_window",
-                "context_window_tokens",
-                "max_context_tokens",
-                "max_prompt_tokens",
-                "max_input_tokens_per_request",
-                "context_length",
-                "contextLength",
-                "inputTokensLimit",
-                "maxInputTokens",
-                "maxContextTokens",
-                "maxPromptTokens");
-        if (inputTokens == null || maxTokens == null || maxTokens <= 0) {
-            return null;
-        }
-        return (int) Math.round((inputTokens * 100.0) / maxTokens);
-    }
-
-    private static Integer firstIntAnywhere(JsonElement element, String... names) {
-        return firstIntAnywhere(element, 0, names);
-    }
-
-    private static Integer firstIntAnywhere(JsonElement element, int depth, String... names) {
-        if (element == null || element.isJsonNull() || depth > 8) {
-            return null;
-        }
-        if (element.isJsonObject()) {
-            JsonObject object = element.getAsJsonObject();
-            Integer direct = firstInt(object, names);
-            if (direct != null) {
-                return direct;
-            }
-            for (var entry : object.entrySet()) {
-                Integer nested = firstIntAnywhere(entry.getValue(), depth + 1, names);
-                if (nested != null) {
-                    return nested;
-                }
-            }
-            return null;
-        }
-        if (element.isJsonArray()) {
-            for (var child : element.getAsJsonArray()) {
-                Integer nested = firstIntAnywhere(child, depth + 1, names);
-                if (nested != null) {
-                    return nested;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Integer firstInt(JsonObject object, String... names) {
-        for (String name : names) {
-            if (object.has(name) && !object.get(name).isJsonNull()) {
-                try {
-                    return object.get(name).getAsInt();
-                } catch (RuntimeException ignored) {
-                }
-            }
-        }
-        return null;
-    }
-
-    private static String extractErrorMessage(String responseBody, int statusCode) {
-        try {
-            JsonObject root = parseJsonObject(responseBody);
-            JsonObject error = root.getAsJsonObject("error");
-            if (error != null && error.has("message")) {
-                return "HTTP " + statusCode + ": " + error.get("message").getAsString();
-            }
-        } catch (RuntimeException e) {
-        }
-        return "HTTP " + statusCode + ": " + compactRawBody(responseBody);
     }
 
     private static JsonObject parseJsonObject(String body) {
@@ -4462,6 +4086,7 @@ public class NemoClient {
         if (isPanelVisible(conversation)) {
             _activeSessionId = conversation._id;
             _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
+            conversation._panelView.activatePrompt();
             persistSessions();
             return;
         }
@@ -4518,6 +4143,7 @@ public class NemoClient {
             conversation._panelView.setPending(false);
         }
         conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
+        conversation._panelView.activatePrompt();
     }
 
     private List<ChatPanelView.ChatMessage> mapTurnsToMessages(Conversation conversation) {
@@ -4761,7 +4387,7 @@ public class NemoClient {
         case ":help":
             appendAssistantNote(conversation,
                     "Available commands: :abort [session-id|all], :sessions, :workers, :new [title], :switch <session-id>, :rename <title>, :reset [session-id], :delete [session-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <session-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
-                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. The webSearch, delegateTask, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
+                            + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
         case ":quit":
@@ -5259,7 +4885,7 @@ public class NemoClient {
         conversation._activeRequestId = 0;
         conversation._worker = null;
         for (ToolTrace trace : response.toolTraces()) {
-            appendTurn(conversation, new ChatTurn("tool", trace.text(), false));
+            appendTurn(conversation, new ChatTurn("tool", trace.displayText(), false));
         }
         appendTurn(conversation, new ChatTurn("nemo", response.text()));
         if (isPanelVisible(conversation)) {

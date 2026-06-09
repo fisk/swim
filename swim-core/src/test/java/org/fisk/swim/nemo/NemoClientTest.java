@@ -96,6 +96,7 @@ class NemoClientTest {
         assertTrue(prompt.contains("delegate_task starts focused work in a separate Nemo sub-agent worker"));
         assertTrue(prompt.contains("worker_status/read_worker to check sub-agent progress"));
         assertTrue(prompt.contains("message_worker to send corrections or extra instructions"));
+        assertTrue(prompt.contains("current_editor_context reports the active editor workspace"));
         assertTrue(prompt.contains("start_editor_control requests host approval"));
         assertTrue(prompt.contains("screen_snapshot can inspect a host-filtered view"));
         assertTrue(prompt.contains("drive_editor can send bounded key streams"));
@@ -232,25 +233,6 @@ class NemoClientTest {
     }
 
     @Test
-    void extractsOutputTextFromResponsesPayload() {
-        String response = """
-                {
-                  "output": [
-                    {
-                      "type": "message",
-                      "content": [
-                        { "type": "output_text", "text": "First line" },
-                        { "type": "output_text", "text": "Second line" }
-                      ]
-                    }
-                  ]
-                }
-                """;
-
-        assertEquals("First line\nSecond line", NemoClient.extractOutputText(response));
-    }
-
-    @Test
     void wrapsLongLinesForListRendering() {
         List<String> lines = NemoClient.wrapText("alpha beta gamma delta epsilon", 10);
 
@@ -283,7 +265,7 @@ class NemoClientTest {
 
         assertEquals("token", configuration.apiKey());
         assertEquals("gpt-5.4", configuration.model());
-        assertEquals("https://example.invalid/litellm/responses", configuration.responsesUri().toString());
+        assertEquals("https://example.invalid/litellm", configuration.baseUrl());
         assertEquals("Bearer token", configuration.headers().get("Authorization"));
         assertEquals("proj_123", configuration.headers().get("OpenAI-Project"));
         assertEquals("org_456", configuration.headers().get("OpenAI-Organization"));
@@ -487,10 +469,10 @@ class NemoClientTest {
                 .mcpServers(List.of(fakeMcpServer("mock")))
                 .build();
 
-        var tools = NemoClient.buildTools(configuration);
+        var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertTrue(tools.toString().contains("\"name\":\"mcp__mock__echo\""));
-        assertTrue(tools.toString().contains("Echo a message."));
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("mcp__mock__echo")
+                && tool.description().contains("Echo a message.")));
     }
 
     @Test
@@ -506,7 +488,7 @@ class NemoClientTest {
                 .mcpServers(List.of(fakeMcpServer("mock")))
                 .build();
 
-        assertFalse(NemoClient.buildTools(configuration).toString().contains("mcp__mock__echo"));
+        assertFalse(toolNames(configuration).contains("mcp__mock__echo"));
 
         String output = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("mcp-read-only", "mcp__mock__echo", json(Map.of("message", "hello"))));
@@ -552,12 +534,10 @@ class NemoClientTest {
         registerPluginTool("sample-plugin", "echo", "Sample plugin echo.", false, true,
                 invocation -> "unused");
 
-        var tools = NemoClient.buildTools(NemoClient.Configuration.builder().build());
+        var tools = NemoLangChain4jClient.buildToolSpecifications(NemoClient.Configuration.builder().build());
 
-        String toolJson = tools.toString();
-        assertTrue(toolJson.contains("\"name\":\"plugin__sample_plugin__echo\""));
-        assertTrue(toolJson.contains("Sample plugin echo."));
-        assertTrue(toolJson.contains("\"message\""));
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("plugin__sample_plugin__echo")
+                && tool.description().contains("Sample plugin echo.")));
     }
 
     @Test
@@ -631,7 +611,7 @@ class NemoClientTest {
                 .toolPermissionMode("read-only")
                 .build();
 
-        String tools = NemoClient.buildTools(configuration).toString();
+        List<String> tools = toolNames(configuration);
         assertFalse(tools.contains("plugin__sample_plugin__mutate"));
         assertTrue(tools.contains("plugin__sample_plugin__inspect"));
 
@@ -746,79 +726,13 @@ class NemoClientTest {
     }
 
     @Test
-    void explicitResponsesUrlWinsOverBaseUrl() {
-        assertEquals("https://example.invalid/custom/responses",
-                NemoClient.buildResponsesUri("https://example.invalid/custom/responses", "https://ignored.invalid").toString());
-    }
+    void responsesUrlConfigurationConvertsToChatBaseUrl() throws IOException {
+        Path config = tempDir.resolve("nemo.conf");
+        Files.writeString(config, "responses_url=https://example.invalid/custom/responses\n");
 
-    @Test
-    void extractsOutputTextWhenGatewayPrefixesJson() {
-        String response = """
-                data: {"output":[{"content":[{"type":"output_text","text":"Hello from Nemo"}]}]}
-                """;
+        var configuration = NemoClient.loadConfiguration(config);
 
-        assertEquals("Hello from Nemo", NemoClient.extractOutputText(response));
-    }
-
-    @Test
-    void extractContextUsagePercentUsesUsageLimitsWhenPresent() {
-        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
-                {
-                  "usage": {
-                    "input_tokens": 5000,
-                    "input_tokens_limit": 20000
-                  }
-                }
-                """).getAsJsonObject();
-
-        assertEquals(25, NemoClient.extractContextUsagePercent(response));
-    }
-
-    @Test
-    void extractContextUsagePercentReturnsNullWithoutKnownLimit() {
-        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
-                {
-                  "usage": {
-                    "input_tokens": 5000
-                  }
-                }
-                """).getAsJsonObject();
-
-        assertEquals(null, NemoClient.extractContextUsagePercent(response));
-    }
-
-    @Test
-    void extractContextUsagePercentFindsNestedGatewayFields() {
-        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
-                {
-                  "usage": {
-                    "prompt_tokens": 6000
-                  },
-                  "metadata": {
-                    "model": {
-                      "context_length": 24000
-                    }
-                  }
-                }
-                """).getAsJsonObject();
-
-        assertEquals(25, NemoClient.extractContextUsagePercent(response));
-    }
-
-    @Test
-    void extractContextUsagePercentSupportsCamelCaseFieldNames() {
-        com.google.gson.JsonObject response = com.google.gson.JsonParser.parseString("""
-                {
-                  "usage": {
-                    "inputTokens": 3000
-                  },
-                  "limits": {
-                    "maxContextTokens": 12000
-                  }
-                }
-                """).getAsJsonObject();
-
-        assertEquals(25, NemoClient.extractContextUsagePercent(response));
+        assertEquals("https://example.invalid/custom", configuration.baseUrl());
     }
 
     @Test
@@ -849,20 +763,21 @@ class NemoClientTest {
                 2000,
                 10);
 
-        var tools = NemoClient.buildTools(configuration);
+        var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(21, tools.size());
-        assertEquals("web_search", tools.get(0).getAsJsonObject().get("type").getAsString());
-        assertEquals("delegate_task", tools.get(1).getAsJsonObject().get("name").getAsString());
-        assertEquals("worker_status", tools.get(2).getAsJsonObject().get("name").getAsString());
-        assertEquals("read_worker", tools.get(3).getAsJsonObject().get("name").getAsString());
-        assertEquals("join_worker", tools.get(4).getAsJsonObject().get("name").getAsString());
-        assertEquals("message_worker", tools.get(5).getAsJsonObject().get("name").getAsString());
-        assertEquals("start_editor_control", tools.get(6).getAsJsonObject().get("name").getAsString());
-        assertEquals("screen_snapshot", tools.get(7).getAsJsonObject().get("name").getAsString());
-        assertEquals("drive_editor", tools.get(8).getAsJsonObject().get("name").getAsString());
-        assertEquals("finish_editor_control", tools.get(9).getAsJsonObject().get("name").getAsString());
-        assertEquals("swim_help", tools.get(10).getAsJsonObject().get("name").getAsString());
+        assertEquals(22, tools.size());
+        assertEquals("web_search", tools.get(0).name());
+        assertEquals("delegate_task", tools.get(1).name());
+        assertEquals("worker_status", tools.get(2).name());
+        assertEquals("read_worker", tools.get(3).name());
+        assertEquals("join_worker", tools.get(4).name());
+        assertEquals("message_worker", tools.get(5).name());
+        assertEquals("start_editor_control", tools.get(6).name());
+        assertEquals("screen_snapshot", tools.get(7).name());
+        assertEquals("drive_editor", tools.get(8).name());
+        assertEquals("finish_editor_control", tools.get(9).name());
+        assertEquals("swim_help", tools.get(10).name());
+        assertEquals("current_editor_context", tools.get(11).name());
     }
 
     @Test
@@ -872,14 +787,7 @@ class NemoClientTest {
                 .toolPermissionMode("read-only")
                 .build();
 
-        var tools = NemoClient.buildTools(configuration);
-        var names = new java.util.ArrayList<String>();
-        for (var tool : tools) {
-            var object = tool.getAsJsonObject();
-            if (object.has("name")) {
-                names.add(object.get("name").getAsString());
-            }
-        }
+        var names = toolNames(configuration);
 
         assertTrue(names.contains("list_files"));
         assertTrue(names.contains("delegate_task"));
@@ -890,6 +798,7 @@ class NemoClientTest {
         assertTrue(names.contains("start_editor_control"));
         assertTrue(names.contains("screen_snapshot"));
         assertTrue(names.contains("finish_editor_control"));
+        assertTrue(names.contains("current_editor_context"));
         assertTrue(names.contains("read_file"));
         assertTrue(names.contains("search_files"));
         assertTrue(names.contains("git_status"));
@@ -904,8 +813,11 @@ class NemoClientTest {
 
     @Test
     void buildToolsDescribeWorkspaceWritesAsPersistent() {
-        var tools = NemoClient.buildTools(NemoClient.Configuration.builder().build());
-        String descriptions = tools.toString();
+        String descriptions = NemoLangChain4jClient.buildToolSpecifications(NemoClient.Configuration.builder().build())
+                .stream()
+                .map(tool -> tool.description())
+                .toList()
+                .toString();
 
         assertTrue(descriptions.contains("Successful writes are saved to disk and persist across Nemo/editor runs"));
         assertTrue(descriptions.contains("Successful patches are saved to disk and persist across Nemo/editor runs"));
@@ -1331,6 +1243,34 @@ class NemoClientTest {
         assertTrue(index.contains("files - Files, Buffers, and Panes"));
         assertTrue(chapter.contains("Files, Buffers, and Panes"));
         assertTrue(chapter.contains(":bnext and :bprev cycle through buffers"));
+    }
+
+    @Test
+    void executesCurrentEditorContextToolInReadOnlyMode() throws Exception {
+        Path project = tempDir.resolve("current-context");
+        Files.createDirectories(project.resolve(".git"));
+        Path file = project.resolve("src/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "SECRET CONTENT\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("read-only")
+                .build();
+
+        try (var harness = HeadlessWindowHarness.create(file, 80, 20)) {
+            var context = harness.getWindow().getBufferContext();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("current", "current_editor_context", json(Map.of())));
+
+            assertTrue(output.contains("workspace: buffer"));
+            assertTrue(output.contains("workspace_root: " + project.toAbsolutePath().normalize()));
+            assertTrue(output.contains("current_file: " + file.toAbsolutePath().normalize()));
+            assertTrue(output.contains("current_file_relative_to_workspace: src/Main.java"));
+            assertTrue(output.contains("project_root: " + project.toAbsolutePath().normalize()));
+            assertTrue(output.contains("current_file_relative_to_project: src/Main.java"));
+            assertFalse(output.contains("SECRET CONTENT"));
+        }
     }
 
     @Test
@@ -1774,7 +1714,10 @@ class NemoClientTest {
                 5);
 
         try (var harness = HeadlessWindowHarness.create(file, 80, 20)) {
-            var context = harness.getWindow().getBufferContext();
+            var window = harness.getWindow();
+            var context = window.getBufferContext();
+            window.splitActiveBufferHorizontally();
+            var splitContext = window.getBufferContext();
 
             String output = NemoClient.executeTool(configuration, context,
                     new NemoClient.ToolCall("5", "write_file", json(Map.of(
@@ -1784,89 +1727,45 @@ class NemoClientTest {
             assertTrue(output.contains("wrote 17 chars to src/Main.txt"));
             assertEquals("class Updated {}\n", Files.readString(file));
             assertEquals("class Updated {}\n", context.getBuffer().getString());
+            assertEquals("class Updated {}\n", splitContext.getBuffer().getString());
         }
     }
 
     @Test
-    void appendsToolRoundWithoutPreviousResponseIdState() {
-        var history = new com.google.gson.JsonArray();
-        history.add(NemoClient.createUserInputMessage("initial prompt"));
+    void writeFileDetailedResultKeepsPatchOutOfModelOutputButShowsItInTraceDisplay() throws Exception {
+        Path project = tempDir.resolve("patch-display");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "old\nkeep\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        var call = new NemoClient.ToolCall("write", "write_file", json(Map.of(
+                "path", "note.txt",
+                "content", "new\nkeep\n")));
 
-        var response = com.google.gson.JsonParser.parseString("""
-                {
-                  "output": [
-                    {
-                      "type": "function_call",
-                      "call_id": "call_1",
-                      "name": "list_files",
-                      "arguments": "{\\"path\\":\\".\\"}"
-                    }
-                  ]
-                }
-                """).getAsJsonObject();
+        NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(configuration, context, call, null);
+        NemoClient.ToolTrace trace = NemoClient.toolTrace(call, result);
 
-        var toolOutputs = new com.google.gson.JsonArray();
-        var toolOutput = new com.google.gson.JsonObject();
-        toolOutput.addProperty("type", "function_call_output");
-        toolOutput.addProperty("call_id", "call_1");
-        toolOutput.addProperty("output", "src/Main.txt");
-        toolOutputs.add(toolOutput);
-
-        NemoClient.appendToolRound(history, response, toolOutputs);
-
-        assertEquals(3, history.size());
-        assertEquals("message", history.get(0).getAsJsonObject().get("type").getAsString());
-        assertEquals("function_call", history.get(1).getAsJsonObject().get("type").getAsString());
-        assertEquals("function_call_output", history.get(2).getAsJsonObject().get("type").getAsString());
-    }
-
-    @Test
-    void createsInitialUserInputAsMessageItem() {
-        var message = NemoClient.createUserInputMessage("hello");
-
-        assertEquals("message", message.get("type").getAsString());
-        assertEquals("user", message.get("role").getAsString());
-        assertEquals("input_text", message.getAsJsonArray("content").get(0).getAsJsonObject().get("type").getAsString());
-        assertEquals("hello", message.getAsJsonArray("content").get(0).getAsJsonObject().get("text").getAsString());
-    }
-
-    @Test
-    void parsesStreamedResponsesTextAndUsage() {
-        JsonObject response = NemoClient.parseResponsesBody("""
-                event: response.output_item.done
-                data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}
-
-                event: response.completed
-                data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":27},"limits":{"max_context_tokens":270}}}
-
-                """);
-
-        assertEquals("ok", NemoClient.extractOutputText(response.toString()));
-        assertEquals(10, NemoClient.extractContextUsagePercent(response));
-    }
-
-    @Test
-    void parsesStreamedResponsesFunctionCalls() {
-        JsonObject response = NemoClient.parseResponsesBody("""
-                event: response.output_item.done
-                data: {"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"list_files","arguments":"{\\"path\\":\\".\\"}"}}
-
-                event: response.completed
-                data: {"type":"response.completed","response":{"output":[]}}
-
-                """);
-
-        List<NemoClient.ToolCall> calls = NemoClient.extractToolCalls(response);
-
-        assertEquals(1, calls.size());
-        assertEquals("call_1", calls.get(0).callId());
-        assertEquals("list_files", calls.get(0).name());
-        assertEquals(".", calls.get(0).arguments().get("path").getAsString());
+        assertTrue(result.output().contains("wrote 9 chars to note.txt"));
+        assertFalse(result.output().contains("-old"));
+        assertTrue(result.displayPatch().contains("-old"));
+        assertTrue(result.displayPatch().contains("+new"));
+        assertFalse(trace.text().contains("-old"));
+        assertTrue(trace.displayText().contains("-old"));
+        assertTrue(trace.displayText().contains("+new"));
     }
 
     private static int promptBudgetChars(int contextWindowTokens) {
         int reserve = Math.max(32, contextWindowTokens / 10);
         return (contextWindowTokens - reserve) * 3;
+    }
+
+    private static List<String> toolNames(NemoClient.Configuration configuration) {
+        return NemoLangChain4jClient.buildToolSpecifications(configuration).stream()
+                .map(tool -> tool.name())
+                .toList();
     }
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {

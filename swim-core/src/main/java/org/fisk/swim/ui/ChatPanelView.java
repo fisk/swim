@@ -23,8 +23,47 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private static final String INPUT_PREFIX = "! ";
     private static final String NEMO_PREFIX = "nemo> ";
     private static final String THINKING_TEXT = "*thinking*";
+    private static final List<String> CODE_KEYWORDS = List.of(
+            "abstract", "boolean", "break", "case", "catch", "class", "const", "continue", "def", "else",
+            "enum", "extends", "false", "final", "finally", "for", "fun", "function", "if", "implements",
+            "import", "interface", "let", "new", "null", "package", "private", "protected", "public",
+            "record", "return", "static", "struct", "switch", "this", "throw", "true", "try", "var",
+            "void", "while");
 
     public record ChatMessage(String speaker, String text) {
+    }
+
+    private enum DisplayKind {
+        NORMAL,
+        CODE_HEADER,
+        CODE,
+        DIFF_HEADER,
+        DIFF_HUNK,
+        DIFF_ADDED,
+        DIFF_REMOVED,
+        DIFF_CONTEXT
+    }
+
+    private record DisplayLine(String text, DisplayKind kind) {
+    }
+
+    private static final class ChatCursor extends Cursor {
+        private final ChatPanelView _owner;
+
+        private ChatCursor(ChatPanelView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
     }
 
     public record PromptStyle(String inputPrefix, String historyPrefix, String emptyHint, String titleReadyLabel,
@@ -45,6 +84,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private final Consumer<String> _onCommandInputChanged;
     private final java.util.function.Function<String, CommandView.CommandMenuState> _commandMenuStateProvider;
     private final PromptStyle _promptStyle;
+    private final ChatCursor _cursor;
     private final List<ChatMessage> _messages = new ArrayList<>();
     private final StringBuilder _input = new StringBuilder();
     private int _cursorOffset;
@@ -91,7 +131,26 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         _onCommandInputChanged = onCommandInputChanged;
         _commandMenuStateProvider = commandMenuStateProvider;
         _promptStyle = promptStyle == null ? PromptStyle.nemo() : promptStyle;
+        _cursor = new ChatCursor(this);
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _cursor;
+    }
+
+    @Override
+    public void setBounds(Rect rect) {
+        super.setBounds(rect);
+        scrollToBottom();
+        ensureInputVisible();
+    }
+
+    public void activatePrompt() {
+        scrollToBottom();
+        ensureInputVisible();
+        setNeedsRedraw();
     }
 
     int getStartLine() {
@@ -151,24 +210,145 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     List<String> getDisplayLines() {
-        var lines = new ArrayList<String>();
+        return getDisplayRows().stream()
+                .map(DisplayLine::text)
+                .toList();
+    }
+
+    private List<DisplayLine> getDisplayRows() {
+        var rows = new ArrayList<DisplayLine>();
         int width = Math.max(1, getBounds().getSize().getWidth());
         for (var message : _messages) {
-            String prefix = prefixForSpeaker(message.speaker());
-            var wrapped = TextPanelView.wrapText(message.text(), Math.max(1, width - prefix.length()));
-            if (wrapped.isEmpty()) {
-                lines.add(prefix);
-                continue;
-            }
-            lines.add(prefix + wrapped.get(0));
-            for (int i = 1; i < wrapped.size(); i++) {
-                lines.add(" ".repeat(prefix.length()) + wrapped.get(i));
-            }
+            appendMessageRows(rows, message, width);
         }
         if (_pending) {
-            lines.add(NEMO_PREFIX + formatThinkingText(elapsedSeconds()));
+            rows.add(new DisplayLine(NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL));
+        }
+        return rows;
+    }
+
+    private void appendMessageRows(List<DisplayLine> rows, ChatMessage message, int width) {
+        String prefix = prefixForSpeaker(message.speaker());
+        String continuation = " ".repeat(prefix.length());
+        boolean first = true;
+        boolean inCodeBlock = false;
+        boolean inDiffBlock = false;
+        boolean inLooseDiff = false;
+        for (String rawLine : message.text().split("\\R", -1)) {
+            String trimmed = rawLine.stripLeading();
+            if (trimmed.startsWith("```")) {
+                String language = trimmed.substring(Math.min(3, trimmed.length())).trim();
+                if (!inCodeBlock) {
+                    inCodeBlock = true;
+                    inDiffBlock = isDiffLanguage(language);
+                    inLooseDiff = false;
+                    first = appendWrappedRows(rows, first ? prefix : continuation, continuation,
+                            codeHeader(language), width, inDiffBlock ? DisplayKind.DIFF_HEADER : DisplayKind.CODE_HEADER);
+                } else {
+                    inCodeBlock = false;
+                    inDiffBlock = false;
+                }
+                continue;
+            }
+            DisplayKind kind = inCodeBlock
+                    ? (inDiffBlock ? diffKind(rawLine) : DisplayKind.CODE)
+                    : looseDiffKind(rawLine, inLooseDiff);
+            if (!inCodeBlock && rawLine.startsWith("diff --git")) {
+                inLooseDiff = true;
+            }
+            boolean codeLike = inCodeBlock || kind != DisplayKind.NORMAL;
+            first = appendWrappedRows(rows, first ? prefix : continuation, continuation, rawLine, width, kind, codeLike);
+        }
+    }
+
+    private boolean appendWrappedRows(List<DisplayLine> rows, String prefix, String continuation,
+            String text, int width, DisplayKind kind) {
+        return appendWrappedRows(rows, prefix, continuation, text, width, kind, false);
+    }
+
+    private boolean appendWrappedRows(List<DisplayLine> rows, String prefix, String continuation,
+            String text, int width, DisplayKind kind, boolean fixedWidth) {
+        int firstWidth = Math.max(1, width - prefix.length());
+        int laterWidth = Math.max(1, width - continuation.length());
+        List<String> wrapped = fixedWidth ? wrapFixed(text, firstWidth) : TextPanelView.wrapText(text, firstWidth);
+        if (wrapped.isEmpty()) {
+            rows.add(new DisplayLine(prefix, kind));
+            return false;
+        }
+        rows.add(new DisplayLine(prefix + wrapped.get(0), kind));
+        for (int i = 1; i < wrapped.size(); i++) {
+            List<String> continuationWrapped = fixedWidth
+                    ? wrapFixed(wrapped.get(i), laterWidth)
+                    : TextPanelView.wrapText(wrapped.get(i), laterWidth);
+            if (continuationWrapped.isEmpty()) {
+                rows.add(new DisplayLine(continuation, kind));
+                continue;
+            }
+            for (String line : continuationWrapped) {
+                rows.add(new DisplayLine(continuation + line, kind));
+            }
+        }
+        return false;
+    }
+
+    private static List<String> wrapFixed(String text, int width) {
+        width = Math.max(1, width);
+        if (text == null || text.isEmpty()) {
+            return List.of("");
+        }
+        var lines = new ArrayList<String>();
+        for (int index = 0; index < text.length(); index += width) {
+            lines.add(text.substring(index, Math.min(text.length(), index + width)));
         }
         return lines;
+    }
+
+    private static String codeHeader(String language) {
+        return language == null || language.isBlank() ? "code" : "code " + language.strip();
+    }
+
+    private static boolean isDiffLanguage(String language) {
+        String normalized = language == null ? "" : language.toLowerCase();
+        return normalized.equals("diff") || normalized.equals("patch") || normalized.equals("udiff");
+    }
+
+    private static DisplayKind diffKind(String line) {
+        if (line == null || line.isEmpty()) {
+            return DisplayKind.NORMAL;
+        }
+        if (line.startsWith("diff --git") || line.startsWith("--- ") || line.startsWith("+++ ")) {
+            return DisplayKind.DIFF_HEADER;
+        }
+        if (line.startsWith("@@")) {
+            return DisplayKind.DIFF_HUNK;
+        }
+        if (line.startsWith("+")) {
+            return DisplayKind.DIFF_ADDED;
+        }
+        if (line.startsWith("-")) {
+            return DisplayKind.DIFF_REMOVED;
+        }
+        if (line.startsWith(" ")) {
+            return DisplayKind.DIFF_CONTEXT;
+        }
+        return DisplayKind.NORMAL;
+    }
+
+    private static DisplayKind looseDiffKind(String line, boolean inLooseDiff) {
+        if (line != null && line.startsWith("diff --git")) {
+            return DisplayKind.DIFF_HEADER;
+        }
+        return inLooseDiff ? diffKind(line) : DisplayKind.NORMAL;
+    }
+
+    private static TextColor rowBackground(DisplayLine line, int rowIndex) {
+        return switch (line.kind()) {
+        case CODE_HEADER, CODE -> UiTheme.SURFACE_MUTED;
+        case DIFF_ADDED -> UiTheme.DIFF_ADDED_BACKGROUND;
+        case DIFF_REMOVED -> UiTheme.DIFF_REMOVED_BACKGROUND;
+        case DIFF_HEADER, DIFF_HUNK, DIFF_CONTEXT -> UiTheme.SURFACE_MUTED;
+        case NORMAL -> rowIndex % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+        };
     }
 
     public void appendMessage(String speaker, String text) {
@@ -308,14 +488,103 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         return AttributedString.create(line, UiTheme.TEXT_MUTED, background);
     }
 
+    private AttributedString renderLine(DisplayLine line, TextColor background) {
+        return switch (line.kind()) {
+        case NORMAL -> renderLine(line.text(), background);
+        case CODE_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
+        case CODE -> renderCodeLine(line.text(), background);
+        case DIFF_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
+        case DIFF_HUNK -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GOLD, background);
+        case DIFF_ADDED -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GREEN, background);
+        case DIFF_REMOVED -> renderDecoratedLine(line.text(), UiTheme.ACCENT_RED, background);
+        case DIFF_CONTEXT -> renderDecoratedLine(line.text(), UiTheme.TEXT_MUTED, background);
+        };
+    }
+
+    private AttributedString renderDecoratedLine(String line, TextColor textColour, TextColor background) {
+        if (line.startsWith(_promptStyle.historyPrefix())) {
+            return renderPromptLine(_promptStyle.historyPrefix(), line.substring(_promptStyle.historyPrefix().length()),
+                    UiTheme.CHAT_ME, textColour, background);
+        }
+        if (line.startsWith(NEMO_PREFIX)) {
+            return renderPromptLine(NEMO_PREFIX, line.substring(NEMO_PREFIX.length()), UiTheme.CHAT_NEMO,
+                    textColour, background);
+        }
+        return AttributedString.create(line, textColour, background);
+    }
+
+    private AttributedString renderCodeLine(String line, TextColor background) {
+        var result = AttributedString.create(line, UiTheme.TEXT_PRIMARY, background);
+        formatCodeKeywords(result, line, background);
+        formatQuotedStrings(result, line, background);
+        formatCodeComment(result, line, background);
+        return result;
+    }
+
+    private static void formatCodeKeywords(AttributedString result, String line, TextColor background) {
+        for (String keyword : CODE_KEYWORDS) {
+            int index = line.indexOf(keyword);
+            while (index >= 0) {
+                int end = index + keyword.length();
+                if (isWordBoundary(line, index - 1) && isWordBoundary(line, end)) {
+                    result.format(index, end, UiTheme.ACCENT_BLUE, background);
+                }
+                index = line.indexOf(keyword, end);
+            }
+        }
+    }
+
+    private static boolean isWordBoundary(String line, int index) {
+        return index < 0 || index >= line.length()
+                || !(Character.isLetterOrDigit(line.charAt(index)) || line.charAt(index) == '_');
+    }
+
+    private static void formatQuotedStrings(AttributedString result, String line, TextColor background) {
+        for (int index = 0; index < line.length(); index++) {
+            char quote = line.charAt(index);
+            if (quote != '"' && quote != '\'') {
+                continue;
+            }
+            int start = index++;
+            boolean escaped = false;
+            while (index < line.length()) {
+                char c = line.charAt(index++);
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == quote) {
+                    break;
+                }
+            }
+            result.format(start, Math.min(index, line.length()), UiTheme.ACCENT_GREEN, background);
+        }
+    }
+
+    private static void formatCodeComment(AttributedString result, String line, TextColor background) {
+        int slashComment = line.indexOf("//");
+        int hashComment = line.indexOf("#");
+        int index = slashComment < 0 ? hashComment
+                : hashComment < 0 ? slashComment
+                : Math.min(slashComment, hashComment);
+        if (index >= 0) {
+            result.format(index, line.length(), UiTheme.TEXT_MUTED, background);
+        }
+    }
+
     private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour) {
         return renderPromptLine(prompt, text, promptColour, _backgroundColour);
     }
 
     private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour, TextColor background) {
+        return renderPromptLine(prompt, text, promptColour, UiTheme.TEXT_PRIMARY, background);
+    }
+
+    private AttributedString renderPromptLine(String prompt, String text, TextColor promptColour, TextColor textColour,
+            TextColor background) {
         var result = new AttributedString();
         result.append(prompt, promptColour, background);
-        result.append(text, UiTheme.TEXT_PRIMARY, background);
+        result.append(text, textColour, background);
         return result;
     }
 
@@ -513,6 +782,20 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     private int visibleInputStart(List<String> inputLines) {
         return Math.min(_inputScrollLine, Math.max(0, inputLines.size() - visibleInputHeight()));
+    }
+
+    private Point cursorScreenPosition() {
+        var lines = inputLines();
+        int inputStart = visibleInputStart(lines);
+        int inputTop = getBounds().getSize().getHeight() - visibleInputHeight();
+        int cursorLine = cursorLine();
+        int visibleLine = Math.max(0, Math.min(visibleInputHeight() - 1, cursorLine - inputStart));
+        int prefixLength = _promptStyle.inputPrefix().length() + 1;
+        int cursorColumn = cursorColumn(cursorLine);
+        int maxColumn = Math.max(0, getBounds().getSize().getWidth() - 1);
+        int x = Math.min(maxColumn, prefixLength + cursorColumn);
+        Point origin = absoluteOrigin();
+        return Point.create(origin.getX() + x, origin.getY() + Math.max(0, inputTop + visibleLine));
     }
 
     private boolean canScrollInput() {
@@ -851,12 +1134,13 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         }
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
-        var lines = getDisplayLines();
+        var lines = getDisplayRows();
         int bodyHeight = bodyHeight();
         for (int i = 0; i < bodyHeight && _startLine + i < lines.size(); i++) {
-            TextColor background = i % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+            DisplayLine line = lines.get(_startLine + i);
+            TextColor background = rowBackground(line, i);
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i), width,
-                    renderLine(lines.get(_startLine + i), background), UiTheme.TEXT_MUTED, background);
+                    renderLine(line, background), UiTheme.TEXT_MUTED, background);
         }
 
         var inputLines = inputLines();

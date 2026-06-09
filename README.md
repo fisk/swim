@@ -55,7 +55,7 @@ Language tooling is plugin-backed. Java uses the bundled Oracle/NetBeans languag
 
 Workspace apps include Help, Todo, Shell, Git, Mail, Slack, and debugger panels. Todo stores items in an H2 database. Mail and Slack keep their account/workspace data under the SWIM home directory. The Git plugin provides local status/history tools plus GitHub pull-request browsing, saved PR views, fetch, review modes, changed-file navigation, hunk coloring, and plugin help chapters.
 
-Nemo is the built-in assistant. It supports OpenAI-compatible chat/responses providers, web search, MCP servers, delegated workers, plugin tools, bounded context management, host-visible approvals, OS command sandboxing where available, and host-approved editor-control sessions. Nemo-visible editor control is intentionally restricted: private integrations such as Mail are not exposed to Nemo.
+Nemo is the built-in assistant and harness. It uses the langchain4j chat backend for OpenAI-compatible models and other supported providers, and adds web search, MCP servers, delegated workers, plugin tools, bounded context management, host-visible approvals, and OS command sandboxing where available. Nemo can either work through file/project tools or, with explicit host approval, directly control the editor through sandbox-aware key streams and host-filtered screen snapshots. Nemo-visible editor control is intentionally restricted: private integrations such as Mail and host-only notifications are not exposed to Nemo.
 
 ## Runtime Layout
 

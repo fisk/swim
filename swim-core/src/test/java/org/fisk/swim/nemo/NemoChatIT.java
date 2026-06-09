@@ -47,10 +47,10 @@ class NemoChatIT {
     @Timeout(15)
     void chatsAcrossMultipleTurnsAndCompletesToolRoundWithoutErrors() throws Exception {
         var requestCount = new AtomicInteger();
-        var server = startSseServer(requestCount, List.of(
-                sseToolCallResponse("call_1", "list_files", "{\"path\":\".\",\"max_results\":5}"),
-                sseTextResponse("Tool-assisted answer"),
-                sseTextResponse("Follow-up answer")));
+        var server = startServer(requestCount, List.of(
+                toolCallResponse("call_1", "list_files", "{\"path\":\".\",\"max_results\":5}"),
+                textResponse("Tool-assisted answer"),
+                textResponse("Follow-up answer")));
         try {
             writeConfig(server);
             String originalUserHome = switchToTempUserHome();
@@ -216,9 +216,9 @@ class NemoChatIT {
     void chatCallsApprovedMcpToolAndReturnsResultToModel() throws Exception {
         var requestCount = new AtomicInteger();
         var requestBody = new AtomicReference<>("");
-        var server = startSseServer(requestCount, requestBody, 0, List.of(
-                sseToolCallResponse("call_mcp", "mcp__mock__echo", "{\"message\":\"hello from mcp\"}"),
-                sseTextResponse("MCP answer")));
+        var server = startServer(requestCount, requestBody, 0, List.of(
+                toolCallResponse("call_mcp", "mcp__mock__echo", "{\"message\":\"hello from mcp\"}"),
+                textResponse("MCP answer")));
         try {
             writeMcpConfig(server);
             String originalUserHome = switchToTempUserHome();
@@ -250,9 +250,9 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
-    void openAiCompatibleFallbackParsesSseTextResponses() throws Exception {
+    void openAiCompatibleUsesLangChainChatResponses() throws Exception {
         var requestCount = new AtomicInteger();
-        var server = startSseServer(requestCount, List.of(sseTextResponse("Hello from SSE")));
+        var server = startServer(requestCount, List.of(textResponse("Hello from langchain4j")));
         try {
             writeConfig(server);
             String originalUserHome = switchToTempUserHome();
@@ -262,7 +262,7 @@ class NemoChatIT {
 
                 NemoClient.getInstance().run(window.getBufferContext(), "Hi");
                 var panel = waitForPanel(window);
-                waitForLine(panel, "nemo> Hello from SSE");
+                waitForLine(panel, "nemo> Hello from langchain4j");
 
                 assertEquals(1, requestCount.get());
                 assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Nemo failed")));
@@ -294,6 +294,8 @@ class NemoChatIT {
 
                 assertTrue(requestCount.get() >= 2);
                 assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("me> Update this file")));
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("-class Demo {}")));
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("+class Updated {}")));
                 assertEquals("class Updated {}\n", Files.readString(tempDir.resolve("chat.txt")));
                 assertEquals("class Updated {}\n", window.getBufferContext().getBuffer().getString());
             } finally {
@@ -405,14 +407,16 @@ class NemoChatIT {
                 var panel = waitForPanel(window);
                 waitForLine(panel, "nemo> Hello");
 
-                String body = requestBody.get();
-                assertTrue(body.contains("list_files"));
-                assertTrue(body.contains("read_file"));
-                assertFalse(body.contains("run_command"));
-                assertFalse(body.contains("write_file"));
-                assertFalse(body.contains("apply_patch"));
-                assertFalse(body.contains("git_add"));
-                assertFalse(body.contains("git_commit"));
+                String toolPayload = JsonParser.parseString(requestBody.get()).getAsJsonObject()
+                        .getAsJsonArray("tools")
+                        .toString();
+                assertTrue(toolPayload.contains("list_files"));
+                assertTrue(toolPayload.contains("read_file"));
+                assertFalse(toolPayload.contains("run_command"));
+                assertFalse(toolPayload.contains("write_file"));
+                assertFalse(toolPayload.contains("apply_patch"));
+                assertFalse(toolPayload.contains("git_add"));
+                assertFalse(toolPayload.contains("git_commit"));
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -451,10 +455,10 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
-    void chatGptProviderUsesResponsesEndpoint() throws Exception {
+    void chatGptProviderUsesLangChainChatBackendFromLegacyResponsesUrl() throws Exception {
         var requestCount = new AtomicInteger();
         var requestBody = new AtomicReference<String>("");
-        var server = startResponsesSseServer(requestCount, requestBody, List.of(responsesSseTextResponse("Native SSO answer")));
+        var server = startServer(requestCount, requestBody, List.of(textResponse("Native SSO answer")));
         try {
             writeResponsesConfig(server);
             String originalUserHome = switchToTempUserHome();
@@ -467,11 +471,12 @@ class NemoChatIT {
                 waitForLine(panel, "nemo> Native SSO answer");
 
                 String body = requestBody.get();
-                assertTrue(body.contains("\"instructions\""));
-                assertTrue(body.contains("\"store\":false"));
-                assertTrue(body.contains("\"stream\":true"));
+                assertTrue(body.contains("\"messages\""));
+                assertFalse(body.contains("\"instructions\""));
+                assertFalse(body.contains("\"store\""));
+                assertFalse(body.contains("\"stream\":true"));
                 JsonObject requestJson = JsonParser.parseString(body).getAsJsonObject();
-                assertEquals("xhigh", requestJson.getAsJsonObject("reasoning").get("effort").getAsString());
+                assertEquals("xhigh", requestJson.get("reasoning_effort").getAsString());
                 assertFalse(body.contains("max_output_tokens"));
                 assertEquals(1, requestCount.get());
             } finally {
@@ -930,10 +935,6 @@ class NemoChatIT {
         return startServer(requestCount, 0, responses);
     }
 
-    private HttpServer startSseServer(AtomicInteger requestCount, List<String> responses) throws IOException {
-        return startSseServer(requestCount, new AtomicReference<>(""), 0, responses);
-    }
-
     private HttpServer startServer(AtomicInteger requestCount, AtomicReference<String> requestBody, List<JsonObject> responses)
             throws IOException {
         return startServer(requestCount, requestBody, 0, responses);
@@ -953,48 +954,28 @@ class NemoChatIT {
         return server;
     }
 
-    private HttpServer startSseServer(AtomicInteger requestCount, AtomicReference<String> requestBody, long responseDelayMillis,
-            List<String> responses) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.setExecutor(Executors.newCachedThreadPool());
-        server.createContext("/chat/completions",
-                exchange -> handleSseResponse(exchange, requestCount, requestBody, responseDelayMillis, responses));
-        server.start();
-        return server;
-    }
-
-    private HttpServer startResponsesSseServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
-            List<String> responses) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.setExecutor(Executors.newCachedThreadPool());
-        server.createContext("/responses",
-                exchange -> handleSseResponse(exchange, requestCount, requestBody, 0, responses));
-        server.start();
-        return server;
-    }
-
     private HttpServer startDelegationServer(AtomicInteger requestCount) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/chat/completions", exchange -> {
             requestCount.incrementAndGet();
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String response;
+            JsonObject response;
             if (body.contains("You are a Nemo sub-agent delegated")) {
                 try {
                     Thread.sleep(2000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                response = sseTextResponse("Sub-agent completed.");
+                response = textResponse("Sub-agent completed.");
             } else if (body.contains("Started sub-agent worker")) {
-                response = sseTextResponse("Parent saw delegated start.");
+                response = textResponse("Parent saw delegated start.");
             } else {
-                response = sseToolCallResponse("call_delegate", "delegate_task",
+                response = toolCallResponse("call_delegate", "delegate_task",
                         "{\"title\":\"Docs\",\"task\":\"Inspect chat.txt and summarize it.\",\"focus_paths\":[\"chat.txt\"]}");
             }
-            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(bytes);
@@ -1010,19 +991,19 @@ class NemoChatIT {
         server.createContext("/chat/completions", exchange -> {
             requestCount.incrementAndGet();
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String response;
+            JsonObject response;
             if (body.contains("tool_call_id") && body.contains("call_subagent_command")) {
-                response = sseTextResponse("Sub-agent command approved.");
+                response = textResponse("Sub-agent command approved.");
             } else if (body.contains("You are a Nemo sub-agent delegated")) {
-                response = sseToolCallResponse("call_subagent_command", "run_command", commandArguments);
+                response = toolCallResponse("call_subagent_command", "run_command", commandArguments);
             } else if (body.contains("Started sub-agent worker")) {
-                response = sseTextResponse("Parent saw delegated start.");
+                response = textResponse("Parent saw delegated start.");
             } else {
-                response = sseToolCallResponse("call_delegate", "delegate_task",
+                response = toolCallResponse("call_delegate", "delegate_task",
                         "{\"title\":\"Build\",\"task\":\"Run the requested command and report the result.\"}");
             }
-            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream output = exchange.getResponseBody()) {
                 output.write(bytes);
@@ -1041,7 +1022,26 @@ class NemoChatIT {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             requestBody.set(body);
             JsonObject request = JsonParser.parseString(body).getAsJsonObject();
-            var allowed = new LinkedHashSet<>(List.of("model", "messages", "tools", "temperature", "top_p", "max_tokens"));
+            var allowed = new LinkedHashSet<>(List.of(
+                    "model",
+                    "messages",
+                    "tools",
+                    "stream",
+                    "stream_options",
+                    "temperature",
+                    "top_p",
+                    "max_tokens",
+                    "max_completion_tokens",
+                    "tool_choice",
+                    "parallel_tool_calls",
+                    "response_format",
+                    "stop",
+                    "presence_penalty",
+                    "frequency_penalty",
+                    "logit_bias",
+                    "user",
+                    "seed",
+                    "reasoning_effort"));
             for (var entry : request.entrySet()) {
                 if (!allowed.contains(entry.getKey())) {
                     byte[] error = """
@@ -1110,31 +1110,6 @@ class NemoChatIT {
         }
     }
 
-    private void handleSseResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
-            long responseDelayMillis, List<String> responses) throws IOException {
-        int requestIndex = requestCount.incrementAndGet();
-        requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-        String response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
-        if (responseDelayMillis > 0) {
-            try {
-                Thread.sleep(responseDelayMillis);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-
-        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
-        exchange.sendResponseHeaders(200, bytes.length);
-        try (OutputStream output = exchange.getResponseBody()) {
-            output.write(bytes);
-        }
-    }
-
-    private static JsonObject functionCallResponse() {
-        return toolCallResponse("call_1", "list_files", "{\"path\":\".\",\"max_results\":5}");
-    }
-
     private static JsonObject toolCallResponse(String callId, String toolName, String arguments) {
         JsonObject response = new JsonObject();
         response.addProperty("id", "chatcmpl-tool");
@@ -1193,100 +1168,6 @@ class NemoChatIT {
         response.add("choices", choices);
         response.add("usage", usage(5000, 100));
         return response;
-    }
-
-    private static String sseTextResponse(String text) {
-        return sseBody(List.of(
-                chunkWithDelta(contentDelta(text), null, null),
-                chunkWithDelta(contentDelta(""), "stop", null),
-                chunkWithDelta(contentDelta(""), null, usage(5000, 100))));
-    }
-
-    private static String responsesSseTextResponse(String text) {
-        return """
-                event: response.output_item.done
-                data: {"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"%s"}]}}
-
-                event: response.completed
-                data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":100},"limits":{"max_context_tokens":1000}}}
-
-                """.formatted(text);
-    }
-
-    private static String sseToolCallResponse(String toolCallId, String toolName, String arguments) {
-        List<JsonObject> chunks = new java.util.ArrayList<>();
-        chunks.add(chunkWithDelta(toolCallDelta(toolCallId, toolName, ""), null, null));
-        for (String fragment : splitArgumentFragments(arguments)) {
-            chunks.add(chunkWithDelta(toolCallDelta(null, null, fragment), null, null));
-        }
-        chunks.add(chunkWithDelta(contentDelta(""), "tool_calls", null));
-        chunks.add(chunkWithDelta(contentDelta(""), null, usage(5000, 100)));
-        return sseBody(chunks);
-    }
-
-    private static List<String> splitArgumentFragments(String arguments) {
-        List<String> fragments = new java.util.ArrayList<>();
-        int chunkSize = 6;
-        for (int index = 0; index < arguments.length(); index += chunkSize) {
-            fragments.add(arguments.substring(index, Math.min(arguments.length(), index + chunkSize)));
-        }
-        return fragments;
-    }
-
-    private static JsonObject chunkWithDelta(JsonObject delta, String finishReason, JsonObject usage) {
-        JsonObject chunk = new JsonObject();
-        chunk.addProperty("id", "chatcmpl-sse");
-        chunk.addProperty("object", "chat.completion.chunk");
-        chunk.addProperty("created", 1);
-        chunk.addProperty("model", "gpt-5.4");
-        JsonArray choices = new JsonArray();
-        JsonObject choice = new JsonObject();
-        choice.addProperty("index", 0);
-        choice.add("delta", delta);
-        if (finishReason != null) {
-            choice.addProperty("finish_reason", finishReason);
-        }
-        choices.add(choice);
-        chunk.add("choices", choices);
-        if (usage != null) {
-            chunk.add("usage", usage);
-        }
-        return chunk;
-    }
-
-    private static JsonObject contentDelta(String content) {
-        JsonObject delta = new JsonObject();
-        delta.addProperty("content", content);
-        return delta;
-    }
-
-    private static JsonObject toolCallDelta(String toolCallId, String toolName, String argumentsFragment) {
-        JsonObject delta = new JsonObject();
-        JsonArray toolCalls = new JsonArray();
-        JsonObject toolCall = new JsonObject();
-        toolCall.addProperty("index", 0);
-        if (toolCallId != null) {
-            toolCall.addProperty("id", toolCallId);
-            toolCall.addProperty("type", "function");
-        }
-        JsonObject function = new JsonObject();
-        if (toolName != null) {
-            function.addProperty("name", toolName);
-        }
-        function.addProperty("arguments", argumentsFragment);
-        toolCall.add("function", function);
-        toolCalls.add(toolCall);
-        delta.add("tool_calls", toolCalls);
-        return delta;
-    }
-
-    private static String sseBody(List<JsonObject> chunks) {
-        StringBuilder builder = new StringBuilder();
-        for (JsonObject chunk : chunks) {
-            builder.append("data: ").append(chunk).append("\n\n");
-        }
-        builder.append("data: [DONE]\n\n");
-        return builder.toString();
     }
 
     private static JsonObject textResponse(String text) {
@@ -1404,7 +1285,7 @@ class NemoChatIT {
                 "provider=chatgpt",
                 "api_key=test-token",
                 "model=gpt-5.5",
-                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "responses_url=http://127.0.0.1:" + server.getAddress().getPort() + "/responses",
                 "reasoning_effort=xhigh",
                 "tool.list_files=true",
                 "tool.read_file=true",

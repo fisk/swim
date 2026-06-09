@@ -112,6 +112,7 @@ final class NemoPromptBuilder {
         var lines = new ArrayList<String>();
         lines.add("\n\nNemo runtime capabilities:");
         lines.add("- permission mode: " + configuration.toolPermissionMode().replace('_', '-'));
+        lines.add("- current_editor_context reports the active editor workspace, current file path, and project root without reading file or screen contents.");
         if ("read_only".equals(configuration.toolPermissionMode())) {
             lines.add("- mutating tools are disabled; inspect files and explain the change needed.");
         } else {

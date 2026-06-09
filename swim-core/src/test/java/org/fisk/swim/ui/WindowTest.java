@@ -1029,6 +1029,23 @@ class WindowTest {
     }
 
     @Test
+    void refreshingOpenBuffersForPathUpdatesEverySplitBufferView() throws Exception {
+        Path file = writeFile("nemo-refresh-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalContext = window.getBufferContext();
+            window.splitActiveBufferHorizontally();
+            var splitContext = window.getBufferContext();
+
+            assertTrue(window.refreshOpenBuffersForPath(file, "updated\ntext\n"));
+
+            assertEquals("updated\ntext\n", originalContext.getBuffer().getString());
+            assertEquals("updated\ntext\n", splitContext.getBuffer().getString());
+        }
+    }
+
+    @Test
     void clickingSplitFrameBarActivatesThatBufferFrame() throws Exception {
         Path file = writeFile("click-split-frame.txt", "alpha\nbeta\n");
 

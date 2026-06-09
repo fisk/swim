@@ -26,6 +26,10 @@ public final class MailNotificationView extends View {
 
     @Override
     public void draw(Rect rect) {
+        Window window = Window.getInstance();
+        if (window != null && window.isGuestObservationActive()) {
+            return;
+        }
         MailNotification notification = MailStatusService.getInstance().currentStatus().notification();
         if (notification == null) {
             return;

@@ -28,6 +28,8 @@ public final class UiTheme {
     public static final TextColor DIAGNOSTIC_ERROR_BACKGROUND = color("#4a2020");
     public static final TextColor DIAGNOSTIC_WARNING_FOREGROUND = color("#ffe66d");
     public static final TextColor DIAGNOSTIC_WARNING_BACKGROUND = color("#4a3f1a");
+    public static final TextColor DIFF_ADDED_BACKGROUND = color("#16351f");
+    public static final TextColor DIFF_REMOVED_BACKGROUND = color("#3a1d22");
 
     public static final TextColor PANEL_SELECTION_BACKGROUND = color("#20405a");
     public static final TextColor PANEL_SELECTION_FOREGROUND = color("#f8fbff");

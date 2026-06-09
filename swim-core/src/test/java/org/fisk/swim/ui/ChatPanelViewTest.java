@@ -211,6 +211,60 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void cursorRendersOnPromptWhenDraftIsEmpty() {
+        var view = new ChatPanelView(Rect.create(3, 4, 40, 5), "Nemo", ignored -> {});
+
+        var cursor = view.getCursor();
+
+        assertEquals(6, cursor.getXOnScreen());
+        assertEquals(8, cursor.getYOnScreen());
+    }
+
+    @Test
+    void resizeAfterLoadingHistoryKeepsScrolledToBottom() {
+        var view = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+        for (int i = 0; i < 10; i++) {
+            view.appendMessage("nemo", "line " + i);
+        }
+
+        view.setBounds(Rect.create(0, 0, 40, 5));
+
+        assertEquals(7, view.getStartLine());
+    }
+
+    @Test
+    void markdownCodeFenceRendersAsCodeBlockRows() {
+        var view = new ChatPanelView(Rect.create(0, 0, 40, 8), "Nemo", ignored -> {});
+
+        view.appendMessage("nemo", "Here:\n```java\nclass Demo {}\n```\nDone");
+
+        var lines = view.getDisplayLines();
+        assertTrue(lines.stream().anyMatch(line -> line.contains("code java")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("class Demo {}")));
+        assertFalse(lines.stream().anyMatch(line -> line.contains("```")));
+    }
+
+    @Test
+    void unifiedDiffTranscriptRendersPatchRows() {
+        var view = new ChatPanelView(Rect.create(0, 0, 60, 10), "Nemo", ignored -> {});
+
+        view.appendMessage("tool", """
+                write_file: path=note.txt
+                diff --git a/note.txt b/note.txt
+                --- a/note.txt
+                +++ b/note.txt
+                @@ -1,1 +1,1 @@
+                -old
+                +new
+                """);
+
+        var lines = view.getDisplayLines();
+        assertTrue(lines.stream().anyMatch(line -> line.contains("-old")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("+new")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("@@ -1,1 +1,1 @@")));
+    }
+
+    @Test
     void mouseWheelScrollsTranscript() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
         for (int i = 0; i < 12; i++) {
