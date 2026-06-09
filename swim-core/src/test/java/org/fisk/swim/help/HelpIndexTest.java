@@ -4,8 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import java.util.stream.Collectors;
 
+import org.fisk.swim.api.SwimHelpChapter;
+import org.fisk.swim.api.SwimHelpRegistry;
+import org.fisk.swim.api.SwimHelpSection;
 import org.junit.jupiter.api.Test;
 
 class HelpIndexTest {
@@ -49,6 +53,29 @@ class HelpIndexTest {
         assertTrue(rendered.contains("Files, Buffers, and Panes"));
         assertTrue(rendered.contains("Nemo Assistant"));
         assertTrue(rendered.stream().anyMatch(line -> line.contains(":swim-help reads this editor help")));
+    }
+
+    @Test
+    void registeredPluginChaptersAppearInHelpAndNemoHelp() throws Exception {
+        try (var ignored = SwimHelpRegistry.register("plugin-docs", new SwimHelpChapter(
+                "plugin-docs",
+                "Plugin Docs",
+                "Plugin-provided help appears in the shared help tree.",
+                List.of(new SwimHelpSection("Plugin section",
+                        List.of("This paragraph is only present in plugin registered help."),
+                        ":plugin-docs"))))) {
+            assertNotNull(HelpDocument.findChapter("Plugin Docs"));
+            assertTrue(HelpDocument.renderIndex().contains("plugin-docs - Plugin Docs"));
+            assertTrue(HelpDocument.renderForNemo("plugin-docs").contains("Plugin section"));
+            assertTrue(HelpDocument.search("plugin registered").stream()
+                    .anyMatch(chapter -> "plugin-docs".equals(chapter.id())));
+
+            var rendered = HelpIndex.createHelpList().stream()
+                    .map(item -> item.displayString())
+                    .collect(Collectors.toList());
+            assertTrue(rendered.contains("Plugin Docs"));
+            assertTrue(rendered.contains("  Plugin section"));
+        }
     }
 
     @Test

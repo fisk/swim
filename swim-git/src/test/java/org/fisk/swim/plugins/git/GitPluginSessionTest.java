@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.eclipse.jgit.api.Git;
+import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimPluginContext;
 import org.junit.jupiter.api.Test;
@@ -16,6 +17,31 @@ import org.junit.jupiter.api.io.TempDir;
 class GitPluginSessionTest {
     @TempDir
     Path tempDir;
+
+    @Test
+    void preloadRegistersHelpPagesWithoutActivatingPlugin() {
+        SwimHelpRegistry.clearForTests();
+        try {
+            GitPlugin plugin = new GitPlugin();
+            plugin.preload(() -> GitPluginSupport.PLUGIN_ID);
+
+            List<String> ids = SwimHelpRegistry.chapters().stream()
+                    .map(chapter -> chapter.id())
+                    .toList();
+            assertTrue(ids.contains("git-workflow"));
+            assertTrue(ids.contains("git-swim-config"));
+            assertTrue(SwimHelpRegistry.chapters().stream()
+                    .anyMatch(chapter -> chapter.summary().contains(".swim config")));
+            assertTrue(SwimHelpRegistry.chapters().stream()
+                    .flatMap(chapter -> chapter.sections().stream())
+                    .flatMap(section -> section.paragraphs().stream())
+                    .anyMatch(paragraph -> paragraph.contains("git.pr.view")));
+            assertTrue(GitPluginSupport.getSession().isEmpty());
+        } finally {
+            GitPluginSupport.shutdown();
+            SwimHelpRegistry.clearForTests();
+        }
+    }
 
     @Test
     void rendersStatusAndSupportsStageDiffAndCommitInput() throws Exception {

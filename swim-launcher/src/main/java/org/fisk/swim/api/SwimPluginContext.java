@@ -21,4 +21,8 @@ public interface SwimPluginContext {
     default AutoCloseable registerNemoTool(SwimNemoTool tool) {
         return SwimNemoToolRegistry.register(getPluginId(), tool);
     }
+
+    default AutoCloseable registerHelpChapter(SwimHelpChapter chapter) {
+        return SwimHelpRegistry.register(getPluginId(), chapter);
+    }
 }

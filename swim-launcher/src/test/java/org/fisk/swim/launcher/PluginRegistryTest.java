@@ -24,6 +24,7 @@ import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 
 import org.fisk.swim.api.SwimApp;
+import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.junit.jupiter.api.AfterEach;
@@ -37,6 +38,7 @@ class PluginRegistryTest {
     @AfterEach
     void tearDown() {
         SwimNemoToolRegistry.clearForTests();
+        SwimHelpRegistry.clearForTests();
     }
 
     @Test
@@ -56,11 +58,15 @@ class PluginRegistryTest {
         assertEquals(List.of("core"), registry.loadedPluginIds());
         assertEquals(List.of("core-start"), Files.readAllLines(events));
         assertTrue(SwimNemoToolRegistry.listTools().isEmpty());
+        assertEquals(List.of("marker-help"),
+                SwimHelpRegistry.chapters().stream().map(chapter -> chapter.id()).toList());
 
         registry.unloadPlugin("marker-plugin");
 
         assertEquals(List.of("core"), registry.loadedPluginIds());
         assertEquals(List.of("core-start"), Files.readAllLines(events));
+        assertEquals(List.of("marker-help"),
+                SwimHelpRegistry.chapters().stream().map(chapter -> chapter.id()).toList());
 
         registry.loadPlugin("marker-plugin", file, host);
 
@@ -88,6 +94,7 @@ class PluginRegistryTest {
         assertEquals(List.of("core-start", "plugin-load", "plugin-close", "plugin-load", "plugin-close", "core-close"),
                 Files.readAllLines(events));
         assertTrue(SwimNemoToolRegistry.listTools().isEmpty());
+        assertTrue(SwimHelpRegistry.chapters().isEmpty());
     }
 
     @Test
@@ -190,8 +197,12 @@ class PluginRegistryTest {
                         import java.nio.file.StandardOpenOption;
                         import org.fisk.swim.api.SwimPlugin;
                         import org.fisk.swim.api.SwimPluginContext;
+                        import org.fisk.swim.api.SwimPluginPreloadContext;
+                        import org.fisk.swim.api.SwimHelpChapter;
+                        import org.fisk.swim.api.SwimHelpSection;
                         import org.fisk.swim.api.SwimNemoTool;
                         import org.fisk.swim.api.SwimNemoToolInvocation;
+                        import java.util.List;
                         public final class MarkerPlugin implements SwimPlugin {
                             private Path events;
                             public String getId() {
@@ -199,6 +210,13 @@ class PluginRegistryTest {
                             }
                             public boolean loadOnStartup() {
                                 return false;
+                            }
+                            public void preload(SwimPluginPreloadContext context) {
+                                context.registerHelpChapter(new SwimHelpChapter(
+                                        "marker-help",
+                                        "Marker Help",
+                                        "Marker plugin help.",
+                                        List.of(new SwimHelpSection("Usage", List.of("Use the marker plugin."), ""))));
                             }
                             public void load(SwimPluginContext context) {
                                 if (!"marker-plugin".equals(context.getPluginId())) {

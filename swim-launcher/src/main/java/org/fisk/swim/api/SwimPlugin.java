@@ -13,6 +13,9 @@ public interface SwimPlugin extends AutoCloseable {
         return true;
     }
 
+    default void preload(SwimPluginPreloadContext context) {
+    }
+
     void load(SwimPluginContext context);
 
     @Override

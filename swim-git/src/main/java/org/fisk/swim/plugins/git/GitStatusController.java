@@ -73,6 +73,7 @@ final class GitStatusController {
     private static final String C_COMMIT_HASH = "#f7a94b";
     private static final String C_PULL_REQUEST_NUMBER = "#3ddbd9";
     private static final String C_LABEL = "#a6e3a1";
+    private static final String C_LABEL_BG = "#1b4f72";
     private static final String C_FILTER_FIELD = "#ffb454";
     private static final String C_FILTER_NEGATED = "#ff6b6b";
     private static final String C_INSERT_BG = "#173d22";
@@ -491,13 +492,23 @@ final class GitStatusController {
             return lines;
         }
         _pullRequestSelection = Math.max(0, Math.min(_pullRequestSelection, _pullRequests.size() - 1));
-        int start = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - bodyHeight)));
+        int visiblePullRequests = visiblePullRequestCount(bodyHeight);
+        int start = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - visiblePullRequests)));
         _scroll = start;
-        for (int i = 0; i < bodyHeight; i++) {
+        for (int i = 0; i < visiblePullRequests && lines.size() < height; i++) {
             int index = start + i;
-            lines.add(index < _pullRequests.size()
-                    ? (index == _pullRequestSelection ? "> " : "  ") + _pullRequests.get(index).displayLabel()
-                    : "");
+            if (index < _pullRequests.size()) {
+                GitHubPullRequest pullRequest = _pullRequests.get(index);
+                boolean selected = index == _pullRequestSelection;
+                lines.add((selected ? "> " : "  ") + "#" + pullRequest.number() + " " + pullRequest.title());
+                if (lines.size() < height) {
+                    lines.add("  @" + pullRequest.author()
+                            + (pullRequest.labels().isEmpty() ? "" : "  " + String.join(" ", pullRequest.labels())));
+                }
+            }
+        }
+        while (lines.size() < height) {
+            lines.add("");
         }
         return lines;
     }
@@ -522,19 +533,23 @@ final class GitStatusController {
             return lines;
         }
         _pullRequestSelection = Math.max(0, Math.min(_pullRequestSelection, _pullRequests.size() - 1));
-        int start = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - bodyHeight)));
+        int visiblePullRequests = visiblePullRequestCount(bodyHeight);
+        int start = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - visiblePullRequests)));
         _scroll = start;
-        for (int i = 0; i < bodyHeight; i++) {
+        for (int i = 0; i < visiblePullRequests && lines.size() < height; i++) {
             int index = start + i;
             if (index < _pullRequests.size()) {
                 boolean selected = index == _pullRequestSelection;
                 GitHubPullRequest pullRequest = _pullRequests.get(index);
-                lines.add(pullRequestLine(selected ? "> " : "  ", pullRequest,
+                lines.add(pullRequestTitleLine(selected ? "> " : "  ", pullRequest,
                         selected ? C_TEXT : C_MUTED, selected ? C_SELECTION_BG : C_PANEL));
-            } else {
-                lines.add(SwimPanelLine.plain(""));
+                if (lines.size() < height) {
+                    lines.add(pullRequestMetaLine(selected ? "  " : "  ", pullRequest,
+                            selected ? C_SELECTION_BG : C_PANEL));
+                }
             }
         }
+        appendBlankRichLines(lines, height);
         return lines;
     }
 
@@ -925,7 +940,14 @@ final class GitStatusController {
         spans.add(span(value.isBlank() ? "(any)" : value, value.isBlank() ? C_MUTED : valueColor, background));
     }
 
-    private static SwimPanelLine pullRequestLine(String prefix, GitHubPullRequest pullRequest, String foreground,
+    private static int visiblePullRequestCount(int bodyHeight) {
+        if (bodyHeight <= 0) {
+            return 0;
+        }
+        return Math.max(1, bodyHeight / 2);
+    }
+
+    private static SwimPanelLine pullRequestTitleLine(String prefix, GitHubPullRequest pullRequest, String foreground,
             String background) {
         var spans = new ArrayList<SwimTextSpan>();
         spans.add(span(prefix, C_MUTED, background));
@@ -935,7 +957,13 @@ final class GitStatusController {
         spans.add(span(pullRequest.headRef(), C_ACCENT, background));
         spans.add(span(" -> ", C_MUTED, background));
         spans.add(span(pullRequest.baseRef(), C_ACCENT, background));
-        spans.add(span("  @", C_MUTED, background));
+        return new SwimPanelLine(spans);
+    }
+
+    private static SwimPanelLine pullRequestMetaLine(String prefix, GitHubPullRequest pullRequest, String background) {
+        var spans = new ArrayList<SwimTextSpan>();
+        spans.add(span(prefix, C_MUTED, background));
+        spans.add(span("@", C_MUTED, background));
         spans.add(span(pullRequest.author(), C_PURPLE, background));
         if (!pullRequest.labels().isEmpty()) {
             spans.add(span("  ", C_MUTED, background));
@@ -943,7 +971,7 @@ final class GitStatusController {
                 if (i > 0) {
                     spans.add(span(" ", C_MUTED, background));
                 }
-                spans.add(span("[" + pullRequest.labels().get(i) + "]", C_LABEL, background));
+                spans.add(span(" " + pullRequest.labels().get(i) + " ", C_TEXT, C_LABEL_BG));
             }
         }
         return new SwimPanelLine(spans);

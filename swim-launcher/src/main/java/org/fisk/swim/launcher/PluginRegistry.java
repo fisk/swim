@@ -16,10 +16,12 @@ import java.util.ServiceLoader;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
+import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.api.SwimPluginPreloadContext;
 
 final class PluginRegistry implements Main.PluginController {
     private static final String CORE_MODULE = "org.fisk.swim.core";
@@ -221,8 +223,13 @@ final class PluginRegistry implements Main.PluginController {
         String id();
         int loadOrder();
         boolean loadOnStartup();
+        default void preload(DefaultPluginPreloadContext context) {
+        }
         void load(DefaultPluginContext context);
         void unload();
+        default void unloadCompletely() {
+            unload();
+        }
         boolean isLoaded();
         default SwimApp app() {
             return null;
@@ -264,27 +271,30 @@ final class PluginRegistry implements Main.PluginController {
         }
 
         void loadAll(List<Path> paths, SwimHost host) {
-            var started = new ArrayList<PluginBinding>();
+            var preloaded = new ArrayList<PluginBinding>();
             try {
+                for (var binding : _bindings) {
+                    binding.preload(createPreloadContext(binding.id()));
+                    preloaded.add(binding);
+                }
                 for (var binding : _bindings) {
                     if (!binding.loadOnStartup()) {
                         continue;
                     }
                     binding.load(createContext(paths, host, binding.id()));
-                    started.add(binding);
                 }
                 SwimApp app = app();
                 if (app != null) {
                     app.refresh(true);
                 }
             } catch (RuntimeException | Error e) {
-                unloadReverse(started);
+                unloadCompletelyReverse(preloaded);
                 throw e;
             }
         }
 
         void unloadAll() {
-            unloadReverse(_bindings);
+            unloadCompletelyReverse(_bindings);
         }
 
         private static void unloadReverse(List<PluginBinding> bindings) {
@@ -296,6 +306,25 @@ final class PluginRegistry implements Main.PluginController {
                 }
                 try {
                     binding.unload();
+                } catch (RuntimeException e) {
+                    if (failure == null) {
+                        failure = e;
+                    } else {
+                        failure.addSuppressed(e);
+                    }
+                }
+            }
+            if (failure != null) {
+                throw failure;
+            }
+        }
+
+        private static void unloadCompletelyReverse(List<PluginBinding> bindings) {
+            RuntimeException failure = null;
+            for (int i = bindings.size() - 1; i >= 0; i--) {
+                PluginBinding binding = bindings.get(i);
+                try {
+                    binding.unloadCompletely();
                 } catch (RuntimeException e) {
                     if (failure == null) {
                         failure = e;
@@ -346,6 +375,10 @@ final class PluginRegistry implements Main.PluginController {
                     .orElseThrow(() -> new IllegalArgumentException("Unknown plugin id: " + id));
         }
 
+        private DefaultPluginPreloadContext createPreloadContext(String pluginId) {
+            return new DefaultPluginPreloadContext(pluginId);
+        }
+
         private DefaultPluginContext createContext(List<Path> paths, SwimHost host, String pluginId) {
             List<Path> initialPaths = paths == null ? List.of() : List.copyOf(paths);
             Path initialPath = initialPaths.isEmpty() ? null : initialPaths.getFirst();
@@ -357,6 +390,13 @@ final class PluginRegistry implements Main.PluginController {
                 Path currentPath = app.getCurrentPath();
                 return currentPath == null ? initialPath : currentPath;
             });
+        }
+    }
+
+    private record DefaultPluginPreloadContext(String pluginId) implements SwimPluginPreloadContext {
+        @Override
+        public String getPluginId() {
+            return pluginId;
         }
     }
 
@@ -430,6 +470,7 @@ final class PluginRegistry implements Main.PluginController {
                 return;
             }
             SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+            SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             SwimApp app = _provider.get();
             _app = app;
             try {
@@ -439,6 +480,7 @@ final class PluginRegistry implements Main.PluginController {
                 _app = null;
                 _loaded = false;
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
                 throw e;
             }
         }
@@ -455,6 +497,7 @@ final class PluginRegistry implements Main.PluginController {
                 app.close();
             } finally {
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             }
         }
 
@@ -476,6 +519,7 @@ final class PluginRegistry implements Main.PluginController {
         private final ServiceLoader.Provider<SwimPlugin> _provider;
         private SwimPlugin _instance;
         private boolean _loaded;
+        private boolean _preloaded;
 
         private ExtensionPluginBinding(
                 String id,
@@ -506,6 +550,25 @@ final class PluginRegistry implements Main.PluginController {
         }
 
         @Override
+        public void preload(DefaultPluginPreloadContext context) {
+            if (_preloaded) {
+                return;
+            }
+            SwimHelpRegistry.unregisterPlugin(_id);
+            SwimPlugin plugin = _instance == null ? _provider.get() : _instance;
+            try {
+                plugin.preload(context);
+                _instance = plugin;
+                _preloaded = true;
+            } catch (RuntimeException | Error e) {
+                _instance = null;
+                _preloaded = false;
+                SwimHelpRegistry.unregisterPlugin(_id);
+                throw e;
+            }
+        }
+
+        @Override
         public void load(DefaultPluginContext context) {
             if (_loaded) {
                 return;
@@ -527,17 +590,26 @@ final class PluginRegistry implements Main.PluginController {
         @Override
         public void unload() {
             if (!_loaded) {
-                _instance = null;
                 SwimNemoToolRegistry.unregisterPlugin(_id);
                 return;
             }
             SwimPlugin plugin = _instance;
-            _instance = null;
             _loaded = false;
             try {
                 plugin.close();
             } finally {
                 SwimNemoToolRegistry.unregisterPlugin(_id);
+            }
+        }
+
+        @Override
+        public void unloadCompletely() {
+            try {
+                unload();
+            } finally {
+                _instance = null;
+                _preloaded = false;
+                SwimHelpRegistry.unregisterPlugin(_id);
             }
         }
 

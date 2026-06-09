@@ -1,8 +1,13 @@
 package org.fisk.swim.help;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+
+import org.fisk.swim.api.SwimHelpChapter;
+import org.fisk.swim.api.SwimHelpRegistry;
+import org.fisk.swim.api.SwimHelpSection;
 
 public final class HelpDocument {
     public record Section(String title, List<String> paragraphs, String example) {
@@ -18,17 +23,31 @@ public final class HelpDocument {
         }
     }
 
-    private static final List<Chapter> CHAPTERS = buildChapters();
+    private static final List<Chapter> BUILT_IN_CHAPTERS = buildChapters();
 
     private HelpDocument() {
     }
 
     public static List<Chapter> chapters() {
-        return CHAPTERS;
+        List<SwimHelpChapter> pluginChapters = SwimHelpRegistry.chapters();
+        if (pluginChapters.isEmpty()) {
+            return BUILT_IN_CHAPTERS;
+        }
+        var chapters = new ArrayList<Chapter>(BUILT_IN_CHAPTERS);
+        var ids = new LinkedHashSet<String>();
+        for (Chapter chapter : BUILT_IN_CHAPTERS) {
+            ids.add(normalize(chapter.id()));
+        }
+        for (SwimHelpChapter chapter : pluginChapters) {
+            if (ids.add(normalize(chapter.id()))) {
+                chapters.add(adapt(chapter));
+            }
+        }
+        return List.copyOf(chapters);
     }
 
     public static Chapter defaultChapter() {
-        return CHAPTERS.getFirst();
+        return chapters().getFirst();
     }
 
     public static Chapter findChapter(String topic) {
@@ -36,7 +55,7 @@ public final class HelpDocument {
             return null;
         }
         String normalized = normalize(topic);
-        for (Chapter chapter : CHAPTERS) {
+        for (Chapter chapter : chapters()) {
             if (normalize(chapter.id()).equals(normalized)
                     || normalize(chapter.title()).equals(normalized)
                     || normalize(chapter.title()).contains(normalized)) {
@@ -52,7 +71,7 @@ public final class HelpDocument {
         lines.add("");
         lines.add("Open the editor help workspace with :help. Inside the help workspace, use j/k or arrow keys to scroll the current chapter, ]/[ or Left/Right to choose chapters, gg/G to jump to the top or bottom, and q to return.");
         lines.add("");
-        for (Chapter chapter : CHAPTERS) {
+        for (Chapter chapter : chapters()) {
             lines.add(chapter.id() + " - " + chapter.title());
             lines.add("  " + chapter.summary());
         }
@@ -111,11 +130,11 @@ public final class HelpDocument {
 
     public static List<Chapter> search(String query) {
         if (query == null || query.isBlank()) {
-            return CHAPTERS;
+            return chapters();
         }
         String normalized = normalize(query);
         var matches = new ArrayList<Chapter>();
-        for (Chapter chapter : CHAPTERS) {
+        for (Chapter chapter : chapters()) {
             if (normalize(chapter.id()).contains(normalized)
                     || normalize(chapter.title()).contains(normalized)
                     || normalize(chapter.summary()).contains(normalized)
@@ -149,6 +168,20 @@ public final class HelpDocument {
             end--;
         }
         return String.join("\n", lines.subList(0, end));
+    }
+
+    private static Chapter adapt(SwimHelpChapter chapter) {
+        return new Chapter(
+                chapter.id(),
+                chapter.title(),
+                chapter.summary(),
+                chapter.sections().stream()
+                        .map(HelpDocument::adapt)
+                        .toList());
+    }
+
+    private static Section adapt(SwimHelpSection section) {
+        return new Section(section.title(), section.paragraphs(), section.example());
     }
 
     private static Chapter chapter(String id, String title, String summary, Section... sections) {

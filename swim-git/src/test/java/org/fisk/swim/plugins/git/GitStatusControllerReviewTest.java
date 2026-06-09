@@ -138,6 +138,16 @@ class GitStatusControllerReviewTest {
 
         assertTrue(listSpans.stream().anyMatch(span -> "#42".equals(span.text())
                 && "#3ddbd9".equals(span.foreground())));
+        assertTrue(listSpans.stream().anyMatch(span -> " compiler ".equals(span.text())
+                && "#1b4f72".equals(span.background())));
+
+        List<String> listLines = controller.render(100, 8);
+        int titleLine = indexOfLineContaining(listLines, "#42 Improve review");
+        assertTrue(titleLine >= 0);
+        assertTrue(!listLines.get(titleLine).contains("@alice"));
+        assertTrue(titleLine + 1 < listLines.size());
+        assertTrue(listLines.get(titleLine + 1).contains("@alice"));
+        assertTrue(listLines.get(titleLine + 1).contains("compiler"));
 
         GitStatusController reviewController = reviewController(tempDir);
         List<SwimTextSpan> reviewSpans = reviewController.renderRich(110, 12).stream()
@@ -180,8 +190,10 @@ class GitStatusControllerReviewTest {
                 && "#ffb454".equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "@alice".equals(span.text())
                 && "#d2a8ff".equals(span.foreground())));
-        assertTrue(spans.stream().anyMatch(span -> "[compiler]".equals(span.text())
-                && "#a6e3a1".equals(span.foreground())));
+        assertTrue(spans.stream().anyMatch(span -> " compiler ".equals(span.text())
+                && "#1b4f72".equals(span.background())));
+        assertTrue(spans.stream().anyMatch(span -> " review ".equals(span.text())
+                && "#1b4f72".equals(span.background())));
         assertTrue(spans.stream().anyMatch(span -> "[mine@origin]".equals(span.text())
                 && "#5ec4ff".equals(span.foreground())));
     }
@@ -322,5 +334,14 @@ class GitStatusControllerReviewTest {
         Field field = GitStatusController.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(target, value);
+    }
+
+    private static int indexOfLineContaining(List<String> lines, String text) {
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).contains(text)) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

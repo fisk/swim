@@ -20,7 +20,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     private record NavRow(int chapterIndex, String text, boolean section, String sectionTitle) {
     }
 
-    private final List<HelpDocument.Chapter> _chapters;
+    private List<HelpDocument.Chapter> _chapters;
     private final ListEventResponder _responders = new ListEventResponder();
     private Runnable _pendingAction;
     private int _selectedChapter;
@@ -72,6 +72,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     String selectedChapterId() {
+        refreshChapters();
         return currentChapter().id();
     }
 
@@ -80,12 +81,46 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     String articleText() {
+        refreshChapters();
         return HelpDocument.renderChapter(currentChapter());
     }
 
     private HelpDocument.Chapter currentChapter() {
+        refreshChapters();
         int index = Math.max(0, Math.min(_selectedChapter, _chapters.size() - 1));
         return _chapters.get(index);
+    }
+
+    private void refreshChapters() {
+        List<HelpDocument.Chapter> chapters = HelpDocument.chapters();
+        if (chapters.equals(_chapters)) {
+            return;
+        }
+        String selectedId = _chapters.isEmpty() ? "" : _chapters.get(Math.max(0,
+                Math.min(_selectedChapter, _chapters.size() - 1))).id();
+        _chapters = chapters;
+        if (_chapters.isEmpty()) {
+            _selectedChapter = 0;
+            _navStart = 0;
+            _articleStart = 0;
+            return;
+        }
+        int replacement = indexOfChapter(selectedId);
+        if (replacement >= 0) {
+            _selectedChapter = replacement;
+        } else {
+            _selectedChapter = Math.max(0, Math.min(_selectedChapter, _chapters.size() - 1));
+        }
+        _navStart = Math.max(0, Math.min(_navStart, _chapters.size() - 1));
+    }
+
+    private int indexOfChapter(String chapterId) {
+        for (int i = 0; i < _chapters.size(); i++) {
+            if (_chapters.get(i).id().equals(chapterId)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void hideWorkspace() {
@@ -100,6 +135,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     private void selectChapter(int index) {
+        refreshChapters();
         if (_chapters.isEmpty()) {
             return;
         }
@@ -134,6 +170,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
 
     @Override
     public Response processEvent(KeyStrokes events) {
+        refreshChapters();
         _pendingAction = null;
         if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
             _pendingAction = mouseAction(mouseAction);
@@ -195,6 +232,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
 
     @Override
     public void draw(Rect rect) {
+        refreshChapters();
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
         var graphics = terminalContext.getGraphics();
@@ -377,6 +415,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     private List<NavRow> navRows() {
+        refreshChapters();
         var rows = new ArrayList<NavRow>();
         for (int i = 0; i < _chapters.size(); i++) {
             HelpDocument.Chapter chapter = _chapters.get(i);

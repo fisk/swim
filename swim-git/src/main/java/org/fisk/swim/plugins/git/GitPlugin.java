@@ -2,6 +2,7 @@ package org.fisk.swim.plugins.git;
 
 import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.api.SwimPluginPreloadContext;
 
 public final class GitPlugin implements SwimPlugin {
     private org.fisk.swim.api.SwimHost _host;
@@ -14,6 +15,13 @@ public final class GitPlugin implements SwimPlugin {
     @Override
     public boolean loadOnStartup() {
         return false;
+    }
+
+    @Override
+    public void preload(SwimPluginPreloadContext context) {
+        for (var chapter : GitPluginHelp.chapters()) {
+            context.registerHelpChapter(chapter);
+        }
     }
 
     @Override
