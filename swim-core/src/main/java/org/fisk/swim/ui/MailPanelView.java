@@ -2019,19 +2019,21 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void setMessageBufferContent(String text, boolean readOnly, boolean placeCursorAtEnd) {
-        var buffer = _messageBufferContext.getBuffer();
-        buffer.setReadOnly(false);
-        if (buffer.getLength() > 0) {
-            buffer.rawRemove(0, buffer.getLength());
+        synchronized (_messageBufferContext) {
+            var buffer = _messageBufferContext.getBuffer();
+            buffer.setReadOnly(false);
+            if (buffer.getLength() > 0) {
+                buffer.rawRemove(0, buffer.getLength());
+            }
+            if (text != null && !text.isEmpty()) {
+                buffer.rawInsert(0, text);
+            }
+            buffer.setReadOnly(readOnly);
+            _messageBufferContext.getTextLayout().calculate();
+            buffer.getCursor().setPosition(placeCursorAtEnd ? buffer.getLength() : 0);
+            _messageBufferContext.getBufferView().adaptViewToCursor();
+            _messageBufferContext.getBufferView().setNeedsRedraw();
         }
-        if (text != null && !text.isEmpty()) {
-            buffer.rawInsert(0, text);
-        }
-        buffer.setReadOnly(readOnly);
-        _messageBufferContext.getTextLayout().calculate();
-        buffer.getCursor().setPosition(placeCursorAtEnd ? buffer.getLength() : 0);
-        _messageBufferContext.getBufferView().adaptViewToCursor();
-        _messageBufferContext.getBufferView().setNeedsRedraw();
     }
 
     private static int clamp(int value, int min, int max) {

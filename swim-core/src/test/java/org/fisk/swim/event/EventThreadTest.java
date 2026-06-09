@@ -35,6 +35,43 @@ class EventThreadTest {
     }
 
     @Test
+    void postEventHookErrorDoesNotStopEventThread() throws Exception {
+        var thread = new EventThread();
+        var firstEventRan = new CountDownLatch(1);
+        var secondEventRan = new CountDownLatch(1);
+        var hookCalls = new AtomicInteger();
+        thread.addOnEvent(() -> {
+            if (hookCalls.incrementAndGet() == 1) {
+                throw new StackOverflowError("render overflow");
+            }
+        });
+        thread.start();
+
+        thread.enqueue(new RunnableEvent(firstEventRan::countDown));
+        assertTrue(firstEventRan.await(2, TimeUnit.SECONDS));
+
+        thread.enqueue(new RunnableEvent(secondEventRan::countDown));
+        assertTrue(secondEventRan.await(2, TimeUnit.SECONDS));
+        assertTrue(thread.isAlive());
+
+        thread.shutdown();
+        thread.join(2000);
+    }
+
+    @Test
+    void enqueueReturnsWhenThreadIsStopped() {
+        var thread = new EventThread();
+        thread.shutdown();
+
+        long start = System.nanoTime();
+        thread.enqueue(new RunnableEvent(() -> {
+        }));
+
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        assertTrue(elapsedMillis < 200, "enqueue should not wait on a stopped event thread");
+    }
+
+    @Test
     void keyStrokeEventDispatchesResponder() throws Exception {
         var thread = new EventThread();
         var responded = new CountDownLatch(1);

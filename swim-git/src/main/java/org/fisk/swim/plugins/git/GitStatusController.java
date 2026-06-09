@@ -9,7 +9,9 @@ import java.util.Objects;
 
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.fisk.swim.api.SwimKeyBindingHint;
+import org.fisk.swim.api.SwimPanelLine;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.api.SwimTextSpan;
 
 final class GitStatusController {
     private enum Mode {
@@ -24,6 +26,61 @@ final class GitStatusController {
         PULL_REQUESTS,
         PULL_REVIEW
     }
+
+    private enum ReviewMode {
+        SUMMARY("summary"),
+        UNIFIED("unified"),
+        SPLIT("split"),
+        COMMENTS("comments");
+
+        private final String _label;
+
+        ReviewMode(String label) {
+            _label = label;
+        }
+
+        String label() {
+            return _label;
+        }
+    }
+
+    private enum PullFilterField {
+        NAME("Filter Name"),
+        LABELS("Filter Labels"),
+        AUTHOR("Filter Author");
+
+        private final String _label;
+
+        PullFilterField(String label) {
+            _label = label;
+        }
+
+        String label() {
+            return _label;
+        }
+    }
+
+    private static final String C_TEXT = "#dce6ef";
+    private static final String C_MUTED = "#8ca1b3";
+    private static final String C_SUBTLE = "#61788d";
+    private static final String C_PANEL = "#111a23";
+    private static final String C_ELEVATED = "#15202b";
+    private static final String C_ACCENT = "#5ec4ff";
+    private static final String C_GOLD = "#ffb454";
+    private static final String C_GREEN = "#7ee787";
+    private static final String C_RED = "#ff6b6b";
+    private static final String C_PURPLE = "#d2a8ff";
+    private static final String C_COMMIT_HASH = "#f7a94b";
+    private static final String C_PULL_REQUEST_NUMBER = "#3ddbd9";
+    private static final String C_LABEL = "#a6e3a1";
+    private static final String C_FILTER_FIELD = "#ffb454";
+    private static final String C_FILTER_NEGATED = "#ff6b6b";
+    private static final String C_INSERT_BG = "#173d22";
+    private static final String C_INSERT_FG = "#d9ffe2";
+    private static final String C_DELETE_BG = "#4a2020";
+    private static final String C_DELETE_FG = "#ffd8d8";
+    private static final String C_SELECTION_BG = "#20405a";
+    private static final String REVIEW_SEPARATOR = "│";
 
     private record StatusRow(GitSection section, Object value) {
         boolean isHeader() {
@@ -73,15 +130,25 @@ final class GitStatusController {
     private GitConflictResolverState _resolverState;
     private List<GitHubRepository> _pullRepositories = List.of();
     private int _pullRepositorySelection;
+    private List<GitHubPullRequest> _allPullRequests = List.of();
     private List<GitHubPullRequest> _pullRequests = List.of();
     private int _pullRequestSelection;
-    private String _pullRequestFilter = "";
     private boolean _pullRequestFiltering;
+    private PullFilterField _pullFilterEditingField = PullFilterField.NAME;
+    private String _pullFilterName = "";
+    private String _pullFilterLabels = "";
+    private String _pullFilterAuthor = "";
+    private List<GitPullRequestSavedView> _pullSavedViews = List.of();
+    private String _pullActiveViewName;
+    private boolean _pullViewNameEditing;
+    private final StringBuilder _pullViewNameInput = new StringBuilder();
     private GitHubRepository _reviewRepository;
     private GitHubPullRequest _reviewPullRequest;
     private List<GitHubPullRequestFile> _reviewFiles = List.of();
+    private List<GitHubReviewComment> _reviewComments = List.of();
     private int _reviewFileSelection;
     private int _reviewScroll;
+    private ReviewMode _reviewMode = ReviewMode.UNIFIED;
 
     void syncToPath(Path path) {
         _currentPath = path;
@@ -114,17 +181,26 @@ final class GitStatusController {
     }
 
     List<String> render(int width, int height) {
+        return renderRich(width, height).stream()
+                .map(SwimPanelLine::text)
+                .toList();
+    }
+
+    List<SwimPanelLine> renderRich(int width, int height) {
+        if (_mode == Mode.PULL_REVIEW) {
+            return renderPullReviewRich(width, height);
+        }
         return switch (_mode) {
-        case STATUS -> renderStatus(height);
-        case ACTIONS -> renderActions(height);
-        case HISTORY -> renderHistory(height);
-        case REBASE -> renderRebase(height);
-        case DIFF -> renderDiff(height);
-        case COMMIT -> renderCommit(height);
-        case HUNK_EDIT -> renderHunkEdit(height);
-        case RESOLVER -> renderResolver(height);
-        case PULL_REQUESTS -> renderPullRequests(height);
-        case PULL_REVIEW -> renderPullReview(height);
+        case STATUS -> renderStatusRich(height);
+        case ACTIONS -> plainLines(renderActions(height));
+        case HISTORY -> renderHistoryRich(height);
+        case REBASE -> renderRebaseRich(height);
+        case DIFF -> plainLines(renderDiff(height));
+        case COMMIT -> plainLines(renderCommit(height));
+        case HUNK_EDIT -> plainLines(renderHunkEdit(height));
+        case RESOLVER -> plainLines(renderResolver(height));
+        case PULL_REQUESTS -> renderPullRequestsRich(height);
+        case PULL_REVIEW -> renderPullReviewRich(width, height);
         };
     }
 
@@ -170,6 +246,44 @@ final class GitStatusController {
         return lines;
     }
 
+    private List<SwimPanelLine> renderStatusRich(int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(SwimPanelLine.plain(title()));
+        if (!_snapshot.hasRepository()) {
+            lines.add(rich(span(" Open :git inside a repository-backed buffer. ", C_MUTED, C_PANEL)));
+            lines.add(rich(span(" " + GitKeyBindings.helpLine(GitKeyBindings.View.STATUS), C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
+            return lines;
+        }
+        var rows = statusRows();
+        StatusRow selected = rows.isEmpty() ? null : rows.get(Math.max(0, Math.min(_selection, rows.size() - 1)));
+        lines.add(statusBranchLine());
+        lines.add(rich(span(" " + statusHelp(selected), C_MUTED, C_ELEVATED)));
+        if (rows.isEmpty()) {
+            rows = List.of(new StatusRow(GitSection.UNSTAGED,
+                    new GitFileChange(GitSection.UNSTAGED, "(clean)", _snapshot.repositoryRoot(), " ")));
+        }
+        clampSelection(rows.size());
+        int bodyHeight = Math.max(0, height - 3);
+        adjustScroll(bodyHeight, rows.size());
+        for (int i = 0; i < bodyHeight; i++) {
+            int index = _scroll + i;
+            lines.add(index < rows.size() ? formatStatusRowRich(rows.get(index), index == _selection)
+                    : SwimPanelLine.plain(""));
+        }
+        return lines;
+    }
+
+    private SwimPanelLine statusBranchLine() {
+        String message = _message == null ? _snapshot.statusMessage() : _message;
+        String messageColor = _message == null && _snapshot.isClean() ? C_GREEN : _message == null ? C_GOLD : C_RED;
+        return rich(
+                span(" ", C_MUTED, C_PANEL),
+                span(_snapshot.branch(), C_ACCENT, C_PANEL),
+                span("  ", C_MUTED, C_PANEL),
+                span(message, messageColor, C_PANEL));
+    }
+
     private List<String> renderActions(int height) {
         var lines = new ArrayList<String>();
         lines.add(title());
@@ -199,6 +313,32 @@ final class GitStatusController {
         return lines;
     }
 
+    private List<SwimPanelLine> renderHistoryRich(int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(SwimPanelLine.plain(title()));
+        lines.add(rich(span(" " + GitKeyBindings.helpLine(GitKeyBindings.View.HISTORY), C_MUTED, C_ELEVATED)));
+        if (_historyEntries.isEmpty()) {
+            lines.add(rich(span(" No commits ", C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
+            return lines;
+        }
+        _historySelection = Math.max(0, Math.min(_historySelection, _historyEntries.size() - 1));
+        int bodyHeight = Math.max(0, height - 2);
+        adjustHistoryScroll(bodyHeight);
+        for (int i = 0; i < bodyHeight; i++) {
+            int index = _scroll + i;
+            if (index < _historyEntries.size()) {
+                boolean selected = index == _historySelection;
+                GitHistoryGraphEntry entry = _historyEntries.get(index);
+                lines.add(highlightedTokenLine(selected ? "> " : "  ", entry.displayLabel(), entry.shortId(),
+                        selected ? C_TEXT : C_MUTED, C_COMMIT_HASH, selected ? C_SELECTION_BG : C_PANEL));
+            } else {
+                lines.add(SwimPanelLine.plain(""));
+            }
+        }
+        return lines;
+    }
+
     private List<String> renderRebase(int height) {
         var lines = new ArrayList<String>();
         lines.add(title());
@@ -222,6 +362,41 @@ final class GitStatusController {
             lines.add(index < _rebaseEntries.size()
                     ? (index == _rebaseSelection ? "> " : "  ") + _rebaseEntries.get(index).displayLabel()
                     : "");
+        }
+        return lines;
+    }
+
+    private List<SwimPanelLine> renderRebaseRich(int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(SwimPanelLine.plain(title()));
+        String upstreamLabel = _rebaseUpstreamLabel == null ? "(none)" : _rebaseUpstreamLabel;
+        lines.add(highlightedTokenLine(" upstream ", upstreamLabel,
+                _rebaseUpstreamLabel == null ? "" : firstToken(upstreamLabel), C_MUTED,
+                C_COMMIT_HASH, C_PANEL));
+        lines.add(rich(span(" " + GitKeyBindings.helpLine(GitKeyBindings.View.REBASE), C_MUTED, C_ELEVATED)));
+        int bodyHeight = Math.max(0, height - 3);
+        if (_rebaseEntries.isEmpty()) {
+            lines.add(rich(span(" No commits to rebase ", C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
+            return lines;
+        }
+        _rebaseSelection = Math.max(0, Math.min(_rebaseSelection, _rebaseEntries.size() - 1));
+        if (_rebaseSelection < _scroll) {
+            _scroll = _rebaseSelection;
+        } else if (_rebaseSelection >= _scroll + bodyHeight) {
+            _scroll = _rebaseSelection - bodyHeight + 1;
+        }
+        _scroll = Math.max(0, Math.min(_scroll, Math.max(0, _rebaseEntries.size() - Math.max(1, bodyHeight))));
+        for (int i = 0; i < bodyHeight; i++) {
+            int index = _scroll + i;
+            if (index < _rebaseEntries.size()) {
+                boolean selected = index == _rebaseSelection;
+                GitRebaseEntry entry = _rebaseEntries.get(index);
+                lines.add(highlightedTokenLine(selected ? "> " : "  ", entry.displayLabel(), entry.shortId(),
+                        selected ? C_TEXT : C_MUTED, C_COMMIT_HASH, selected ? C_SELECTION_BG : C_PANEL));
+            } else {
+                lines.add(SwimPanelLine.plain(""));
+            }
         }
         return lines;
     }
@@ -299,12 +474,11 @@ final class GitStatusController {
         lines.add(title());
         lines.add(" " + GitKeyBindings.helpLine(GitKeyBindings.View.PULL_REQUESTS));
         lines.add(" repos: " + pullRepositoryListLabel());
-        if (_pullRequestFiltering) {
-            lines.add(" filter: " + _pullRequestFilter);
-        } else {
-            String remote = currentPullRepository() == null ? "no GitHub remote" : currentPullRepository().label();
-            lines.add(" repo: " + remote + (_pullRequestFilter.isBlank() ? "" : "  filter: " + _pullRequestFilter));
-        }
+        String remote = currentPullRepository() == null ? "no GitHub remote" : currentPullRepository().label();
+        lines.add(" repo: " + remote
+                + "  name: " + (_pullFilterName.isBlank() ? "(any)" : _pullFilterName)
+                + "  labels: " + (_pullFilterLabels.isBlank() ? "(any)" : _pullFilterLabels)
+                + "  author: " + (_pullFilterAuthor.isBlank() ? "(any)" : _pullFilterAuthor));
         int bodyHeight = Math.max(0, height - lines.size());
         if (_pullRepositories.isEmpty()) {
             lines.add(" No GitHub remotes found ");
@@ -328,33 +502,474 @@ final class GitStatusController {
         return lines;
     }
 
-    private List<String> renderPullReview(int height) {
-        var lines = new ArrayList<String>();
-        lines.add(title());
-        lines.add(" " + GitKeyBindings.helpLine(GitKeyBindings.View.PULL_REVIEW));
-        if (_reviewPullRequest == null) {
-            lines.add(" No pull request selected ");
-            appendBlankLines(lines, height);
+    private List<SwimPanelLine> renderPullRequestsRich(int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(SwimPanelLine.plain(title()));
+        lines.add(rich(span(" " + GitKeyBindings.helpLine(GitKeyBindings.View.PULL_REQUESTS), C_MUTED, C_ELEVATED)));
+        lines.add(pullRepositoryLine());
+        lines.add(pullFilterStatusLine());
+        lines.add(pullSavedViewLine());
+        int bodyHeight = Math.max(0, height - lines.size());
+        if (_pullRepositories.isEmpty()) {
+            lines.add(rich(span(" No GitHub remotes found ", C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
             return lines;
         }
-        lines.add(" " + _reviewRepository.slug() + "  #" + _reviewPullRequest.number() + " "
-                + _reviewPullRequest.title());
+        if (_pullRequests.isEmpty()) {
+            String message = _allPullRequests.isEmpty() ? " No pull requests " : " No pull requests match the filter ";
+            lines.add(rich(span(message, C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
+            return lines;
+        }
+        _pullRequestSelection = Math.max(0, Math.min(_pullRequestSelection, _pullRequests.size() - 1));
+        int start = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - bodyHeight)));
+        _scroll = start;
+        for (int i = 0; i < bodyHeight; i++) {
+            int index = start + i;
+            if (index < _pullRequests.size()) {
+                boolean selected = index == _pullRequestSelection;
+                GitHubPullRequest pullRequest = _pullRequests.get(index);
+                lines.add(pullRequestLine(selected ? "> " : "  ", pullRequest,
+                        selected ? C_TEXT : C_MUTED, selected ? C_SELECTION_BG : C_PANEL));
+            } else {
+                lines.add(SwimPanelLine.plain(""));
+            }
+        }
+        return lines;
+    }
+
+    private List<SwimPanelLine> renderPullReviewRich(int width, int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(SwimPanelLine.plain(title()));
+        if (height <= 1) {
+            return lines;
+        }
+        if (_reviewPullRequest == null) {
+            lines.add(rich(span(" No pull request selected ", C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
+            return lines;
+        }
         if (_reviewFiles.isEmpty()) {
-            lines.add(" No files ");
-            appendBlankLines(lines, height);
+            lines.add(rich(span(" No files changed ", C_MUTED, C_PANEL)));
+            appendBlankRichLines(lines, height);
             return lines;
         }
         _reviewFileSelection = Math.max(0, Math.min(_reviewFileSelection, _reviewFiles.size() - 1));
-        GitHubPullRequestFile file = _reviewFiles.get(_reviewFileSelection);
-        lines.add(" file " + (_reviewFileSelection + 1) + "/" + _reviewFiles.size() + "  " + file.displayLabel());
-        int bodyHeight = Math.max(0, height - 4);
-        int maxScroll = Math.max(0, file.patchLines().size() - bodyHeight);
-        _reviewScroll = Math.max(0, Math.min(_reviewScroll, maxScroll));
-        for (int i = 0; i < bodyHeight; i++) {
-            int index = _reviewScroll + i;
-            lines.add(index < file.patchLines().size() ? file.patchLines().get(index) : "");
+        int sidebarWidth = reviewSidebarWidth(width);
+        int bodyWidth = Math.max(0, width - sidebarWidth - 1);
+        int bodyRows = Math.max(0, height - 1);
+        List<SwimPanelLine> sidebar = reviewSidebar(sidebarWidth, bodyRows);
+        List<SwimPanelLine> body = reviewBody(bodyWidth, bodyRows);
+        for (int row = 0; row < bodyRows; row++) {
+            lines.add(joinReviewPanes(
+                    row < sidebar.size() ? sidebar.get(row) : paddedLine("", sidebarWidth, C_MUTED, C_PANEL),
+                    row < body.size() ? body.get(row) : paddedLine("", bodyWidth, C_MUTED, C_PANEL),
+                    sidebarWidth));
+        }
+        appendBlankRichLines(lines, height);
+        return lines;
+    }
+
+    private List<SwimPanelLine> reviewSidebar(int width, int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(paddedLine(" Files (" + _reviewFiles.size() + ") ", width, C_TEXT, C_ELEVATED));
+        int rows = Math.max(0, height - 1);
+        int start = Math.max(0, Math.min(_reviewFileSelection - Math.max(0, rows / 2),
+                Math.max(0, _reviewFiles.size() - rows)));
+        for (int row = 0; row < rows; row++) {
+            int index = start + row;
+            if (index >= _reviewFiles.size()) {
+                lines.add(paddedLine("", width, C_MUTED, C_PANEL));
+                continue;
+            }
+            GitHubPullRequestFile file = _reviewFiles.get(index);
+            boolean selected = index == _reviewFileSelection;
+            String label = (selected ? "> " : "  ") + file.path();
+            String stats = " +" + file.additions() + " -" + file.deletions();
+            String text = label + (width > 28 ? stats : "");
+            lines.add(paddedLine(text, width, selected ? C_TEXT : C_MUTED, selected ? C_SELECTION_BG : C_PANEL));
         }
         return lines;
+    }
+
+    private List<SwimPanelLine> reviewBody(int width, int height) {
+        var lines = new ArrayList<SwimPanelLine>();
+        GitHubPullRequestFile file = currentReviewFile();
+        lines.add(paddedLine(" " + GitKeyBindings.helpLine(GitKeyBindings.View.PULL_REVIEW)
+                + "  mode " + _reviewMode.label(), width, C_MUTED, C_ELEVATED));
+        lines.add(pullRequestReviewHeader(width));
+        lines.add(paddedLine(" " + (_reviewFileSelection + 1) + "/" + _reviewFiles.size() + "  "
+                + file.displayLabel() + "  comments " + commentsFor(file.path()).size(),
+                width, C_TEXT, C_PANEL));
+        int contentHeight = Math.max(0, height - lines.size());
+        List<SwimPanelLine> content = switch (_reviewMode) {
+        case SUMMARY -> reviewSummaryLines(width);
+        case UNIFIED -> reviewUnifiedLines(file, width);
+        case SPLIT -> reviewSplitLines(file, width);
+        case COMMENTS -> reviewCommentLines(file, width);
+        };
+        int maxScroll = Math.max(0, content.size() - contentHeight);
+        _reviewScroll = Math.max(0, Math.min(_reviewScroll, maxScroll));
+        for (int row = 0; row < contentHeight; row++) {
+            int index = _reviewScroll + row;
+            lines.add(index < content.size() ? content.get(index) : paddedLine("", width, C_MUTED, C_PANEL));
+        }
+        return lines;
+    }
+
+    private List<SwimPanelLine> reviewSummaryLines(int width) {
+        var lines = new ArrayList<SwimPanelLine>();
+        int additions = 0;
+        int deletions = 0;
+        for (GitHubPullRequestFile file : _reviewFiles) {
+            additions += file.additions();
+            deletions += file.deletions();
+        }
+        lines.add(paddedLine(" Summary", width, C_GOLD, C_PANEL));
+        lines.add(paddedLine(" Files changed: " + _reviewFiles.size(), width, C_TEXT, C_PANEL));
+        lines.add(paddedLine(" Insertions: +" + additions, width, C_INSERT_FG, C_INSERT_BG));
+        lines.add(paddedLine(" Deletions: -" + deletions, width, C_DELETE_FG, C_DELETE_BG));
+        lines.add(paddedLine(" Review comments: " + _reviewComments.size(), width, C_TEXT, C_PANEL));
+        lines.add(paddedLine("", width, C_MUTED, C_PANEL));
+        for (GitHubPullRequestFile file : _reviewFiles) {
+            lines.add(paddedLine(" " + file.displayLabel(), width, C_MUTED, C_PANEL));
+        }
+        return lines;
+    }
+
+    private List<SwimPanelLine> reviewUnifiedLines(GitHubPullRequestFile file, int width) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(paddedLine(" Unified diff", width, C_GOLD, C_PANEL));
+        for (String patchLine : file.patchLines()) {
+            lines.add(reviewPatchLine(patchLine, width));
+        }
+        appendReviewComments(lines, file, width);
+        return lines;
+    }
+
+    private List<SwimPanelLine> reviewSplitLines(GitHubPullRequestFile file, int width) {
+        var lines = new ArrayList<SwimPanelLine>();
+        int leftWidth = Math.max(8, (width - 3) / 2);
+        int rightWidth = Math.max(8, width - leftWidth - 3);
+        lines.add(paddedLine(" Split diff", width, C_GOLD, C_PANEL));
+        for (String patchLine : file.patchLines()) {
+            if (patchLine.startsWith("@@")) {
+                lines.add(paddedLine(" " + patchLine, width, C_GOLD, C_PANEL));
+            } else if (patchLine.startsWith("-") && !patchLine.startsWith("---")) {
+                lines.add(rich(
+                        span(padRight(fit(patchLine, leftWidth), leftWidth), C_DELETE_FG, C_DELETE_BG),
+                        span(" " + REVIEW_SEPARATOR + " ", C_SUBTLE, C_PANEL),
+                        span(padRight("", rightWidth), C_MUTED, C_PANEL)));
+            } else if (patchLine.startsWith("+") && !patchLine.startsWith("+++")) {
+                lines.add(rich(
+                        span(padRight("", leftWidth), C_MUTED, C_PANEL),
+                        span(" " + REVIEW_SEPARATOR + " ", C_SUBTLE, C_PANEL),
+                        span(padRight(fit(patchLine, rightWidth), rightWidth), C_INSERT_FG, C_INSERT_BG)));
+            } else {
+                String context = patchLine.startsWith(" ") ? patchLine.substring(1) : patchLine;
+                lines.add(rich(
+                        span(padRight(fit(" " + context, leftWidth), leftWidth), C_MUTED, C_PANEL),
+                        span(" " + REVIEW_SEPARATOR + " ", C_SUBTLE, C_PANEL),
+                        span(padRight(fit(" " + context, rightWidth), rightWidth), C_MUTED, C_PANEL)));
+            }
+        }
+        appendReviewComments(lines, file, width);
+        return lines;
+    }
+
+    private List<SwimPanelLine> reviewCommentLines(GitHubPullRequestFile file, int width) {
+        var lines = new ArrayList<SwimPanelLine>();
+        lines.add(paddedLine(" Comments", width, C_GOLD, C_PANEL));
+        List<GitHubReviewComment> comments = commentsFor(file.path());
+        if (comments.isEmpty() && issueComments().isEmpty()) {
+            lines.add(paddedLine(" No review comments for this file", width, C_MUTED, C_PANEL));
+            return lines;
+        }
+        for (GitHubReviewComment comment : comments) {
+            appendComment(lines, comment, width);
+        }
+        for (GitHubReviewComment comment : issueComments()) {
+            appendComment(lines, comment, width);
+        }
+        return lines;
+    }
+
+    private SwimPanelLine reviewPatchLine(String patchLine, int width) {
+        if (patchLine.startsWith("@@")) {
+            return paddedLine(" " + patchLine, width, C_GOLD, C_PANEL);
+        }
+        if (patchLine.startsWith("+") && !patchLine.startsWith("+++")) {
+            return paddedLine(patchLine, width, C_INSERT_FG, C_INSERT_BG);
+        }
+        if (patchLine.startsWith("-") && !patchLine.startsWith("---")) {
+            return paddedLine(patchLine, width, C_DELETE_FG, C_DELETE_BG);
+        }
+        if (patchLine.startsWith("+++") || patchLine.startsWith("---")) {
+            return paddedLine(patchLine, width, C_ACCENT, C_PANEL);
+        }
+        return paddedLine(patchLine, width, C_MUTED, C_PANEL);
+    }
+
+    private void appendReviewComments(List<SwimPanelLine> lines, GitHubPullRequestFile file, int width) {
+        List<GitHubReviewComment> comments = commentsFor(file.path());
+        if (comments.isEmpty()) {
+            return;
+        }
+        lines.add(paddedLine("", width, C_MUTED, C_PANEL));
+        lines.add(paddedLine(" Review comments", width, C_GOLD, C_PANEL));
+        for (GitHubReviewComment comment : comments) {
+            appendComment(lines, comment, width);
+        }
+    }
+
+    private void appendComment(List<SwimPanelLine> lines, GitHubReviewComment comment, int width) {
+        lines.add(paddedLine(" @" + comment.author() + "  " + comment.locationLabel()
+                + (comment.createdAt().isBlank() ? "" : "  " + comment.createdAt()), width, C_ACCENT, C_ELEVATED));
+        if (!comment.diffHunk().isBlank()) {
+            for (String line : comment.diffHunk().split("\\R")) {
+                lines.add(reviewPatchLine("   " + line, width));
+            }
+        }
+        String body = comment.body().isBlank() ? "(empty comment)" : comment.body();
+        for (String line : body.split("\\R")) {
+            lines.add(paddedLine("   " + line, width, C_TEXT, C_PANEL));
+        }
+    }
+
+    private List<GitHubReviewComment> commentsFor(String path) {
+        if (path == null || path.isBlank()) {
+            return List.of();
+        }
+        return _reviewComments.stream()
+                .filter(comment -> !comment.issueComment())
+                .filter(comment -> path.equals(comment.path()))
+                .toList();
+    }
+
+    private List<GitHubReviewComment> issueComments() {
+        return _reviewComments.stream()
+                .filter(GitHubReviewComment::issueComment)
+                .toList();
+    }
+
+    private GitHubPullRequestFile currentReviewFile() {
+        return _reviewFiles.get(Math.max(0, Math.min(_reviewFileSelection, _reviewFiles.size() - 1)));
+    }
+
+    private static int reviewSidebarWidth(int width) {
+        if (width < 60) {
+            return Math.max(16, width / 3);
+        }
+        return Math.max(24, Math.min(44, width / 3));
+    }
+
+    private static List<SwimPanelLine> plainLines(List<String> lines) {
+        return lines.stream()
+                .map(SwimPanelLine::plain)
+                .toList();
+    }
+
+    private static SwimPanelLine joinReviewPanes(SwimPanelLine left, SwimPanelLine right, int leftWidth) {
+        var spans = new ArrayList<SwimTextSpan>();
+        spans.addAll(left.spans());
+        if (left.text().length() < leftWidth) {
+            spans.add(span(" ".repeat(leftWidth - left.text().length()), C_MUTED, C_PANEL));
+        }
+        spans.add(span(REVIEW_SEPARATOR, C_SUBTLE, C_ELEVATED));
+        spans.addAll(right.spans());
+        return new SwimPanelLine(spans);
+    }
+
+    private static SwimPanelLine paddedLine(String text, int width, String foreground, String background) {
+        return rich(span(padRight(fit(text, width), width), foreground, background));
+    }
+
+    private static SwimPanelLine paddedRichLine(int width, String padForeground, String padBackground,
+            SwimTextSpan... spans) {
+        if (width <= 0) {
+            return SwimPanelLine.plain("");
+        }
+        var fitted = new ArrayList<SwimTextSpan>();
+        int remaining = width;
+        for (SwimTextSpan span : spans) {
+            if (remaining <= 0) {
+                break;
+            }
+            String text = span.text();
+            if (text.length() > remaining) {
+                text = fit(text, remaining);
+            }
+            if (!text.isEmpty()) {
+                fitted.add(SwimTextSpan.styled(text, span.foreground(), span.background()));
+            }
+            remaining -= text.length();
+        }
+        if (remaining > 0) {
+            fitted.add(span(" ".repeat(remaining), padForeground, padBackground));
+        }
+        return new SwimPanelLine(fitted);
+    }
+
+    private static SwimPanelLine rich(SwimTextSpan... spans) {
+        return SwimPanelLine.of(spans);
+    }
+
+    private static SwimTextSpan span(String text, String foreground, String background) {
+        return SwimTextSpan.styled(text, foreground, background);
+    }
+
+    private static String fit(String text, int width) {
+        if (width <= 0) {
+            return "";
+        }
+        if (text == null) {
+            return "";
+        }
+        if (text.length() <= width) {
+            return text;
+        }
+        if (width == 1) {
+            return ".";
+        }
+        return text.substring(0, width - 1) + ".";
+    }
+
+    private static String padRight(String text, int width) {
+        String fitted = fit(text, width);
+        return fitted + " ".repeat(Math.max(0, width - fitted.length()));
+    }
+
+    private static SwimPanelLine highlightedTokenLine(String prefix, String label, String token, String foreground,
+            String highlight, String background) {
+        var spans = new ArrayList<SwimTextSpan>();
+        if (!prefix.isEmpty()) {
+            spans.add(span(prefix, C_MUTED, background));
+        }
+        int index = token == null || token.isBlank() ? -1 : label.indexOf(token);
+        if (index < 0) {
+            spans.add(span(label, foreground, background));
+            return new SwimPanelLine(spans);
+        }
+        if (index > 0) {
+            spans.add(span(label.substring(0, index), foreground, background));
+        }
+        spans.add(span(token, highlight, background));
+        if (index + token.length() < label.length()) {
+            spans.add(span(label.substring(index + token.length()), foreground, background));
+        }
+        return new SwimPanelLine(spans);
+    }
+
+    private SwimPanelLine pullRepositoryLine() {
+        var spans = new ArrayList<SwimTextSpan>();
+        spans.add(span(" repos: ", C_FILTER_FIELD, C_PANEL));
+        if (_pullRepositories.isEmpty()) {
+            spans.add(span("none", C_MUTED, C_PANEL));
+            return new SwimPanelLine(spans);
+        }
+        for (int i = 0; i < _pullRepositories.size(); i++) {
+            if (i > 0) {
+                spans.add(span("  ", C_MUTED, C_PANEL));
+            }
+            String label = _pullRepositories.get(i).label();
+            boolean selected = i == _pullRepositorySelection;
+            spans.add(span(selected ? "[" + label + "]" : label, selected ? C_ACCENT : C_MUTED, C_PANEL));
+        }
+        return new SwimPanelLine(spans);
+    }
+
+    private SwimPanelLine pullFilterStatusLine() {
+        var spans = new ArrayList<SwimTextSpan>();
+        if (_pullViewNameEditing) {
+            spans.add(span(" save view as: ", C_FILTER_FIELD, C_ELEVATED));
+            spans.add(span(_pullViewNameInput.toString(), C_TEXT, C_ELEVATED));
+            spans.add(span("  Enter save  Esc cancel", C_MUTED, C_ELEVATED));
+            return new SwimPanelLine(spans);
+        }
+        if (_pullActiveViewName != null) {
+            spans.add(span("[" + _pullActiveViewName + "] ", C_ACCENT,
+                    _pullRequestFiltering ? C_ELEVATED : C_PANEL));
+        }
+        appendFilterFieldSpans(spans, PullFilterField.NAME, _pullFilterName, C_TEXT);
+        spans.add(span("  ", C_MUTED, C_PANEL));
+        appendFilterFieldSpans(spans, PullFilterField.LABELS, _pullFilterLabels, C_LABEL);
+        spans.add(span("  ", C_MUTED, C_PANEL));
+        appendFilterFieldSpans(spans, PullFilterField.AUTHOR, _pullFilterAuthor, C_PURPLE);
+        return new SwimPanelLine(spans);
+    }
+
+    private SwimPanelLine pullSavedViewLine() {
+        var spans = new ArrayList<SwimTextSpan>();
+        spans.add(span(" views: ", C_FILTER_FIELD, C_PANEL));
+        if (_pullSavedViews.isEmpty()) {
+            spans.add(span("none", C_MUTED, C_PANEL));
+            return new SwimPanelLine(spans);
+        }
+        for (int i = 0; i < _pullSavedViews.size(); i++) {
+            if (i > 0) {
+                spans.add(span("  ", C_MUTED, C_PANEL));
+            }
+            GitPullRequestSavedView view = _pullSavedViews.get(i);
+            boolean selected = view.name().equals(_pullActiveViewName);
+            spans.add(span(selected ? "[" + view.displayLabel() + "]" : view.displayLabel(),
+                    selected ? C_ACCENT : C_MUTED, selected ? C_SELECTION_BG : C_PANEL));
+        }
+        return new SwimPanelLine(spans);
+    }
+
+    private void appendFilterFieldSpans(List<SwimTextSpan> spans, PullFilterField field, String value,
+            String valueColor) {
+        boolean editing = _pullRequestFiltering && _pullFilterEditingField == field;
+        String background = editing ? C_ELEVATED : C_PANEL;
+        spans.add(span(field.label() + (editing ? "*: " : ": "), C_FILTER_FIELD, background));
+        spans.add(span(value.isBlank() ? "(any)" : value, value.isBlank() ? C_MUTED : valueColor, background));
+    }
+
+    private static SwimPanelLine pullRequestLine(String prefix, GitHubPullRequest pullRequest, String foreground,
+            String background) {
+        var spans = new ArrayList<SwimTextSpan>();
+        spans.add(span(prefix, C_MUTED, background));
+        spans.add(span("#" + pullRequest.number(), C_PULL_REQUEST_NUMBER, background));
+        spans.add(span(" " + pullRequest.title(), foreground, background));
+        spans.add(span("  ", C_MUTED, background));
+        spans.add(span(pullRequest.headRef(), C_ACCENT, background));
+        spans.add(span(" -> ", C_MUTED, background));
+        spans.add(span(pullRequest.baseRef(), C_ACCENT, background));
+        spans.add(span("  @", C_MUTED, background));
+        spans.add(span(pullRequest.author(), C_PURPLE, background));
+        if (!pullRequest.labels().isEmpty()) {
+            spans.add(span("  ", C_MUTED, background));
+            for (int i = 0; i < pullRequest.labels().size(); i++) {
+                if (i > 0) {
+                    spans.add(span(" ", C_MUTED, background));
+                }
+                spans.add(span("[" + pullRequest.labels().get(i) + "]", C_LABEL, background));
+            }
+        }
+        return new SwimPanelLine(spans);
+    }
+
+    private SwimPanelLine pullRequestReviewHeader(int width) {
+        String prefix = " " + _reviewRepository.slug() + "  ";
+        String number = "#" + _reviewPullRequest.number();
+        return paddedRichLine(width, C_TEXT, C_PANEL,
+                span(prefix, C_TEXT, C_PANEL),
+                span(number, C_PULL_REQUEST_NUMBER, C_PANEL),
+                span(" " + _reviewPullRequest.title(), C_TEXT, C_PANEL));
+    }
+
+    private static String firstToken(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        int space = value.indexOf(' ');
+        return space < 0 ? value : value.substring(0, space);
+    }
+
+    private static void appendBlankRichLines(List<SwimPanelLine> lines, int height) {
+        while (lines.size() < Math.max(1, height)) {
+            lines.add(SwimPanelLine.plain(""));
+        }
     }
 
     private SwimPanelResult handleStatusInput(String input) {
@@ -657,6 +1272,9 @@ final class GitStatusController {
     }
 
     private SwimPanelResult handlePullRequestsInput(String input) {
+        if (_pullViewNameEditing) {
+            return handlePullViewNameInput(input);
+        }
         if (_pullRequestFiltering) {
             return handlePullRequestFilterInput(input);
         }
@@ -682,16 +1300,31 @@ final class GitStatusController {
             yield refreshPullRequests();
         }
         case "/" -> {
-            _pullRequestFiltering = true;
+            beginPullFilterEdit(PullFilterField.NAME);
+            yield SwimPanelResult.success();
+        }
+        case "L" -> {
+            beginPullFilterEdit(PullFilterField.LABELS);
+            yield SwimPanelResult.success();
+        }
+        case "A" -> {
+            beginPullFilterEdit(PullFilterField.AUTHOR);
             yield SwimPanelResult.success();
         }
         case "backspace" -> {
-            if (!_pullRequestFilter.isEmpty()) {
-                _pullRequestFilter = _pullRequestFilter.substring(0, _pullRequestFilter.length() - 1);
-                yield refreshPullRequests();
+            String value = pullFilterValue(_pullFilterEditingField);
+            if (!value.isEmpty()) {
+                setPullFilterValue(_pullFilterEditingField, value.substring(0, value.length() - 1));
+                _pullActiveViewName = null;
+                applyPullRequestFilter();
             }
             yield SwimPanelResult.success();
         }
+        case "S" -> beginSavePullView();
+        case "[" -> applyAdjacentPullView(-1);
+        case "]" -> applyAdjacentPullView(1);
+        case "0" -> clearPullView();
+        case "D" -> deleteActivePullView();
         case "r" -> refreshPullRequests();
         case "f" -> fetchSelectedPullRequest();
         case "enter" -> openPullReview();
@@ -702,25 +1335,59 @@ final class GitStatusController {
     private SwimPanelResult handlePullRequestFilterInput(String input) {
         if ("enter".equals(input)) {
             _pullRequestFiltering = false;
-            return refreshPullRequests();
+            syncActivePullViewName();
+            return SwimPanelResult.success();
         }
         if ("backspace".equals(input)) {
-            if (!_pullRequestFilter.isEmpty()) {
-                _pullRequestFilter = _pullRequestFilter.substring(0, _pullRequestFilter.length() - 1);
+            String value = pullFilterValue(_pullFilterEditingField);
+            if (!value.isEmpty()) {
+                setPullFilterValue(_pullFilterEditingField, value.substring(0, value.length() - 1));
+                _pullActiveViewName = null;
             }
-            return refreshPullRequests();
+            applyPullRequestFilter();
+            return SwimPanelResult.success();
         }
         if (isCloseInput(input)) {
             _pullRequestFiltering = false;
             return SwimPanelResult.success();
         }
         if ("space".equals(input)) {
-            _pullRequestFilter += " ";
-            return refreshPullRequests();
+            setPullFilterValue(_pullFilterEditingField, pullFilterValue(_pullFilterEditingField) + " ");
+            _pullActiveViewName = null;
+            applyPullRequestFilter();
+            return SwimPanelResult.success();
         }
         if (input.length() == 1) {
-            _pullRequestFilter += input;
-            return refreshPullRequests();
+            setPullFilterValue(_pullFilterEditingField, pullFilterValue(_pullFilterEditingField) + input);
+            _pullActiveViewName = null;
+            applyPullRequestFilter();
+            return SwimPanelResult.success();
+        }
+        return SwimPanelResult.ignored();
+    }
+
+    private SwimPanelResult handlePullViewNameInput(String input) {
+        if ("enter".equals(input)) {
+            return savePullView();
+        }
+        if ("backspace".equals(input)) {
+            if (!_pullViewNameInput.isEmpty()) {
+                _pullViewNameInput.deleteCharAt(_pullViewNameInput.length() - 1);
+            }
+            return SwimPanelResult.success();
+        }
+        if (isCloseInput(input)) {
+            _pullViewNameEditing = false;
+            _pullViewNameInput.setLength(0);
+            return SwimPanelResult.success();
+        }
+        if ("space".equals(input)) {
+            _pullViewNameInput.append(' ');
+            return SwimPanelResult.success();
+        }
+        if (input.length() == 1) {
+            _pullViewNameInput.append(input);
+            return SwimPanelResult.success();
         }
         return SwimPanelResult.ignored();
     }
@@ -733,13 +1400,19 @@ final class GitStatusController {
         }
         return switch (input) {
         case "j" -> {
-            _reviewFileSelection = Math.min(Math.max(0, _reviewFiles.size() - 1), _reviewFileSelection + 1);
-            _reviewScroll = 0;
+            moveReviewFile(1);
             yield SwimPanelResult.success();
         }
         case "k" -> {
-            _reviewFileSelection = Math.max(0, _reviewFileSelection - 1);
-            _reviewScroll = 0;
+            moveReviewFile(-1);
+            yield SwimPanelResult.success();
+        }
+        case "n" -> {
+            moveReviewHunk(1);
+            yield SwimPanelResult.success();
+        }
+        case "p" -> {
+            moveReviewHunk(-1);
             yield SwimPanelResult.success();
         }
         case "down" -> {
@@ -750,11 +1423,79 @@ final class GitStatusController {
             _reviewScroll = Math.max(0, _reviewScroll - 1);
             yield SwimPanelResult.success();
         }
+        case "m" -> {
+            cycleReviewMode();
+            yield SwimPanelResult.success();
+        }
+        case "1" -> {
+            setReviewMode(ReviewMode.SUMMARY);
+            yield SwimPanelResult.success();
+        }
+        case "2" -> {
+            setReviewMode(ReviewMode.UNIFIED);
+            yield SwimPanelResult.success();
+        }
+        case "3" -> {
+            setReviewMode(ReviewMode.SPLIT);
+            yield SwimPanelResult.success();
+        }
+        case "4" -> {
+            setReviewMode(ReviewMode.COMMENTS);
+            yield SwimPanelResult.success();
+        }
         case "r" -> openPullReview();
         case "f" -> fetchReviewPullRequest();
-        case "enter" -> openReviewFile();
+        case "enter", "o" -> openReviewFile();
         default -> SwimPanelResult.ignored();
         };
+    }
+
+    private void moveReviewFile(int delta) {
+        if (_reviewFiles.isEmpty()) {
+            _reviewFileSelection = 0;
+            _reviewScroll = 0;
+            return;
+        }
+        _reviewFileSelection = Math.max(0, Math.min(_reviewFileSelection + delta, _reviewFiles.size() - 1));
+        _reviewScroll = 0;
+    }
+
+    private void cycleReviewMode() {
+        ReviewMode[] modes = ReviewMode.values();
+        setReviewMode(modes[(_reviewMode.ordinal() + 1) % modes.length]);
+    }
+
+    private void setReviewMode(ReviewMode mode) {
+        _reviewMode = mode;
+        _reviewScroll = 0;
+    }
+
+    private void moveReviewHunk(int delta) {
+        if (_reviewFiles.isEmpty()) {
+            return;
+        }
+        List<Integer> hunkRows = reviewHunkRows(currentReviewFile());
+        if (hunkRows.isEmpty()) {
+            return;
+        }
+        int selected = 0;
+        for (int i = 0; i < hunkRows.size(); i++) {
+            if (hunkRows.get(i) <= _reviewScroll) {
+                selected = i;
+            }
+        }
+        int next = Math.floorMod(selected + delta, hunkRows.size());
+        _reviewScroll = hunkRows.get(next);
+    }
+
+    private static List<Integer> reviewHunkRows(GitHubPullRequestFile file) {
+        var rows = new ArrayList<Integer>();
+        for (int i = 0; i < file.patchLines().size(); i++) {
+            if (file.patchLines().get(i).startsWith("@@")) {
+                rows.add(i + 1);
+            }
+        }
+        return rows;
     }
 
     private SwimPanelResult refreshResult() {
@@ -812,6 +1553,56 @@ final class GitStatusController {
             return prefix + row.reflogEntry().displayLabel();
         }
         return prefix;
+    }
+
+    private SwimPanelLine formatStatusRowRich(StatusRow row, boolean selected) {
+        String background = selected ? C_SELECTION_BG : C_PANEL;
+        String prefix = selected ? "> " : "  ";
+        if (row.isHeader()) {
+            int count = sectionCount(row.section());
+            String folded = _collapsed.contains(row.section()) ? ">" : "v";
+            return rich(
+                    span(prefix, C_MUTED, background),
+                    span(folded + " ", C_SUBTLE, background),
+                    span(row.section().title(), sectionColor(row.section()), background),
+                    span(" (" + count + ")", C_MUTED, background));
+        }
+        if (row.fileChange() != null) {
+            GitFileChange change = row.fileChange();
+            return rich(
+                    span(prefix, C_MUTED, background),
+                    span(change.statusCode(), sectionColor(change.section()), background),
+                    span(" ", C_MUTED, background),
+                    span(change.relativePath(), selected ? C_TEXT : C_MUTED, background));
+        }
+        if (row.stashEntry() != null) {
+            return rich(
+                    span(prefix, C_MUTED, background),
+                    span(row.stashEntry().displayLabel(), C_PURPLE, background));
+        }
+        if (row.commitEntry() != null) {
+            GitCommitEntry entry = row.commitEntry();
+            return highlightedTokenLine(prefix, entry.displayLabel(), entry.shortId(),
+                    selected ? C_TEXT : C_MUTED, C_COMMIT_HASH, background);
+        }
+        if (row.reflogEntry() != null) {
+            GitReflogEntryView entry = row.reflogEntry();
+            return highlightedTokenLine(prefix, entry.displayLabel(), entry.shortId(),
+                    selected ? C_TEXT : C_SUBTLE, C_COMMIT_HASH, background);
+        }
+        return rich(span(prefix, C_MUTED, background));
+    }
+
+    private static String sectionColor(GitSection section) {
+        return switch (section) {
+        case STAGED -> C_GREEN;
+        case UNSTAGED -> C_GOLD;
+        case UNTRACKED -> C_ACCENT;
+        case CONFLICTS -> C_RED;
+        case STASHES -> C_PURPLE;
+        case COMMITS -> C_TEXT;
+        case REFLOG -> C_SUBTLE;
+        };
     }
 
     private int sectionCount(GitSection section) {
@@ -1010,6 +1801,8 @@ final class GitStatusController {
         }
         try {
             _pullRepositories = GitHubPullRequestService.repositories(_snapshot.repositoryRoot());
+            _pullSavedViews = GitProjectSwimConfig.loadPullRequestViews(_snapshot.repositoryRoot());
+            syncActivePullViewName();
             _pullRepositorySelection = Math.max(0, Math.min(_pullRepositorySelection,
                     Math.max(0, _pullRepositories.size() - 1)));
             _pullRequestSelection = 0;
@@ -1024,20 +1817,185 @@ final class GitStatusController {
     private SwimPanelResult refreshPullRequests() {
         GitHubRepository repository = currentPullRepository();
         if (repository == null) {
+            _allPullRequests = List.of();
             _pullRequests = List.of();
             return SwimPanelResult.successMessage("No GitHub remotes found");
         }
         try {
-            _pullRequests = GitHubPullRequestService.listPullRequests(repository, _pullRequestFilter);
-            _pullRequestSelection = Math.max(0, Math.min(_pullRequestSelection, Math.max(0, _pullRequests.size() - 1)));
+            _allPullRequests = GitHubPullRequestService.listPullRequests(repository);
+            applyPullRequestFilter();
             return SwimPanelResult.success();
         } catch (IOException e) {
+            _allPullRequests = List.of();
             _pullRequests = List.of();
             return SwimPanelResult.successMessage(e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            _allPullRequests = List.of();
             _pullRequests = List.of();
             return SwimPanelResult.successMessage("GitHub request interrupted");
+        }
+    }
+
+    private void applyPullRequestFilter() {
+        _pullRequests = GitHubPullRequestService.filterPullRequests(_allPullRequests, currentPullFilters());
+        _pullRequestSelection = Math.max(0, Math.min(_pullRequestSelection, Math.max(0, _pullRequests.size() - 1)));
+        _scroll = Math.max(0, Math.min(_scroll, Math.max(0, _pullRequests.size() - 1)));
+    }
+
+    private GitPullRequestFilters currentPullFilters() {
+        return new GitPullRequestFilters(_pullFilterName, _pullFilterLabels, _pullFilterAuthor);
+    }
+
+    private void setCurrentPullFilters(GitPullRequestFilters filters) {
+        GitPullRequestFilters value = filters == null ? GitPullRequestFilters.empty() : filters;
+        _pullFilterName = value.name();
+        _pullFilterLabels = value.labels();
+        _pullFilterAuthor = value.author();
+    }
+
+    private void beginPullFilterEdit(PullFilterField field) {
+        _pullFilterEditingField = field;
+        _pullRequestFiltering = true;
+    }
+
+    private String pullFilterValue(PullFilterField field) {
+        return switch (field) {
+        case NAME -> _pullFilterName;
+        case LABELS -> _pullFilterLabels;
+        case AUTHOR -> _pullFilterAuthor;
+        };
+    }
+
+    private void setPullFilterValue(PullFilterField field, String value) {
+        switch (field) {
+        case NAME -> _pullFilterName = value == null ? "" : value;
+        case LABELS -> _pullFilterLabels = value == null ? "" : value;
+        case AUTHOR -> _pullFilterAuthor = value == null ? "" : value;
+        }
+    }
+
+    private SwimPanelResult beginSavePullView() {
+        if (currentPullRepository() == null) {
+            return SwimPanelResult.successMessage("Select a GitHub remote before saving a PR view");
+        }
+        _pullViewNameInput.setLength(0);
+        if (_pullActiveViewName != null) {
+            _pullViewNameInput.append(_pullActiveViewName);
+        }
+        _pullViewNameEditing = true;
+        return SwimPanelResult.success();
+    }
+
+    private SwimPanelResult savePullView() {
+        String name = _pullViewNameInput.toString().strip();
+        if (name.isBlank()) {
+            return SwimPanelResult.successMessage("View name cannot be empty");
+        }
+        GitHubRepository repository = currentPullRepository();
+        if (repository == null) {
+            return SwimPanelResult.successMessage("Select a GitHub remote before saving a PR view");
+        }
+        var views = new ArrayList<GitPullRequestSavedView>();
+        boolean replaced = false;
+        GitPullRequestSavedView next = new GitPullRequestSavedView(name, repository.remoteName(), currentPullFilters());
+        for (GitPullRequestSavedView view : _pullSavedViews) {
+            if (view.name().equals(name)) {
+                views.add(next);
+                replaced = true;
+            } else {
+                views.add(view);
+            }
+        }
+        if (!replaced) {
+            views.add(next);
+        }
+        try {
+            GitProjectSwimConfig.savePullRequestViews(_snapshot.repositoryRoot(), views);
+            _pullSavedViews = List.copyOf(views);
+            _pullActiveViewName = name;
+            _pullViewNameEditing = false;
+            _pullViewNameInput.setLength(0);
+            return SwimPanelResult.successMessage("Saved PR view " + next.displayLabel());
+        } catch (IOException e) {
+            return SwimPanelResult.successMessage("Could not save PR view: " + e.getMessage());
+        }
+    }
+
+    private SwimPanelResult applyAdjacentPullView(int delta) {
+        if (_pullSavedViews.isEmpty()) {
+            return SwimPanelResult.successMessage("No saved PR views");
+        }
+        int index = activePullViewIndex();
+        int next = index < 0 ? (delta >= 0 ? 0 : _pullSavedViews.size() - 1)
+                : Math.floorMod(index + delta, _pullSavedViews.size());
+        GitPullRequestSavedView view = _pullSavedViews.get(next);
+        if (view.pinsRemote() && !hasPullRepositoryRemoteName(view.remoteName())) {
+            return SwimPanelResult.successMessage("Saved PR view remote not available: " + view.remoteName());
+        }
+        boolean switchedRemote = view.pinsRemote() && selectPullRepositoryByRemoteName(view.remoteName());
+        setCurrentPullFilters(view.filters());
+        _pullActiveViewName = view.name();
+        _pullRequestFiltering = false;
+        if (switchedRemote) {
+            SwimPanelResult result = refreshPullRequests();
+            if (result.message() != null && !result.message().isBlank()) {
+                return result;
+            }
+        } else {
+            applyPullRequestFilter();
+        }
+        return SwimPanelResult.successMessage("Applied PR view " + view.displayLabel());
+    }
+
+    private SwimPanelResult clearPullView() {
+        setCurrentPullFilters(GitPullRequestFilters.empty());
+        _pullActiveViewName = null;
+        _pullRequestFiltering = false;
+        applyPullRequestFilter();
+        return SwimPanelResult.successMessage("Cleared PR view");
+    }
+
+    private SwimPanelResult deleteActivePullView() {
+        if (_pullActiveViewName == null) {
+            syncActivePullViewName();
+        }
+        if (_pullActiveViewName == null) {
+            return SwimPanelResult.successMessage("No active saved PR view");
+        }
+        String deleted = _pullActiveViewName;
+        List<GitPullRequestSavedView> views = _pullSavedViews.stream()
+                .filter(filter -> !filter.name().equals(deleted))
+                .toList();
+        try {
+            GitProjectSwimConfig.savePullRequestViews(_snapshot.repositoryRoot(), views);
+            _pullSavedViews = List.copyOf(views);
+            _pullActiveViewName = null;
+            return SwimPanelResult.successMessage("Deleted PR view " + deleted);
+        } catch (IOException e) {
+            return SwimPanelResult.successMessage("Could not delete PR view: " + e.getMessage());
+        }
+    }
+
+    private int activePullViewIndex() {
+        for (int i = 0; i < _pullSavedViews.size(); i++) {
+            if (_pullSavedViews.get(i).name().equals(_pullActiveViewName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void syncActivePullViewName() {
+        _pullActiveViewName = null;
+        GitPullRequestFilters filters = currentPullFilters();
+        GitHubRepository repository = currentPullRepository();
+        String remoteName = repository == null ? "" : repository.remoteName();
+        for (GitPullRequestSavedView view : _pullSavedViews) {
+            if (view.filters().equals(filters) && (!view.pinsRemote() || view.remoteName().equals(remoteName))) {
+                _pullActiveViewName = view.name();
+                return;
+            }
         }
     }
 
@@ -1047,8 +2005,39 @@ final class GitStatusController {
             return;
         }
         _pullRepositorySelection = Math.floorMod(_pullRepositorySelection + delta, _pullRepositories.size());
+        _pullActiveViewName = null;
+        _allPullRequests = List.of();
+        _pullRequests = List.of();
         _pullRequestSelection = 0;
         _scroll = 0;
+    }
+
+    private boolean selectPullRepositoryByRemoteName(String remoteName) {
+        if (remoteName == null || remoteName.isBlank()) {
+            return false;
+        }
+        for (int i = 0; i < _pullRepositories.size(); i++) {
+            if (remoteName.equals(_pullRepositories.get(i).remoteName())) {
+                if (i == _pullRepositorySelection) {
+                    return false;
+                }
+                _pullRepositorySelection = i;
+                _allPullRequests = List.of();
+                _pullRequests = List.of();
+                _pullRequestSelection = 0;
+                _scroll = 0;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasPullRepositoryRemoteName(String remoteName) {
+        if (remoteName == null || remoteName.isBlank()) {
+            return true;
+        }
+        return _pullRepositories.stream()
+                .anyMatch(repository -> remoteName.equals(repository.remoteName()));
     }
 
     private String pullRepositoryListLabel() {
@@ -1070,7 +2059,8 @@ final class GitStatusController {
         }
         try {
             return SwimPanelResult.successMessage(
-                    GitHubPullRequestService.fetch(_snapshot.repositoryRoot(), currentPullRepository(), pullRequest));
+                    GitHubPullRequestService.fetch(_snapshot.repositoryRoot(), currentPullRepository(), pullRequest)
+                            + ". Press Enter to review.");
         } catch (IOException | GitAPIException e) {
             return SwimPanelResult.successMessage(e.getMessage());
         }
@@ -1094,14 +2084,27 @@ final class GitStatusController {
         if (pullRequest == null || repository == null) {
             return SwimPanelResult.ignored();
         }
+        ReviewMode mode = _mode == Mode.PULL_REVIEW ? _reviewMode : ReviewMode.UNIFIED;
         try {
             _reviewRepository = repository;
             _reviewPullRequest = pullRequest;
             _reviewFiles = GitHubPullRequestService.files(repository, pullRequest);
+            String commentsMessage = null;
+            try {
+                _reviewComments = GitHubPullRequestService.reviewComments(repository, pullRequest);
+            } catch (IOException e) {
+                _reviewComments = List.of();
+                commentsMessage = "Review comments unavailable: " + e.getMessage();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                _reviewComments = List.of();
+                commentsMessage = "Review comments unavailable: GitHub request interrupted";
+            }
             _reviewFileSelection = 0;
             _reviewScroll = 0;
+            _reviewMode = mode;
             _mode = Mode.PULL_REVIEW;
-            return SwimPanelResult.success();
+            return commentsMessage == null ? SwimPanelResult.success() : SwimPanelResult.successMessage(commentsMessage);
         } catch (IOException e) {
             return SwimPanelResult.successMessage(e.getMessage());
         } catch (InterruptedException e) {

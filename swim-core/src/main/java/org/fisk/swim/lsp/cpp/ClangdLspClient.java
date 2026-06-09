@@ -110,10 +110,6 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     static final TextColor SEMANTIC_READONLY = TextColor.Factory.fromString("#ffcf66");
     static final TextColor SEMANTIC_MACRO = TextColor.Factory.fromString("#f7a94b");
 
-    private static final Pattern CPP_COMMENT_PATTERN = Pattern.compile("(/\\*([^*]|[\\n]|(\\*+([^*/]|[\\n])))*\\*+/)|(//.*)", Pattern.MULTILINE);
-    private static final Pattern CPP_STRING_PATTERN = Pattern.compile("\"([^\\\\\"]|(\\\\.))*\"", Pattern.MULTILINE);
-    private static final Pattern CPP_CHARACTER_PATTERN = Pattern.compile("'([^\\\\']|(\\\\.))*'", Pattern.MULTILINE);
-    private static final Pattern CPP_PREPROCESSOR_PATTERN = Pattern.compile("(?m)^\\s*#\\s*[A-Za-z_][A-Za-z0-9_]*.*$");
     private static final Pattern CPP_KEYWORD_PATTERN = Pattern.compile(
             "\\b(alignas|alignof|asm|auto|bool|break|case|catch|char|char8_t|char16_t|char32_t|class|concept|const|consteval|constexpr|constinit|continue|co_await|co_return|co_yield|decltype|default|delete|do|double|else|enum|explicit|export|extern|false|final|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|noexcept|nullptr|operator|override|private|protected|public|register|requires|return|short|signed|sizeof|static|struct|switch|template|this|thread_local|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\\b",
             Pattern.MULTILINE);
@@ -984,11 +980,9 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     @Override
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         String string = str.toString();
-        formatToken(str, string, CPP_PREPROCESSOR_PATTERN, SEMANTIC_MACRO);
+        formatCppPreprocessorLines(str, string);
         formatToken(str, string, CPP_KEYWORD_PATTERN, SEMANTIC_KEYWORD);
-        formatToken(str, string, CPP_COMMENT_PATTERN, SEMANTIC_COMMENT);
-        formatToken(str, string, CPP_STRING_PATTERN, SEMANTIC_STRING);
-        formatToken(str, string, CPP_CHARACTER_PATTERN, SEMANTIC_STRING);
+        formatCppLexicalTokens(str, string);
         if (bufferContext != null) {
             for (var highlight : getSemanticHighlights(bufferContext)) {
                 str.format(highlight.start(), highlight.end(), highlight.foregroundColor(), TextColor.ANSI.DEFAULT);
@@ -1568,6 +1562,94 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         var matcher = pattern.matcher(string);
         while (matcher.find()) {
             str.format(matcher.start(), matcher.end(), color, TextColor.ANSI.DEFAULT);
+        }
+    }
+
+    private static void formatCppPreprocessorLines(AttributedString str, String string) {
+        int lineStart = 0;
+        while (lineStart < string.length()) {
+            int lineEnd = string.indexOf('\n', lineStart);
+            if (lineEnd < 0) {
+                lineEnd = string.length();
+            }
+            int index = lineStart;
+            while (index < lineEnd && Character.isWhitespace(string.charAt(index))) {
+                index++;
+            }
+            if (index < lineEnd && string.charAt(index) == '#') {
+                str.format(lineStart, lineEnd, SEMANTIC_MACRO, TextColor.ANSI.DEFAULT);
+            }
+            lineStart = lineEnd + 1;
+        }
+    }
+
+    private static void formatCppLexicalTokens(AttributedString str, String string) {
+        int index = 0;
+        while (index < string.length()) {
+            char current = string.charAt(index);
+            if (current == '/' && index + 1 < string.length()) {
+                char next = string.charAt(index + 1);
+                if (next == '/') {
+                    int start = index;
+                    index += 2;
+                    while (index < string.length() && !isLineBreak(string.charAt(index))) {
+                        index++;
+                    }
+                    formatRange(str, start, index, SEMANTIC_COMMENT);
+                    continue;
+                }
+                if (next == '*') {
+                    int start = index;
+                    index += 2;
+                    while (index + 1 < string.length()
+                            && !(string.charAt(index) == '*' && string.charAt(index + 1) == '/')) {
+                        index++;
+                    }
+                    index = index + 1 < string.length() ? index + 2 : string.length();
+                    formatRange(str, start, index, SEMANTIC_COMMENT);
+                    continue;
+                }
+            }
+            if (current == '"' || current == '\'') {
+                int start = index;
+                char quote = current;
+                index++;
+                boolean escaped = false;
+                while (index < string.length()) {
+                    char value = string.charAt(index);
+                    if (escaped) {
+                        escaped = false;
+                        index++;
+                        continue;
+                    }
+                    if (value == '\\') {
+                        escaped = true;
+                        index++;
+                        continue;
+                    }
+                    if (value == quote) {
+                        index++;
+                        break;
+                    }
+                    if (isLineBreak(value)) {
+                        break;
+                    }
+                    index++;
+                }
+                formatRange(str, start, index, SEMANTIC_STRING);
+                continue;
+            }
+            index++;
+        }
+    }
+
+    private static boolean isLineBreak(char value) {
+        return value == '\n' || value == '\r';
+    }
+
+    private static void formatRange(AttributedString str, int start, int end, TextColor color) {
+        if (end > start) {
+            str.format(start, end, color, TextColor.ANSI.DEFAULT);
         }
     }
 

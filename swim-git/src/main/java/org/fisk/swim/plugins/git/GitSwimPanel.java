@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.api.SwimPanelLine;
 import org.fisk.swim.api.SwimPanelResult;
 
 final class GitSwimPanel implements SwimPanel {
@@ -27,6 +28,11 @@ final class GitSwimPanel implements SwimPanel {
     @Override
     public List<String> render(int width, int height) {
         return _session.render(width, height);
+    }
+
+    @Override
+    public List<SwimPanelLine> renderRich(int width, int height) {
+        return _session.renderRich(width, height);
     }
 
     @Override

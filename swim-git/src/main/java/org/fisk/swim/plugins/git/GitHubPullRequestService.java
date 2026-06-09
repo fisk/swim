@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -46,10 +45,19 @@ final class GitHubPullRequestService {
 
     static List<GitHubPullRequest> listPullRequests(GitHubRepository repository, String filter)
             throws IOException, InterruptedException {
+        return filterPullRequests(listPullRequests(repository), filter);
+    }
+
+    static List<GitHubPullRequest> listPullRequests(GitHubRepository repository)
+            throws IOException, InterruptedException {
         if (repository == null) {
             throw new IOException("No GitHub remote found");
         }
         String body = get(repository.apiBase() + "/pulls?state=open&per_page=50");
+        return parsePullRequests(body);
+    }
+
+    static List<GitHubPullRequest> parsePullRequests(String body) {
         var pullRequests = new ArrayList<GitHubPullRequest>();
         for (JsonElement element : JsonParser.parseString(body).getAsJsonArray()) {
             JsonObject object = element.getAsJsonObject();
@@ -60,14 +68,16 @@ final class GitHubPullRequestService {
                     number(object),
                     string(object, "title"),
                     string(user, "login"),
+                    string(user, "name"),
                     string(head, "ref"),
                     string(base, "ref"),
                     string(head, "sha"),
                     string(base, "sha"),
                     string(object, "html_url"),
-                    string(object, "updated_at")));
+                    string(object, "updated_at"),
+                    labelNames(object)));
         }
-        return filterPullRequests(pullRequests, filter);
+        return List.copyOf(pullRequests);
     }
 
     static List<GitHubPullRequestFile> files(GitHubRepository repository, GitHubPullRequest pullRequest)
@@ -76,6 +86,23 @@ final class GitHubPullRequestService {
             throw new IOException("No GitHub remote found");
         }
         String body = get(repository.apiBase() + "/pulls/" + pullRequest.number() + "/files?per_page=100");
+        return parsePullRequestFiles(body);
+    }
+
+    static List<GitHubReviewComment> reviewComments(GitHubRepository repository, GitHubPullRequest pullRequest)
+            throws IOException, InterruptedException {
+        if (repository == null) {
+            throw new IOException("No GitHub remote found");
+        }
+        String reviewBody = get(repository.apiBase() + "/pulls/" + pullRequest.number() + "/comments?per_page=100");
+        String issueBody = get(repository.apiBase() + "/issues/" + pullRequest.number() + "/comments?per_page=100");
+        var comments = new ArrayList<GitHubReviewComment>();
+        comments.addAll(parseReviewComments(reviewBody));
+        comments.addAll(parseIssueComments(issueBody));
+        return List.copyOf(comments);
+    }
+
+    static List<GitHubPullRequestFile> parsePullRequestFiles(String body) {
         var files = new ArrayList<GitHubPullRequestFile>();
         for (JsonElement element : JsonParser.parseString(body).getAsJsonArray()) {
             JsonObject object = element.getAsJsonObject();
@@ -87,6 +114,42 @@ final class GitHubPullRequestService {
                     splitPatchLines(string(object, "patch"))));
         }
         return List.copyOf(files);
+    }
+
+    static List<GitHubReviewComment> parseReviewComments(String body) {
+        var comments = new ArrayList<GitHubReviewComment>();
+        for (JsonElement element : JsonParser.parseString(body).getAsJsonArray()) {
+            JsonObject object = element.getAsJsonObject();
+            JsonObject user = object.getAsJsonObject("user");
+            comments.add(new GitHubReviewComment(
+                    string(object, "path"),
+                    number(object, "line"),
+                    number(object, "original_line"),
+                    string(user, "login"),
+                    string(object, "body"),
+                    string(object, "diff_hunk"),
+                    string(object, "created_at"),
+                    false));
+        }
+        return List.copyOf(comments);
+    }
+
+    static List<GitHubReviewComment> parseIssueComments(String body) {
+        var comments = new ArrayList<GitHubReviewComment>();
+        for (JsonElement element : JsonParser.parseString(body).getAsJsonArray()) {
+            JsonObject object = element.getAsJsonObject();
+            JsonObject user = object.getAsJsonObject("user");
+            comments.add(new GitHubReviewComment(
+                    "",
+                    0,
+                    0,
+                    string(user, "login"),
+                    string(object, "body"),
+                    "",
+                    string(object, "created_at"),
+                    true));
+        }
+        return List.copyOf(comments);
     }
 
     static String fetch(Path repositoryRoot, GitHubRepository repository, GitHubPullRequest pullRequest)
@@ -134,12 +197,23 @@ final class GitHubPullRequestService {
     }
 
     static List<GitHubPullRequest> filterPullRequests(List<GitHubPullRequest> pullRequests, String filter) {
-        if (filter == null || filter.isBlank()) {
+        GitHubPullRequestFilter parsed = GitHubPullRequestFilter.parse(filter);
+        if (parsed.isBlank()) {
             return pullRequests == null ? List.of() : List.copyOf(pullRequests);
         }
-        String needle = filter.toLowerCase(Locale.ROOT);
-        return pullRequests.stream()
-                .filter(pr -> searchable(pr).contains(needle))
+        return (pullRequests == null ? List.<GitHubPullRequest>of() : pullRequests).stream()
+                .filter(parsed::matches)
+                .toList();
+    }
+
+    static List<GitHubPullRequest> filterPullRequests(List<GitHubPullRequest> pullRequests,
+            GitPullRequestFilters filters) {
+        GitPullRequestFilters parsed = filters == null ? GitPullRequestFilters.empty() : filters;
+        if (parsed.isBlank()) {
+            return pullRequests == null ? List.of() : List.copyOf(pullRequests);
+        }
+        return (pullRequests == null ? List.<GitHubPullRequest>of() : pullRequests).stream()
+                .filter(parsed::matches)
                 .toList();
     }
 
@@ -157,11 +231,6 @@ final class GitHubPullRequestService {
             throw new IOException("GitHub request failed: HTTP " + response.statusCode());
         }
         return response.body();
-    }
-
-    private static String searchable(GitHubPullRequest pullRequest) {
-        return ("#" + pullRequest.number() + " " + pullRequest.title() + " " + pullRequest.author() + " "
-                + pullRequest.headRef() + " " + pullRequest.baseRef()).toLowerCase(Locale.ROOT);
     }
 
     private static List<String> splitPatchLines(String patch) {
@@ -187,6 +256,23 @@ final class GitHubPullRequestService {
             return "";
         }
         return object.get(key).getAsString();
+    }
+
+    private static List<String> labelNames(JsonObject object) {
+        if (object == null || !object.has("labels") || object.get("labels").isJsonNull()) {
+            return List.of();
+        }
+        var labels = new ArrayList<String>();
+        for (JsonElement element : object.getAsJsonArray("labels")) {
+            if (!element.isJsonObject()) {
+                continue;
+            }
+            String name = string(element.getAsJsonObject(), "name");
+            if (!name.isBlank()) {
+                labels.add(name);
+            }
+        }
+        return List.copyOf(labels);
     }
 
     private static String firstNonBlank(String... values) {

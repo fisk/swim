@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.fisk.swim.api.SwimKeyBindingHint;
+import org.fisk.swim.api.SwimPanelLine;
 import org.fisk.swim.api.SwimPanelResult;
 import org.fisk.swim.api.SwimPluginContext;
 
@@ -21,6 +22,10 @@ final class GitPluginSession implements AutoCloseable {
 
     List<String> render(int width, int height) {
         return _controller.render(width, height);
+    }
+
+    List<SwimPanelLine> renderRich(int width, int height) {
+        return _controller.renderRich(width, height);
     }
 
     SwimPanelResult handleInput(String input, int width, int height) {

@@ -53,6 +53,7 @@ public class EventThread extends Thread {
     }
 
     public EventThread() {
+        super("swim-event-thread");
         setDaemon(true);
         _responder = new ListEventResponder();
         _eventExecutor = Executors.newSingleThreadExecutor(runnable -> {
@@ -83,15 +84,20 @@ public class EventThread extends Thread {
         ArrayList<KeyStroke> events = new ArrayList<>();
         ArrayDeque<Event> deferred = new ArrayDeque<>();
         while (_running) {
-            Event event = waitForNextEvent(deferred);
-            if (!_running || event == null) {
-                break;
-            }
-            processEvent(event, events, deferred);
-            while (_running && (event = pollNextEvent(deferred)) != null) {
+            try {
+                Event event = waitForNextEvent(deferred);
+                if (!_running || event == null) {
+                    break;
+                }
                 processEvent(event, events, deferred);
+                while (_running && (event = pollNextEvent(deferred)) != null) {
+                    processEvent(event, events, deferred);
+                }
+                runPostEventHooks();
+            } catch (Throwable e) {
+                _log.warn("Fatal error in event loop: {}", errorSummary(e));
+                _log.debug("Fatal error in event loop", e);
             }
-            runPostEventHooks();
         }
     }
 
@@ -259,21 +265,29 @@ public class EventThread extends Thread {
         for (Runnable runnable : _onEventRunnables) {
             try {
                 runnable.run();
-            } catch (Exception e) {
-                _log.error("Error processing event: ", e);
+            } catch (Throwable e) {
+                _log.warn("Error processing post-event hook: {}", errorSummary(e));
+                _log.debug("Error processing post-event hook", e);
             }
         }
         _log.debug("Ran post-event hooks");
     }
 
     public void enqueue(Event event) {
-        while (true) {
+        while (_running) {
             try {
                 if (_events.offer(event, 1, TimeUnit.SECONDS)) {
                     _log.debug("Sent event");
                     return;
                 }
-            } catch (InterruptedException e) {}
+                if (getState() == State.TERMINATED) {
+                    _log.warn("Dropping event because event thread has terminated");
+                    return;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -315,5 +329,15 @@ public class EventThread extends Thread {
                 _log.error("Error in key stroke observer", e);
             }
         }
+    }
+
+    private static String errorSummary(Throwable e) {
+        if (e == null) {
+            return "unknown error";
+        }
+        String message = e.getMessage();
+        return message == null || message.isBlank()
+                ? e.getClass().getSimpleName()
+                : e.getClass().getSimpleName() + ": " + message;
     }
 }

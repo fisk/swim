@@ -9,6 +9,12 @@ public interface SwimPanel {
     List<String> render(int width, int height);
     SwimPanelResult handleInput(String input, int width, int height);
 
+    default List<SwimPanelLine> renderRich(int width, int height) {
+        return render(width, height).stream()
+                .map(SwimPanelLine::plain)
+                .toList();
+    }
+
     default List<SwimKeyBindingHint> keyBindingHints() {
         return List.of();
     }
