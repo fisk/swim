@@ -14,6 +14,8 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.api.SwimPluginKeyBinding;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.copy.Copy;
@@ -601,6 +603,12 @@ class NormalModeTest {
         var host = new RecordingHost();
         host.panel = new FakeGitPanel();
         SwimRuntime.setHost(host);
+        SwimPluginKeyBindingRegistry.register("swim-email",
+                new SwimPluginKeyBinding("<SPACE> m", "Workspace", "mail", "mail", "mail"));
+        SwimPluginKeyBindingRegistry.register("swim-slack",
+                new SwimPluginKeyBinding("<SPACE> s", "Workspace", "Slack", "slack", "slack"));
+        SwimPluginKeyBindingRegistry.register("swim-git",
+                new SwimPluginKeyBinding("<SPACE> g", "Workspace", "Git", "git", "git"));
         MailPluginRegistry.register(new FakeMailClient(tempDir.resolve(".swim/email")));
         SlackPluginRegistry.register(new FakeSlackClient(tempDir.resolve(".swim/slack/workspaces.json")));
         TodoUiSupport.shutdownInstance();
@@ -632,6 +640,7 @@ class NormalModeTest {
             MailPluginRegistry.clear();
             SlackPluginRegistry.clear();
             TodoUiSupport.shutdownInstance();
+            SwimPluginKeyBindingRegistry.clearForTests();
             SwimRuntime.clear();
             System.setProperty("user.home", previousHome);
         }

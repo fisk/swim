@@ -17,6 +17,8 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.api.SwimPluginKeyBinding;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.debug.DebugLaunchRequest;
 import org.fisk.swim.debug.DebugSnapshot;
 import org.fisk.swim.debug.DebugSourceLocation;
@@ -130,6 +132,8 @@ class CommandViewTest {
     void commandMenuShowsKeyboardShortcutOnRightSide() throws IOException {
         Path path = tempDir.resolve("command-shortcut.txt");
         Files.writeString(path, "abc");
+        SwimPluginKeyBindingRegistry.register("swim-git",
+                new SwimPluginKeyBinding("<SPACE> g", "Workspace", "Git", "git", "git"));
 
         try (var harness = HeadlessWindowHarness.create(path, 48, 10)) {
             var commandView = harness.getWindow().getCommandView();
@@ -157,6 +161,8 @@ class CommandViewTest {
             assertTrue(state.visible());
             assertEquals("git", state.selectedMatch().primaryName());
             assertEquals("SPC g", state.selectedMatch().shortcutLabel());
+        } finally {
+            SwimPluginKeyBindingRegistry.clearForTests();
         }
     }
 

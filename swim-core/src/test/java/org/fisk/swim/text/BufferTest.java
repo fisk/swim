@@ -9,15 +9,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
+import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class BufferTest {
     @TempDir
     Path tempDir;
+
+    @AfterEach
+    void tearDown() {
+        SwimPluginPreloadRegistry.clearForTests();
+    }
 
     @Test
     void insertCommitUndoAndRedoRestoresText() throws IOException {
@@ -122,6 +130,7 @@ class BufferTest {
 
     @Test
     void newlineInsideCppBlockUsesTwoSpaceIndentation() throws IOException {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         var context = createCppBufferContext("""
                 int main() {}
                 """, 120);

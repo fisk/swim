@@ -12,10 +12,12 @@ import java.nio.file.Path;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.LanguageModeProvider;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,7 @@ class ClangdLspPluginSupportTest {
             Window.getInstance().dispose();
         }
         ClangdLspClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
         SwimRuntime.clear();
         EventThread.shutdownInstance();
         TerminalContext.shutdownInstance();
@@ -38,9 +41,10 @@ class ClangdLspPluginSupportTest {
 
     @Test
     void registryMapsCppExtensionsToClangdPlugin() {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         LanguageModeProvider.getInstance();
 
-        for (String extension : new String[] {"c", "h", "cpp", "hpp"}) {
+        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
             var registration = LanguagePluginRegistry.find(Path.of("demo." + extension));
             assertNotNull(registration);
             assertEquals(ClangdLspPluginSupport.PLUGIN_ID, registration.pluginId());
@@ -49,7 +53,8 @@ class ClangdLspPluginSupportTest {
 
     @Test
     void languageModeProviderMapsCppExtensionsToClangdMode() {
-        for (String extension : new String[] {"c", "h", "cpp", "hpp"}) {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
             var mode = LanguageModeProvider.getInstance().getLanguageMode(Path.of("demo." + extension));
             assertNotNull(mode);
             assertInstanceOf(ClangdLspClient.class, mode);
@@ -57,14 +62,61 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
-    void createWindowStartsClangdWhenProjectHasCompilationDatabase() throws Exception {
+    void findsCounterpartInSameDirectoryUsingCppExtensions() throws Exception {
+        Path directory = tempDir.resolve("same-dir");
+        Files.createDirectories(directory);
+        Path source = Files.writeString(directory.resolve("demo.cpp"), "int demo() { return 0; }\n");
+        Path header = Files.writeString(directory.resolve("demo.hpp"), "#pragma once\n");
+
+        assertEquals(header, ClangdLspPluginSupport.findHeaderImplementationCounterpart(source));
+        assertEquals(source, ClangdLspPluginSupport.findHeaderImplementationCounterpart(header));
+    }
+
+    @Test
+    void findsCounterpartInProjectRootWithRelatedSourceAndIncludeDirectories() throws Exception {
+        Path project = tempDir.resolve("project-pair");
+        Files.createDirectories(project.resolve(".git"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("include"));
+        Path source = Files.writeString(project.resolve("src").resolve("engine.cxx"), "int engine() { return 0; }\n");
+        Path header = Files.writeString(project.resolve("include").resolve("engine.hxx"), "#pragma once\n");
+
+        assertEquals(header, ClangdLspPluginSupport.findHeaderImplementationCounterpart(source));
+        assertEquals(source, ClangdLspPluginSupport.findHeaderImplementationCounterpart(header));
+    }
+
+    @Test
+    void normalModeGMSwitchesCppBufferToCounterpart() throws Exception {
+        Path project = tempDir.resolve("normal-pair");
+        Files.createDirectories(project.resolve(".git"));
+        Files.createDirectories(project.resolve("src"));
+        Files.createDirectories(project.resolve("include"));
+        Path source = Files.writeString(project.resolve("src").resolve("demo.cpp"), "int demo() { return 0; }\n");
+        Path header = Files.writeString(project.resolve("include").resolve("demo.hpp"), "#pragma once\n");
+
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        try (var harness = HeadlessWindowHarness.create(source, 60, 10)) {
+            Window window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('m'));
+
+            assertEquals(header.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void createWindowStartsClangdForCppFileWhenProjectHasCompilationDatabase() throws Exception {
         Path project = tempDir.resolve("demo");
         Files.createDirectories(project.resolve("build"));
         Files.writeString(project.resolve("build").resolve("compile_commands.json"), "[]");
-        Path file = Files.writeString(project.resolve("README.txt"), "notes\n");
+        Path file = Files.writeString(project.resolve("demo.cpp"), "int main() { return 0; }\n");
 
         var client = new RecordingClangdLspClient();
         ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         TerminalContextTestSupport.install(80, 24);
 
         invoke(createDefaultBindings(), "createWindow", new Class<?>[] { Path.class }, file);
@@ -74,15 +126,16 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
-    void switchingBuffersStartsClangdWhenCompilationDatabaseIsDiscovered() throws Exception {
+    void switchingToCppBufferStartsClangdWhenCompilationDatabaseIsDiscovered() throws Exception {
         Path initialFile = Files.writeString(tempDir.resolve("notes.txt"), "plain\n");
         Path project = tempDir.resolve("engine");
         Files.createDirectories(project.resolve("build"));
         Files.writeString(project.resolve("build").resolve("compile_commands.json"), "[]");
-        Path discoveredFile = Files.writeString(project.resolve("scratch.txt"), "inside project\n");
+        Path discoveredFile = Files.writeString(project.resolve("engine.cpp"), "int engine() { return 0; }\n");
 
         var client = new RecordingClangdLspClient();
         ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         TerminalContextTestSupport.install(80, 24);
 
         invoke(createDefaultBindings(), "createWindow", new Class<?>[] { Path.class }, initialFile);

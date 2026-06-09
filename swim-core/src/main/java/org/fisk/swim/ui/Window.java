@@ -33,7 +33,6 @@ import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
-import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mode.InputMode;
 import org.fisk.swim.mode.Mode;
@@ -303,8 +302,6 @@ public class Window implements Drawable {
             _log.error("Failed to open buffer " + path, e);
             return false;
         }
-        ClangdLspPluginSupport.ensureStartedForProject(path);
-
         var nextBufferView = nextBufferContext.getBufferView();
         registerBufferView(nextBufferContext, nextBufferView);
         replaceViewInLayout(currentBufferView, nextBufferView);
@@ -3567,7 +3564,6 @@ public class Window implements Drawable {
             _log.error("Failed to open buffer " + path, e);
             return false;
         }
-        ClangdLspPluginSupport.ensureStartedForProject(path);
         var nextBufferView = nextBufferContext.getBufferView();
         registerBufferView(nextBufferContext, nextBufferView);
         replaceViewInLayout(browserView, nextBufferView);

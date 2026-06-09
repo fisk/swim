@@ -16,6 +16,7 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -29,6 +30,7 @@ class ClangdLspCompletionIntegrationTest {
     @AfterEach
     void tearDown() {
         ClangdLspClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
         if (Window.getInstance() != null) {
             Window.getInstance().dispose();
         }
@@ -49,6 +51,7 @@ class ClangdLspCompletionIntegrationTest {
         capabilities.setCompletionProvider(new CompletionOptions(Boolean.FALSE, List.of(".")));
         setField(client, "_capabilities", capabilities);
         ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(file, 32, 8)) {
             var window = harness.getWindow();

@@ -500,7 +500,8 @@ final class GitStatusController {
             if (index < _pullRequests.size()) {
                 GitHubPullRequest pullRequest = _pullRequests.get(index);
                 boolean selected = index == _pullRequestSelection;
-                lines.add((selected ? "> " : "  ") + "#" + pullRequest.number() + " " + pullRequest.title());
+                lines.add((selected ? "> " : "  ") + "#" + pullRequest.number() + " " + pullRequest.title()
+                        + "  " + pullRequest.headRef() + " -> " + pullRequest.baseRef());
                 if (lines.size() < height) {
                     lines.add("  @" + pullRequest.author()
                             + (pullRequest.labels().isEmpty() ? "" : "  " + String.join(" ", pullRequest.labels())));

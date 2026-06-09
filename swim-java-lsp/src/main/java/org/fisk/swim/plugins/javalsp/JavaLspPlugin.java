@@ -2,6 +2,7 @@ package org.fisk.swim.plugins.javalsp;
 
 import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.api.SwimPluginPreloadContext;
 import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 
 public final class JavaLspPlugin implements SwimPlugin {
@@ -13,6 +14,11 @@ public final class JavaLspPlugin implements SwimPlugin {
     @Override
     public boolean loadOnStartup() {
         return false;
+    }
+
+    @Override
+    public void preload(SwimPluginPreloadContext context) {
+        JavaLspPluginSupport.preload(context);
     }
 
     @Override

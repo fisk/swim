@@ -3,8 +3,6 @@ package org.fisk.swim.lsp;
 import java.nio.file.Path;
 
 import org.eclipse.lsp4j.TextDocumentItem;
-import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
-import org.fisk.swim.lsp.java.JavaLspPluginSupport;
 import org.fisk.swim.lsp.latex.LatexLSPClient;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
@@ -17,11 +15,6 @@ public class LanguageModeProvider {
 
     static {
         LanguagePluginRegistry.register("tex", null, path -> new LatexLSPClient());
-        LanguagePluginRegistry.register("java", JavaLspPluginSupport.PLUGIN_ID, JavaLspPluginSupport::createLanguageMode);
-        LanguagePluginRegistry.register("c", ClangdLspPluginSupport.PLUGIN_ID, ClangdLspPluginSupport::createLanguageMode);
-        LanguagePluginRegistry.register("h", ClangdLspPluginSupport.PLUGIN_ID, ClangdLspPluginSupport::createLanguageMode);
-        LanguagePluginRegistry.register("cpp", ClangdLspPluginSupport.PLUGIN_ID, ClangdLspPluginSupport::createLanguageMode);
-        LanguagePluginRegistry.register("hpp", ClangdLspPluginSupport.PLUGIN_ID, ClangdLspPluginSupport::createLanguageMode);
     }
 
     public static LanguageModeProvider getInstance() {

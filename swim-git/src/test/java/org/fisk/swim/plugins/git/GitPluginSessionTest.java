@@ -10,7 +10,9 @@ import java.util.List;
 import org.eclipse.jgit.api.Git;
 import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -20,7 +22,9 @@ class GitPluginSessionTest {
 
     @Test
     void preloadRegistersHelpPagesWithoutActivatingPlugin() {
+        SwimPluginPreloadRegistry.clearForTests();
         SwimHelpRegistry.clearForTests();
+        SwimPluginKeyBindingRegistry.clearForTests();
         try {
             GitPlugin plugin = new GitPlugin();
             plugin.preload(() -> GitPluginSupport.PLUGIN_ID);
@@ -36,10 +40,16 @@ class GitPluginSessionTest {
                     .flatMap(chapter -> chapter.sections().stream())
                     .flatMap(section -> section.paragraphs().stream())
                     .anyMatch(paragraph -> paragraph.contains("git.pr.view")));
+            assertTrue(SwimPluginKeyBindingRegistry.listBindings().stream()
+                    .anyMatch(binding -> "<SPACE> g".equals(binding.key())
+                            && "swim-git".equals(binding.pluginId())
+                            && "git".equals(binding.command())));
             assertTrue(GitPluginSupport.getSession().isEmpty());
         } finally {
             GitPluginSupport.shutdown();
+            SwimPluginPreloadRegistry.clearForTests();
             SwimHelpRegistry.clearForTests();
+            SwimPluginKeyBindingRegistry.clearForTests();
         }
     }
 

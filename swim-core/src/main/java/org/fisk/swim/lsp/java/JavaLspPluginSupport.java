@@ -5,9 +5,11 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginKeyBinding;
+import org.fisk.swim.api.SwimPluginPreloadContext;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
-import org.fisk.swim.mode.NormalMode;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -44,45 +46,21 @@ public final class JavaLspPluginSupport {
         SwimRuntime.loadPlugin(PLUGIN_ID, path);
     }
 
-    public static void installNormalModeBindings(NormalMode mode, Window window, String leader) {
-        Path path = window.getBufferContext().getBuffer().getPath();
-        if (!isJavaPath(path)) {
-            return;
-        }
-
-        var layer = mode.addKeybindingLayer();
-        layer.addEventResponder("g d", "LSP", "go to definition", () -> {
-            window.allowEditorDriveAction("lsp definition");
-            withLoadedClient(window, client -> client.goToDefinition(window.getBufferContext()));
-        });
-        layer.addEventResponder("g r", "LSP", "find references", () -> {
-            window.allowEditorDriveAction("lsp references");
-            withLoadedClient(window, client -> client.findReferences(window.getBufferContext()));
-        });
-        layer.addEventResponder(leader + " e i", "LSP", "organize imports", () -> {
-            window.allowEditorDriveAction("lsp code action");
-            organizeImports(window);
-        });
-        layer.addEventResponder(leader + " e f", "LSP", "make field final", () -> {
-            window.allowEditorDriveAction("lsp code action");
-            withLoadedClient(window, client -> client.makeFinal(window.getBufferContext()));
-        });
-        layer.addEventResponder(leader + " e a", "LSP", "generate accessors", () -> {
-            window.allowEditorDriveAction("lsp code action");
-            withLoadedClient(window, client -> client.generateAccessors(window.getBufferContext()));
-        });
-        layer.addEventResponder(leader + " e s", "LSP", "generate toString", () -> {
-            window.allowEditorDriveAction("lsp code action");
-            withLoadedClient(window, client -> client.generateToString(window.getBufferContext()));
-        });
-        layer.addEventResponder(leader + " e l", "LSP", "code lens", () -> {
-            window.allowEditorDriveAction("lsp code lens");
-            withLoadedClient(window, client -> client.codeLens(window.getBufferContext()));
-        });
-        layer.addEventResponder("o", "LSP", "organize imports", () -> {
-            window.allowEditorDriveAction("lsp code action");
-            organizeImports(window);
-        });
+    public static void preload(SwimPluginPreloadContext context) {
+        context.registerPreloadResource(LanguagePluginRegistry.register("java", PLUGIN_ID,
+                JavaLspPluginSupport::createLanguageMode));
+        registerJavaKey(context, "g d", "go to definition", "lsp-definition", JavaLspPluginSupport::goToDefinition);
+        registerJavaKey(context, "g r", "find references", "lsp-references", JavaLspPluginSupport::findReferences);
+        registerJavaKey(context, "<SPACE> e i", "organize imports", "lsp-organize-imports",
+                JavaLspPluginSupport::organizeImports);
+        registerJavaKey(context, "<SPACE> e f", "make field final", "lsp-make-final",
+                JavaLspPluginSupport::makeFinal);
+        registerJavaKey(context, "<SPACE> e a", "generate accessors", "lsp-generate-accessors",
+                JavaLspPluginSupport::generateAccessors);
+        registerJavaKey(context, "<SPACE> e s", "generate toString", "lsp-generate-tostring",
+                JavaLspPluginSupport::generateToString);
+        registerJavaKey(context, "<SPACE> e l", "code lens", "lsp-code-lens", JavaLspPluginSupport::codeLens);
+        registerJavaKey(context, "o", "organize imports", "lsp-organize-imports", JavaLspPluginSupport::organizeImports);
     }
 
     public static LanguageMode createLanguageMode(Path path) {
@@ -109,6 +87,45 @@ public final class JavaLspPluginSupport {
         JavaLSPClient.shutdownInstalledInstance();
     }
 
+    public static void goToDefinition() {
+        withActiveJavaWindow("lsp definition", client -> client.goToDefinition(Window.getInstance().getBufferContext()));
+    }
+
+    public static void findReferences() {
+        withActiveJavaWindow("lsp references", client -> client.findReferences(Window.getInstance().getBufferContext()));
+    }
+
+    public static void organizeImports() {
+        Window window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        window.allowEditorDriveAction("lsp code action");
+        organizeImports(window);
+    }
+
+    public static void makeFinal() {
+        withActiveJavaWindow("lsp code action", client -> client.makeFinal(Window.getInstance().getBufferContext()));
+    }
+
+    public static void generateAccessors() {
+        withActiveJavaWindow("lsp code action", client -> client.generateAccessors(Window.getInstance().getBufferContext()));
+    }
+
+    public static void generateToString() {
+        withActiveJavaWindow("lsp code action", client -> client.generateToString(Window.getInstance().getBufferContext()));
+    }
+
+    public static void codeLens() {
+        withActiveJavaWindow("lsp code lens", client -> client.codeLens(Window.getInstance().getBufferContext()));
+    }
+
+    private static void registerJavaKey(SwimPluginPreloadContext context, String key, String summary, String commandName,
+            Runnable action) {
+        context.registerKeyBinding(new SwimPluginKeyBinding(key, "LSP", summary, commandName,
+                JavaLspPluginSupport::isJavaBuffer, action));
+    }
+
     private static void organizeImports(Window window) {
         withLoadedClient(window, client -> client.organizeImports(window.getBufferContext()));
     }
@@ -118,7 +135,27 @@ public final class JavaLspPluginSupport {
         action.accept(JavaLSPClient.getInstance());
     }
 
-    private static boolean isJavaPath(Path path) {
+    private static void withActiveJavaWindow(String editorDriveAction, Consumer<JavaLSPClient> action) {
+        Window window = Window.getInstance();
+        if (window == null || !isJavaPath(currentPath(window))) {
+            return;
+        }
+        window.allowEditorDriveAction(editorDriveAction);
+        withLoadedClient(window, action);
+    }
+
+    private static boolean isJavaBuffer() {
+        return isJavaPath(currentPath(Window.getInstance()));
+    }
+
+    private static Path currentPath(Window window) {
+        if (window == null || window.getBufferContext() == null || window.getBufferContext().getBuffer() == null) {
+            return null;
+        }
+        return window.getBufferContext().getBuffer().getPath();
+    }
+
+    public static boolean isJavaPath(Path path) {
         if (path == null || path.getFileName() == null) {
             return false;
         }

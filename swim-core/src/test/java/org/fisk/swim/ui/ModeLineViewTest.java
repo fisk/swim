@@ -5,11 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.MemoryUsage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.List;
+
+import javax.management.ObjectName;
 
 import com.googlecode.lanterna.TextColor;
 
@@ -95,6 +98,18 @@ class ModeLineViewTest {
         assertEquals(UiTheme.ACCENT_GREEN, ModeLineView.heapBarColor(green));
         assertEquals(UiTheme.ACCENT_GOLD, ModeLineView.heapBarColor(yellow));
         assertEquals(UiTheme.ACCENT_RED, ModeLineView.heapBarColor(red));
+    }
+
+    @Test
+    void heapLabelCanIncludeZgcMinorAndMajorCycleCounts() {
+        assertEquals("5m 1M", ModeLineView.zgcCollectionLabel(List.of(
+                new FakeGarbageCollectorMXBean("ZGC Minor Cycles", 5),
+                new FakeGarbageCollectorMXBean("ZGC Minor Pauses", 99),
+                new FakeGarbageCollectorMXBean("ZGC Major Cycles", 1),
+                new FakeGarbageCollectorMXBean("ZGC Major Pauses", 42))));
+        assertEquals("", ModeLineView.zgcCollectionLabel(List.of(
+                new FakeGarbageCollectorMXBean("G1 Young Generation", 7),
+                new FakeGarbageCollectorMXBean("ZGC Minor Cycles", -1))));
     }
 
     @Test
@@ -322,6 +337,38 @@ class ModeLineViewTest {
         @Override
         public Path getDataPath() {
             return Path.of(".");
+        }
+    }
+
+    private record FakeGarbageCollectorMXBean(String name, long collectionCount) implements GarbageCollectorMXBean {
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public boolean isValid() {
+            return true;
+        }
+
+        @Override
+        public String[] getMemoryPoolNames() {
+            return new String[0];
+        }
+
+        @Override
+        public long getCollectionCount() {
+            return collectionCount;
+        }
+
+        @Override
+        public long getCollectionTime() {
+            return 0;
+        }
+
+        @Override
+        public ObjectName getObjectName() {
+            return null;
         }
     }
 }

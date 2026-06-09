@@ -27,6 +27,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.CodeActionPopupView;
@@ -52,6 +53,7 @@ class ClangdDiagnosticUiIntegrationTest {
     @AfterEach
     void tearDown() {
         ClangdLspClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
         if (Window.getInstance() != null) {
             Window.getInstance().dispose();
         }
@@ -70,6 +72,7 @@ class ClangdDiagnosticUiIntegrationTest {
         setField(client, "_enabled", true);
         setField(client, "_projectPath", tempDir);
         ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         var terminal = TerminalContextTestSupport.install(20, 10);
 
         try (var harness = HeadlessWindowHarness.create(file, 20, 10)) {
@@ -104,6 +107,7 @@ class ClangdDiagnosticUiIntegrationTest {
         setField(client, "_server", new CodeActionLanguageServer());
         setField(client, "_capabilities", new ServerCapabilities());
         ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(file, 60, 12)) {
             var window = harness.getWindow();

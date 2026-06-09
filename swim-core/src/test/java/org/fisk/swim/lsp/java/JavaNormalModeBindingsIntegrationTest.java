@@ -12,6 +12,7 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -28,6 +29,7 @@ class JavaNormalModeBindingsIntegrationTest {
     @AfterEach
     void tearDown() {
         JavaLSPClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
         if (Window.getInstance() != null) {
             Window.getInstance().dispose();
         }
@@ -50,6 +52,7 @@ class JavaNormalModeBindingsIntegrationTest {
         setField(client, "_server", new OrganizeImportsLanguageServer());
         setField(client, "_capabilities", new ServerCapabilities());
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(file, 48, 10)) {
             var window = harness.getWindow();

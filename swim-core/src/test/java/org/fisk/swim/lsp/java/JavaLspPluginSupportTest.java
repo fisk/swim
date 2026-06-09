@@ -6,8 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import java.io.IOException;
 import java.nio.file.Path;
 
+import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.Window;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,10 +19,21 @@ class JavaLspPluginSupportTest {
     @TempDir
     Path tempDir;
 
+    @AfterEach
+    void tearDown() {
+        if (Window.getInstance() != null) {
+            Window.getInstance().dispose();
+        }
+        JavaLSPClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
+        SwimRuntime.clear();
+    }
+
     @Test
     void normalModeOOrganizesImportsForJavaBuffers() throws IOException {
         var client = new RecordingJavaLspClient();
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
         try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
             var window = harness.getWindow();
             var buffer = window.getBufferContext().getBuffer();
@@ -28,8 +43,6 @@ class JavaLspPluginSupportTest {
             assertEquals(1, client.organizeImportsCalls);
             assertEquals("class Demo {}\n", buffer.getString());
             assertSame(window.getNormalMode(), window.getCurrentMode());
-        } finally {
-            JavaLSPClient.shutdownInstalledInstance();
         }
     }
 
@@ -37,6 +50,7 @@ class JavaLspPluginSupportTest {
     void normalModeGDTriggersDefinitionLookupForJavaBuffers() throws IOException {
         var client = new RecordingJavaLspClient();
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
         try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
             var window = harness.getWindow();
 
@@ -44,14 +58,13 @@ class JavaLspPluginSupportTest {
 
             assertEquals(1, client.goToDefinitionCalls);
             assertSame(window.getNormalMode(), window.getCurrentMode());
-        } finally {
-            JavaLSPClient.shutdownInstalledInstance();
         }
     }
 
     @Test
     void normalModeOKeepsDefaultOpenBelowForNonJavaBuffers() throws IOException {
         JavaLSPClient.shutdownInstalledInstance();
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
         try (var harness = HeadlessWindowHarness.create(writeFile("notes.txt", "alpha"), 40, 12)) {
             var window = harness.getWindow();
             var buffer = window.getBufferContext().getBuffer();

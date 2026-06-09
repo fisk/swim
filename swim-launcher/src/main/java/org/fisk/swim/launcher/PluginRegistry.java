@@ -16,12 +16,12 @@ import java.util.ServiceLoader;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
-import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.api.SwimPluginPreloadContext;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 
 final class PluginRegistry implements Main.PluginController {
     private static final String CORE_MODULE = "org.fisk.swim.core";
@@ -470,7 +470,7 @@ final class PluginRegistry implements Main.PluginController {
                 return;
             }
             SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
-            SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+            SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             SwimApp app = _provider.get();
             _app = app;
             try {
@@ -480,7 +480,7 @@ final class PluginRegistry implements Main.PluginController {
                 _app = null;
                 _loaded = false;
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
-                SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
                 throw e;
             }
         }
@@ -497,7 +497,7 @@ final class PluginRegistry implements Main.PluginController {
                 app.close();
             } finally {
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
-                SwimHelpRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             }
         }
 
@@ -554,7 +554,7 @@ final class PluginRegistry implements Main.PluginController {
             if (_preloaded) {
                 return;
             }
-            SwimHelpRegistry.unregisterPlugin(_id);
+            SwimPluginPreloadRegistry.unregisterPlugin(_id);
             SwimPlugin plugin = _instance == null ? _provider.get() : _instance;
             try {
                 plugin.preload(context);
@@ -563,7 +563,7 @@ final class PluginRegistry implements Main.PluginController {
             } catch (RuntimeException | Error e) {
                 _instance = null;
                 _preloaded = false;
-                SwimHelpRegistry.unregisterPlugin(_id);
+                SwimPluginPreloadRegistry.unregisterPlugin(_id);
                 throw e;
             }
         }
@@ -609,7 +609,7 @@ final class PluginRegistry implements Main.PluginController {
             } finally {
                 _instance = null;
                 _preloaded = false;
-                SwimHelpRegistry.unregisterPlugin(_id);
+                SwimPluginPreloadRegistry.unregisterPlugin(_id);
             }
         }
 

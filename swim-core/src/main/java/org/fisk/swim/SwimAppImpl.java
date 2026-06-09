@@ -9,8 +9,6 @@ import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailUiSupport;
-import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
-import org.fisk.swim.lsp.java.JavaLSPClient;
 import org.fisk.swim.event.IOThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
@@ -45,7 +43,6 @@ public class SwimAppImpl implements SwimApp {
         EventThreadAccess getEventThread();
         Thread createIoThread();
         void preloadMailPlugin(Path path);
-        void shutdownJavaLsp();
         void shutdownEventThread();
         void shutdownTerminalContext();
         void clearRuntime();
@@ -112,18 +109,12 @@ public class SwimAppImpl implements SwimApp {
         @Override
         public WindowAccess createWindow(Path path) {
             Window.createInstance(path);
-            ClangdLspPluginSupport.ensureStartedForProject(path);
             return WINDOW;
         }
 
         @Override
         public WindowAccess createWindow(List<Path> paths) {
             Window.createInstance(paths);
-            if (paths != null) {
-                for (Path path : paths) {
-                    ClangdLspPluginSupport.ensureStartedForProject(path);
-                }
-            }
             return WINDOW;
         }
 
@@ -156,11 +147,6 @@ public class SwimAppImpl implements SwimApp {
             }, "mail-plugin-preload");
             thread.setDaemon(true);
             thread.start();
-        }
-
-        @Override
-        public void shutdownJavaLsp() {
-            org.fisk.swim.lsp.java.JavaLspPluginSupport.shutdown();
         }
 
         @Override
@@ -264,7 +250,6 @@ public class SwimAppImpl implements SwimApp {
             _ioThread.interrupt();
             _ioThread = null;
         }
-        _bindings.shutdownJavaLsp();
         _bindings.shutdownEventThread();
         var window = _bindings.getWindow();
         if (window != null) {

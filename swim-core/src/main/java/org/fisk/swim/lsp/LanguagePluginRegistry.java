@@ -2,6 +2,7 @@ package org.fisk.swim.lsp;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class LanguagePluginRegistry {
@@ -18,12 +19,14 @@ public final class LanguagePluginRegistry {
     private LanguagePluginRegistry() {
     }
 
-    public static void register(String extension, String pluginId, LanguageModeFactory factory) {
+    public static AutoCloseable register(String extension, String pluginId, LanguageModeFactory factory) {
         if (extension == null || extension.isBlank() || factory == null) {
             throw new IllegalArgumentException("Language plugin registration requires an extension and factory");
         }
         String normalizedExtension = normalizeExtension(extension);
-        REGISTRATIONS.put(normalizedExtension, new Registration(normalizedExtension, pluginId, factory));
+        var registration = new Registration(normalizedExtension, pluginId, factory);
+        REGISTRATIONS.put(normalizedExtension, registration);
+        return () -> REGISTRATIONS.remove(normalizedExtension, registration);
     }
 
     public static void unregisterPlugin(String pluginId) {
@@ -31,6 +34,10 @@ public final class LanguagePluginRegistry {
             return;
         }
         REGISTRATIONS.entrySet().removeIf(entry -> pluginId.equals(entry.getValue().pluginId()));
+    }
+
+    public static void clearForTests() {
+        REGISTRATIONS.entrySet().removeIf(entry -> entry.getValue().pluginId() != null);
     }
 
     public static Registration find(Path path) {
@@ -46,6 +53,6 @@ public final class LanguagePluginRegistry {
     }
 
     private static String normalizeExtension(String extension) {
-        return extension.toLowerCase(java.util.Locale.ROOT);
+        return Objects.requireNonNull(extension, "extension").toLowerCase(java.util.Locale.ROOT);
     }
 }

@@ -149,7 +149,6 @@ class SwimAppImplTest {
         app.close();
 
         assertTrue(bindings.ioThread.interrupted);
-        assertTrue(bindings.shutdownJavaLspCalled);
         assertTrue(bindings.shutdownEventThreadCalled);
         assertTrue(bindings.window.disposed);
         assertTrue(bindings.shutdownTerminalContextCalled);
@@ -166,7 +165,6 @@ class SwimAppImplTest {
         app.start(Path.of("/tmp/reload-close.txt"), host);
         app.close();
 
-        assertTrue(bindings.shutdownJavaLspCalled);
         assertTrue(bindings.shutdownEventThreadCalled);
         assertTrue(bindings.window.disposed);
         assertTrue(bindings.clearRuntimeCalled);
@@ -209,7 +207,6 @@ class SwimAppImplTest {
         assertInstanceOf(IOThread.class, ioThread);
         assertTrue(ioThread.isDaemon());
 
-        invoke(bindings, "shutdownJavaLsp", new Class<?>[0]);
         invoke(bindings, "shutdownEventThread", new Class<?>[0]);
         invoke(windowAccess, "dispose", new Class<?>[0]);
         invoke(bindings, "shutdownTerminalContext", new Class<?>[0]);
@@ -248,7 +245,6 @@ class SwimAppImplTest {
         private SwimHost host;
         private Path createdWindowPath;
         private List<Path> createdWindowPaths;
-        private boolean shutdownJavaLspCalled;
         private boolean shutdownEventThreadCalled;
         private boolean shutdownTerminalContextCalled;
         private boolean clearRuntimeCalled;
@@ -294,11 +290,6 @@ class SwimAppImplTest {
         @Override
         public void preloadMailPlugin(Path path) {
             preloadMailPluginPath = path;
-        }
-
-        @Override
-        public void shutdownJavaLsp() {
-            shutdownJavaLspCalled = true;
         }
 
         @Override

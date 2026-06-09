@@ -18,11 +18,10 @@ import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.fileindex.FileIndex;
 import org.fisk.swim.event.RecordedKey;
-import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
-import org.fisk.swim.lsp.java.JavaLspPluginSupport;
-import org.fisk.swim.mail.MailUiSupport;
+import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginKeyBindingDescriptor;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.nemo.NemoClient;
-import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.BufferView;
@@ -58,8 +57,7 @@ public class NormalMode extends Mode {
         _fancyCharacterJump = new FancyJumpResponder(bufferContext, "g c", FancyJumpResponder.TargetKind.CHARACTER);
         _rootResponder.addEventResponder(_fancyWordJump);
         _rootResponder.addEventResponder(_fancyCharacterJump);
-        JavaLspPluginSupport.installNormalModeBindings(this, window, leader);
-        ClangdLspPluginSupport.installNormalModeBindings(this, window);
+        installPluginKeyBindings(window);
         installLeaderMoveBindings(window, leader);
         installLeaderWorkspaceBindings(window, leader);
         _rootResponder.addEventResponder("i", "Editing", "insert", () -> {
@@ -411,24 +409,6 @@ public class NormalMode extends Mode {
                 window.getCommandView().setMessage(e.getMessage() == null ? "Failed to toggle breakpoint" : e.getMessage());
             }
         });
-        _rootResponder.addEventResponder("e", () -> {
-            if (window.blockEditorDriveAction("mail workspace", "email is confidential and unavailable to Nemo")) {
-                return;
-            }
-            MailUiSupport.toggle(window);
-        });
-        _rootResponder.addEventResponder("s", () -> {
-            if (window.blockEditorDriveAction("Slack workspace", "Slack is outside the editor-control sandbox")) {
-                return;
-            }
-            SlackUiSupport.toggle(window);
-        });
-        _rootResponder.addEventResponder("t", () -> {
-            if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
-                return;
-            }
-            TodoUiSupport.toggle(window);
-        });
         _rootResponder.addEventResponder(":", "Workspace", "command line", () -> {
             window.getCommandView().activate(":");
         });
@@ -535,27 +515,74 @@ public class NormalMode extends Mode {
     }
 
     private void installLeaderWorkspaceBindings(Window window, String leader) {
-        _rootResponder.addEventResponder(leader + " m", "Workspace", "mail", "mail", () -> {
-            if (window.blockEditorDriveAction("mail workspace", "email is confidential and unavailable to Nemo")) {
-                return;
-            }
-            MailUiSupport.toggle(window);
-        });
-        _rootResponder.addEventResponder(leader + " g", "Workspace", "Git", "git", () -> {
-            window.getCommandView().execute("git");
-        });
-        _rootResponder.addEventResponder(leader + " s", "Workspace", "Slack", "slack", () -> {
-            if (window.blockEditorDriveAction("Slack workspace", "Slack is outside the editor-control sandbox")) {
-                return;
-            }
-            SlackUiSupport.toggle(window);
-        });
         _rootResponder.addEventResponder(leader + " t", "Workspace", "Todo", "todo", () -> {
             if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
                 return;
             }
             TodoUiSupport.toggle(window);
         });
+    }
+
+    private void installPluginKeyBindings(Window window) {
+        List<SwimPluginKeyBindingDescriptor> bindings = SwimPluginKeyBindingRegistry.listBindings();
+        if (bindings.isEmpty()) {
+            return;
+        }
+        var layer = _rootResponder.addLayer();
+        for (SwimPluginKeyBindingDescriptor binding : bindings) {
+            layer.addEventResponder(new PluginKeyBindingResponder(window, binding));
+        }
+    }
+
+    private static final class PluginKeyBindingResponder implements EventResponder, KeyBindingHintProvider {
+        private final Window _window;
+        private final SwimPluginKeyBindingDescriptor _binding;
+        private final TextEventResponder _responder;
+
+        private PluginKeyBindingResponder(Window window, SwimPluginKeyBindingDescriptor binding) {
+            _window = window;
+            _binding = binding;
+            _responder = new TextEventResponder(binding.key(), this::run,
+                    KeyBindingHint.of(binding.key(), binding.group(), binding.summary(), binding.commandName()));
+        }
+
+        @Override
+        public Response processEvent(KeyStrokes events) {
+            if (!isAvailable()) {
+                return Response.NO;
+            }
+            return _responder.processEvent(events);
+        }
+
+        @Override
+        public void respond() {
+            _responder.respond();
+        }
+
+        @Override
+        public List<KeyBindingHint> keyBindingHints() {
+            return isAvailable() ? _responder.keyBindingHints() : List.of();
+        }
+
+        private boolean isAvailable() {
+            try {
+                return _binding.isAvailable();
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
+        private void run() {
+            var context = _window.getBufferContext();
+            var path = context == null || context.getBuffer() == null ? null : context.getBuffer().getPath();
+            SwimRuntime.loadPlugin(_binding.pluginId(), path);
+            if (_binding.hasAction()) {
+                _binding.action().run();
+            }
+            if (!_binding.command().isBlank()) {
+                _window.getCommandView().execute(_binding.command());
+            }
+        }
     }
 
     private void moveCurrentLines(Window window, int delta, int lineCount) {

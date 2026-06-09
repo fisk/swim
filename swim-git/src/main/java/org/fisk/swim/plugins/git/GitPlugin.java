@@ -1,6 +1,7 @@
 package org.fisk.swim.plugins.git;
 
 import org.fisk.swim.api.SwimPlugin;
+import org.fisk.swim.api.SwimPluginKeyBinding;
 import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.api.SwimPluginPreloadContext;
 
@@ -22,6 +23,7 @@ public final class GitPlugin implements SwimPlugin {
         for (var chapter : GitPluginHelp.chapters()) {
             context.registerHelpChapter(chapter);
         }
+        context.registerKeyBinding(new SwimPluginKeyBinding("<SPACE> g", "Workspace", "Git", "git", "git"));
     }
 
     @Override

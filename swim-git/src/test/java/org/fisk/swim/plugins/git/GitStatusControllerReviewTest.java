@@ -144,10 +144,12 @@ class GitStatusControllerReviewTest {
         List<String> listLines = controller.render(100, 8);
         int titleLine = indexOfLineContaining(listLines, "#42 Improve review");
         assertTrue(titleLine >= 0);
+        assertTrue(listLines.get(titleLine).contains("feature -> master"));
         assertTrue(!listLines.get(titleLine).contains("@alice"));
         assertTrue(titleLine + 1 < listLines.size());
         assertTrue(listLines.get(titleLine + 1).contains("@alice"));
         assertTrue(listLines.get(titleLine + 1).contains("compiler"));
+        assertTrue(!listLines.get(titleLine + 1).contains("feature -> master"));
 
         GitStatusController reviewController = reviewController(tempDir);
         List<SwimTextSpan> reviewSpans = reviewController.renderRich(110, 12).stream()

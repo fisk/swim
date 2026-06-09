@@ -20,6 +20,7 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -33,6 +34,7 @@ class JavaLspCompletionIntegrationTest {
     @AfterEach
     void tearDown() {
         JavaLSPClient.shutdownInstalledInstance();
+        SwimPluginPreloadRegistry.clearForTests();
         if (Window.getInstance() != null) {
             Window.getInstance().dispose();
         }
@@ -47,6 +49,7 @@ class JavaLspCompletionIntegrationTest {
         capabilities.setCompletionProvider(new CompletionOptions(Boolean.FALSE, List.of(".")));
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(writeFile("completion-input.java", ""), 32, 8)) {
             var window = harness.getWindow();
@@ -75,6 +78,7 @@ class JavaLspCompletionIntegrationTest {
         capabilities.setCompletionProvider(options);
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(writeFile("completion-commit.java", ""), 32, 8)) {
             var window = harness.getWindow();
@@ -97,6 +101,7 @@ class JavaLspCompletionIntegrationTest {
         capabilities.setCompletionProvider(new CompletionOptions(Boolean.FALSE, List.of(".")));
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(writeFile("completion-page.java", ""), 48, 10)) {
             var window = harness.getWindow();
@@ -120,6 +125,7 @@ class JavaLspCompletionIntegrationTest {
         capabilities.setCompletionProvider(new CompletionOptions(Boolean.FALSE, List.of(".")));
         setField(client, "_capabilities", capabilities);
         JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         try (var harness = HeadlessWindowHarness.create(writeFile("completion-snippet.java", ""), 48, 10)) {
             var window = harness.getWindow();

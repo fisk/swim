@@ -1,12 +1,15 @@
 package org.fisk.swim.ui;
 
 import java.io.IOException;
+import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
 import java.nio.file.Path;
 import java.text.DateFormat;
 import java.util.Date;
+import java.util.List;
+import java.util.Locale;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -30,6 +33,7 @@ public class ModeLineView extends View {
     private TextColor _foregroundColour;
     private final Timer _timer;
     private final MemoryMXBean _memoryBean;
+    private final List<GarbageCollectorMXBean> _gcBeans;
     private Path _cachedBranchRoot;
     private String _cachedBranch = "";
 
@@ -106,6 +110,34 @@ public class ModeLineView extends View {
         return used / 1024 / 1024 + "/" + capacity / 1024 / 1024 + "M";
     }
 
+    static String zgcCollectionLabel(List<? extends GarbageCollectorMXBean> beans) {
+        long minor = 0;
+        long major = 0;
+        boolean hasMinor = false;
+        boolean hasMajor = false;
+        for (GarbageCollectorMXBean bean : beans == null ? List.<GarbageCollectorMXBean>of() : beans) {
+            String name = bean.getName() == null ? "" : bean.getName().toLowerCase(Locale.ROOT);
+            if (!name.contains("zgc") || name.contains("pause") || !name.contains("cycle")) {
+                continue;
+            }
+            long count = bean.getCollectionCount();
+            if (count < 0) {
+                continue;
+            }
+            if (name.contains("minor")) {
+                minor += count;
+                hasMinor = true;
+            } else if (name.contains("major")) {
+                major += count;
+                hasMajor = true;
+            }
+        }
+        if (!hasMinor && !hasMajor) {
+            return "";
+        }
+        return minor + "m " + major + "M";
+    }
+
     static TextColor heapBarColor(MemoryUsage usage) {
         long capacity = heapCapacityBytes(usage);
         long used = Math.max(0, Math.min(usage.getUsed(), capacity));
@@ -126,11 +158,13 @@ public class ModeLineView extends View {
     private AttributedString getHeapString() {
         MemoryUsage usage = getHeapUsage();
         int filledColumns = heapBarFilledColumns(usage, HEAP_BAR_WIDTH);
+        String collectionLabel = zgcCollectionLabel(_gcBeans);
         var str = new AttributedString();
         str.append("[", _foregroundColour, _backgroundColour);
         str.append(UiTheme.repeat("■", filledColumns), heapBarColor(usage), _backgroundColour);
         str.append(UiTheme.repeat("·", HEAP_BAR_WIDTH - filledColumns), UiTheme.TEXT_SUBTLE, _backgroundColour);
-        str.append("] " + heapLabel(usage), _foregroundColour, _backgroundColour);
+        str.append("] " + heapLabel(usage)
+                + (collectionLabel.isBlank() ? "" : " " + collectionLabel), _foregroundColour, _backgroundColour);
         return str;
     }
 
@@ -147,6 +181,7 @@ public class ModeLineView extends View {
         setBackgroundColour(UiTheme.MODELINE_BACKGROUND);
         _foregroundColour = UiTheme.MODELINE_FOREGROUND;
         _memoryBean = ManagementFactory.getMemoryMXBean();
+        _gcBeans = ManagementFactory.getGarbageCollectorMXBeans();
         _time = getTime();
 
         _timer = new Timer(true);
