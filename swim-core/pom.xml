@@ -28,6 +28,11 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>org.fisk</groupId>
+      <artifactId>swim-session</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>com.googlecode.lanterna</groupId>
       <artifactId>lanterna</artifactId>
     </dependency>

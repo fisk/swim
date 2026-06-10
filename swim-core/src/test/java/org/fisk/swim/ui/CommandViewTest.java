@@ -37,6 +37,7 @@ import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.slack.FakeSlackClient;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.SlackPluginRegistry;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.MailPanelView;
@@ -216,6 +217,27 @@ class CommandViewTest {
             HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('e'));
             assertEquals("ne", panel.getQuery());
             assertEquals(2, panel.getResults().size());
+        }
+    }
+
+    @Test
+    void sessionsCommandShowsServerSessionFallbackWhenNoServerIsAttached() throws Exception {
+        Path path = tempDir.resolve("sessions-command.txt");
+        Files.writeString(path, "abc");
+        String previous = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            invokeRunCommand(harness.getWindow().getCommandView(), "sessions");
+
+            assertTrue(harness.getWindow().getPanelView() instanceof TextPanelView);
+            String text = HeadlessWindowHarness.getField(harness.getWindow().getPanelView(), "_text", String.class);
+            assertTrue(text.contains("No SWIM session server is attached"));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+            } else {
+                System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previous);
+            }
         }
     }
 

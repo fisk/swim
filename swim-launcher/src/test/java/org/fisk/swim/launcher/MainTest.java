@@ -174,9 +174,22 @@ class MainTest {
                 "--add-modules=java.instrument"));
 
         assertTrue(modules.contains("org.fisk.swim.launcher"));
+        assertTrue(modules.contains("org.fisk.swim.session"));
         assertTrue(modules.contains("jdk.jshell"));
         assertTrue(modules.contains("jdk.jdeps"));
         assertTrue(modules.contains("java.instrument"));
+    }
+
+    @Test
+    void sessionServerCommandUsesDedicatedJvmPolicy() {
+        List<String> command = SwimJavaCommand.serverCommand(Path.of("server.sock"), Path.of("swim-root"));
+
+        assertTrue(command.contains("-XX:+UseZGC"));
+        assertTrue(command.contains("-Xmx4G"));
+        assertTrue(command.contains("-XX:SoftMaxHeapSize=1G"));
+        assertTrue(command.contains("--enable-native-access=org.fisk.swim.session"));
+        assertTrue(command.contains("org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain"));
+        assertFalse(command.contains("--swim-server"));
     }
 
     @Test

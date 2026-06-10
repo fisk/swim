@@ -2881,6 +2881,13 @@ public class Window implements Drawable {
         terminalContext.setCursorShape(shape);
     }
 
+    public void forceRedraw() {
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
+        update(true);
+    }
+
     private TerminalCursorShape cursorShape(Cursor cursor) {
         if (cursor == null) {
             return TerminalCursorShape.BLOCK;

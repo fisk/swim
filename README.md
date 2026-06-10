@@ -30,6 +30,7 @@ Startup behavior:
 - `swim <file> [file...]` opens the requested file set, creating missing files when possible.
 - `swim <directory>` opens the built-in directory browser for that directory.
 - Normal launches do not restore an old session. `:reload` and `:rebuild` preserve the current editor state while the runtime restarts.
+- Normal launches attach to a background SWIM session server. Use `:sessions` to list live editor instances and `:session <name>` to move the terminal client to another named instance.
 
 `mvn package` installs runtime artifacts into:
 
@@ -57,11 +58,20 @@ Workspace apps include Help, Todo, Shell, Git, Mail, Slack, and debugger panels.
 
 Nemo is the built-in assistant and harness. It uses the langchain4j chat backend for OpenAI-compatible models and other supported providers, and adds web search, MCP servers, delegated workers, plugin tools, bounded context management, host-visible approvals, and OS command sandboxing where available. Nemo can either work through file/project tools or, with explicit host approval, directly control the editor through sandbox-aware key streams and host-filtered screen snapshots. Nemo-visible editor control is intentionally restricted: private integrations such as Mail and host-only notifications are not exposed to Nemo.
 
+## Architecture
+
+SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, and switching.
+
+Each live editor session is a separate app process. When a client attaches, it sends the server both the user launch arguments and the exact app command that should start that session. That is the version boundary: after `:rebuild`, new sessions can start with the rebuilt runtime while existing sessions keep running the older command they were created with. The server must not derive app launch commands from its own code version.
+
+The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal. Its JVM is sized for long-lived coordination with `-XX:+UseZGC`, `-Xmx4G`, and `-XX:SoftMaxHeapSize=1G`; individual editor app processes keep their own runtime policy.
+
 ## Runtime Layout
 
 This repository currently builds these Maven modules:
 
-- `swim-launcher`: the stable launcher, host API, plugin loading, rebuild/reload boundary, and `jlink` image installer.
+- `swim-launcher`: the stable host API, thin client launch path, plugin loading, rebuild/reload boundary, and `jlink` image installer.
+- `swim-session`: the background session server, Unix-domain socket protocol, and public live-session API.
 - `swim-core`: the editor core, UI, modes, commands, help system, shell, Todo, Nemo, LSP/debug integration points, and shared runtime services.
 - `swim-java-lsp`: Java language-support plugin.
 - `swim-clangd-lsp`: C/C++ language-support plugin.

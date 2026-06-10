@@ -16,6 +16,7 @@
   </licenses>
 
   <modules>
+    <module>swim-session</module>
     <module>swim-launcher</module>
     <module>swim-core</module>
     <module>swim-java-lsp</module>

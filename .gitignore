@@ -8,6 +8,7 @@
 session.json
 build
 /target/
+/swim-session/target/
 /swim-core/target/
 /swim-launcher/target/
 /swim-java-lsp/target/

@@ -155,7 +155,7 @@ Targets:
 
 - open Nemo pane from normal mode
 - submit prompt
-- command-mode operations: `:sessions`, `:workers`, `:new`, `:switch`, `:rename`, `:delete`, `:abort`, `:help`, `:q`
+- command-mode operations: `:sessions`, `:session`, `:conversations`, `:workers`, `:new`, `:switch`, `:rename`, `:delete`, `:abort`, `:help`, `:q`
 - pending-state rendering and abort behavior
 
 ### Phase 8: Configuration And Startup Matrix

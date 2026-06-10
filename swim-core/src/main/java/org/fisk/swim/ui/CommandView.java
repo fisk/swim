@@ -1,5 +1,6 @@
 package org.fisk.swim.ui;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,6 +22,8 @@ import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.slack.SlackUiSupport;
+import org.fisk.swim.session.SwimServerSession;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
@@ -84,6 +87,8 @@ public class CommandView extends View {
             new CommandSpec("%s", List.of(), "/pattern/replacement/[g]", "substitute in the whole buffer"),
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
+            new CommandSpec("sessions", List.of(), "", "show live SWIM server sessions"),
+            new CommandSpec("session", List.of(), "<name>", "switch to a live SWIM server session"),
             new CommandSpec("mail", List.of(), "", "open the mail client"),
             new CommandSpec("todo", List.of(), "", "open the Todo workspace"),
             new CommandSpec("tree", List.of(), "", "open the tree view"),
@@ -442,6 +447,12 @@ public class CommandView extends View {
                 _message = "Failed to open help";
             }
             break;
+        case "sessions":
+            showServerSessions();
+            break;
+        case "session":
+            switchServerSession(argument);
+            break;
         case "mail":
             MailUiSupport.toggle(Window.getInstance());
             break;
@@ -652,6 +663,8 @@ public class CommandView extends View {
                 "lgrep", "multicursor", "mc", "grep", "search",
                 "h", "help", "tree", "registers", "reg", "marks", "jumps",
                 "set", "normal", "norm" -> allowEditorDriveCommand(window, rawCommand);
+        case "sessions", "session" -> blockEditorDriveCommand(window, rawCommand,
+                "server session management requires host action");
         case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
         case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
         case "q", "q!", "wq", "x" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
@@ -786,6 +799,69 @@ public class CommandView extends View {
         if (!moved) {
             _message = "No view in that direction";
         }
+    }
+
+    private void showServerSessions() {
+        if (!SwimServerSessions.isAvailable()) {
+            Window.getInstance().showTextPanel("Sessions",
+                    "No SWIM session server is attached.\n\nLaunch swim through the normal client to use server-managed sessions.");
+            return;
+        }
+        List<SwimServerSession> sessions;
+        try {
+            sessions = SwimServerSessions.list();
+        } catch (IOException e) {
+            Window.getInstance().showTextPanel("Sessions", "Unable to read SWIM server sessions: " + e.getMessage());
+            return;
+        }
+        if (sessions.isEmpty()) {
+            Window.getInstance().showTextPanel("Sessions", "No live SWIM server sessions.");
+            return;
+        }
+
+        var items = new ArrayList<ListView.ListItem>();
+        for (SwimServerSession session : sessions) {
+            items.add(new ListView.ListItem() {
+                @Override
+                public void onClick() {
+                    if (session.current()) {
+                        return;
+                    }
+                    try {
+                        SwimServerSessions.switchTo(session.name());
+                    } catch (IOException e) {
+                        _message = "Unable to switch SWIM session: " + e.getMessage();
+                    }
+                }
+
+                @Override
+                public String displayString() {
+                    return serverSessionDisplayString(session);
+                }
+            });
+        }
+        Window.getInstance().showList(items, "Sessions");
+    }
+
+    private void switchServerSession(String argument) {
+        if (argument.isBlank()) {
+            showServerSessions();
+            return;
+        }
+        try {
+            SwimServerSessions.switchTo(argument);
+            _message = "Switching to SWIM session " + SwimServerSessions.normalizeName(argument);
+        } catch (IOException e) {
+            _message = "Unable to switch SWIM session: " + e.getMessage();
+        }
+    }
+
+    private static String serverSessionDisplayString(SwimServerSession session) {
+        String marker = session.current() ? "*" : " ";
+        String attached = session.attached() ? "attached" : "detached";
+        String running = session.running() ? "pid " + session.pid() : "stopped";
+        String args = session.launchArgs().isEmpty() ? "" : " | " + String.join(" ", session.launchArgs());
+        return marker + " " + session.name() + " | " + attached + " | " + running + args;
     }
 
     private boolean isCommandPrompt() {

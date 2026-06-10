@@ -543,11 +543,11 @@ class NemoChatIT {
                     var panel = waitForPanel(window);
                     String restoredSession1Answer = waitForAnyAnswer(panel);
 
-                    submit(panel, ":sessions");
-                    waitForLine(panel, "Sessions:");
+                    submit(panel, ":conversations");
+                    waitForLine(panel, "Conversations:");
                     assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
                     assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-2")));
-                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("me> :sessions")));
+                    assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("me> :conversations")));
 
                     submit(panel, ":switch session-2");
                     panel = waitForPanel(window);
@@ -836,8 +836,8 @@ class NemoChatIT {
                 submit(panel, ":delete session-1");
                 waitForLine(panel, "Deleted session-1.");
 
-                submit(panel, ":sessions");
-                waitForLine(panel, "Sessions:");
+                submit(panel, ":conversations");
+                waitForLine(panel, "Conversations:");
                 var transcript = displayLines(panel);
                 assertFalse(transcript.stream().anyMatch(line -> line.contains("session-1 |")));
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("session-2 | Review Session")));
@@ -853,8 +853,8 @@ class NemoChatIT {
                 NemoClient.getInstance().run(window.getBufferContext(), "");
                 var panel = waitForPanel(window);
 
-                submit(panel, ":sessions");
-                waitForLine(panel, "Sessions:");
+                submit(panel, ":conversations");
+                waitForLine(panel, "Conversations:");
                 var transcript = displayLines(panel);
                 assertFalse(transcript.stream().anyMatch(line -> line.contains("session-1 |")));
                 assertTrue(transcript.stream().anyMatch(line -> line.contains("session-2 | Review Session")));
@@ -892,8 +892,8 @@ class NemoChatIT {
                 waitForNoLine(panel, "hello nemo");
                 waitForNoLine(panel, "Set api_key in");
 
-                submit(panel, ":sessions");
-                waitForLine(panel, "Sessions:");
+                submit(panel, ":conversations");
+                waitForLine(panel, "Conversations:");
                 assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
             }
         } finally {

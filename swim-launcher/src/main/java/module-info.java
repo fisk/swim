@@ -9,6 +9,7 @@ module org.fisk.swim.launcher {
     requires java.sql.rowset;
     requires java.xml;
     requires jdk.httpserver;
+    requires org.fisk.swim.session;
     exports org.fisk.swim.api;
     exports org.fisk.swim.launcher;
 

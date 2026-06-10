@@ -297,14 +297,14 @@ Chat panel editing:
 
 Nemo commands:
 
-- `:abort [session-id|all]`
+- `:abort [conversation-id|all]`
 - `:sessions`
 - `:workers`
 - `:new [title]`
-- `:switch <session-id>`
+- `:switch <conversation-id>`
 - `:rename <title>`
-- `:reset [session-id]`
-- `:delete [session-id]`
+- `:reset [conversation-id]`
+- `:delete [conversation-id]`
 - `:permissions [read-only|workspace-write|full-access]`
 - pending approval dropdown options for approve once, approve always, and deny
 - `:approvals`

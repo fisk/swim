@@ -123,6 +123,7 @@ public final class LauncherImageInstaller {
     static List<String> collectJlinkModules(List<String> launcherOptions) {
         Set<String> modules = new LinkedHashSet<>();
         modules.add("org.fisk.swim.launcher");
+        modules.add("org.fisk.swim.session");
         for (String moduleName : NETBEANS_RUNTIME_MODULES) {
             if (ModuleLayer.boot().findModule(moduleName).isPresent()) {
                 modules.add(moduleName);

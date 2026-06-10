@@ -19,6 +19,7 @@ import org.fisk.swim.event.KeyStrokeEvent;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
@@ -186,6 +187,14 @@ public class EventThread extends Thread {
     private EventExecutionResult executeEvent(Event event, ArrayList<KeyStroke> events) {
         if (event instanceof KeyStrokeEvent keyEvent) {
             _log.debug("Received key stroke event");
+            if (isForceRedrawEvent(keyEvent.getKeyStroke())) {
+                var window = Window.getInstance();
+                if (window != null) {
+                    window.forceRedraw();
+                }
+                notifyKeyObservers(keyEvent.getKeyStroke());
+                return ignored -> ignored.clear();
+            }
             if (keyEvent.getKeyStroke() instanceof MouseAction mouseAction) {
                 return executeMouseEvent(mouseAction);
             }
@@ -243,6 +252,13 @@ public class EventThread extends Thread {
                 && stroke.getKeyType() == com.googlecode.lanterna.input.KeyType.Character
                 && stroke.isCtrlDown()
                 && (stroke.getCharacter() == 'q' || stroke.getCharacter() == 'Q');
+    }
+
+    private static boolean isForceRedrawEvent(KeyStroke stroke) {
+        return stroke != null
+                && stroke.getKeyType() == com.googlecode.lanterna.input.KeyType.Character
+                && stroke.isCtrlDown()
+                && (stroke.getCharacter() == 'l' || stroke.getCharacter() == 'L');
     }
 
     private void drainCancelEvents(ArrayDeque<Event> deferred) {

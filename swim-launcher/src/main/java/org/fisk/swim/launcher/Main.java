@@ -84,7 +84,18 @@ public class Main implements SwimHost {
     }
 
     public static void main(String[] args) {
-        new Main().run(args);
+        Main main = new Main();
+        if (args.length > 0 && "--swim-app".equals(args[0])) {
+            main.run(java.util.Arrays.copyOfRange(args, 1, args.length));
+            return;
+        }
+        try {
+            Path buildRoot = main.determineBuildRoot();
+            System.exit(new SwimSessionClient(buildRoot).run(args));
+        } catch (RuntimeException e) {
+            System.err.println("swim: " + e.getMessage());
+            System.exit(1);
+        }
     }
 
     private void run(String[] args) {

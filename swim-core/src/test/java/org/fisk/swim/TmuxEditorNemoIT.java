@@ -54,9 +54,9 @@ class TmuxEditorNemoIT {
             session.waitForText("Renamed session-", UI_TIMEOUT);
             session.waitForText("Renamed", UI_TIMEOUT);
 
-            session.sendLiteral(":sessions");
+            session.sendLiteral(":conversations");
             session.sendEnter();
-            session.waitForText("Sessions:", UI_TIMEOUT);
+            session.waitForText("Conversations:", UI_TIMEOUT);
             session.waitForText("Renamed", UI_TIMEOUT);
 
             session.sendLiteral(":reset");
@@ -65,7 +65,7 @@ class TmuxEditorNemoIT {
 
             session.sendLiteral(":switch");
             session.sendEnter();
-            session.waitForText("Usage: :switch <session-id>", UI_TIMEOUT);
+            session.waitForText("Usage: :switch <conversation-id>", UI_TIMEOUT);
 
             session.sendLiteral(":delete");
             session.sendEnter();
