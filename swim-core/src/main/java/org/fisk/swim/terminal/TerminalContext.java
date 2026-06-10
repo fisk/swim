@@ -1,6 +1,9 @@
 package org.fisk.swim.terminal;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -23,7 +26,10 @@ import com.googlecode.lanterna.terminal.ExtendedTerminal;
 import com.googlecode.lanterna.terminal.MouseCaptureMode;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.TerminalResizeListener;
+import com.googlecode.lanterna.terminal.ansi.ANSITerminal;
 import com.googlecode.lanterna.terminal.ansi.StreamBasedTerminal;
+import org.fisk.swim.session.SwimServerSessions;
+import org.fisk.swim.session.SwimServerTerminalSize;
 
 public class TerminalContext {
     public static final KeyType BRACKETED_PASTE_START_KEY = KeyType.F18;
@@ -109,10 +115,14 @@ public class TerminalContext {
 
     private static CreatedTerminal createTerminal() {
         try {
-            var factory = new DefaultTerminalFactory();
-            Terminal terminal = factory.createTerminal();
-            configureTerminalInputDecoding(terminal);
-            terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty);
+            Terminal terminal;
+            if (SwimServerSessions.isAvailable()) {
+                terminal = createServerStreamTerminal(System.in, System.out, TerminalContext::queryTerminalSizeFromTty);
+            } else {
+                terminal = new DefaultTerminalFactory().createTerminal();
+                configureTerminalInputDecoding(terminal);
+                terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty);
+            }
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
             return new CreatedTerminal(screen, terminal);
@@ -122,12 +132,26 @@ public class TerminalContext {
     }
 
     private static TerminalControlWriter standardOutputControlWriter() {
+        return outputControlWriter(System.out);
+    }
+
+    private static TerminalControlWriter outputControlWriter(OutputStream output) {
+        OutputStream target = output == null ? System.out : output;
         return sequence -> {
-            synchronized (System.out) {
-                System.out.write(sequence.getBytes(StandardCharsets.UTF_8));
-                System.out.flush();
+            synchronized (target) {
+                target.write(sequence.getBytes(StandardCharsets.UTF_8));
+                target.flush();
             }
         };
+    }
+
+    static Terminal createServerStreamTerminal(
+            InputStream input,
+            OutputStream output,
+            Supplier<TerminalSize> terminalSizeSupplier) {
+        Terminal terminal = new ServerStreamTerminal(input, output, StandardCharsets.UTF_8);
+        configureTerminalInputDecoding(terminal);
+        return wrapTerminal(terminal, terminalSizeSupplier, outputControlWriter(output));
     }
 
     private static void configureTerminalInputDecoding(Terminal terminal) {
@@ -135,6 +159,8 @@ public class TerminalContext {
             return;
         }
         KeyDecodingProfile profile = () -> List.of(
+                new BasicCharacterPattern(new KeyStroke(KeyType.Enter), '\r'),
+                new BasicCharacterPattern(new KeyStroke(KeyType.Enter), '\n'),
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_START_KEY),
                         '\u001b', '[', '2', '0', '0', '~'),
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_END_KEY),
@@ -233,6 +259,10 @@ public class TerminalContext {
 
     private static TerminalSize queryTerminalSizeFromTty() {
         try {
+            TerminalSize serverSize = queryServerTerminalSize();
+            if (serverSize != null) {
+                return serverSize;
+            }
             TerminalSize ttyPathSize = queryConfiguredTtySize();
             if (ttyPathSize != null) {
                 return ttyPathSize;
@@ -252,6 +282,23 @@ public class TerminalContext {
             }
             return null;
         }
+    }
+
+    private static TerminalSize queryServerTerminalSize() {
+        if (!SwimServerSessions.isAvailable()) {
+            return null;
+        }
+        try {
+            return SwimServerSessions.terminalSize()
+                    .map(TerminalContext::toTerminalSize)
+                    .orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private static TerminalSize toTerminalSize(SwimServerTerminalSize size) {
+        return size == null ? null : new TerminalSize(size.columns(), size.rows());
     }
 
     private static TerminalSize queryConfiguredTtySize() throws IOException, InterruptedException {
@@ -415,6 +462,18 @@ public class TerminalContext {
             throw new IllegalArgumentException("terminal must not be null");
         }
         return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter);
+    }
+
+    private static final class ServerStreamTerminal extends ANSITerminal {
+        private ServerStreamTerminal(InputStream input, OutputStream output, Charset charset) {
+            super(input, output, charset);
+        }
+
+        @Override
+        protected TerminalSize findTerminalSize() throws IOException {
+            TerminalSize size = queryTerminalSizeFromTty();
+            return size == null ? new TerminalSize(80, 24) : size;
+        }
     }
 
     private static final class SizeAwareTerminal implements Terminal, TerminalControlWriter {

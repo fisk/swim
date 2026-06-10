@@ -264,6 +264,86 @@ class CommandViewTest {
     }
 
     @Test
+    void detachCommandReportsNoServerWhenUnavailable() throws Exception {
+        Path path = tempDir.resolve("detach-command.txt");
+        Files.writeString(path, "abc");
+        String previous = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var commandView = harness.getWindow().getCommandView();
+
+            invokeRunCommand(commandView, "detach");
+
+            assertTrue(HeadlessWindowHarness.getField(commandView, "_message", String.class)
+                    .contains("No SWIM session server is attached"));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+            } else {
+                System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previous);
+            }
+        }
+    }
+
+    @Test
+    void quitCommandClosesCurrentWindowBeforeTabOrExit() throws Exception {
+        Path path = tempDir.resolve("quit-window.txt");
+        Files.writeString(path, "first");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferHorizontally();
+
+            invokeRunCommand(window.getCommandView(), "q");
+
+            assertFalse(host.exitRequested);
+            assertEquals(1, leafViews(window).size());
+            assertEquals(List.of("quit-window.txt"), tabLabels(window));
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void quitCommandClosesCurrentTabAfterLastWindow() throws Exception {
+        Path first = tempDir.resolve("quit-first.txt");
+        Path second = tempDir.resolve("quit-second.txt");
+        Files.writeString(first, "first");
+        Files.writeString(second, "second");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(first, 50, 12)) {
+            var window = harness.getWindow();
+            invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second);
+
+            invokeRunCommand(window.getCommandView(), "q");
+
+            assertFalse(host.exitRequested);
+            assertEquals(List.of("quit-first.txt"), tabLabels(window));
+            assertEquals(first.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void quitCommandExitsWhenLastTabCloses() throws Exception {
+        Path path = tempDir.resolve("quit-last.txt");
+        Files.writeString(path, "abc");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            invokeRunCommand(harness.getWindow().getCommandView(), "q");
+
+            assertTrue(host.exitRequested);
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
     void tabCompletesSelectedCommandAndPreservesArguments() throws IOException {
         Path path = tempDir.resolve("command-complete.txt");
         Files.writeString(path, "abc");
@@ -498,7 +578,7 @@ class CommandViewTest {
 
             assertEquals("swim-git", host.pluginId);
             assertTrue(window.getActiveView() instanceof PluginPanelView);
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Git"));
+            assertTrue(tabLabels(window).contains("Git"));
         } finally {
             SwimRuntime.clear();
         }
@@ -791,11 +871,26 @@ class CommandViewTest {
         method.invoke(commandView, command);
     }
 
+    private static Object invoke(Object target, String name, Class<?>[] parameterTypes, Object... args) throws Exception {
+        Method method = target.getClass().getDeclaredMethod(name, parameterTypes);
+        method.setAccessible(true);
+        return method.invoke(target, args);
+    }
+
     @SuppressWarnings("unchecked")
     private static List<View> leafViews(Window window) throws Exception {
         Method method = Window.class.getDeclaredMethod("getLeafViews");
         method.setAccessible(true);
         return (List<View>) method.invoke(window);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> tabLabels(Window window) throws Exception {
+        Method method = Window.class.getDeclaredMethod("tabEntries");
+        method.setAccessible(true);
+        return ((List<TabBarView.Tab>) method.invoke(window)).stream()
+                .map(TabBarView.Tab::label)
+                .toList();
     }
 
     private static Rect absoluteBounds(View view) {
@@ -805,6 +900,7 @@ class CommandViewTest {
     private static final class RecordingHost implements SwimHost {
         private String pluginId;
         private SwimPanel panel;
+        private boolean exitRequested;
 
         @Override
         public void requestReload(Path path) {
@@ -821,6 +917,7 @@ class CommandViewTest {
 
         @Override
         public void requestExit() {
+            exitRequested = true;
         }
 
         @Override

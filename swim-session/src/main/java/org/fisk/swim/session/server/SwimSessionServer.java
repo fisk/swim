@@ -18,12 +18,15 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.session.SwimServerSession;
 import org.fisk.swim.session.SwimServerSessions;
+import org.fisk.swim.session.SwimServerTerminalSize;
 
 final class SwimSessionServer {
     private static final byte CTRL_L = 12;
@@ -92,7 +95,10 @@ final class SwimSessionServer {
             }
             case "list" -> handleList(dataInput, dataOutput);
             case "switch" -> handleSwitch(dataInput, dataOutput);
+            case "detach" -> handleDetach(dataInput, dataOutput);
             case "kill" -> handleKill(dataInput, dataOutput);
+            case "resize" -> handleResize(dataInput, dataOutput);
+            case "size" -> handleSize(dataInput, dataOutput);
             default -> writeError(dataOutput, "Unknown SWIM session request: " + requestType);
             }
         } catch (IOException | RuntimeException e) {
@@ -176,6 +182,21 @@ final class SwimSessionServer {
         output.flush();
     }
 
+    private void handleDetach(DataInputStream input, DataOutputStream output) throws IOException {
+        String targetName = SwimServerSessions.normalizeName(input.readUTF());
+        ManagedSession target = _sessions.get(targetName);
+        if (target == null) {
+            writeError(output, "No such SWIM session: " + targetName);
+            return;
+        }
+        if (!target.detachCurrentClient()) {
+            writeError(output, "No client is attached to " + targetName);
+            return;
+        }
+        output.writeUTF("OK");
+        output.flush();
+    }
+
     private void handleKill(DataInputStream input, DataOutputStream output) throws IOException {
         String targetName = SwimServerSessions.normalizeName(input.readUTF());
         ManagedSession target = _sessions.get(targetName);
@@ -192,6 +213,35 @@ final class SwimSessionServer {
         output.flush();
     }
 
+    private void handleResize(DataInputStream input, DataOutputStream output) throws IOException {
+        String targetName = SwimServerSessions.normalizeName(input.readUTF());
+        int rows = input.readInt();
+        int columns = input.readInt();
+        ManagedSession target = _sessions.get(targetName);
+        if (target == null) {
+            writeError(output, "No such SWIM session: " + targetName);
+            return;
+        }
+        target.resize(rows, columns);
+        output.writeUTF("OK");
+        output.flush();
+    }
+
+    private void handleSize(DataInputStream input, DataOutputStream output) throws IOException {
+        String targetName = SwimServerSessions.normalizeName(input.readUTF());
+        ManagedSession target = _sessions.get(targetName);
+        output.writeUTF("OK");
+        if (target == null) {
+            output.writeBoolean(false);
+        } else {
+            SwimServerTerminalSize size = target.terminalSize();
+            output.writeBoolean(true);
+            output.writeInt(size.rows());
+            output.writeInt(size.columns());
+        }
+        output.flush();
+    }
+
     private ManagedSession session(String name) {
         String normalized = SwimServerSessions.normalizeName(name);
         return _sessions.computeIfAbsent(normalized,
@@ -200,11 +250,23 @@ final class SwimSessionServer {
 
     private static ClientRequest readAttachRequest(DataInputStream input) throws IOException {
         String session = input.readUTF();
+        Path workingDirectory = Path.of(input.readUTF()).toAbsolutePath().normalize();
+        Map<String, String> environment = readStringMap(input);
         int rows = input.readInt();
         int columns = input.readInt();
         List<String> launchArgs = readStringList(input);
         List<String> appCommand = readStringList(input);
-        return new ClientRequest(SwimServerSessions.normalizeName(session), launchArgs, appCommand, rows, columns);
+        return new ClientRequest(SwimServerSessions.normalizeName(session), workingDirectory, environment, launchArgs,
+                appCommand, rows, columns);
+    }
+
+    private static Map<String, String> readStringMap(DataInputStream input) throws IOException {
+        int count = input.readInt();
+        var values = new LinkedHashMap<String, String>();
+        for (int i = 0; i < count; i++) {
+            values.put(input.readUTF(), input.readUTF());
+        }
+        return Map.copyOf(values);
     }
 
     private static List<String> readStringList(DataInputStream input) throws IOException {
@@ -222,6 +284,27 @@ final class SwimSessionServer {
         output.flush();
     }
 
+    static Path appWorkingDirectory(Path serverWorkingDirectory, ClientRequest request) {
+        Path directory = request.workingDirectory();
+        if (directory != null && Files.isDirectory(directory)) {
+            return directory;
+        }
+        return serverWorkingDirectory;
+    }
+
+    static Map<String, String> appEnvironment(Path socketPath, String sessionName, ClientRequest request) {
+        var environment = new LinkedHashMap<String, String>(request.environment());
+        environment.put(SwimServerSessions.ENV_SOCKET, socketPath.toString());
+        environment.put(SwimServerSessions.ENV_SESSION, SwimServerSessions.normalizeName(sessionName));
+        environment.put("SWIM_TTY_ROWS", String.valueOf(request.rows()));
+        environment.put("SWIM_TTY_COLS", String.valueOf(request.columns()));
+        return Map.copyOf(environment);
+    }
+
+    static List<String> appCommand(ClientRequest request) {
+        return request.appCommand();
+    }
+
     private static void closeQuietly(AutoCloseable closeable) {
         try {
             closeable.close();
@@ -229,9 +312,12 @@ final class SwimSessionServer {
         }
     }
 
-    record ClientRequest(String session, List<String> args, List<String> appCommand, int rows, int columns) {
+    record ClientRequest(String session, Path workingDirectory, Map<String, String> environment, List<String> args,
+            List<String> appCommand, int rows, int columns) {
         ClientRequest {
             session = SwimServerSessions.normalizeName(session);
+            workingDirectory = workingDirectory == null ? null : workingDirectory.toAbsolutePath().normalize();
+            environment = Map.copyOf(environment == null ? Map.of() : environment);
             args = List.copyOf(args == null ? List.of() : args);
             appCommand = List.copyOf(appCommand == null ? List.of() : appCommand);
             rows = Math.max(1, rows);
@@ -242,11 +328,15 @@ final class SwimSessionServer {
         }
 
         ClientRequest withSession(String session) {
-            return new ClientRequest(session, args, appCommand, rows, columns);
+            return new ClientRequest(session, workingDirectory, environment, args, appCommand, rows, columns);
         }
 
         ClientRequest withoutLaunchArgs() {
-            return new ClientRequest(session, List.of(), appCommand, rows, columns);
+            return new ClientRequest(session, workingDirectory, environment, List.of(), appCommand, rows, columns);
+        }
+
+        ClientRequest withTerminalSize(int rows, int columns) {
+            return new ClientRequest(session, workingDirectory, environment, args, appCommand, rows, columns);
         }
     }
 
@@ -271,6 +361,10 @@ final class SwimSessionServer {
         void attachTo(ManagedSession session, ClientRequest request) {
             _request = request;
             _session.set(session);
+        }
+
+        void resize(int rows, int columns) {
+            _request = _request.withTerminalSize(rows, columns);
         }
 
         void start() {
@@ -317,7 +411,7 @@ final class SwimSessionServer {
     private record KillResult(String message, boolean removable) {
     }
 
-    private static final class ManagedSession {
+    private final class ManagedSession {
         private static final Duration GRACEFUL_KILL_TIMEOUT = Duration.ofSeconds(2);
         private static final Duration FORCED_KILL_TIMEOUT = Duration.ofSeconds(2);
 
@@ -329,6 +423,7 @@ final class SwimSessionServer {
         private volatile Process _process;
         private volatile OutputStream _processInput;
         private volatile List<String> _launchArgs = List.of();
+        private volatile SwimServerTerminalSize _terminalSize = new SwimServerTerminalSize(24, 80);
 
         private ManagedSession(String name, Path workingDirectory, Path socketPath) {
             _name = name;
@@ -343,6 +438,7 @@ final class SwimSessionServer {
                     previousClient.close();
                 }
                 client.attachTo(this, request);
+                resize(request.rows(), request.columns());
                 ensureStarted(request);
                 requestRedraw();
             }
@@ -350,6 +446,15 @@ final class SwimSessionServer {
 
         void detach(ClientConnection client) {
             _client.compareAndSet(client, null);
+        }
+
+        boolean detachCurrentClient() {
+            ClientConnection client = _client.getAndSet(null);
+            if (client == null) {
+                return false;
+            }
+            client.close();
+            return true;
         }
 
         ClientConnection currentClient() {
@@ -374,6 +479,19 @@ final class SwimSessionServer {
                 processInput.flush();
             } catch (IOException e) {
             }
+        }
+
+        void resize(int rows, int columns) {
+            _terminalSize = new SwimServerTerminalSize(rows, columns);
+            ClientConnection client = _client.get();
+            if (client != null) {
+                client.resize(rows, columns);
+            }
+            requestRedraw();
+        }
+
+        SwimServerTerminalSize terminalSize() {
+            return _terminalSize;
         }
 
         KillResult kill() {
@@ -407,27 +525,21 @@ final class SwimSessionServer {
                 return;
             }
             _launchArgs = request.args();
-            List<String> command = ptyCommand(request);
+            List<String> command = appCommand(request);
             ProcessBuilder builder = new ProcessBuilder(command)
-                    .directory(_workingDirectory.toFile())
+                    .directory(appWorkingDirectory(request).toFile())
                     .redirectErrorStream(true);
-            builder.environment().put(SwimServerSessions.ENV_SOCKET, _socketPath.toString());
-            builder.environment().put(SwimServerSessions.ENV_SESSION, _name);
+            Map<String, String> environment = builder.environment();
+            environment.clear();
+            environment.putAll(appEnvironment(_socketPath, _name, request));
             Process process = builder.start();
             _process = process;
             _processInput = process.getOutputStream();
             Thread.startVirtualThread(() -> copyProcessToCurrentClient(process));
         }
 
-        private List<String> ptyCommand(ClientRequest request) {
-            Path script = Path.of("/usr/bin/script");
-            if (!Files.isExecutable(script)) {
-                throw new IllegalStateException("/usr/bin/script is required for SWIM server sessions");
-            }
-            String resize = "stty rows " + request.rows()
-                    + " cols " + request.columns() + "; ";
-            String command = resize + "exec " + shellCommand(request.appCommand());
-            return List.of(script.toString(), "-q", "/dev/null", "/bin/sh", "-lc", command);
+        private Path appWorkingDirectory(ClientRequest request) {
+            return SwimSessionServer.appWorkingDirectory(_workingDirectory, request);
         }
 
         private void requestRedraw() {
@@ -458,6 +570,7 @@ final class SwimSessionServer {
             } catch (IOException e) {
             } finally {
                 ClientConnection client = null;
+                boolean removeSession = false;
                 synchronized (_lock) {
                     if (_process == process) {
                         _process = null;
@@ -465,7 +578,11 @@ final class SwimSessionServer {
                         _processInput = null;
                         _launchArgs = List.of();
                         client = _client.getAndSet(null);
+                        removeSession = true;
                     }
+                }
+                if (removeSession) {
+                    _sessions.remove(_name, this);
                 }
                 if (client != null) {
                     client.close();
@@ -518,14 +635,5 @@ final class SwimSessionServer {
             return true;
         }
 
-        private static String shellCommand(List<String> command) {
-            return command.stream()
-                    .map(ManagedSession::shellQuote)
-                    .collect(java.util.stream.Collectors.joining(" "));
-        }
-
-        private static String shellQuote(String value) {
-            return "'" + value.replace("'", "'\"'\"'") + "'";
-        }
     }
 }

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -80,6 +81,7 @@ class MainTest {
         assertTrue(modulePath.stream().anyMatch(path -> path.getFileName().toString().equals("swim-core-0.0.1-SNAPSHOT.jar")));
         assertTrue(modulePath.stream().anyMatch(path -> path.getFileName().toString().equals("lanterna-9.9.9.jar")));
         assertFalse(modulePath.stream().anyMatch(path -> path.getFileName().toString().startsWith("swim-launcher-")));
+        assertFalse(modulePath.stream().anyMatch(path -> path.getFileName().toString().startsWith("swim-session-")));
     }
 
     @Test
@@ -122,8 +124,9 @@ class MainTest {
     }
 
     @Test
-    void sharedLibFilterOnlyExcludesLauncherArtifacts() {
+    void sharedLibFilterExcludesBootLayerSwimArtifacts() {
         assertTrue(Main.isSharedLib(Path.of("swim-launcher-0.0.1-SNAPSHOT.jar")));
+        assertTrue(Main.isSharedLib(Path.of("swim-session-0.0.1-SNAPSHOT.jar")));
         assertFalse(Main.isSharedLib(Path.of("lanterna-3.1.3.jar")));
     }
 
@@ -223,10 +226,19 @@ class MainTest {
                 "-Djava.awt.headless=true"));
 
         String content = Files.readString(launcher);
-        assertTrue(content.startsWith("#!/usr/bin/env -S java --source 25"));
+        Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
+        assertTrue(content.startsWith("#!" + embeddedJava + " --source 25"));
+        assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx1g\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
+        assertTrue(content.contains("clientWorkingDirectory()"));
+        assertTrue(content.contains("clientEnvironment()"));
+        assertTrue(content.contains("relayResize(socket, request.sessionName(), terminalSize)"));
+        assertTrue(content.contains("output.writeUTF(\"resize\")"));
+        assertTrue(content.contains("redirectInput(ProcessBuilder.Redirect.from(Path.of(\"/dev/null\").toFile()))"));
+        assertFalse(content.contains("redirectInput(ProcessBuilder.Redirect.DISCARD)"));
         assertTrue(content.contains("\"--attach\""));
         assertTrue(content.contains("\"--kill-session\""));
         assertTrue(Files.isExecutable(launcher));
@@ -251,6 +263,36 @@ class MainTest {
     }
 
     @Test
+    void sourceLauncherRunsThroughEmbeddedJavaShebang() throws Exception {
+        assumeTrue(!System.getProperty("os.name").toLowerCase().contains("win"),
+                "source launcher shebang is Unix-only");
+        Path launcher = tempDir.resolve("embedded").resolve("bin").resolve("swim");
+        Files.createDirectories(launcher.getParent());
+        Path embeddedJava = launcher.getParent().resolve("java");
+        Path currentJava = Path.of(System.getProperty("java.home")).resolve("bin").resolve("java")
+                .toAbsolutePath().normalize();
+        try {
+            Files.createSymbolicLink(embeddedJava, currentJava);
+        } catch (UnsupportedOperationException | IOException e) {
+            assumeTrue(false, "symbolic links are unavailable: " + e.getMessage());
+        }
+        try {
+            Files.writeString(launcher, "placeholder");
+            LauncherImageInstaller.installSourceLauncher(launcher, List.of());
+
+            Process process = new ProcessBuilder(launcher.toString(), "--swim-source-client-self-test")
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS), output);
+            assertEquals(0, process.exitValue(), output);
+        } finally {
+            Files.deleteIfExists(embeddedJava);
+        }
+    }
+
+    @Test
     void swimSessionClientAttachModeUsesNamedSessionWithoutLaunchArgs() throws Exception {
         Path socket = tempDir.resolve("attach.sock");
         var request = new AtomicReference<List<String>>();
@@ -264,6 +306,12 @@ class MainTest {
             assertEquals(SwimServerSessions.MAGIC, input.readUTF());
             assertEquals("attach", input.readUTF());
             String session = input.readUTF();
+            String workingDirectory = input.readUTF();
+            int environmentCount = input.readInt();
+            var environment = new java.util.HashMap<String, String>();
+            for (int i = 0; i < environmentCount; i++) {
+                environment.put(input.readUTF(), input.readUTF());
+            }
             input.readInt();
             input.readInt();
             int launchArgCount = input.readInt();
@@ -275,7 +323,8 @@ class MainTest {
             for (int i = 0; i < commandArgCount; i++) {
                 commandArgs.add(input.readUTF());
             }
-            request.set(List.of(session, String.valueOf(launchArgCount), commandArgs.getLast()));
+            request.set(List.of(session, workingDirectory, String.valueOf(environment.containsKey("PATH")),
+                    String.valueOf(launchArgCount), commandArgs.getLast()));
             var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
             output.writeUTF("OK");
             output.flush();
@@ -285,7 +334,8 @@ class MainTest {
         server.join(1000);
 
         assertEquals(0, exit);
-        assertEquals(List.of("review", "0", "--swim-app"), request.get());
+        assertEquals(List.of("review", Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize().toString(),
+                "true", "0", "--swim-app"), request.get());
     }
 
     @Test
@@ -693,6 +743,7 @@ class MainTest {
 
         Path helperJar = runtimeLibs.resolve("lanterna-9.9.9.jar");
         jarDirectory(helperClasses, helperJar, null, Map.of());
+        Files.writeString(runtimeLibs.resolve("swim-session-0.0.1-SNAPSHOT.jar"), "shared");
 
         compileJava(Map.of(
                 "fake/core/FakeApp.java", """

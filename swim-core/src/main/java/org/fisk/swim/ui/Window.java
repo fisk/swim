@@ -25,6 +25,7 @@ import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.KeyStrokeEvent;
+import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
@@ -41,6 +42,7 @@ import org.fisk.swim.mode.ReplaceMode;
 import org.fisk.swim.mode.VisualBlockMode;
 import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
@@ -111,9 +113,13 @@ public class Window implements Drawable {
         private Mode _currentMode;
         private View _panelView;
         private String _pluginId;
+        private String _customTabLabel;
     }
 
-    public record OpenBufferEntry(Path path, String label) {
+    public record OpenBufferEntry(Path path, String label, boolean modified) {
+        public OpenBufferEntry(Path path, String label) {
+            this(path, label, false);
+        }
     }
 
     public record EditorDriveResult(boolean accepted, String message, int eventsProcessed,
@@ -147,7 +153,9 @@ public class Window implements Drawable {
     private KeyMenuView _keyMenuView;
     private View _workspaceView;
     private View _activeView;
+    private View _lastActiveView;
     private BufferView _activeBufferView;
+    private TabBarView _tabBarView;
     private ModeLineView _modeLineView;
     private CommandView _commandView;
     private CommandMenuView _commandMenuView;
@@ -180,7 +188,10 @@ public class Window implements Drawable {
     private View _panelView;
     private ShellPanelView _savedPanelShell;
     private List<WorkspaceState> _workspaceHistory = new ArrayList<>();
+    private List<WorkspaceState> _workspaceOrder = new ArrayList<>();
+    private List<Path> _bufferHistory = new ArrayList<>();
     private WorkspaceState _currentWorkspace;
+    private WorkspaceState _lastWorkspace;
     private EditorState _editorState;
     private final EditorPaths _editorPaths;
     private final EditorConfig _editorConfig;
@@ -239,6 +250,15 @@ public class Window implements Drawable {
     private void ensureLayoutState() {
         if (_workspaceHistory == null) {
             _workspaceHistory = new ArrayList<>();
+        }
+        if (_workspaceOrder == null) {
+            _workspaceOrder = new ArrayList<>();
+        }
+        if (_workspaceOrder.isEmpty() && !_workspaceHistory.isEmpty()) {
+            _workspaceOrder.addAll(_workspaceHistory);
+        }
+        if (_bufferHistory == null) {
+            _bufferHistory = new ArrayList<>();
         }
         if (_bufferContextsByView == null) {
             _bufferContextsByView = new IdentityHashMap<>();
@@ -569,7 +589,7 @@ public class Window implements Drawable {
         }
         chatView.removeFromParent();
         WorkspaceState workspace = createViewWorkspace(chatView, WorkspaceKind.NEMO);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
@@ -761,6 +781,14 @@ public class Window implements Drawable {
         return splitActiveBuffer(SplitView.Orientation.VERTICAL);
     }
 
+    public boolean splitActiveContentHorizontally() {
+        return splitActiveContent(SplitView.Orientation.HORIZONTAL);
+    }
+
+    public boolean splitActiveContentVertically() {
+        return splitActiveContent(SplitView.Orientation.VERTICAL);
+    }
+
     public boolean splitActiveViewHorizontally(View view) {
         if (!splitView(getActiveView(), view, SplitView.Orientation.HORIZONTAL, 0.5)) {
             return false;
@@ -820,6 +848,9 @@ public class Window implements Drawable {
             }
             if (view == _panelView) {
                 _panelView = null;
+            }
+            if (view == _lastActiveView) {
+                _lastActiveView = null;
             }
             if (view instanceof BufferView bufferView) {
                 unregisterBufferView(bufferView);
@@ -892,6 +923,9 @@ public class Window implements Drawable {
             hideTransientDiagnostics();
         }
         View previousActiveView = _activeView;
+        if (previousActiveView != null && previousActiveView != view) {
+            _lastActiveView = previousActiveView;
+        }
         if (previousActiveView instanceof ShellPanelView previousShell && previousActiveView != view) {
             previousShell.sendFocusChanged(false);
         }
@@ -903,6 +937,7 @@ public class Window implements Drawable {
             if (bufferContext != null) {
                 _activeBufferView = bufferView;
                 _bufferContext = bufferContext;
+                trackBufferContext(bufferContext);
                 if (bufferContext != previousBufferContext) {
                     rebuildModesForActiveBuffer(previousMode);
                 } else if (_currentMode != null) {
@@ -1464,6 +1499,231 @@ public class Window implements Drawable {
         return activateWorkspace(_workspaceHistory.get(oneBasedIndex - 1));
     }
 
+    public boolean createScratchWorkspace() {
+        if (blockEditorDriveAction("workspace create", "creating workspaces through drive_editor is not allowed")) {
+            return false;
+        }
+        return openBufferWorkspace(null);
+    }
+
+    public boolean switchToWorkspaceIndex(int zeroBasedIndex) {
+        if (blockEditorDriveAction("workspace switch", "switching workspaces through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (zeroBasedIndex < 0 || zeroBasedIndex >= _workspaceOrder.size()) {
+            return false;
+        }
+        return activateWorkspace(_workspaceOrder.get(zeroBasedIndex));
+    }
+
+    public boolean switchToNextWorkspace() {
+        return switchWorkspaceByDelta(1);
+    }
+
+    public boolean switchToPreviousWorkspace() {
+        return switchWorkspaceByDelta(-1);
+    }
+
+    public boolean switchToLastWorkspace() {
+        if (blockEditorDriveAction("workspace switch", "switching workspaces through drive_editor is not allowed")) {
+            return false;
+        }
+        return _lastWorkspace != null && _workspaceOrder.contains(_lastWorkspace)
+                && activateWorkspace(_lastWorkspace);
+    }
+
+    public boolean renameCurrentTab(String label) {
+        if (blockEditorDriveAction("tab rename", "renaming tabs through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace == null) {
+            return false;
+        }
+        _currentWorkspace._customTabLabel = normalizeTabLabel(label);
+        refreshChromeState();
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
+        return true;
+    }
+
+    public boolean moveCurrentTabToIndex(int targetIndex) {
+        if (blockEditorDriveAction("tab reorder", "reordering tabs through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace == null || targetIndex < 0 || targetIndex >= _workspaceOrder.size()) {
+            return false;
+        }
+        int currentIndex = _workspaceOrder.indexOf(_currentWorkspace);
+        if (currentIndex < 0) {
+            return false;
+        }
+        if (currentIndex == targetIndex) {
+            return true;
+        }
+        _workspaceOrder.remove(currentIndex);
+        _workspaceOrder.add(targetIndex, _currentWorkspace);
+        refreshChromeState();
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
+        return true;
+    }
+
+    public boolean swapCurrentTabByDelta(int delta) {
+        if (blockEditorDriveAction("tab reorder", "reordering tabs through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace == null || delta == 0) {
+            return false;
+        }
+        int currentIndex = _workspaceOrder.indexOf(_currentWorkspace);
+        int targetIndex = currentIndex + delta;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= _workspaceOrder.size()) {
+            return false;
+        }
+        java.util.Collections.swap(_workspaceOrder, currentIndex, targetIndex);
+        refreshChromeState();
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
+        return true;
+    }
+
+    private boolean switchWorkspaceByDelta(int delta) {
+        if (blockEditorDriveAction("workspace switch", "switching workspaces through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_workspaceOrder.size() <= 1 || _currentWorkspace == null) {
+            return false;
+        }
+        int index = _workspaceOrder.indexOf(_currentWorkspace);
+        if (index < 0) {
+            return false;
+        }
+        int nextIndex = Math.floorMod(index + delta, _workspaceOrder.size());
+        return activateWorkspace(_workspaceOrder.get(nextIndex));
+    }
+
+    public boolean closeAnyCurrentWorkspace() {
+        if (blockEditorDriveAction("workspace close", "closing workspaces through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace == null || _workspaceOrder.size() <= 1) {
+            return false;
+        }
+        return closeCurrentWorkspaceAndActivateFallback();
+    }
+
+    public void closeCurrentTabOrExit() {
+        if (blockEditorDriveAction("workspace close", "closing workspaces through drive_editor is not allowed")) {
+            return;
+        }
+        ensureLayoutState();
+        if (_currentWorkspace != null && _workspaceOrder.size() > 1 && closeCurrentWorkspaceAndActivateFallback()) {
+            return;
+        }
+        SwimRuntime.exit();
+    }
+
+    public void quitCurrentWindowOrExit() {
+        if (blockEditorDriveAction("window close", "closing windows through drive_editor is not allowed")) {
+            return;
+        }
+        ensureLayoutState();
+        if (closeView(getActiveView())) {
+            return;
+        }
+        closeCurrentTabOrExit();
+    }
+
+    private boolean closeCurrentWorkspaceAndActivateFallback() {
+        ensureLayoutState();
+        if (_currentWorkspace == null) {
+            return false;
+        }
+        var closing = _currentWorkspace;
+        untrackWorkspace(closing);
+        closeWorkspaceViews(closing);
+        _currentWorkspace = null;
+        if (_workspaceHistory.isEmpty() && _workspaceOrder.isEmpty()) {
+            return false;
+        }
+        return activateWorkspace(!_workspaceHistory.isEmpty() ? _workspaceHistory.getFirst() : _workspaceOrder.getFirst());
+    }
+
+    public boolean showWorkspaceChooser() {
+        if (blockEditorDriveAction("workspace chooser", "workspace selection through drive_editor is not allowed")) {
+            return false;
+        }
+        ensureLayoutState();
+        if (_workspaceOrder.isEmpty()) {
+            return false;
+        }
+        var items = new ArrayList<ListItem>();
+        for (int i = 0; i < _workspaceOrder.size(); i++) {
+            WorkspaceState workspace = _workspaceOrder.get(i);
+            int index = i;
+            items.add(new ListItem() {
+                @Override
+                public void onClick() {
+                    switchToWorkspaceIndex(index);
+                }
+
+                @Override
+                public String displayString() {
+                    String marker = workspace == _currentWorkspace ? "*" : " ";
+                    return marker + " " + index + ": " + tabLabel(workspace);
+                }
+            });
+        }
+        showList(items, "Tabs");
+        return true;
+    }
+
+    public boolean detachCurrentSession() {
+        if (blockEditorDriveAction("session detach", "detaching the host client through drive_editor is not allowed")) {
+            return false;
+        }
+        if (!SwimServerSessions.isAvailable()) {
+            if (_commandView != null) {
+                _commandView.setMessage("No SWIM session server is attached");
+            }
+            return false;
+        }
+        try {
+            SwimServerSessions.detach();
+            return true;
+        } catch (IOException e) {
+            if (_commandView != null) {
+                _commandView.setMessage("Unable to detach SWIM session: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    public boolean focusLastView() {
+        ensureLayoutState();
+        allowEditorDriveAction("focus buffer split");
+        return _lastActiveView != null
+                && getLeafViews().contains(_lastActiveView)
+                && focusViewDirectly(_lastActiveView);
+    }
+
+    private boolean focusViewDirectly(View view) {
+        if (view == null) {
+            return false;
+        }
+        activateView(view);
+        return true;
+    }
+
     public boolean isShowingMailWorkspace() {
         return _currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL;
     }
@@ -1523,7 +1783,7 @@ public class Window implements Drawable {
             return false;
         }
         var closing = _currentWorkspace;
-        _workspaceHistory.remove(closing);
+        untrackWorkspace(closing);
         closeWorkspaceViews(closing);
         if (_workspaceHistory.isEmpty()) {
             _currentWorkspace = null;
@@ -1573,7 +1833,7 @@ public class Window implements Drawable {
         if (target == _currentWorkspace) {
             return closeCurrentWorkspaceWindow();
         }
-        _workspaceHistory.remove(target);
+        untrackWorkspace(target);
         closeWorkspaceViews(target);
         return true;
     }
@@ -2126,6 +2386,7 @@ public class Window implements Drawable {
             }
             buffer.getUndoLog().commit();
             buffer.getCursor().setPosition(cursorPosition);
+            buffer.markUnmodified();
             context.getTextLayout().calculate();
             context.getBufferView().adaptViewToCursor();
             context.getBufferView().setNeedsRedraw();
@@ -2140,7 +2401,13 @@ public class Window implements Drawable {
         }
         Path path = context.getBuffer().getPath();
         String key = path.toAbsolutePath().normalize().toString();
-        ordered.putIfAbsent(key, new OpenBufferEntry(path, bufferLabel(path)));
+        OpenBufferEntry existing = ordered.get(key);
+        boolean modified = context.getBuffer().isModified();
+        if (existing == null) {
+            ordered.put(key, new OpenBufferEntry(path, bufferLabel(path), modified));
+        } else if (modified && !existing.modified()) {
+            ordered.put(key, new OpenBufferEntry(existing.path(), existing.label(), true));
+        }
     }
 
     private static String bufferLabel(Path path) {
@@ -2151,7 +2418,8 @@ public class Window implements Drawable {
         if (root != null) {
             return root.relativize(path).toString();
         }
-        return path.toString();
+        Path name = path.getFileName();
+        return name == null ? path.toString() : name.toString();
     }
 
     private boolean openLocationList(SearchLocationList list) {
@@ -2312,13 +2580,13 @@ public class Window implements Drawable {
                 ? null
                 : _bufferContext.getBuffer().getPath().toAbsolutePath().normalize().toString();
         var workspaces = new ArrayList<SessionWorkspace>();
-        for (var workspace : _workspaceHistory) {
+        for (var workspace : _workspaceOrder) {
             SessionWorkspace saved = snapshotWorkspace(workspace);
             if (saved != null) {
                 workspaces.add(saved);
             }
         }
-        int activeWorkspaceIndex = _currentWorkspace == null ? 0 : Math.max(0, _workspaceHistory.indexOf(_currentWorkspace));
+        int activeWorkspaceIndex = _currentWorkspace == null ? 0 : Math.max(0, _workspaceOrder.indexOf(_currentWorkspace));
         return new EditorSession(buffers, active, workspaces, activeWorkspaceIndex);
     }
 
@@ -2331,34 +2599,51 @@ public class Window implements Drawable {
             String activePath = workspace._bufferContext == null || workspace._bufferContext.getBuffer().getPath() == null
                     ? null
                     : workspace._bufferContext.getBuffer().getPath().toAbsolutePath().normalize().toString();
-            SessionLayoutNode layout = snapshotLayout(workspace._workspaceView);
-            yield new SessionWorkspace("BUFFER", activePath, activePath, layout);
+            SessionLayoutNode layout = snapshotLayout(workspace._workspaceView, workspace._bufferContextsByView);
+            yield new SessionWorkspace("BUFFER", activePath, activePath, layout, workspace._customTabLabel);
         }
         case DIRECTORY -> {
             String path = workspace._workspaceView instanceof DirectoryBrowserView browser
                     ? browser.getDirectory().toAbsolutePath().normalize().toString()
                     : null;
-            yield path == null ? null : new SessionWorkspace("DIRECTORY", path, path, null);
+            yield path == null ? null : new SessionWorkspace("DIRECTORY", path, path, null, workspace._customTabLabel);
         }
         default -> null;
         };
     }
 
-    private SessionLayoutNode snapshotLayout(View view) {
+    private SessionLayoutNode snapshotLayout(View view, IdentityHashMap<BufferView, BufferContext> contextsByView) {
         if (view instanceof SplitView splitView) {
             return toSessionLayout(splitView.snapshot(leaf -> {
                 if (leaf instanceof BufferView bufferView) {
-                    Path path = getBufferContextFor(bufferView).getBuffer().getPath();
+                    BufferContext context = bufferContextForSnapshot(contextsByView, bufferView);
+                    if (context == null) {
+                        return null;
+                    }
+                    Path path = context.getBuffer().getPath();
                     return path == null ? null : path.toAbsolutePath().normalize().toString();
                 }
                 return null;
             }));
         }
         if (view instanceof BufferView bufferView) {
-            Path path = getBufferContextFor(bufferView).getBuffer().getPath();
+            BufferContext context = bufferContextForSnapshot(contextsByView, bufferView);
+            if (context == null) {
+                return null;
+            }
+            Path path = context.getBuffer().getPath();
             return path == null ? null : new SessionLayoutNode(null, 0.0, null, null, path.toAbsolutePath().normalize().toString());
         }
         return null;
+    }
+
+    private BufferContext bufferContextForSnapshot(IdentityHashMap<BufferView, BufferContext> contextsByView,
+            BufferView bufferView) {
+        if (bufferView == null) {
+            return null;
+        }
+        BufferContext context = contextsByView == null ? null : contextsByView.get(bufferView);
+        return context != null ? context : getBufferContextFor(bufferView);
     }
 
     private static SessionLayoutNode toSessionLayout(SplitView.SessionNode node) {
@@ -2375,10 +2660,12 @@ public class Window implements Drawable {
 
     private void restoreSessionWorkspaces(EditorSession session) {
         _workspaceHistory.clear();
+        _workspaceOrder.clear();
+        _lastWorkspace = null;
         for (SessionWorkspace workspace : session.workspaces()) {
             WorkspaceState restored = restoreWorkspace(workspace);
             if (restored != null) {
-                _workspaceHistory.add(restored);
+                trackWorkspace(restored, false);
             }
         }
         if (_workspaceHistory.isEmpty()) {
@@ -2392,13 +2679,17 @@ public class Window implements Drawable {
         if (workspace == null || workspace.kind() == null) {
             return null;
         }
-        return switch (workspace.kind()) {
+        WorkspaceState restored = switch (workspace.kind()) {
         case "BUFFER" -> restoreBufferWorkspace(workspace);
         case "DIRECTORY" -> workspace.path() == null ? null
                 : createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), Path.of(workspace.path())),
                         WorkspaceKind.DIRECTORY);
         default -> null;
         };
+        if (restored != null) {
+            restored._customTabLabel = normalizeTabLabel(workspace.label());
+        }
+        return restored;
     }
 
     private WorkspaceState restoreBufferWorkspace(SessionWorkspace workspace) {
@@ -2461,6 +2752,10 @@ public class Window implements Drawable {
         return _modeLineView;
     }
 
+    public TabBarView getTabBarView() {
+        return _tabBarView;
+    }
+
     public void dispose() {
         ensureLayoutState();
         if (_editorConfig != null && Boolean.getBoolean("swim.session.restore_on_reload")) {
@@ -2517,8 +2812,12 @@ public class Window implements Drawable {
             _keyMenuView.setCommandState(_commandView == null || !_commandView.isActive() ? null : _commandView.getPrompt(),
                     _commandView == null ? "" : _commandView.getCommandText());
             _keyMenuView.setChatPending(responder instanceof ChatPanelView chatPanelView && chatPanelView.isPending());
-            _keyMenuView.setRecentWindows(recentWindowLabels());
+            _keyMenuView.setRecentWindows(recentBufferLabels());
             _keyMenuView.setNeedsRedraw();
+        }
+        if (_tabBarView != null) {
+            _tabBarView.setTabs(tabEntries());
+            _tabBarView.setNeedsRedraw();
         }
         if (_commandMenuView != null) {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
@@ -2560,11 +2859,22 @@ public class Window implements Drawable {
             panelView.removeFromParent();
         }
         attachWorkspaceView();
-        int index = rootSubviews().size();
-        if (_modeLineView != null && _modeLineView.getParent() == _rootView) {
-            index = rootSubviews().indexOf(_modeLineView);
-        }
+        int index = firstFooterIndex();
         _rootView.insertSubview(index, panelView);
+    }
+
+    private int firstFooterIndex() {
+        int index = rootSubviews().size();
+        if (_tabBarView != null && _tabBarView.getParent() == _rootView) {
+            index = Math.min(index, rootSubviews().indexOf(_tabBarView));
+        }
+        if (_modeLineView != null && _modeLineView.getParent() == _rootView) {
+            index = Math.min(index, rootSubviews().indexOf(_modeLineView));
+        }
+        if (_commandView != null && _commandView.getParent() == _rootView) {
+            index = Math.min(index, rootSubviews().indexOf(_commandView));
+        }
+        return index;
     }
 
     private boolean isOverlayPanel(View panelView) {
@@ -2646,7 +2956,9 @@ public class Window implements Drawable {
         var initial = captureCurrentWorkspace();
         initial._kind = WorkspaceKind.BUFFER;
         _workspaceHistory.clear();
-        _workspaceHistory.add(initial);
+        _workspaceOrder.clear();
+        _lastWorkspace = null;
+        trackWorkspace(initial, true);
         _currentWorkspace = initial;
     }
 
@@ -3219,11 +3531,12 @@ public class Window implements Drawable {
 
         int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.getRows());
         Rect bufferBounds = Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
-                Math.max(0, terminalSize.getRows() - initialMenuHeight - 2));
+                Math.max(0, terminalSize.getRows() - initialMenuHeight - 3));
         _bufferContext = initialText == null
                 ? new BufferContext(bufferBounds, path)
                 : new BufferContext(bufferBounds, initialText, true);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
+        trackBufferContext(_bufferContext);
 
         _rootView = new View(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
         _rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
@@ -3238,6 +3551,12 @@ public class Window implements Drawable {
         _activeView = _workspaceView;
         _activeBufferView = _bufferContext.getBufferView();
         attachWorkspaceView();
+
+        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 3), terminalSize.getColumns(),
+                terminalSize.getRows() >= 3 ? 1 : 0));
+        _tabBarView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
+                | View.RESIZE_MASK_HEIGHT);
+        _rootView.addSubview(_tabBarView);
 
         _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
                 terminalSize.getRows() >= 2 ? 1 : 0));
@@ -3281,7 +3600,10 @@ public class Window implements Drawable {
             }
             TodoUiSupport.quickCapture(Window.this);
         });
-        _globalNormalModeHints = quickCaptureLayer.keyBindingHints();
+        installTmuxPrefixBindings(prefixLayer);
+        var globalHints = new ArrayList<KeyBindingHint>(quickCaptureLayer.keyBindingHints());
+        globalHints.addAll(prefixLayer.keyBindingHints());
+        _globalNormalModeHints = List.copyOf(globalHints);
         prefixLayer.addEventResponder(new EventResponder() {
             private CompiledRemap _matched;
 
@@ -3439,6 +3761,218 @@ public class Window implements Drawable {
         });
     }
 
+    private void installTmuxPrefixBindings(ListEventResponder.Layer layer) {
+        addTmuxBinding(layer, "c", "Tabs", "new shell tab",
+                () -> reportIfFalse(showShellWorkspace(), "Unable to create shell tab"));
+        addTmuxBinding(layer, "n", "Tabs", "next tab",
+                () -> reportIfFalse(switchToNextWorkspace(), "No next tab"));
+        addTmuxBinding(layer, "p", "Tabs", "previous tab",
+                () -> reportIfFalse(switchToPreviousWorkspace(), "No previous tab"));
+        addTmuxBinding(layer, "l", "Tabs", "last tab",
+                () -> reportIfFalse(switchToLastWorkspace(), "No last tab"));
+        addTmuxBinding(layer, "w", "Tabs", "choose tab",
+                () -> reportIfFalse(showWorkspaceChooser(), "No tabs"));
+        addTmuxBinding(layer, ",", "Tabs", "rename tab", this::promptRenameCurrentTab, "tab-rename");
+        addTmuxBinding(layer, ".", "Tabs", "move tab", this::promptMoveCurrentTab, "tab-move");
+        addTmuxBinding(layer, "<", "Tabs", "swap tab left",
+                () -> reportIfFalse(swapCurrentTabByDelta(-1), "No tab to the left"), "tab-swap-left");
+        addTmuxBinding(layer, ">", "Tabs", "swap tab right",
+                () -> reportIfFalse(swapCurrentTabByDelta(1), "No tab to the right"), "tab-swap-right");
+        addTmuxBinding(layer, "&", "Tabs", "close tab", this::closeCurrentTabOrExit);
+        addTmuxBinding(layer, "d", "Sessions", "detach client",
+                () -> reportIfFalse(detachCurrentSession(), "Unable to detach session"), "detach");
+        addTmuxBinding(layer, "s", "Sessions", "choose session",
+                () -> executeCommand("sessions"), "sessions");
+        addTmuxTabNumberBinding(layer);
+        for (int i = 0; i <= 9; i++) {
+            int index = i;
+            addTmuxBinding(layer, Integer.toString(i), "Tabs", "tab " + i,
+                    () -> reportIfFalse(switchToWorkspaceIndex(index), "No tab " + index));
+        }
+
+        addTmuxBinding(layer, "\"", "Frames", "split below",
+                () -> reportIfFalse(splitActiveContentVertically(), "Unable to split below"), "split");
+        addTmuxBinding(layer, "%", "Frames", "split right",
+                () -> reportIfFalse(splitActiveContentHorizontally(), "Unable to split right"), "vsplit");
+        addTmuxBinding(layer, "x", "Frames", "close frame",
+                () -> reportIfFalse(closeActiveView(), "Cannot close the last frame"), "close");
+        addTmuxBinding(layer, "o", "Frames", "next frame",
+                () -> reportIfFalse(focusNextView(), "No other frame"), "focus");
+        addTmuxBinding(layer, ";", "Frames", "last frame",
+                () -> reportIfFalse(focusLastView(), "No last frame"), "focus");
+        addTmuxBinding(layer, "<SPACE>", "Frames", "equalize frames",
+                () -> reportIfFalse(equalizeSplits(), "No split to equalize"), "only");
+        addTmuxBinding(layer, "<LEFT>", "Frames", "focus left",
+                () -> reportIfFalse(focusView(Direction.LEFT), "No frame to the left"), "focus");
+        addTmuxBinding(layer, "<DOWN>", "Frames", "focus down",
+                () -> reportIfFalse(focusView(Direction.DOWN), "No frame below"), "focus");
+        addTmuxBinding(layer, "<UP>", "Frames", "focus up",
+                () -> reportIfFalse(focusView(Direction.UP), "No frame above"), "focus");
+        addTmuxBinding(layer, "<RIGHT>", "Frames", "focus right",
+                () -> reportIfFalse(focusView(Direction.RIGHT), "No frame to the right"), "focus");
+        addTmuxBinding(layer, "<ALT>-<LEFT>", "Frames", "resize left",
+                () -> reportIfFalse(resizeActiveViewWidth(-4), "No vertical split to resize"));
+        addTmuxBinding(layer, "<ALT>-<RIGHT>", "Frames", "resize right",
+                () -> reportIfFalse(resizeActiveViewWidth(4), "No vertical split to resize"));
+        addTmuxBinding(layer, "<ALT>-<UP>", "Frames", "resize up",
+                () -> reportIfFalse(resizeActiveViewHeight(-2), "No horizontal split to resize"));
+        addTmuxBinding(layer, "<ALT>-<DOWN>", "Frames", "resize down",
+                () -> reportIfFalse(resizeActiveViewHeight(2), "No horizontal split to resize"));
+        addTmuxBinding(layer, ":", "Commands", "command prompt", this::activateCommandPrompt);
+        addTmuxBinding(layer, "?", "Help", "tmux keys", this::showTmuxPrefixHelp);
+    }
+
+    private void addTmuxBinding(ListEventResponder.Layer layer, String key, String group, String summary,
+            Runnable action) {
+        addTmuxBinding(layer, key, group, summary, action, "");
+    }
+
+    private void addTmuxBinding(ListEventResponder.Layer layer, String key, String group, String summary,
+            Runnable action, String commandName) {
+        layer.addEventResponder("<CTRL>-b " + key, group, summary, commandName, action);
+    }
+
+    private void addTmuxTabNumberBinding(ListEventResponder.Layer layer) {
+        layer.addKeyBindingHint("<CTRL>-b '", "Tabs", "tab number");
+        layer.addEventResponder(new EventResponder() {
+            private Integer _tabIndex;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _tabIndex = null;
+                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                for (var keyStroke : events) {
+                    sequence.add(keyStroke);
+                }
+                if (sequence.isEmpty() || !isCtrlB(sequence.getFirst())) {
+                    return Response.NO;
+                }
+                if (sequence.size() == 1) {
+                    return Response.MAYBE;
+                }
+                var quote = sequence.get(1);
+                if (quote.getKeyType() != KeyType.Character || quote.getCharacter() != '\'') {
+                    return Response.NO;
+                }
+                if (sequence.size() == 2) {
+                    return Response.MAYBE;
+                }
+                StringBuilder digits = new StringBuilder();
+                for (int i = 2; i < sequence.size(); i++) {
+                    var stroke = sequence.get(i);
+                    if (stroke.getKeyType() == KeyType.Enter) {
+                        if (digits.isEmpty()) {
+                            return Response.NO;
+                        }
+                        try {
+                            _tabIndex = Integer.parseInt(digits.toString());
+                        } catch (NumberFormatException e) {
+                            return Response.NO;
+                        }
+                        return Response.YES;
+                    }
+                    if (stroke.getKeyType() != KeyType.Character || !Character.isDigit(stroke.getCharacter())) {
+                        return Response.NO;
+                    }
+                    digits.append(stroke.getCharacter());
+                }
+                return Response.MAYBE;
+            }
+
+            @Override
+            public void respond() {
+                if (_tabIndex != null) {
+                    reportIfFalse(switchToWorkspaceIndex(_tabIndex), "No tab " + _tabIndex);
+                }
+            }
+        });
+    }
+
+    private static boolean isCtrlB(com.googlecode.lanterna.input.KeyStroke stroke) {
+        if (stroke == null || stroke.getKeyType() != KeyType.Character) {
+            return false;
+        }
+        Character character = stroke.getCharacter();
+        return stroke.isCtrlDown() && character != null
+                && (Character.toLowerCase(character) == 'b' || character == 2);
+    }
+
+    private void reportIfFalse(boolean success, String message) {
+        if (!success && _commandView != null) {
+            _commandView.setMessage(message);
+        }
+    }
+
+    private void activateCommandPrompt() {
+        if (blockEditorDriveAction("command prompt", "opening host command prompts through drive_editor is not allowed")) {
+            return;
+        }
+        if (_commandView != null) {
+            _commandView.activate(":");
+        }
+    }
+
+    private void promptRenameCurrentTab() {
+        if (blockEditorDriveAction("tab rename", "renaming tabs through drive_editor is not allowed")) {
+            return;
+        }
+        if (_commandView != null && _currentWorkspace != null) {
+            _commandView.activate(":", "tab-rename " + tabLabel(_currentWorkspace));
+        }
+    }
+
+    private void promptMoveCurrentTab() {
+        if (blockEditorDriveAction("tab reorder", "reordering tabs through drive_editor is not allowed")) {
+            return;
+        }
+        if (_commandView != null) {
+            _commandView.activate(":", "tab-move ");
+        }
+    }
+
+    private void executeCommand(String rawCommand) {
+        if (_commandView != null) {
+            _commandView.execute(rawCommand);
+        }
+    }
+
+    private void showTmuxPrefixHelp() {
+        if (blockEditorDriveAction("tmux prefix help", "opening help panels through drive_editor is not allowed")) {
+            return;
+        }
+        showTextPanel("Tmux Prefix",
+                """
+                Prefix: Ctrl-b
+
+                Tabs:
+                  c       new shell tab
+                  n / p   next / previous tab
+                  l       last tab
+                  0..9    select tab by tmux-style index
+                  '       select any tab number
+                  w       choose tab
+                  ,       rename current tab
+                  .       move current tab to an index
+                  < / >   swap current tab left / right
+                  &       close current tab; exits when it was last
+                  d       detach client
+                  s       choose server session
+
+                Frames:
+                  "       split below
+                  %       split right
+                  x       close frame
+                  o / ;   next / last frame
+                  arrows  focus frame by direction
+                  Alt-arrows resize frame
+                  Space   equalize frame sizes
+
+                Commands:
+                  :       command prompt
+                  ?       this help
+                """);
+    }
+
     private BufferView splitActiveBuffer(SplitView.Orientation orientation) {
         ensureLayoutState();
         var currentView = getActiveView();
@@ -3454,6 +3988,14 @@ public class Window implements Drawable {
         }
         activateView(nextBufferView);
         return nextBufferView;
+    }
+
+    private boolean splitActiveContent(SplitView.Orientation orientation) {
+        ensureLayoutState();
+        if (getActiveView() instanceof ShellPanelView) {
+            return openShellSplit(orientation);
+        }
+        return splitActiveBuffer(orientation) != null;
     }
 
     private boolean splitView(View existingView, View newView, SplitView.Orientation orientation, double ratio) {
@@ -3499,6 +4041,9 @@ public class Window implements Drawable {
         }
         if (!(_workspaceView instanceof SplitView splitRoot) || !splitRoot.containsLeaf(view)) {
             return false;
+        }
+        if (_lastActiveView == view) {
+            _lastActiveView = null;
         }
         var focusFallback = splitRoot.removeLeaf(view);
 
@@ -3602,11 +4147,13 @@ public class Window implements Drawable {
             menuHeight = _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
         }
         menuHeight = Math.min(menuHeight, size.getHeight());
-        int footerRows = Math.min(2, Math.max(0, size.getHeight() - menuHeight));
-        int modeLineHeight = footerRows == 2 ? 1 : 0;
+        int maxFooterRows = _tabBarView == null ? 2 : 3;
+        int footerRows = Math.min(maxFooterRows, Math.max(0, size.getHeight() - menuHeight));
+        int tabBarHeight = _tabBarView != null && footerRows == 3 ? 1 : 0;
+        int modeLineHeight = footerRows >= 2 ? 1 : 0;
         int commandHeight = footerRows >= 1 ? 1 : 0;
         int contentTop = menuHeight;
-        int contentHeight = Math.max(0, size.getHeight() - menuHeight - modeLineHeight - commandHeight);
+        int contentHeight = Math.max(0, size.getHeight() - menuHeight - tabBarHeight - modeLineHeight - commandHeight);
         if (_keyMenuView != null) {
             _keyMenuView.setBounds(Rect.create(0, 0, size.getWidth(), menuHeight));
         }
@@ -3618,12 +4165,16 @@ public class Window implements Drawable {
             int overlayHeight = Math.max(1, (int) Math.ceil(contentHeight * overlayRatio));
             _panelView.setBounds(Rect.create(0, contentTop + contentHeight - overlayHeight, size.getWidth(), overlayHeight));
         }
+        if (_tabBarView != null) {
+            _tabBarView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(), tabBarHeight));
+        }
         if (_modeLineView != null) {
-            _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(), modeLineHeight));
+            _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight + tabBarHeight, size.getWidth(),
+                    modeLineHeight));
         }
         if (_commandView != null) {
-            _commandView.setBounds(Rect.create(0, contentTop + contentHeight + modeLineHeight, size.getWidth(),
-                    commandHeight));
+            _commandView.setBounds(Rect.create(0, contentTop + contentHeight + tabBarHeight + modeLineHeight,
+                    size.getWidth(), commandHeight));
         }
         if (_commandMenuView != null) {
             _commandMenuView.syncBounds();
@@ -3755,6 +4306,9 @@ public class Window implements Drawable {
         if (!sourceText.isEmpty()) {
             copyBuffer.rawInsert(0, sourceText);
         }
+        if (!sourceBuffer.isModified()) {
+            copyBuffer.markUnmodified();
+        }
         copyBuffer.getCursor().setPosition(Math.min(sourceBuffer.getCursor().getPosition(), copyBuffer.getLength()));
         copyBuffer.setReadOnly(sourceBuffer.isReadOnly());
         copy.getTextLayout().calculate();
@@ -3805,6 +4359,38 @@ public class Window implements Drawable {
         return view;
     }
 
+    private void trackWorkspace(WorkspaceState workspace, boolean recentFirst) {
+        if (workspace == null) {
+            return;
+        }
+        if (_workspaceHistory == null) {
+            _workspaceHistory = new ArrayList<>();
+        }
+        if (_workspaceOrder == null) {
+            _workspaceOrder = new ArrayList<>();
+        }
+        _workspaceHistory.remove(workspace);
+        if (recentFirst) {
+            _workspaceHistory.add(0, workspace);
+        } else {
+            _workspaceHistory.add(workspace);
+        }
+        if (!_workspaceOrder.contains(workspace)) {
+            _workspaceOrder.add(workspace);
+        }
+    }
+
+    private void untrackWorkspace(WorkspaceState workspace) {
+        if (workspace == null) {
+            return;
+        }
+        _workspaceHistory.remove(workspace);
+        _workspaceOrder.remove(workspace);
+        if (_lastWorkspace == workspace) {
+            _lastWorkspace = null;
+        }
+    }
+
     private boolean activateWorkspace(WorkspaceState workspace) {
         if (workspace == null || workspace._workspaceView == null) {
             return false;
@@ -3819,6 +4405,7 @@ public class Window implements Drawable {
             return true;
         }
         if (_currentWorkspace != null) {
+            _lastWorkspace = _currentWorkspace;
             captureCurrentWorkspace();
             detachWorkspaceView(_currentWorkspace);
         }
@@ -3830,6 +4417,7 @@ public class Window implements Drawable {
         moveWorkspaceToFront(workspace);
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_activeBufferView != null && _currentMode != null) {
+            trackBufferContext(_bufferContext);
             _activeBufferView.setFirstResponder(_currentMode);
         }
         if (_rootView != null && _activeView != null) {
@@ -3869,7 +4457,7 @@ public class Window implements Drawable {
             WorkspaceState workspace = path.toFile().isDirectory()
                     ? createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), path), WorkspaceKind.DIRECTORY)
                     : createBufferWorkspace(path);
-            _workspaceHistory.add(workspace);
+            trackWorkspace(workspace, false);
         }
     }
 
@@ -3894,40 +4482,40 @@ public class Window implements Drawable {
 
     private boolean openBufferWorkspace(Path path) {
         WorkspaceState workspace = createBufferWorkspace(path);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
     private boolean openDirectoryWorkspace(Path directory) {
         WorkspaceState workspace = createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), directory),
                 WorkspaceKind.DIRECTORY);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
     private boolean openMailWorkspace(org.fisk.swim.mail.MailClient client) {
         WorkspaceState workspace = createMailWorkspace(client);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
     private boolean openSlackWorkspace(org.fisk.swim.slack.SlackClient client) {
         WorkspaceState workspace = createSlackWorkspace(client);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
     private boolean openTodoWorkspace(org.fisk.swim.todo.TodoStore store) {
         WorkspaceState workspace = createViewWorkspace(new TodoWorkspaceView(Rect.create(0, 0, 0, 0), store),
                 WorkspaceKind.TODO);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
     private boolean openHelpWorkspace() {
         WorkspaceState workspace = createViewWorkspace(new HelpWorkspaceView(Rect.create(0, 0, 0, 0)),
                 WorkspaceKind.HELP);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
@@ -3973,7 +4561,7 @@ public class Window implements Drawable {
 
     private boolean openPluginWorkspace(String pluginId, SwimPanel panel) {
         WorkspaceState workspace = createPluginWorkspace(pluginId, panel);
-        _workspaceHistory.add(0, workspace);
+        trackWorkspace(workspace, true);
         return activateWorkspace(workspace);
     }
 
@@ -3982,7 +4570,7 @@ public class Window implements Drawable {
             var shellView = ShellPanelView.createWorkspace(this);
             shellView.setOnExit(() -> closeShellView(shellView));
             WorkspaceState workspace = createViewWorkspace(shellView, WorkspaceKind.SHELL);
-            _workspaceHistory.add(0, workspace);
+            trackWorkspace(workspace, true);
             return activateWorkspace(workspace);
         } catch (IOException e) {
             if (_commandView != null) {
@@ -4211,12 +4799,118 @@ public class Window implements Drawable {
         }
     }
 
-    private List<String> recentWindowLabels() {
+    private List<TabBarView.Tab> tabEntries() {
+        ensureLayoutState();
+        var tabs = new ArrayList<TabBarView.Tab>();
+        for (int i = 0; i < _workspaceOrder.size(); i++) {
+            WorkspaceState workspace = _workspaceOrder.get(i);
+            int index = i;
+            tabs.add(new TabBarView.Tab(index, tabLabel(workspace), workspace == _currentWorkspace,
+                    () -> switchToWorkspaceIndex(index)));
+        }
+        return List.copyOf(tabs);
+    }
+
+    private List<String> recentBufferLabels() {
         var labels = new ArrayList<String>();
-        for (int i = 0; i < _workspaceHistory.size(); i++) {
-            labels.add((i + 1) + ":" + workspaceLabel(_workspaceHistory.get(i)));
+        Path currentProject = currentBufferProjectRoot();
+        var openByPath = new LinkedHashMap<Path, OpenBufferEntry>();
+        for (OpenBufferEntry entry : openBuffers()) {
+            if (entry.path() != null) {
+                openByPath.put(normalizePath(entry.path()), entry);
+            }
+        }
+        var ordered = new LinkedHashMap<Path, OpenBufferEntry>();
+        for (Path path : _bufferHistory) {
+            OpenBufferEntry entry = openByPath.get(path);
+            if (entry != null && sameProject(currentProject, projectRootForBuffer(path))) {
+                ordered.put(path, entry);
+            }
+        }
+        for (var entry : openByPath.entrySet()) {
+            if (sameProject(currentProject, projectRootForBuffer(entry.getKey()))) {
+                ordered.putIfAbsent(entry.getKey(), entry.getValue());
+            }
+        }
+        int index = 1;
+        for (OpenBufferEntry entry : ordered.values()) {
+            labels.add(index++ + ":" + (entry.modified() ? "*" : "") + entry.label());
         }
         return labels;
+    }
+
+    private Path currentBufferProjectRoot() {
+        Path path = _bufferContext == null || _bufferContext.getBuffer() == null
+                ? null
+                : _bufferContext.getBuffer().getPath();
+        return projectRootForBuffer(path);
+    }
+
+    private void trackBufferContext(BufferContext context) {
+        if (context == null || context.getBuffer() == null || context.getBuffer().getPath() == null) {
+            return;
+        }
+        if (_bufferHistory == null) {
+            _bufferHistory = new ArrayList<>();
+        }
+        Path path = normalizePath(context.getBuffer().getPath());
+        _bufferHistory.remove(path);
+        _bufferHistory.add(0, path);
+        if (_bufferHistory.size() > 200) {
+            _bufferHistory = new ArrayList<>(_bufferHistory.subList(0, 200));
+        }
+    }
+
+    private static boolean sameProject(Path left, Path right) {
+        return java.util.Objects.equals(left, right);
+    }
+
+    private static Path normalizePath(Path path) {
+        return path == null ? null : path.toAbsolutePath().normalize();
+    }
+
+    private static Path projectRootForBuffer(Path path) {
+        if (path == null) {
+            return null;
+        }
+        Path root = ProjectPaths.getProjectRootPath(path);
+        if (root != null) {
+            return root.toAbsolutePath().normalize();
+        }
+        Path parent = path.toAbsolutePath().normalize().getParent();
+        return parent == null ? path.toAbsolutePath().normalize() : parent;
+    }
+
+    private String tabLabel(WorkspaceState workspace) {
+        if (workspace == null || workspace._workspaceView == null) {
+            return "(none)";
+        }
+        String custom = normalizeTabLabel(workspace._customTabLabel);
+        if (custom != null) {
+            return custom;
+        }
+        if (workspace._kind == WorkspaceKind.BUFFER) {
+            return projectTabLabel(workspace._bufferContext);
+        }
+        return workspaceLabel(workspace);
+    }
+
+    private static String normalizeTabLabel(String label) {
+        return label == null || label.isBlank() ? null : label.trim();
+    }
+
+    private static String projectTabLabel(BufferContext context) {
+        Path path = context == null || context.getBuffer() == null ? null : context.getBuffer().getPath();
+        if (path == null) {
+            return "*scratch*";
+        }
+        Path root = ProjectPaths.getProjectRootPath(path);
+        if (root == null) {
+            Path name = path.getFileName();
+            return name == null ? path.toString() : name.toString();
+        }
+        Path name = root.getFileName();
+        return name == null ? path.toString() : name.toString();
     }
 
     private String workspaceLabel(WorkspaceState workspace) {

@@ -21,6 +21,7 @@ import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
@@ -709,7 +710,7 @@ class WindowTest {
                     HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('w'));
 
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Shell"));
+            assertTrue(tabLabels(window).contains("Shell"));
             assertEquals(32, shell.getBounds().getSize().getWidth());
             assertEquals(7, shell.getBounds().getSize().getHeight());
         }
@@ -922,7 +923,7 @@ class WindowTest {
     }
 
     @Test
-    void openingDirectoryShowsDirectoryBrowserWorkspaceAndCanSwitchBack() throws IOException {
+    void openingDirectoryShowsDirectoryBrowserWorkspaceAndCanSwitchBack() throws Exception {
         Path directory = tempDir.resolve("browse");
         Files.createDirectories(directory);
         Path file = writeFile("window.txt", "abc");
@@ -934,7 +935,7 @@ class WindowTest {
 
             var browser = assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
             assertEquals(directory.toAbsolutePath().normalize(), browser.getDirectory());
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Browse: browse"));
+            assertTrue(tabLabels(window).contains("Browse: browse"));
 
             assertTrue(window.switchToRecentWindow(2));
             assertEquals(file.toAbsolutePath().normalize(),
@@ -943,7 +944,7 @@ class WindowTest {
     }
 
     @Test
-    void switchingWorkspacesReordersRecentWindowLabels() throws IOException {
+    void topBarShowsProjectLocalBufferMruWhileTabOrderRemainsStable() throws Exception {
         Path directory = tempDir.resolve("browse-order");
         Files.createDirectories(directory);
         Path file = writeFile("window.txt", "abc");
@@ -952,13 +953,15 @@ class WindowTest {
             var window = harness.getWindow();
 
             assertTrue(window.showDirectoryBrowser(directory));
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:Browse: browse-order"));
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("2:window.txt"));
+            assertTrue(tabLabels(window).contains("Browse: browse-order"));
+            assertTrue(tabLabels(window).contains("window.txt"));
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:window.txt"));
 
             assertTrue(window.switchToRecentWindow(2));
             String header = window.getKeyMenuView().buildHeaderLine().toString();
             assertTrue(header.contains("1:window.txt"));
-            assertTrue(header.contains("2:Browse: browse-order"));
+            assertTrue(!header.contains("Browse: browse-order"));
+            assertTrue(tabLabels(window).contains("Browse: browse-order"));
         }
     }
 
@@ -1042,6 +1045,8 @@ class WindowTest {
 
             assertEquals("updated\ntext\n", originalContext.getBuffer().getString());
             assertEquals("updated\ntext\n", splitContext.getBuffer().getString());
+            assertFalse(originalContext.getBuffer().isModified());
+            assertFalse(splitContext.getBuffer().isModified());
         }
     }
 
@@ -1383,10 +1388,307 @@ class WindowTest {
         }
     }
 
+    @Test
+    void tmuxPrefixCreatesShellTabAndSwitchesStableWorkspaces() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-workspace.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+            Path originalPath = window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('c')));
+
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('0')));
+
+            assertEquals(originalPath, window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('n')));
+
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('l')));
+
+            assertEquals(originalPath, window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixQuoteSelectsTabsBeyondNine() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("tmux-tab-0.txt", "zero");
+        Path tenth = null;
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+            for (int i = 1; i <= 10; i++) {
+                Path path = writeFile("tmux-tab-" + i + ".txt", "tab " + i);
+                if (i == 10) {
+                    tenth = path;
+                }
+                assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, path));
+            }
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('\''), HeadlessWindowHarness.key('0'),
+                    HeadlessWindowHarness.enter()));
+
+            assertEquals(first.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('\''), HeadlessWindowHarness.key('1'),
+                    HeadlessWindowHarness.key('0'), HeadlessWindowHarness.enter()));
+
+            assertEquals(tenth.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixRenamesMovesAndSwapsTabs() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("tmux-manage-0.txt", "zero");
+        Path second = writeFile("tmux-manage-1.txt", "one");
+        Path third = writeFile("tmux-manage-2.txt", "two");
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, third));
+            assertTrue(window.switchToWorkspaceIndex(0));
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key(',')));
+            assertSame(window.getCommandView(), window.getRootView().getFirstResponder());
+            assertEquals("tab-rename tmux-manage-0.txt", window.getCommandView().getCommandText());
+
+            window.getCommandView().execute("tab-rename review");
+            window.getCommandView().deactivate();
+            assertEquals(List.of("review", "tmux-manage-1.txt", "tmux-manage-2.txt"), tabLabels(window));
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('>')));
+            assertEquals(List.of("tmux-manage-1.txt", "review", "tmux-manage-2.txt"), tabLabels(window));
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('<')));
+            assertEquals(List.of("review", "tmux-manage-1.txt", "tmux-manage-2.txt"), tabLabels(window));
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('.')));
+            assertEquals("tab-move ", window.getCommandView().getCommandText());
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(window.getCommandView(),
+                    HeadlessWindowHarness.key('2')));
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(window.getCommandView(),
+                    HeadlessWindowHarness.enter()));
+
+            assertEquals(List.of("tmux-manage-1.txt", "tmux-manage-2.txt", "review"), tabLabels(window));
+            assertEquals(first.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void sessionSnapshotUsesStableTabOrderAndTabLabels() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("tmux-session-0.txt", "zero");
+        Path second = writeFile("tmux-session-1.txt", "one");
+        Path third = writeFile("tmux-session-2.txt", "two");
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, third));
+            assertTrue(window.switchToWorkspaceIndex(0));
+            assertTrue(window.renameCurrentTab("review"));
+            assertTrue(window.moveCurrentTabToIndex(2));
+
+            var session = (org.fisk.swim.config.EditorSession) invoke(window, "createSession", new Class<?>[0]);
+
+            assertEquals(2, session.activeWorkspaceIndex());
+            assertEquals(second.toAbsolutePath().normalize().toString(), session.workspaces().get(0).path());
+            assertEquals(third.toAbsolutePath().normalize().toString(), session.workspaces().get(1).path());
+            assertEquals(first.toAbsolutePath().normalize().toString(), session.workspaces().get(2).path());
+            assertEquals("review", session.workspaces().get(2).label());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixSplitsFocusesAndClosesFrames() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-frame.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+            var originalView = window.getActiveView();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('%')));
+
+            assertEquals(2, leafViews(window).size());
+            var splitView = window.getActiveView();
+            assertNotSame(originalView, splitView);
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key(';')));
+
+            assertSame(originalView, window.getActiveView());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('o')));
+
+            assertSame(splitView, window.getActiveView());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('x')));
+
+            assertEquals(1, leafViews(window).size());
+            assertSame(originalView, window.getActiveView());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixSplitsShellTabIntoShellFrames() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-shell-frame.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+            assertTrue(window.showShellWorkspace());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('%')));
+
+            assertEquals(2, leafViews(window).size());
+            assertTrue(leafViews(window).stream().allMatch(ShellPanelView.class::isInstance));
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixColonOpensCommandPrompt() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-command.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key(':')));
+
+            assertSame(window.getCommandView(), window.getRootView().getFirstResponder());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixSOpensServerSessionChooser() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-sessions.txt", "abc");
+        String previousSocket = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('s')));
+
+            var panel = assertInstanceOf(TextPanelView.class, window.getPanelView());
+            String text = HeadlessWindowHarness.getField(panel, "_text", String.class);
+            assertTrue(text.contains("No SWIM session server is attached"));
+        } finally {
+            if (previousSocket == null) {
+                System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+            } else {
+                System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previousSocket);
+            }
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void bottomTabsShowStableProjectNamesAndTopBarShowsActiveProjectBufferMru() throws Exception {
+        TerminalContextTestSupport.install(90, 18);
+        Path alpha = tempDir.resolve("alpha");
+        Path beta = tempDir.resolve("beta");
+        Files.createDirectories(alpha.resolve("src"));
+        Files.createDirectories(beta.resolve("src"));
+        Files.writeString(alpha.resolve("pom.xml"), "<project />");
+        Files.writeString(beta.resolve("pom.xml"), "<project />");
+        Path alphaOne = Files.writeString(alpha.resolve("src/One.txt"), "one");
+        Path alphaTwo = Files.writeString(alpha.resolve("src/Two.txt"), "two");
+        Path betaMain = Files.writeString(beta.resolve("src/Main.txt"), "beta");
+        try {
+            Window.createInstance(alphaOne);
+            var window = Window.getInstance();
+            window.splitActiveBufferHorizontally();
+            assertTrue(window.setBufferPath(alphaTwo));
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, betaMain));
+
+            String betaTabs = window.getTabBarView().buildLine(90).toString();
+            assertTrue(betaTabs.contains("0:alpha"));
+            assertTrue(betaTabs.contains("1:beta"));
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("1:src/Main.txt"));
+            assertTrue(!window.getKeyMenuView().buildHeaderLine().toString().contains("src/Two.txt"));
+
+            assertTrue(window.switchToWorkspaceIndex(0));
+
+            String alphaHeader = window.getKeyMenuView().buildHeaderLine().toString();
+            assertTrue(alphaHeader.contains("1:src/Two.txt"));
+            assertTrue(alphaHeader.contains("2:src/One.txt"));
+            assertTrue(!alphaHeader.contains("src/Main.txt"));
+
+            window.getBufferContext().getBuffer().insert("!");
+            window.refreshChromeState();
+
+            String dirtyAlphaHeader = window.getKeyMenuView().buildHeaderLine().toString();
+            assertTrue(dirtyAlphaHeader.contains("1:*src/Two.txt"));
+            assertTrue(dirtyAlphaHeader.contains("2:src/One.txt"));
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
     private Path writeFile(String name, String text) throws IOException {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
         return path;
+    }
+
+    private static void shutdownRealWindow() {
+        if (Window.getInstance() != null) {
+            Window.getInstance().dispose();
+        }
+        EventThread.shutdownInstance();
+        org.fisk.swim.terminal.TerminalContext.shutdownInstance();
     }
 
     private static Rect absoluteBounds(View view) {
@@ -1447,6 +1749,13 @@ class WindowTest {
     @SuppressWarnings("unchecked")
     private static List<View> leafViews(Window window) throws Exception {
         return (List<View>) invoke(window, "getLeafViews", new Class<?>[0]);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> tabLabels(Window window) throws Exception {
+        return ((List<TabBarView.Tab>) invoke(window, "tabEntries", new Class<?>[0])).stream()
+                .map(TabBarView.Tab::label)
+                .toList();
     }
 
     private static Response processSequenceStep(org.fisk.swim.event.EventResponder responder,

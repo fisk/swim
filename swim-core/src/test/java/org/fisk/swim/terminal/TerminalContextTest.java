@@ -3,16 +3,33 @@ package org.fisk.swim.terminal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintStream;
 import java.lang.reflect.Proxy;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.Channels;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.fisk.swim.session.SwimServerSessions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
+import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.terminal.ExtendedTerminal;
 import com.googlecode.lanterna.terminal.MouseCaptureMode;
 import com.googlecode.lanterna.terminal.Terminal;
@@ -75,6 +92,43 @@ class TerminalContextTest {
     }
 
     @Test
+    void serverManagedTerminalCreatesScreenFromProcessStreamsWithoutTty(@TempDir Path tempDir) throws Exception {
+        Path socket = tempDir.resolve("server.sock");
+        InputStream previousIn = System.in;
+        PrintStream previousOut = System.out;
+        String previousSocket = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        String previousSession = System.getProperty(SwimServerSessions.PROPERTY_SESSION);
+        try (var server = FakeSizeServer.start(socket, 30, 100)) {
+            System.setProperty(SwimServerSessions.PROPERTY_SOCKET, socket.toString());
+            System.setProperty(SwimServerSessions.PROPERTY_SESSION, "default");
+            System.setIn(new ByteArrayInputStream(new byte[0]));
+            System.setOut(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+
+            TerminalContext context = TerminalContext.getInstance();
+
+            assertEquals(100, context.getTerminalSize().getColumns());
+            assertEquals(30, context.getTerminalSize().getRows());
+            assertTrue(server.requests().get() >= 1);
+        } finally {
+            TerminalContext.shutdownInstance();
+            System.setIn(previousIn);
+            System.setOut(previousOut);
+            restoreProperty(SwimServerSessions.PROPERTY_SOCKET, previousSocket);
+            restoreProperty(SwimServerSessions.PROPERTY_SESSION, previousSession);
+        }
+    }
+
+    @Test
+    void serverStreamTerminalDecodesCarriageReturnAsEnter() throws Exception {
+        assertServerStreamDecodesCommandEnter("\r");
+    }
+
+    @Test
+    void serverStreamTerminalDecodesLineFeedAsEnter() throws Exception {
+        assertServerStreamDecodesCommandEnter("\n");
+    }
+
+    @Test
     void wrappedExtendedTerminalEnablesAndDisablesMouseCaptureWithPrivateMode() throws Exception {
         var modes = new ArrayList<MouseCaptureMode>();
         var writes = new ArrayList<String>();
@@ -124,6 +178,20 @@ class TerminalContextTest {
         assertEquals(java.util.Arrays.asList("\u001b[6 q", "\u001b[2 q"), installed.terminalWrites());
     }
 
+    private static void assertServerStreamDecodesCommandEnter(String lineEnding) throws Exception {
+        Terminal terminal = TerminalContext.createServerStreamTerminal(
+                new ByteArrayInputStream((":w" + lineEnding).getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream(),
+                () -> new TerminalSize(80, 24));
+        try {
+            assertEquals(':', terminal.readInput().getCharacter());
+            assertEquals('w', terminal.readInput().getCharacter());
+            assertEquals(KeyType.Enter, terminal.readInput().getKeyType());
+        } finally {
+            terminal.close();
+        }
+    }
+
     private static Object defaultValue(Object proxy, Class<?> type) {
         if (type == Void.TYPE) {
             return null;
@@ -150,5 +218,57 @@ class TerminalContextTest {
             return proxy;
         }
         return null;
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
+    }
+
+    private record FakeSizeServer(ServerSocketChannel server, Thread thread, AtomicInteger requests)
+            implements AutoCloseable {
+        static FakeSizeServer start(Path socket, int rows, int columns) throws IOException {
+            ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX);
+            server.bind(UnixDomainSocketAddress.of(socket));
+            AtomicInteger requests = new AtomicInteger();
+            Thread thread = Thread.ofVirtual().start(() -> {
+                while (server.isOpen()) {
+                    try (var channel = server.accept()) {
+                        var input = new DataInputStream(Channels.newInputStream(channel));
+                        var output = new DataOutputStream(Channels.newOutputStream(channel));
+                        input.readUTF();
+                        String request = input.readUTF();
+                        if ("size".equals(request)) {
+                            input.readUTF();
+                            requests.incrementAndGet();
+                            output.writeUTF("OK");
+                            output.writeBoolean(true);
+                            output.writeInt(rows);
+                            output.writeInt(columns);
+                        } else if ("ping".equals(request)) {
+                            output.writeUTF("OK");
+                        } else {
+                            output.writeUTF("ERR");
+                            output.writeUTF("unexpected request: " + request);
+                        }
+                        output.flush();
+                    } catch (IOException e) {
+                        if (server.isOpen()) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+            });
+            return new FakeSizeServer(server, thread, requests);
+        }
+
+        @Override
+        public void close() throws Exception {
+            server.close();
+            thread.join(1000);
+        }
     }
 }

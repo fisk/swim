@@ -83,6 +83,64 @@ class SwimServerSessionsTest {
         assertEquals("Killed SWIM session review.", message);
     }
 
+    @Test
+    void detachUsesControlProtocol() throws Exception {
+        Path socket = tempDir.resolve("detach.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeServer(socket, input -> {
+            request.set(List.of(input.readUTF(), input.readUTF(), input.readUTF()));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.flush();
+        });
+
+        SwimServerSessions.detach(socket, "review");
+        server.join(1000);
+
+        assertEquals(List.of(SwimServerSessions.MAGIC, "detach", "review"), request.get());
+    }
+
+    @Test
+    void resizeUsesControlProtocol() throws Exception {
+        Path socket = tempDir.resolve("resize.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeServer(socket, input -> {
+            request.set(List.of(input.readUTF(), input.readUTF(), input.readUTF(),
+                    String.valueOf(input.input().readInt()), String.valueOf(input.input().readInt())));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.flush();
+        });
+
+        SwimServerSessions.resize(socket, "review", 31, 111);
+        server.join(1000);
+
+        assertEquals(List.of(SwimServerSessions.MAGIC, "resize", "review", "31", "111"), request.get());
+    }
+
+    @Test
+    void terminalSizeUsesControlProtocol() throws Exception {
+        Path socket = tempDir.resolve("size.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeServer(socket, input -> {
+            request.set(List.of(input.readUTF(), input.readUTF(), input.readUTF()));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.writeBoolean(true);
+            output.writeInt(42);
+            output.writeInt(132);
+            output.flush();
+        });
+
+        var size = SwimServerSessions.terminalSize(socket, "review");
+        server.join(1000);
+
+        assertEquals(List.of(SwimServerSessions.MAGIC, "size", "review"), request.get());
+        assertTrue(size.isPresent());
+        assertEquals(42, size.get().rows());
+        assertEquals(132, size.get().columns());
+    }
+
     private static Thread fakeServer(Path socket, ServerHandler handler) throws Exception {
         var ready = new CountDownLatch(1);
         Thread thread = Thread.ofVirtual().start(() -> {

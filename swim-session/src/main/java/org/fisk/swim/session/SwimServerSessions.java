@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 public final class SwimServerSessions {
-    public static final String MAGIC = "SWIM_SESSION_2";
+    public static final String MAGIC = "SWIM_SESSION_6";
     public static final String ENV_SOCKET = "SWIM_SERVER_SOCKET";
     public static final String ENV_SESSION = "SWIM_SERVER_SESSION";
     public static final String PROPERTY_SOCKET = "swim.server.socket";
@@ -108,6 +108,64 @@ public final class SwimServerSessions {
             var input = new DataInputStream(Channels.newInputStream(channel));
             readOk(input);
             return input.readUTF();
+        }
+    }
+
+    public static void detach() throws IOException {
+        detach(requireSocketPath(), currentSessionName());
+    }
+
+    public static void detach(Path socketPath, String targetSession) throws IOException {
+        String target = normalizeName(targetSession);
+        try (SocketChannel channel = connect(socketPath)) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("detach");
+            output.writeUTF(target);
+            output.flush();
+
+            readOk(new DataInputStream(Channels.newInputStream(channel)));
+        }
+    }
+
+    public static void resize(String targetSession, int rows, int columns) throws IOException {
+        resize(requireSocketPath(), targetSession, rows, columns);
+    }
+
+    public static void resize(Path socketPath, String targetSession, int rows, int columns) throws IOException {
+        String target = normalizeName(targetSession);
+        try (SocketChannel channel = connect(socketPath)) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("resize");
+            output.writeUTF(target);
+            output.writeInt(Math.max(1, rows));
+            output.writeInt(Math.max(1, columns));
+            output.flush();
+
+            readOk(new DataInputStream(Channels.newInputStream(channel)));
+        }
+    }
+
+    public static Optional<SwimServerTerminalSize> terminalSize() throws IOException {
+        return terminalSize(requireSocketPath(), currentSessionName());
+    }
+
+    public static Optional<SwimServerTerminalSize> terminalSize(Path socketPath, String targetSession) throws IOException {
+        String target = normalizeName(targetSession);
+        try (SocketChannel channel = connect(socketPath)) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("size");
+            output.writeUTF(target);
+            output.flush();
+
+            var input = new DataInputStream(Channels.newInputStream(channel));
+            readOk(input);
+            if (!input.readBoolean()) {
+                return Optional.empty();
+            }
+            return Optional.of(new SwimServerTerminalSize(input.readInt(), input.readInt()));
         }
     }
 

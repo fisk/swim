@@ -58,7 +58,7 @@ public class CommandView extends View {
 
     static final int MAX_VISIBLE_COMMANDS = 8;
     private static final List<CommandSpec> COMMAND_SPECS = List.of(
-            new CommandSpec("q", List.of(), "", "quit SWIM"),
+            new CommandSpec("q", List.of(), "", "close current window; exit on last tab"),
             new CommandSpec("e", List.of(), "<path>", "open or create a file"),
             new CommandSpec("debug", List.of("dbg"), "[providers|open|stop|continue|next|step|out|break|<provider> ...]",
                     "open the debugger or run debugger commands"),
@@ -68,6 +68,10 @@ public class CommandView extends View {
             new CommandSpec("close", List.of(), "", "close the active pane"),
             new CommandSpec("only", List.of(), "", "keep only the active pane"),
             new CommandSpec("focus", List.of(), "left|right|up|down|next|prev", "move focus between panes"),
+            new CommandSpec("tab-rename", List.of("rename-tab", "rename-window"), "<name>", "rename the current tab"),
+            new CommandSpec("tab-move", List.of("move-tab", "move-window"), "<index>", "move the current tab"),
+            new CommandSpec("tab-swap-left", List.of(), "", "swap the current tab left"),
+            new CommandSpec("tab-swap-right", List.of(), "", "swap the current tab right"),
             new CommandSpec("buffers", List.of("ls"), "", "show open buffers"),
             new CommandSpec("buffer", List.of("b"), "<index|path>", "switch to an open buffer"),
             new CommandSpec("bnext", List.of("bn"), "", "switch to the next open buffer"),
@@ -87,6 +91,7 @@ public class CommandView extends View {
             new CommandSpec("%s", List.of(), "/pattern/replacement/[g]", "substitute in the whole buffer"),
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
+            new CommandSpec("detach", List.of(), "", "detach the current client"),
             new CommandSpec("sessions", List.of(), "", "show live SWIM server sessions"),
             new CommandSpec("session", List.of(), "<name>", "switch to a live SWIM server session"),
             new CommandSpec("session-kill", List.of(), "<name>", "kill a live SWIM server session"),
@@ -105,9 +110,9 @@ public class CommandView extends View {
             new CommandSpec("hshell", List.of(), "", "open a shell in a split below"),
             new CommandSpec("upgrade", List.of(), "", "alias for :rebuild"),
             new CommandSpec("w", List.of(), "[path]", "write the current buffer"),
-            new CommandSpec("wq", List.of(), "", "write the current buffer and quit"),
-            new CommandSpec("x", List.of(), "", "write the current buffer and quit"),
-            new CommandSpec("q!", List.of(), "", "quit without checks"),
+            new CommandSpec("wq", List.of(), "", "write current buffer and close current window"),
+            new CommandSpec("x", List.of(), "", "write current buffer and close current window"),
+            new CommandSpec("q!", List.of(), "", "close current window without checks"),
             new CommandSpec("read", List.of("r"), "<path>", "read a file below the current line"),
             new CommandSpec("set", List.of(), "[option=value]", "show or update editor options"),
             new CommandSpec("normal", List.of("norm"), "<keys>", "run normal-mode keys"),
@@ -331,10 +336,10 @@ public class CommandView extends View {
         }
         switch (command) {
         case "q":
-            SwimRuntime.exit();
+            Window.getInstance().quitCurrentWindowOrExit();
             break;
         case "q!":
-            SwimRuntime.exit();
+            Window.getInstance().quitCurrentWindowOrExit();
             break;
         case "e":
             open(argument);
@@ -362,6 +367,28 @@ public class CommandView extends View {
             break;
         case "focus":
             focus(argument);
+            break;
+        case "tab-rename":
+        case "rename-tab":
+        case "rename-window":
+            if (!Window.getInstance().renameCurrentTab(argument)) {
+                _message = "Unable to rename current tab";
+            }
+            break;
+        case "tab-move":
+        case "move-tab":
+        case "move-window":
+            moveTab(argument);
+            break;
+        case "tab-swap-left":
+            if (!Window.getInstance().swapCurrentTabByDelta(-1)) {
+                _message = "No tab to the left";
+            }
+            break;
+        case "tab-swap-right":
+            if (!Window.getInstance().swapCurrentTabByDelta(1)) {
+                _message = "No tab to the right";
+            }
             break;
         case "buffers":
         case "ls":
@@ -451,6 +478,9 @@ public class CommandView extends View {
         case "sessions":
             showServerSessions();
             break;
+        case "detach":
+            Window.getInstance().detachCurrentSession();
+            break;
         case "session":
             switchServerSession(argument);
             break;
@@ -511,7 +541,7 @@ public class CommandView extends View {
         case "wq":
         case "x":
             Window.getInstance().getBufferContext().getBuffer().write();
-            SwimRuntime.exit();
+            Window.getInstance().quitCurrentWindowOrExit();
             break;
         case "read":
         case "r":
@@ -667,7 +697,7 @@ public class CommandView extends View {
                 "lgrep", "multicursor", "mc", "grep", "search",
                 "h", "help", "tree", "registers", "reg", "marks", "jumps",
                 "set", "normal", "norm" -> allowEditorDriveCommand(window, rawCommand);
-        case "sessions", "session", "session-kill" -> blockEditorDriveCommand(window, rawCommand,
+        case "detach", "sessions", "session", "session-kill" -> blockEditorDriveCommand(window, rawCommand,
                 "server session management requires host action");
         case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
         case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
@@ -682,6 +712,10 @@ public class CommandView extends View {
                 "debugger commands are outside the editor-control sandbox");
         case "git" -> blockEditorDriveCommand(window, rawCommand,
                 "git UI commands are outside the editor-control sandbox");
+        case "tab-rename", "rename-tab", "rename-window",
+                "tab-move", "move-tab", "move-window",
+                "tab-swap-left", "tab-swap-right" -> blockEditorDriveCommand(window, rawCommand,
+                        "tab layout management requires host action");
         default -> blockEditorDriveCommand(window, rawCommand,
                 "unknown or unsupported command in the editor-control sandbox");
         };
@@ -758,15 +792,8 @@ public class CommandView extends View {
 
     private void splitBuffer(boolean vertical) {
         var window = Window.getInstance();
-        if (window.getActiveView() instanceof ShellPanelView) {
-            boolean opened = vertical ? window.showShellSplitHorizontally() : window.showShellSplitVertically();
-            if (!opened) {
-                _message = "Failed to split view";
-            }
-            return;
-        }
-        var splitView = vertical ? window.splitActiveBufferHorizontally() : window.splitActiveBufferVertically();
-        if (splitView == null) {
+        boolean opened = vertical ? window.splitActiveContentHorizontally() : window.splitActiveContentVertically();
+        if (!opened) {
             _message = "Failed to split view";
         }
     }
@@ -802,6 +829,23 @@ public class CommandView extends View {
         };
         if (!moved) {
             _message = "No view in that direction";
+        }
+    }
+
+    private void moveTab(String argument) {
+        if (argument.isBlank()) {
+            _message = "Wrong number of parameters";
+            return;
+        }
+        int index;
+        try {
+            index = Integer.parseInt(argument.trim());
+        } catch (NumberFormatException e) {
+            _message = "Invalid tab index: " + argument;
+            return;
+        }
+        if (!Window.getInstance().moveCurrentTabToIndex(index)) {
+            _message = "No tab " + index;
         }
     }
 
@@ -1645,9 +1689,13 @@ public class CommandView extends View {
     }
 
     public void activate(String prompt) {
+        activate(prompt, "");
+    }
+
+    public void activate(String prompt, String initialText) {
         _message = null;
         _prompt = prompt;
-        _command = new StringBuilder();
+        _command = new StringBuilder(initialText == null ? "" : initialText);
         clearLiveGrepPreview();
         resetCommandSelection();
         var window = Window.getInstance();

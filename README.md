@@ -30,7 +30,7 @@ Startup behavior:
 - `swim <file> [file...]` opens the requested file set, creating missing files when possible.
 - `swim <directory>` opens the built-in directory browser for that directory.
 - Normal launches do not restore an old session. `:reload` and `:rebuild` preserve the current editor state while the runtime restarts.
-- Normal launches attach to a background SWIM session server. Use `swim --attach <name>` to attach the terminal client directly to a named session, `:sessions` to list live editor instances, and `:session <name>` to move the current terminal client to another named instance. If a managed session is wedged, `swim --kill-session <name>` asks the server to terminate that session process tree.
+- Normal launches attach to a background SWIM session server. Use `swim --attach <name>` to attach the terminal client directly to a named session, `:sessions` to list live editor instances, and `:session <name>` to move the current terminal client to another named instance. New session app processes start from the client current working directory when it still exists. If a managed session is wedged, `swim --kill-session <name>` asks the server to terminate that session process tree.
 
 `mvn package` installs runtime artifacts into:
 
@@ -38,7 +38,7 @@ Startup behavior:
 - `~/.swim/plugins`
 - `~/.swim/deps/oracle.oracle-java`
 
-The launcher binary in `image/bin/swim` is built from a custom `jlink` image. Runtime code is loaded from `plugins/`, so SWIM can rebuild and reload itself without running directly from `target/`.
+The launcher in `image/bin/swim` is a single-source Java entry point generated into the custom `jlink` image. Its shebang points at the image's embedded `bin/java`, not whatever `java` happens to be on `PATH`. Runtime code is loaded from `plugins/`, so SWIM can rebuild and reload itself without running directly from `target/`.
 
 ## Getting Help
 
@@ -50,7 +50,7 @@ Nemo can read the same documentation through the `swim_help` tool or the Nemo ch
 
 ## Feature Areas
 
-The core editor includes modal editing, normal/insert/visual modes, visual block mode, Vim-style operators and text objects, registers, macros, marks, jumps, folds, search, substitutions, splits, buffers, quickfix/location lists, directory browsing, shell workspaces, mouse selection, and project search.
+The core editor includes modal editing, normal/insert/visual modes, visual block mode, Vim-style operators and text objects, registers, macros, marks, jumps, folds, search, substitutions, splits, project-scoped buffer groups, stable bottom tabs with rename/reorder support, quickfix/location lists, directory browsing, shell workspaces, mouse selection, project search, and a tmux-style `Ctrl-b` prefix for tab and frame management.
 
 Language tooling is plugin-backed. Java uses the bundled Oracle/NetBeans language-server payload. C and C++ use `clangd` and recognize common source/header extensions including `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, and `.hxx`. Diagnostics, line highlighting, completion, hovers, code actions, and project diagnostic navigation share the same editor UI.
 
@@ -60,9 +60,11 @@ Nemo is the built-in assistant and harness. It uses the langchain4j chat backend
 
 ## Architecture
 
-SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, sends explicit attach/kill requests, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, switching, and process-tree termination.
+SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, sends explicit attach/kill requests, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, switching, and process-tree termination. App processes are launched directly with stdio pipes; SWIM does not depend on an external `script`/PTY wrapper between the server and editor runtime.
 
-Each live editor session is a separate app process. When a client attaches, it sends the server both the user launch arguments and the exact app command that should start that session. That is the version boundary: after `:rebuild`, new sessions can start with the rebuilt runtime while existing sessions keep running the older command they were created with. The server must not derive app launch commands from its own code version.
+Each live editor session is a separate app process. When a client attaches, it sends the server the client current working directory, the user launch arguments, and the exact app command that should start that session. That is the version boundary: after `:rebuild`, new sessions can start with the rebuilt runtime while existing sessions keep running the older command they were created with. The server must not derive app launch commands from its own code version.
+
+Detaching a client, such as with `:detach` or the tmux-style `Ctrl-b d` binding, leaves the server-side session running. `:q` follows Vim window semantics: it closes the current frame first, then the current tab, and only exits the app process when the last tab is gone. The tmux-style `Ctrl-b &` binding closes the current tab directly. App process exit removes the session from the server.
 
 The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal. Its JVM is sized for long-lived coordination with `-XX:+UseZGC`, `-Xmx4G`, and `-XX:SoftMaxHeapSize=1G`; individual editor app processes keep their own runtime policy.
 

@@ -254,8 +254,9 @@ public final class LauncherImageInstaller {
                 "-Xmx4G",
                 "-XX:SoftMaxHeapSize=1G",
                 "--enable-native-access=org.fisk.swim.session");
-        Files.writeString(launcher, sourceLauncher(javaListLiteral(appOptions), javaListLiteral(serverOptions)),
-                StandardCharsets.UTF_8);
+        Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
+        Files.writeString(launcher, sourceLauncher(embeddedJava, javaListLiteral(appOptions),
+                javaListLiteral(serverOptions)), StandardCharsets.UTF_8);
         launcher.toFile().setExecutable(true, false);
     }
 
@@ -269,9 +270,9 @@ public final class LauncherImageInstaller {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    private static String sourceLauncher(String appOptions, String serverOptions) {
-        return """
-                #!/usr/bin/env -S java --source 25
+    private static String sourceLauncher(Path embeddedJava, String appOptions, String serverOptions) {
+        return String.format("""
+                #!%s --source 25
                 import java.io.*;
                 import java.net.*;
                 import java.nio.channels.*;
@@ -280,7 +281,7 @@ public final class LauncherImageInstaller {
                 import java.util.*;
 
                 class swim {
-                    private static final String MAGIC = "SWIM_SESSION_2";
+                    private static final String MAGIC = "SWIM_SESSION_6";
                     private static final String APP_MODULE = "org.fisk.swim.launcher/org.fisk.swim.launcher.Main";
                     private static final String SERVER_MODULE = "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
                     private static final List<String> APP_JVM_OPTIONS = %s;
@@ -303,8 +304,10 @@ public final class LauncherImageInstaller {
                         Path swimHome = swimHome(launcher);
                         ensureServer(socket, swimHome, java);
                         try (SocketChannel channel = connect(socket)) {
-                            sendAttach(channel, java, request);
+                            TerminalSize terminalSize = sendAttach(channel, java, request);
                             try (TerminalMode ignored = TerminalMode.enterRawMode()) {
+                                Thread resizeRelay = Thread.ofVirtual().name("swim-client-resize")
+                                        .start(() -> relayResize(socket, request.sessionName(), terminalSize));
                                 Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
                                     try {
                                         copy(System.in, Channels.newOutputStream(channel));
@@ -312,8 +315,13 @@ public final class LauncherImageInstaller {
                                     } catch (IOException e) {
                                     }
                                 });
-                                copy(Channels.newInputStream(channel), System.out);
+                                try {
+                                    copy(Channels.newInputStream(channel), System.out);
+                                } finally {
+                                    resizeRelay.interrupt();
+                                }
                                 inputRelay.join(Duration.ofSeconds(1));
+                                resizeRelay.join(Duration.ofSeconds(1));
                             }
                         }
                     }
@@ -424,7 +432,7 @@ public final class LauncherImageInstaller {
                         }
                         Files.createDirectories(socket.getParent());
                         ProcessBuilder builder = new ProcessBuilder(serverCommand(java, socket, swimHome));
-                        builder.redirectInput(ProcessBuilder.Redirect.DISCARD);
+                        builder.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile()));
                         Path logFile = socket.getParent().resolve("server.log");
                         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
                         builder.redirectError(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
@@ -462,12 +470,14 @@ public final class LauncherImageInstaller {
                         return channel;
                     }
 
-                    private static void sendAttach(SocketChannel channel, Path java, LaunchRequest request) throws IOException {
+                    private static TerminalSize sendAttach(SocketChannel channel, Path java, LaunchRequest request) throws IOException {
                         TerminalSize terminalSize = TerminalMode.currentSize();
                         DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
                         output.writeUTF(MAGIC);
                         output.writeUTF("attach");
                         output.writeUTF(request.sessionName());
+                        output.writeUTF(clientWorkingDirectory().toString());
+                        writeStringMap(output, clientEnvironment());
                         output.writeInt(terminalSize.rows());
                         output.writeInt(terminalSize.columns());
                         writeStringList(output, request.launchArgs());
@@ -476,6 +486,50 @@ public final class LauncherImageInstaller {
                         String response = new DataInputStream(Channels.newInputStream(channel)).readUTF();
                         if (!"OK".equals(response)) {
                             throw new IOException(response);
+                        }
+                        return terminalSize;
+                    }
+
+                    private static void relayResize(Path socket, String session, TerminalSize initialSize) {
+                        TerminalSize previous = initialSize;
+                        while (!Thread.currentThread().isInterrupted()) {
+                            try {
+                                Thread.sleep(250);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return;
+                            }
+                            TerminalSize current = TerminalMode.currentSize();
+                            if (current.equals(previous)) {
+                                continue;
+                            }
+                            try {
+                                resizeSession(socket, session, current);
+                                previous = current;
+                            } catch (IOException e) {
+                                return;
+                            }
+                        }
+                    }
+
+                    private static void resizeSession(Path socket, String session, TerminalSize size) throws IOException {
+                        try (SocketChannel channel = connect(socket)) {
+                            DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
+                            output.writeUTF(MAGIC);
+                            output.writeUTF("resize");
+                            output.writeUTF(normalizeName(session));
+                            output.writeInt(size.rows());
+                            output.writeInt(size.columns());
+                            output.flush();
+                            DataInputStream input = new DataInputStream(Channels.newInputStream(channel));
+                            String response = input.readUTF();
+                            if ("OK".equals(response)) {
+                                return;
+                            }
+                            if ("ERR".equals(response)) {
+                                throw new IOException(input.readUTF());
+                            }
+                            throw new IOException("Unexpected SWIM session server response: " + response);
                         }
                     }
 
@@ -501,10 +555,26 @@ public final class LauncherImageInstaller {
                         return List.copyOf(command);
                     }
 
+                    private static Path clientWorkingDirectory() {
+                        return Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+                    }
+
+                    private static Map<String, String> clientEnvironment() {
+                        return new TreeMap<>(System.getenv());
+                    }
+
                     private static void writeStringList(DataOutputStream output, List<String> values) throws IOException {
                         output.writeInt(values.size());
                         for (String value : values) {
                             output.writeUTF(value);
+                        }
+                    }
+
+                    private static void writeStringMap(DataOutputStream output, Map<String, String> values) throws IOException {
+                        output.writeInt(values.size());
+                        for (var entry : values.entrySet()) {
+                            output.writeUTF(entry.getKey());
+                            output.writeUTF(entry.getValue());
                         }
                     }
 
@@ -621,7 +691,7 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """.formatted(appOptions, serverOptions);
+                """, embeddedJava, appOptions, serverOptions);
     }
 
     private static void runTool(String name, List<String> args) throws IOException {

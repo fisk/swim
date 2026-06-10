@@ -31,7 +31,8 @@ public class Main implements SwimHost {
     private static final String CORE_MODULE = "org.fisk.swim.core";
     static final String RELOAD_SESSION_PROPERTY = "swim.session.restore_on_reload";
     private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
-            "swim-launcher-");
+            "swim-launcher-",
+            "swim-session-");
 
     @FunctionalInterface
     interface Rebuilder {

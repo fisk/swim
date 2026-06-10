@@ -14,6 +14,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import org.fisk.swim.session.SwimServerSessions;
 
@@ -46,8 +48,9 @@ final class SwimSessionClient {
         try {
             ensureServer();
             try (SocketChannel channel = connect()) {
-                sendRequest(channel, request);
+                var terminalSize = sendRequest(channel, request);
                 try (SwimTerminalMode ignored = SwimTerminalMode.enterRawMode()) {
+                    Thread resizeRelay = startResizeRelay(request, terminalSize);
                     Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
                         try {
                             copy(System.in, Channels.newOutputStream(channel));
@@ -55,9 +58,14 @@ final class SwimSessionClient {
                         } catch (IOException e) {
                         }
                     });
-                    copy(Channels.newInputStream(channel), System.out);
+                    try {
+                        copy(Channels.newInputStream(channel), System.out);
+                    } finally {
+                        resizeRelay.interrupt();
+                    }
                     try {
                         inputRelay.join(Duration.ofSeconds(1));
+                        resizeRelay.join(Duration.ofSeconds(1));
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
@@ -108,7 +116,7 @@ final class SwimSessionClient {
         }
         Files.createDirectories(_socketPath.getParent());
         ProcessBuilder builder = new ProcessBuilder(SwimJavaCommand.serverCommand(_socketPath, _buildRoot));
-        builder.redirectInput(ProcessBuilder.Redirect.DISCARD);
+        builder.redirectInput(ProcessBuilder.Redirect.from(Path.of("/dev/null").toFile()));
         Path logFile = _socketPath.getParent().resolve("server.log");
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
         builder.redirectError(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
@@ -139,13 +147,15 @@ final class SwimSessionClient {
         return channel;
     }
 
-    private void sendRequest(SocketChannel channel, LaunchRequest request) throws IOException {
+    private SwimTerminalMode.TerminalSize sendRequest(SocketChannel channel, LaunchRequest request) throws IOException {
         OutputStream output = Channels.newOutputStream(channel);
         var terminalSize = SwimTerminalMode.currentSize();
         var dataOutput = new DataOutputStream(output);
         dataOutput.writeUTF(SwimServerSessions.MAGIC);
         dataOutput.writeUTF("attach");
         dataOutput.writeUTF(request.sessionName());
+        dataOutput.writeUTF(clientWorkingDirectory().toString());
+        writeStringMap(dataOutput, clientEnvironment());
         dataOutput.writeInt(terminalSize.rows());
         dataOutput.writeInt(terminalSize.columns());
         writeStringList(dataOutput, request.launchArgs());
@@ -155,6 +165,31 @@ final class SwimSessionClient {
         if (!"OK".equals(response)) {
             throw new IOException(response);
         }
+        return terminalSize;
+    }
+
+    private Thread startResizeRelay(LaunchRequest request, SwimTerminalMode.TerminalSize initialSize) {
+        return Thread.ofVirtual().name("swim-client-resize").start(() -> {
+            var previous = initialSize;
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    Thread.sleep(250);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                var current = SwimTerminalMode.currentSize();
+                if (current.equals(previous)) {
+                    continue;
+                }
+                try {
+                    SwimServerSessions.resize(_socketPath, request.sessionName(), current.rows(), current.columns());
+                    previous = current;
+                } catch (IOException e) {
+                    return;
+                }
+            }
+        });
     }
 
     private static void writeStringList(DataOutputStream output, List<String> values) throws IOException {
@@ -162,6 +197,22 @@ final class SwimSessionClient {
         for (String value : values) {
             output.writeUTF(value);
         }
+    }
+
+    private static void writeStringMap(DataOutputStream output, Map<String, String> values) throws IOException {
+        output.writeInt(values.size());
+        for (var entry : values.entrySet()) {
+            output.writeUTF(entry.getKey());
+            output.writeUTF(entry.getValue());
+        }
+    }
+
+    private static Path clientWorkingDirectory() {
+        return Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize();
+    }
+
+    private static Map<String, String> clientEnvironment() {
+        return new TreeMap<>(System.getenv());
     }
 
     private static void copy(InputStream input, OutputStream output) throws IOException {

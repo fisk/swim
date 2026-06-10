@@ -47,6 +47,7 @@ public class Buffer {
     private BufferContext _bufferContext;
     private UndoLog _undoLog;
     private int _version = 1;
+    private int _savedVersion = 1;
     private boolean _readOnly;
     private static Logger _log = LogFactory.createLog();
     private final List<Fold> _folds = new ArrayList<>();
@@ -142,6 +143,14 @@ public class Buffer {
 
     public boolean isReadOnly() {
         return _readOnly;
+    }
+
+    public boolean isModified() {
+        return _version != _savedVersion;
+    }
+
+    public void markUnmodified() {
+        _savedVersion = _version;
     }
 
     public void undo() {
@@ -1781,6 +1790,7 @@ public class Buffer {
         }
         _languageMode.willSave(_bufferContext);
         Files.writeString(_path, _string.toString());
+        _savedVersion = _version;
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {
             window.getCommandView().setMessage("Saved file");

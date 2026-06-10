@@ -5,8 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,7 +46,7 @@ class DirectoryBrowserViewTest {
     }
 
     @Test
-    void enterOnFileOpensItInWindowBuffer() throws IOException {
+    void enterOnFileOpensItInWindowBuffer() throws Exception {
         Path dir = tempDir.resolve("browse-open");
         Files.createDirectories(dir);
         Path file = Files.writeString(dir.resolve("note.txt"), "opened\n");
@@ -60,7 +62,16 @@ class DirectoryBrowserViewTest {
             assertEquals(file.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
             assertInstanceOf(BufferView.class, window.getActiveView());
-            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("2:Browse: browse-open"));
+            assertTrue(tabLabels(window).contains("Browse: browse-open"));
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> tabLabels(Window window) throws Exception {
+        Method method = Window.class.getDeclaredMethod("tabEntries");
+        method.setAccessible(true);
+        return ((List<TabBarView.Tab>) method.invoke(window)).stream()
+                .map(TabBarView.Tab::label)
+                .toList();
     }
 }
