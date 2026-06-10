@@ -1,6 +1,7 @@
 package org.fisk.swim.terminal;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,7 @@ public class TerminalContext {
     private final TextGraphics _graphics;
     private final Supplier<TerminalSize> _terminalSizeSupplier;
     private final TerminalModeState _terminalModeState;
+    private TerminalCursorShape _cursorShape = TerminalCursorShape.BLOCK;
 
     public TerminalContext() {
         this(createTerminal(), null, TerminalContext::queryTerminalSizeFromTty, configureTerminalShortcuts());
@@ -119,6 +121,15 @@ public class TerminalContext {
         }
     }
 
+    private static TerminalControlWriter standardOutputControlWriter() {
+        return sequence -> {
+            synchronized (System.out) {
+                System.out.write(sequence.getBytes(StandardCharsets.UTF_8));
+                System.out.flush();
+            }
+        };
+    }
+
     private static void configureTerminalInputDecoding(Terminal terminal) {
         if (!(terminal instanceof StreamBasedTerminal streamBasedTerminal)) {
             return;
@@ -141,6 +152,7 @@ public class TerminalContext {
             _screen.stopScreen();
         } catch (IOException | IllegalStateException e) {
         }
+        setCursorShape(TerminalCursorShape.BLOCK, true);
         try {
             restoreTerminalShortcuts(_terminalModeState);
         } catch (RuntimeException e) {
@@ -163,6 +175,24 @@ public class TerminalContext {
 
     public Terminal getTerminal() {
         return _terminal;
+    }
+
+    public void setCursorShape(TerminalCursorShape shape) {
+        setCursorShape(shape, false);
+    }
+
+    private synchronized void setCursorShape(TerminalCursorShape shape, boolean force) {
+        TerminalCursorShape next = shape == null ? TerminalCursorShape.BLOCK : shape;
+        if (!force && next == _cursorShape) {
+            return;
+        }
+        _cursorShape = next;
+        try {
+            if (_terminal instanceof TerminalControlWriter controlWriter) {
+                controlWriter.writeControlSequence(next.escapeSequence());
+            }
+        } catch (IOException | IllegalStateException e) {
+        }
     }
 
     public TerminalSize getTerminalSize() {
@@ -374,20 +404,32 @@ public class TerminalContext {
     }
 
     static Terminal wrapTerminal(Terminal terminal, Supplier<TerminalSize> terminalSizeSupplier) {
+        return wrapTerminal(terminal, terminalSizeSupplier, standardOutputControlWriter());
+    }
+
+    static Terminal wrapTerminal(
+            Terminal terminal,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalControlWriter controlWriter) {
         if (terminal == null) {
             throw new IllegalArgumentException("terminal must not be null");
         }
-        return new SizeAwareTerminal(terminal, terminalSizeSupplier);
+        return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter);
     }
 
-    private static final class SizeAwareTerminal implements Terminal {
+    private static final class SizeAwareTerminal implements Terminal, TerminalControlWriter {
         private final Terminal _delegate;
         private final Supplier<TerminalSize> _terminalSizeSupplier;
+        private final TerminalControlWriter _controlWriter;
         private final Map<TerminalResizeListener, TerminalResizeListener> _resizeListeners = new IdentityHashMap<>();
 
-        private SizeAwareTerminal(Terminal delegate, Supplier<TerminalSize> terminalSizeSupplier) {
+        private SizeAwareTerminal(
+                Terminal delegate,
+                Supplier<TerminalSize> terminalSizeSupplier,
+                TerminalControlWriter controlWriter) {
             _delegate = delegate;
             _terminalSizeSupplier = terminalSizeSupplier;
+            _controlWriter = controlWriter != null ? controlWriter : standardOutputControlWriter();
         }
 
         @Override
@@ -405,16 +447,22 @@ public class TerminalContext {
         }
 
         private void setBracketedPasteMode(boolean enabled) throws IOException {
-            _delegate.putString(enabled ? ENABLE_BRACKETED_PASTE : DISABLE_BRACKETED_PASTE);
-            _delegate.flush();
+            writeControlSequence(enabled ? ENABLE_BRACKETED_PASTE : DISABLE_BRACKETED_PASTE);
         }
 
         private void setMouseCaptureMode(boolean enabled) throws IOException {
             if (_delegate instanceof ExtendedTerminal extendedTerminal) {
                 extendedTerminal.setMouseCaptureMode(enabled ? MouseCaptureMode.CLICK_RELEASE_DRAG : null);
             }
-            _delegate.putString(enabled ? ENABLE_SGR_MOUSE : DISABLE_SGR_MOUSE);
-            _delegate.flush();
+            writeControlSequence(enabled ? ENABLE_SGR_MOUSE : DISABLE_SGR_MOUSE);
+        }
+
+        @Override
+        public void writeControlSequence(String sequence) throws IOException {
+            if (sequence == null || sequence.isEmpty()) {
+                return;
+            }
+            _controlWriter.writeControlSequence(sequence);
         }
 
         @Override

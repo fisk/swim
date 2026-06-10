@@ -12,6 +12,7 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
@@ -63,6 +64,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         @Override
         public int getYOnScreen() {
             return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
         }
     }
 

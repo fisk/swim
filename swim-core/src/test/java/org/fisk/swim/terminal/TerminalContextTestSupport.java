@@ -33,6 +33,7 @@ public final class TerminalContextTestSupport {
         var stopCalls = new AtomicInteger();
         var closeCalls = new AtomicInteger();
         var drawCalls = new CopyOnWriteArrayList<DrawCall>();
+        var terminalWrites = new CopyOnWriteArrayList<String>();
         var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var cursorPosition = new AtomicReference<TerminalPosition>(new TerminalPosition(0, 0));
@@ -71,10 +72,18 @@ public final class TerminalContextTestSupport {
                 });
         var terminal = (Terminal) Proxy.newProxyInstance(
                 Terminal.class.getClassLoader(),
-                new Class<?>[] { Terminal.class },
+                new Class<?>[] { Terminal.class, TerminalControlWriter.class },
                 (proxy, method, args) -> {
                     if ("close".equals(method.getName())) {
                         closeCalls.incrementAndGet();
+                        return null;
+                    }
+                    if ("putString".equals(method.getName()) && args != null && args.length == 1) {
+                        terminalWrites.add((String) args[0]);
+                        return null;
+                    }
+                    if ("writeControlSequence".equals(method.getName()) && args != null && args.length == 1) {
+                        terminalWrites.add((String) args[0]);
                         return null;
                     }
                     return defaultValue(proxy, method.getReturnType(), columns, rows);
@@ -116,7 +125,7 @@ public final class TerminalContextTestSupport {
                 });
         var context = new TerminalContext(screen, terminal, graphics, terminalSizeSupplier);
         setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls, closeCalls, drawCalls, cursorPosition);
+        return new InstalledTerminalContext(context, stopCalls, closeCalls, drawCalls, cursorPosition, terminalWrites);
     }
 
     private static void setInstance(TerminalContext context) {
@@ -162,7 +171,8 @@ public final class TerminalContextTestSupport {
             AtomicInteger stopCalls,
             AtomicInteger closeCalls,
             List<DrawCall> drawCalls,
-            AtomicReference<TerminalPosition> cursorPosition) {
+            AtomicReference<TerminalPosition> cursorPosition,
+            List<String> terminalWrites) {
     }
 
     public record DrawCall(int x, int y, String text, TextColor foreground, TextColor background) {

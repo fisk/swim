@@ -92,7 +92,7 @@ class TerminalContextTest {
                     }
                     return defaultValue(proxy, method.getReturnType());
                 });
-        Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> new TerminalSize(80, 24));
+        Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> new TerminalSize(80, 24), writes::add);
 
         wrapped.enterPrivateMode();
         wrapped.exitPrivateMode();
@@ -100,6 +100,28 @@ class TerminalContextTest {
         assertEquals(java.util.Arrays.asList(MouseCaptureMode.CLICK_RELEASE_DRAG, null), modes);
         assertEquals(java.util.Arrays.asList("\u001b[?2004h", "\u001b[?1006h", "\u001b[?1006l", "\u001b[?2004l"),
                 writes);
+    }
+
+    @Test
+    void cursorShapeWritesDecscusrOnlyWhenShapeChanges() {
+        var installed = TerminalContextTestSupport.install(80, 24);
+
+        installed.context().setCursorShape(TerminalCursorShape.BLOCK);
+        installed.context().setCursorShape(TerminalCursorShape.BAR);
+        installed.context().setCursorShape(TerminalCursorShape.BAR);
+        installed.context().setCursorShape(TerminalCursorShape.UNDERLINE);
+
+        assertEquals(java.util.Arrays.asList("\u001b[6 q", "\u001b[4 q"), installed.terminalWrites());
+    }
+
+    @Test
+    void shutdownRestoresBlockCursorShape() {
+        var installed = TerminalContextTestSupport.install(80, 24);
+
+        installed.context().setCursorShape(TerminalCursorShape.BAR);
+        TerminalContext.shutdownInstance();
+
+        assertEquals(java.util.Arrays.asList("\u001b[6 q", "\u001b[2 q"), installed.terminalWrites());
     }
 
     private static Object defaultValue(Object proxy, Class<?> type) {

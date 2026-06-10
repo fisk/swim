@@ -2,6 +2,7 @@ package org.fisk.swim.ui;
 
 import java.util.regex.Pattern;
 
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.TextLayout.Line;
 
@@ -10,6 +11,7 @@ public class Cursor {
     private int _y;
     private int _position;
     private int _lastX;
+    private TerminalCursorShape _shape = TerminalCursorShape.BLOCK;
 
     private BufferContext _bufferContext;
 
@@ -57,6 +59,14 @@ public class Cursor {
 
     public int getPosition() {
         return _position;
+    }
+
+    public TerminalCursorShape getShape() {
+        return _shape;
+    }
+
+    public void setShape(TerminalCursorShape shape) {
+        _shape = shape == null ? TerminalCursorShape.BLOCK : shape;
     }
 
     public void goBack() {

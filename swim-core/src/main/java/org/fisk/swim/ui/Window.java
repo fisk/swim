@@ -42,6 +42,7 @@ import org.fisk.swim.mode.VisualBlockMode;
 import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.todo.TodoStore;
@@ -2868,12 +2869,31 @@ public class Window implements Drawable {
             bufferView.adaptViewToCursor();
         }
         var cursor = _rootView.getCursor();
+        TerminalCursorShape shape = TerminalCursorShape.BLOCK;
         if (cursor != null) {
             screen.setCursorPosition(new TerminalPosition(cursor.getXOnScreen(), cursor.getYOnScreen()));
+            shape = cursorShape(cursor);
         }
         try {
             screen.refresh(RefreshType.DELTA);
-        } catch (IOException e) {}
+        } catch (IOException e) {
+        }
+        terminalContext.setCursorShape(shape);
+    }
+
+    private TerminalCursorShape cursorShape(Cursor cursor) {
+        if (cursor == null) {
+            return TerminalCursorShape.BLOCK;
+        }
+        if (_rootView != null && _rootView.getFirstResponder() == _activeBufferView) {
+            if (_currentMode == _inputMode) {
+                return TerminalCursorShape.BAR;
+            }
+            if (_currentMode == _replaceMode) {
+                return TerminalCursorShape.UNDERLINE;
+            }
+        }
+        return cursor.getShape();
     }
 
     @Override

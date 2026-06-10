@@ -8,12 +8,37 @@ import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
 public class TodoQuickCaptureView extends View implements KeyBindingHintProvider {
+    private static final class CaptureCursor extends Cursor {
+        private final TodoQuickCaptureView _owner;
+
+        private CaptureCursor(TodoQuickCaptureView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
+        }
+    }
+
     private static final int MIN_WIDTH = 36;
     private static final int MAX_WIDTH = 76;
     private static final int HEIGHT = 5;
@@ -25,9 +50,11 @@ public class TodoQuickCaptureView extends View implements KeyBindingHintProvider
     };
     private Runnable _pendingAction;
     private String _message = "";
+    private final CaptureCursor _cursor;
 
     public TodoQuickCaptureView(Rect bounds) {
         super(bounds);
+        _cursor = new CaptureCursor(this);
         setBackgroundColour(UiTheme.SURFACE_ELEVATED);
     }
 
@@ -51,6 +78,11 @@ public class TodoQuickCaptureView extends View implements KeyBindingHintProvider
 
     public String getMessage() {
         return _message;
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _cursor;
     }
 
     @Override
@@ -186,6 +218,26 @@ public class TodoQuickCaptureView extends View implements KeyBindingHintProvider
 
     private com.googlecode.lanterna.TextColor footerColour() {
         return _message == null || _message.isBlank() ? UiTheme.TEXT_MUTED : UiTheme.ACCENT_GOLD;
+    }
+
+    private Point cursorScreenPosition() {
+        Rect rect = getBounds();
+        int visibleTitleWidth = Math.max(0, rect.getSize().getWidth() - 4);
+        int maxX = Math.max(0, rect.getSize().getWidth() - 1);
+        int localX = Math.min(maxX, 3 + Math.min(_title.length(), visibleTitleWidth));
+        Point origin = absoluteOrigin();
+        int localY = Math.min(2, Math.max(0, rect.getSize().getHeight() - 1));
+        return Point.create(origin.getX() + localX, origin.getY() + localY);
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     private static Rect calculateBounds(Size parentSize) {

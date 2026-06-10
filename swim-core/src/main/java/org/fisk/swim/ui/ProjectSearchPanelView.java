@@ -11,15 +11,41 @@ import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.fileindex.ProjectSearch;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class ProjectSearchPanelView extends View implements KeyBindingHintProvider {
+    private static final class QueryCursor extends Cursor {
+        private final ProjectSearchPanelView _owner;
+
+        private QueryCursor(ProjectSearchPanelView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
+        }
+    }
+
     private final ProjectSearch _projectSearch;
     private final StringBuilder _query = new StringBuilder();
     private final ListEventResponder _responders = new ListEventResponder();
+    private final QueryCursor _cursor;
     private List<ProjectSearch.Match> _results = List.of();
     private int _selection;
     private int _start;
@@ -35,6 +61,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     public ProjectSearchPanelView(Rect bounds, ProjectSearch projectSearch) {
         super(bounds);
         _projectSearch = projectSearch;
+        _cursor = new QueryCursor(this);
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         _responders.addEventResponder("<DOWN>", "Results", "move down", () -> moveSelection(1));
         _responders.addEventResponder("<UP>", "Results", "move up", () -> moveSelection(-1));
@@ -84,6 +111,11 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     @Override
     public List<KeyBindingHint> keyBindingHints() {
         return _responders.keyBindingHints();
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _cursor;
     }
 
     String getQuery() {
@@ -290,5 +322,24 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         if (window != null) {
             window.hidePanel();
         }
+    }
+
+    private Point cursorScreenPosition() {
+        Point origin = absoluteOrigin();
+        int width = Math.max(1, getBounds().getSize().getWidth());
+        int queryColumn = " query ".length() + 1 + _query.length();
+        int x = Math.min(width - 1, queryColumn);
+        int y = Math.min(Math.max(0, getBounds().getSize().getHeight() - 1), 1);
+        return Point.create(origin.getX() + Math.max(0, x), origin.getY() + y);
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 }

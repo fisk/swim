@@ -10,6 +10,7 @@ import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.todo.TodoItem;
 import org.fisk.swim.todo.TodoProject;
@@ -22,6 +23,30 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
 public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
+    private static final class PromptCursor extends Cursor {
+        private final TodoWorkspaceView _owner;
+
+        private PromptCursor(TodoWorkspaceView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
+        }
+    }
+
     private enum FilterKind {
         INBOX,
         ALL,
@@ -84,10 +109,12 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     private Prompt _prompt;
     private String _message = "";
     private Runnable _pendingAction;
+    private final PromptCursor _cursor;
 
     public TodoWorkspaceView(Rect bounds, TodoStore store) {
         super(bounds);
         _store = store;
+        _cursor = new PromptCursor(this);
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         refresh();
     }
@@ -176,6 +203,11 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
                 KeyBindingHint.of("r", "Workspace", "refresh"),
                 KeyBindingHint.of("q", "Workspace", "return"),
                 KeyBindingHint.of("<ESC>", "Workspace", "return"));
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _prompt == null ? null : _cursor;
     }
 
     private Runnable promptAction(KeyStroke event) {
@@ -601,6 +633,26 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
             return ".";
         }
         return value.substring(0, width - 1) + ".";
+    }
+
+    private Point cursorScreenPosition() {
+        Point origin = absoluteOrigin();
+        int width = Math.max(1, getBounds().getSize().getWidth());
+        int height = Math.max(1, getBounds().getSize().getHeight());
+        int promptLength = _prompt == null ? 0 : _prompt._value.length();
+        int labelLength = _prompt == null ? 0 : (" " + promptLabel(_prompt._kind) + " ").length();
+        int x = Math.min(width - 1, labelLength + 1 + promptLength);
+        return Point.create(origin.getX() + Math.max(0, x), origin.getY() + height - 1);
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     private static List<String> parseTags(String value) {

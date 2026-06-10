@@ -22,6 +22,7 @@ import org.fisk.swim.mail.MailThreadPage;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 
@@ -31,6 +32,30 @@ import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.input.KeyType;
 
 public class MailPanelView extends View implements KeyBindingHintProvider {
+    private static final class MailCursor extends Cursor {
+        private final MailPanelView _owner;
+
+        private MailCursor(MailPanelView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
+        }
+    }
+
     private static final int THREAD_PAGE_SIZE = 100;
     private static final int THREAD_PREFETCH_THRESHOLD = 10;
 
@@ -110,6 +135,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private final MailClient _client;
+    private final MailCursor _cursor = new MailCursor(this);
     private MailSnapshot _snapshot;
     private List<SidebarRow> _sidebarRows = List.of();
     private List<String> _availableTags = List.of();
@@ -175,6 +201,11 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
     boolean isComposeActive() {
         return _mode == Mode.COMPOSE;
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _mode == Mode.SEARCH || _mode == Mode.COMPOSE ? _cursor : null;
     }
 
     @Override
@@ -575,6 +606,88 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         return Math.max(0, Math.min(localX - 1 - prefix.length(), length));
     }
 
+    private Point cursorScreenPosition() {
+        Point origin = absoluteOrigin();
+        if (_mode == Mode.SEARCH) {
+            return Point.create(origin.getX() + boundedColumn(" Search ".length() + _searchCursor),
+                    origin.getY() + Math.min(1, Math.max(0, getBounds().getSize().getHeight() - 1)));
+        }
+        if (_mode == Mode.COMPOSE) {
+            return composeCursorScreenPosition(origin);
+        }
+        return origin;
+    }
+
+    private Point composeCursorScreenPosition(Point origin) {
+        int wrapWidth = Math.max(1, getBounds().getSize().getWidth() - 2);
+        int baseRow = 1;
+        String line = "";
+        int cursor = 0;
+        switch (_composeField) {
+        case TO -> {
+            baseRow = 1;
+            line = "To: " + _composeTo;
+            cursor = "To: ".length() + _composeToCursor;
+        }
+        case CC -> {
+            baseRow = 2;
+            line = "Cc: " + _composeCc;
+            cursor = "Cc: ".length() + _composeCcCursor;
+        }
+        case BCC -> {
+            baseRow = 3;
+            line = "Bcc: " + _composeBcc;
+            cursor = "Bcc: ".length() + _composeBccCursor;
+        }
+        case SUBJECT -> {
+            baseRow = 4;
+            line = "Subject: " + _composeSubject;
+            cursor = "Subject: ".length() + _composeSubjectCursor;
+        }
+        case BODY -> {
+            baseRow = 6;
+            for (int i = 0; i < _composeBodyRow && i < _composeBody.size(); i++) {
+                baseRow += TextPanelView.wrapText(_composeBody.get(i).toString(), wrapWidth).size();
+            }
+            StringBuilder bodyLine = _composeBody.isEmpty() ? new StringBuilder() : _composeBody.get(
+                    Math.max(0, Math.min(_composeBodyRow, _composeBody.size() - 1)));
+            line = bodyLine.toString();
+            cursor = _composeBodyColumn;
+        }
+        }
+        Point offset = wrappedCursorOffset(line, cursor, wrapWidth);
+        return Point.create(origin.getX() + boundedColumn(1 + offset.getX()),
+                origin.getY() + boundedRow(1 + baseRow + offset.getY()));
+    }
+
+    private Point wrappedCursorOffset(String line, int cursor, int width) {
+        int safeCursor = Math.max(0, Math.min(cursor, line.length()));
+        int row = 0;
+        int start = 0;
+        while (line.length() - start > width) {
+            String remaining = line.substring(start);
+            int split = remaining.lastIndexOf(' ', width);
+            if (split <= 0) {
+                split = width;
+            }
+            int displayedEnd = start + split;
+            if (safeCursor <= displayedEnd) {
+                return Point.create(Math.min(width - 1, Math.max(0, safeCursor - start)), row);
+            }
+            start += Math.min(split + 1, remaining.length());
+            row++;
+        }
+        return Point.create(Math.max(0, safeCursor - start), row);
+    }
+
+    private int boundedColumn(int column) {
+        return Math.max(0, Math.min(column, Math.max(0, getBounds().getSize().getWidth() - 1)));
+    }
+
+    private int boundedRow(int row) {
+        return Math.max(0, Math.min(row, Math.max(0, getBounds().getSize().getHeight() - 1)));
+    }
+
     private Point absoluteOrigin() {
         int x = getBounds().getPoint().getX();
         int y = getBounds().getPoint().getY();
@@ -702,7 +815,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         var line = new AttributedString();
         if (_mode == Mode.SEARCH) {
             line.append(" Search ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
-            line.append(withCursor(_searchInput.toString(), _searchCursor), UiTheme.TEXT_PRIMARY,
+            line.append(_searchInput.toString(), UiTheme.TEXT_PRIMARY,
                     UiTheme.MAIL_STATUS_BACKGROUND);
         } else {
             line.append(" Filter ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
@@ -797,22 +910,17 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     private List<String> buildComposeLines(int width) {
         var lines = new ArrayList<String>();
         lines.add("Account: " + safe(_composeAccountId, "(none)"));
-        lines.add(prefixField("To: ", _composeTo.toString(), _composeField == ComposeField.TO, _composeToCursor));
-        lines.add(prefixField("Cc: ", _composeCc.toString(), _composeField == ComposeField.CC, _composeCcCursor));
-        lines.add(prefixField("Bcc: ", _composeBcc.toString(), _composeField == ComposeField.BCC, _composeBccCursor));
-        lines.add(prefixField("Subject: ", _composeSubject.toString(), _composeField == ComposeField.SUBJECT,
-                _composeSubjectCursor));
+        lines.add(prefixField("To: ", _composeTo.toString()));
+        lines.add(prefixField("Cc: ", _composeCc.toString()));
+        lines.add(prefixField("Bcc: ", _composeBcc.toString()));
+        lines.add(prefixField("Subject: ", _composeSubject.toString()));
         if (_messageBufferContext != null) {
             lines.add("Body: edit in the right pane");
             return wrapComposeLines(lines, Math.max(1, width - 2));
         }
         lines.add("Body:");
         for (int i = 0; i < _composeBody.size(); i++) {
-            String value = _composeBody.get(i).toString();
-            if (_composeField == ComposeField.BODY && i == _composeBodyRow) {
-                value = withCursor(value, _composeBodyColumn);
-            }
-            lines.add(value);
+            lines.add(_composeBody.get(i).toString());
         }
         if (lines.size() < Math.max(6, getBounds().getSize().getHeight() - 1)) {
             lines.add("");
@@ -832,14 +940,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         return lines;
     }
 
-    private String prefixField(String prefix, String value, boolean active, int cursor) {
-        String rendered = active ? withCursor(value, cursor) : value;
-        return prefix + rendered;
-    }
-
-    private String withCursor(String value, int cursor) {
-        int safeCursor = Math.max(0, Math.min(cursor, value.length()));
-        return value.substring(0, safeCursor) + "▏" + value.substring(safeCursor);
+    private String prefixField(String prefix, String value) {
+        return prefix + value;
     }
 
     private void refreshClient() {

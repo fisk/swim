@@ -22,12 +22,37 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 public class CommandView extends View {
+    private static final class CommandCursor extends Cursor {
+        private final CommandView _owner;
+
+        private CommandCursor(CommandView owner) {
+            super(null);
+            _owner = owner;
+        }
+
+        @Override
+        public int getXOnScreen() {
+            return _owner.cursorScreenPosition().getX();
+        }
+
+        @Override
+        public int getYOnScreen() {
+            return _owner.cursorScreenPosition().getY();
+        }
+
+        @Override
+        public TerminalCursorShape getShape() {
+            return TerminalCursorShape.BAR;
+        }
+    }
+
     static final int MAX_VISIBLE_COMMANDS = 8;
     private static final List<CommandSpec> COMMAND_SPECS = List.of(
             new CommandSpec("q", List.of(), "", "quit SWIM"),
@@ -94,6 +119,7 @@ public class CommandView extends View {
     private ListEventResponder _responders = new ListEventResponder();
     private boolean _searchForward;
     private String _searchString;
+    private final CommandCursor _cursor;
     private static final Logger _log = LogFactory.createLog();
 
     private boolean isSearch() {
@@ -102,6 +128,7 @@ public class CommandView extends View {
 
     public CommandView(Rect bounds) {
         super(bounds);
+        _cursor = new CommandCursor(this);
         setBackgroundColour(UiTheme.COMMAND_INACTIVE_BACKGROUND);
         _responders.addEventResponder("<ESC>", () -> {
             allowEditorDrivePromptAction("close prompt");
@@ -1449,6 +1476,30 @@ public class CommandView extends View {
         }
         UiTheme.drawLine(graphics, rect.getPoint(), width, line, UiTheme.TEXT_MUTED,
                 _command != null ? UiTheme.COMMAND_BACKGROUND : UiTheme.COMMAND_INACTIVE_BACKGROUND);
+    }
+
+    @Override
+    public Cursor getCursor() {
+        return _command == null ? null : _cursor;
+    }
+
+    private Point cursorScreenPosition() {
+        Point origin = absoluteOrigin();
+        int width = Math.max(1, getBounds().getSize().getWidth());
+        String label = isSearch() ? " search " : " command ";
+        int commandLength = _command == null ? 0 : _command.length();
+        int x = Math.min(width - 1, label.length() + 1 + (_prompt == null ? 0 : _prompt.length()) + commandLength);
+        return Point.create(origin.getX() + Math.max(0, x), origin.getY());
+    }
+
+    private Point absoluteOrigin() {
+        int x = getBounds().getPoint().getX();
+        int y = getBounds().getPoint().getY();
+        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+            x += parent.getBounds().getPoint().getX();
+            y += parent.getBounds().getPoint().getY();
+        }
+        return Point.create(x, y);
     }
 
     public void setMessage(String message) {
