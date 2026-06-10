@@ -58,8 +58,8 @@ Scenarios:
 - `:help` plus command completion via `Tab`
 - Help/list filtering
 - `:grep`
-- `M` project-search panel
-- `m` project file list
+- `<leader> f` project file list
+- `<leader> /` project grep panel
 - Ignore hidden and generated directories in project search
 
 Planned additions:

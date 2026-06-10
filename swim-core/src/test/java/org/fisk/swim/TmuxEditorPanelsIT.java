@@ -34,7 +34,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "src/current.txt")) {
             session.waitForText("current file", STARTUP_TIMEOUT);
 
-            session.sendLiteral("m");
+            session.sendLiteral(" f");
             session.waitForText("Project Files", UI_TIMEOUT);
             session.sendLiteral("other");
             session.waitForText("other.txt", UI_TIMEOUT);
@@ -64,7 +64,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "src/current.txt")) {
             session.waitForText("current file", STARTUP_TIMEOUT);
 
-            session.sendLiteral("M");
+            session.sendLiteral(" /");
             session.waitForText("project search", UI_TIMEOUT);
             session.sendLiteral("needle");
             session.waitForText("target.txt:2:7", UI_TIMEOUT);

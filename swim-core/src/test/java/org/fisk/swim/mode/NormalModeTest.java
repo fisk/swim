@@ -647,6 +647,29 @@ class NormalModeTest {
     }
 
     @Test
+    void leaderOpensProjectFilesAndProjectSearch() throws Exception {
+        Path root = tempDir.resolve("leader-project");
+        Path current = root.resolve("src/current.txt");
+        Files.createDirectories(root.resolve(".git"));
+        Files.createDirectories(current.getParent());
+        Files.writeString(current, "current\n");
+        Files.writeString(root.resolve("src/other.txt"), "needle\n");
+
+        try (var harness = HeadlessWindowHarness.create(current, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('f'));
+            assertTrue(window.isShowingList());
+            window.hidePanel();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('/'));
+            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+        }
+    }
+
+    @Test
     void visualBlockYankPastesRectangularText() throws Exception {
         Path path = tempDir.resolve("visual-block-paste.txt");
         Files.writeString(path, "ab12\ncd34\n");

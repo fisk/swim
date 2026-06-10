@@ -440,7 +440,6 @@ class TmuxEditorModesIT {
             session.waitForText("charlie", STARTUP_TIMEOUT);
 
             session.sendLiteral("j");
-            session.sendLiteral("g");
             session.sendLiteral("m");
             session.sendLiteral("a");
             session.sendLiteral("G");

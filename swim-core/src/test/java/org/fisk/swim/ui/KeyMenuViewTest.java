@@ -376,6 +376,8 @@ class KeyMenuViewTest {
                 KeyBindingHint.of("<SPACE> j", "Editing", "move line or selection down"),
                 KeyBindingHint.of("<SPACE> k", "Editing", "move line or selection up"),
                 KeyBindingHint.of("<SPACE> l", "Editing", "indent line or selection"),
+                KeyBindingHint.of("<SPACE> f", "Workspace", "project files"),
+                KeyBindingHint.of("<SPACE> /", "Search", "project grep"),
                 KeyBindingHint.of("<SPACE> m", "Workspace", "mail"),
                 KeyBindingHint.of("<SPACE> s", "Workspace", "Slack"),
                 KeyBindingHint.of("<SPACE> t", "Workspace", "Todo"),

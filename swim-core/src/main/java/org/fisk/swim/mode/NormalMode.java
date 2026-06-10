@@ -387,18 +387,6 @@ public class NormalMode extends Mode {
         installTextObjectResponder(window, "y a '", "'", true, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y i p", "p", false, TextObjectOperator.YANK);
         installTextObjectResponder(window, "y a p", "p", true, TextObjectOperator.YANK);
-        _rootResponder.addEventResponder("m", "Workspace", "project files", () -> {
-            allow("project file list");
-            if (window.isShowingList()) {
-                window.hideList();
-            } else {
-                window.showList(FileIndex.createFileList(), "Project Files");
-            }
-        });
-        _rootResponder.addEventResponder("M", "Search", "project search", () -> {
-            allow("project search panel");
-            ProjectSearchUiSupport.toggle(window);
-        });
         _rootResponder.addEventResponder("B", "Debug", "toggle breakpoint", () -> {
             if (window.blockEditorDriveAction("debug breakpoint", "debugger actions are outside the editor-control sandbox")) {
                 return;
@@ -515,6 +503,18 @@ public class NormalMode extends Mode {
     }
 
     private void installLeaderWorkspaceBindings(Window window, String leader) {
+        _rootResponder.addEventResponder(leader + " f", "Workspace", "project files", () -> {
+            allow("project file list");
+            if (window.isShowingList()) {
+                window.hideList();
+            } else {
+                window.showList(FileIndex.createFileList(), "Project Files");
+            }
+        });
+        _rootResponder.addEventResponder(leader + " /", "Search", "project grep", "grep", () -> {
+            allow("project search panel");
+            ProjectSearchUiSupport.toggle(window);
+        });
         _rootResponder.addEventResponder(leader + " t", "Workspace", "Todo", "todo", () -> {
             if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
                 return;
