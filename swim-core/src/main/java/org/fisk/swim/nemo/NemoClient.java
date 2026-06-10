@@ -103,6 +103,7 @@ public class NemoClient {
     }
 
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
+    private final NemoResponsesClient _responsesClient = new NemoResponsesClient();
     private final NemoMcpClient _mcpClient = new NemoMcpClient();
     private static final HttpClient _webSearchHttpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -907,6 +908,13 @@ public class NemoClient {
                     || "responses".equals(_provider)
                     || "openai-responses".equals(_provider);
         }
+
+        boolean usesResponsesApi() {
+            return "chatgpt".equals(_provider)
+                    || "responses".equals(_provider)
+                    || "openai-responses".equals(_provider);
+        }
+
         static String normalizeToolPermissionMode(String toolPermissionMode) {
             if (toolPermissionMode == null || toolPermissionMode.isBlank()) {
                 return _defaultPermissionMode;
@@ -1580,6 +1588,9 @@ public class NemoClient {
         if (mailVisibleToNemo()) {
             return new ResponseResult("Nemo is unavailable while mail is visible; switch away from mail and retry.",
                     null, List.of());
+        }
+        if (configuration.usesResponsesApi()) {
+            return _responsesClient.request(configuration, context, turns, executionSession);
         }
         return _langChain4jClient.request(configuration, context, turns, executionSession);
     }
@@ -4224,7 +4235,7 @@ public class NemoClient {
             } catch (Exception e) {
                 _log.error("Nemo request failed", e);
                 EventThread.getInstance().enqueue(new RunnableEvent(
-                        () -> handleFailure(conversation, requestId, "Nemo failed: " + e.getMessage())));
+                        () -> handleFailure(conversation, requestId, "Nemo failed: " + exceptionSummary(e))));
             }
         }, "swim-nemo-" + conversation._id);
         worker.setDaemon(true);
@@ -4236,6 +4247,14 @@ public class NemoClient {
         var turn = new ChatTurn("me", message);
         conversation._queuedUserTurns.add(turn);
         appendTurn(conversation, turn);
+    }
+
+    private static String exceptionSummary(Exception e) {
+        String message = e.getMessage();
+        if (message != null && !message.isBlank()) {
+            return message;
+        }
+        return e.getClass().getSimpleName();
     }
 
     private synchronized List<ChatTurn> drainQueuedUserTurns(Conversation conversation, long requestId) {

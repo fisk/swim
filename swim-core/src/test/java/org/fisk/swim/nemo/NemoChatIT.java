@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.googlecode.lanterna.input.KeyStroke;
@@ -455,10 +456,10 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
-    void chatGptProviderUsesLangChainChatBackendFromLegacyResponsesUrl() throws Exception {
+    void chatGptProviderUsesResponsesBackendFromResponsesUrl() throws Exception {
         var requestCount = new AtomicInteger();
         var requestBody = new AtomicReference<String>("");
-        var server = startServer(requestCount, requestBody, List.of(textResponse("Native SSO answer")));
+        var server = startResponsesServer(requestCount, requestBody, List.of(responsesTextResponse("Native SSO answer")));
         try {
             writeResponsesConfig(server);
             String originalUserHome = switchToTempUserHome();
@@ -471,13 +472,52 @@ class NemoChatIT {
                 waitForLine(panel, "nemo> Native SSO answer");
 
                 String body = requestBody.get();
-                assertTrue(body.contains("\"messages\""));
-                assertFalse(body.contains("\"instructions\""));
-                assertFalse(body.contains("\"store\""));
-                assertFalse(body.contains("\"stream\":true"));
+                assertTrue(body.contains("\"input\""));
+                assertTrue(body.contains("\"instructions\""));
+                assertFalse(body.contains("\"messages\""));
                 JsonObject requestJson = JsonParser.parseString(body).getAsJsonObject();
-                assertEquals("xhigh", requestJson.get("reasoning_effort").getAsString());
+                assertFalse(requestJson.get("instructions").getAsString().isBlank());
+                assertTrue(requestJson.get("stream").getAsBoolean());
+                assertFalse(requestJson.get("store").getAsBoolean());
+                assertFalse(requestJson.has("model_reasoning_effort"));
+                assertEquals("xhigh", requestJson.getAsJsonObject("reasoning").get("effort").getAsString());
                 assertFalse(body.contains("max_output_tokens"));
+                assertEquals(1, requestCount.get());
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void chatGptProviderAppendsResponsesPathToBaseUrl() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<String>("");
+        var authorizationHeader = new AtomicReference<String>("");
+        var server = startResponsesServer("/backend-api/codex/responses", requestCount, requestBody, authorizationHeader,
+                List.of(responsesTextResponse("Codex backend answer")));
+        try {
+            writeChatGptBaseConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Hi");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Codex backend answer");
+
+                JsonObject requestJson = JsonParser.parseString(requestBody.get()).getAsJsonObject();
+                assertTrue(requestJson.has("input"));
+                assertTrue(requestJson.has("instructions"));
+                assertTrue(requestJson.get("stream").getAsBoolean());
+                assertFalse(requestJson.get("store").getAsBoolean());
+                assertFalse(requestJson.has("model_reasoning_effort"));
+                assertEquals("xhigh", requestJson.getAsJsonObject("reasoning").get("effort").getAsString());
+                assertEquals("Bearer test-token", authorizationHeader.get());
                 assertEquals(1, requestCount.get());
             } finally {
                 System.setProperty("user.home", originalUserHome);
@@ -954,6 +994,28 @@ class NemoChatIT {
         return server;
     }
 
+    private HttpServer startResponsesServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<JsonObject> responses) throws IOException {
+        return startResponsesServer("/responses", requestCount, requestBody, responses);
+    }
+
+    private HttpServer startResponsesServer(String path, AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<JsonObject> responses) throws IOException {
+        return startResponsesServer(path, requestCount, requestBody, new AtomicReference<>(""), responses);
+    }
+
+    private HttpServer startResponsesServer(String path, AtomicInteger requestCount, AtomicReference<String> requestBody,
+            AtomicReference<String> authorizationHeader, List<JsonObject> responses) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext(path, exchange -> {
+            authorizationHeader.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            handleResponsesStream(exchange, requestCount, requestBody, responses);
+        });
+        server.start();
+        return server;
+    }
+
     private HttpServer startDelegationServer(AtomicInteger requestCount) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.setExecutor(Executors.newCachedThreadPool());
@@ -1110,6 +1172,35 @@ class NemoChatIT {
         }
     }
 
+    private void handleResponsesStream(HttpExchange exchange, AtomicInteger requestCount,
+            AtomicReference<String> requestBody, List<JsonObject> responses) throws IOException {
+        int requestIndex = requestCount.incrementAndGet();
+        requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        JsonObject response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
+        JsonArray responseOutput = response.has("output") && response.get("output").isJsonArray()
+                ? response.getAsJsonArray("output")
+                : new JsonArray();
+        JsonObject completedResponse = response.deepCopy();
+        completedResponse.add("error", JsonNull.INSTANCE);
+        completedResponse.add("output", new JsonArray());
+        JsonObject itemEvent = new JsonObject();
+        itemEvent.addProperty("type", "response.output_item.done");
+        if (!responseOutput.isEmpty() && responseOutput.get(0).isJsonObject()) {
+            itemEvent.add("item", responseOutput.get(0).getAsJsonObject());
+        }
+        JsonObject completedEvent = new JsonObject();
+        completedEvent.addProperty("type", "response.completed");
+        completedEvent.add("response", completedResponse);
+        byte[] bytes = ("event: response.output_item.done\ndata: " + itemEvent
+                + "\n\nevent: response.completed\ndata: " + completedEvent + "\n\n")
+                .getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(bytes);
+        }
+    }
+
     private static JsonObject toolCallResponse(String callId, String toolName, String arguments) {
         JsonObject response = new JsonObject();
         response.addProperty("id", "chatcmpl-tool");
@@ -1187,6 +1278,30 @@ class NemoChatIT {
         choices.add(choice);
         response.add("choices", choices);
         response.add("usage", usage(5000, 100));
+        return response;
+    }
+
+    private static JsonObject responsesTextResponse(String text) {
+        JsonObject response = new JsonObject();
+        response.addProperty("id", "resp-text");
+        response.addProperty("object", "response");
+        response.addProperty("model", "gpt-5.5");
+        JsonArray output = new JsonArray();
+        JsonObject message = new JsonObject();
+        message.addProperty("type", "message");
+        message.addProperty("role", "assistant");
+        JsonArray content = new JsonArray();
+        JsonObject outputText = new JsonObject();
+        outputText.addProperty("type", "output_text");
+        outputText.addProperty("text", text);
+        content.add(outputText);
+        message.add("content", content);
+        output.add(message);
+        response.add("output", output);
+        JsonObject usage = new JsonObject();
+        usage.addProperty("input_tokens", 5000);
+        usage.addProperty("output_tokens", 100);
+        response.add("usage", usage);
         return response;
     }
 
@@ -1286,6 +1401,23 @@ class NemoChatIT {
                 "api_key=test-token",
                 "model=gpt-5.5",
                 "responses_url=http://127.0.0.1:" + server.getAddress().getPort() + "/responses",
+                "reasoning_effort=xhigh",
+                "tool.list_files=true",
+                "tool.read_file=true",
+                "tool.search_files=true",
+                "tool.run_command=false",
+                "tool.write_file=true",
+                "tool.web_search=false"));
+    }
+
+    private void writeChatGptBaseConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=chatgpt",
+                "api_key=test-token",
+                "model=gpt-5.5",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort() + "/backend-api/codex",
                 "reasoning_effort=xhigh",
                 "tool.list_files=true",
                 "tool.read_file=true",
