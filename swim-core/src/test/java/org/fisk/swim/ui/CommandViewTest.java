@@ -242,6 +242,28 @@ class CommandViewTest {
     }
 
     @Test
+    void sessionKillCommandReportsNoServerWhenUnavailable() throws Exception {
+        Path path = tempDir.resolve("session-kill-command.txt");
+        Files.writeString(path, "abc");
+        String previous = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var commandView = harness.getWindow().getCommandView();
+
+            invokeRunCommand(commandView, "session-kill review");
+
+            assertTrue(HeadlessWindowHarness.getField(commandView, "_message", String.class)
+                    .contains("No SWIM session server is attached"));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+            } else {
+                System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previous);
+            }
+        }
+    }
+
+    @Test
     void tabCompletesSelectedCommandAndPreservesArguments() throws IOException {
         Path path = tempDir.resolve("command-complete.txt");
         Files.writeString(path, "abc");

@@ -92,6 +92,25 @@ public final class SwimServerSessions {
         }
     }
 
+    public static String kill(String targetSession) throws IOException {
+        return kill(requireSocketPath(), normalizeName(targetSession));
+    }
+
+    public static String kill(Path socketPath, String targetSession) throws IOException {
+        String target = normalizeName(targetSession);
+        try (SocketChannel channel = connect(socketPath)) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("kill");
+            output.writeUTF(target);
+            output.flush();
+
+            var input = new DataInputStream(Channels.newInputStream(channel));
+            readOk(input);
+            return input.readUTF();
+        }
+    }
+
     public static boolean ping(Path socketPath) {
         try (SocketChannel channel = connect(socketPath)) {
             var output = new DataOutputStream(Channels.newOutputStream(channel));

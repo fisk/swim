@@ -24,15 +24,29 @@ final class SwimSessionClient {
     private final Path _socketPath;
 
     SwimSessionClient(Path buildRoot) {
+        this(buildRoot, defaultSocketPath());
+    }
+
+    SwimSessionClient(Path buildRoot, Path socketPath) {
         _buildRoot = buildRoot;
-        _socketPath = defaultSocketPath();
+        _socketPath = socketPath;
     }
 
     int run(String[] args) {
+        if (isKillSessionCommand(args)) {
+            return killSession(args);
+        }
+        LaunchRequest request;
+        try {
+            request = LaunchRequest.parse(args);
+        } catch (IllegalArgumentException e) {
+            System.err.println("swim: " + e.getMessage());
+            return 1;
+        }
         try {
             ensureServer();
             try (SocketChannel channel = connect()) {
-                sendRequest(channel, args);
+                sendRequest(channel, request);
                 try (SwimTerminalMode ignored = SwimTerminalMode.enterRawMode()) {
                     Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
                         try {
@@ -53,6 +67,38 @@ final class SwimSessionClient {
         } catch (IOException | RuntimeException e) {
             System.err.println("swim: unable to connect to session server: " + e.getMessage());
             return 1;
+        }
+    }
+
+    private int killSession(String[] args) {
+        if (args.length > 2) {
+            System.err.println("swim: usage: swim --kill-session [name]");
+            return 1;
+        }
+        String target = args.length == 2 ? args[1] : sessionName();
+        try {
+            System.out.println(SwimServerSessions.kill(_socketPath, target));
+            return 0;
+        } catch (IOException e) {
+            System.err.println("swim: unable to kill session: " + e.getMessage());
+            return 1;
+        }
+    }
+
+    private static boolean isKillSessionCommand(String[] args) {
+        return args != null && args.length > 0
+                && ("--kill-session".equals(args[0]) || "--swim-kill-session".equals(args[0]));
+    }
+
+    private record LaunchRequest(String sessionName, List<String> launchArgs) {
+        static LaunchRequest parse(String[] args) {
+            if (args != null && args.length > 0 && "--attach".equals(args[0])) {
+                if (args.length != 2 || args[1].isBlank()) {
+                    throw new IllegalArgumentException("usage: swim --attach <session>");
+                }
+                return new LaunchRequest(SwimServerSessions.normalizeName(args[1]), List.of());
+            }
+            return new LaunchRequest(SwimSessionClient.sessionName(), Arrays.asList(args == null ? new String[0] : args));
         }
     }
 
@@ -93,18 +139,17 @@ final class SwimSessionClient {
         return channel;
     }
 
-    private void sendRequest(SocketChannel channel, String[] args) throws IOException {
+    private void sendRequest(SocketChannel channel, LaunchRequest request) throws IOException {
         OutputStream output = Channels.newOutputStream(channel);
         var terminalSize = SwimTerminalMode.currentSize();
         var dataOutput = new DataOutputStream(output);
         dataOutput.writeUTF(SwimServerSessions.MAGIC);
         dataOutput.writeUTF("attach");
-        dataOutput.writeUTF(sessionName());
+        dataOutput.writeUTF(request.sessionName());
         dataOutput.writeInt(terminalSize.rows());
         dataOutput.writeInt(terminalSize.columns());
-        List<String> launchArgs = Arrays.asList(args == null ? new String[0] : args);
-        writeStringList(dataOutput, launchArgs);
-        writeStringList(dataOutput, SwimJavaCommand.appCommand(launchArgs));
+        writeStringList(dataOutput, request.launchArgs());
+        writeStringList(dataOutput, SwimJavaCommand.appCommand(request.launchArgs()));
         dataOutput.flush();
         String response = new DataInputStream(Channels.newInputStream(channel)).readUTF();
         if (!"OK".equals(response)) {

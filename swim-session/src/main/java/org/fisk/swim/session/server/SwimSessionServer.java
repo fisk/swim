@@ -14,6 +14,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -91,6 +92,7 @@ final class SwimSessionServer {
             }
             case "list" -> handleList(dataInput, dataOutput);
             case "switch" -> handleSwitch(dataInput, dataOutput);
+            case "kill" -> handleKill(dataInput, dataOutput);
             default -> writeError(dataOutput, "Unknown SWIM session request: " + requestType);
             }
         } catch (IOException | RuntimeException e) {
@@ -171,6 +173,22 @@ final class SwimSessionServer {
             return;
         }
         output.writeUTF("OK");
+        output.flush();
+    }
+
+    private void handleKill(DataInputStream input, DataOutputStream output) throws IOException {
+        String targetName = SwimServerSessions.normalizeName(input.readUTF());
+        ManagedSession target = _sessions.get(targetName);
+        if (target == null) {
+            writeError(output, "No such SWIM session: " + targetName);
+            return;
+        }
+        KillResult result = target.kill();
+        if (result.removable()) {
+            _sessions.remove(targetName, target);
+        }
+        output.writeUTF("OK");
+        output.writeUTF(result.message());
         output.flush();
     }
 
@@ -296,15 +314,21 @@ final class SwimSessionServer {
         }
     }
 
+    private record KillResult(String message, boolean removable) {
+    }
+
     private static final class ManagedSession {
+        private static final Duration GRACEFUL_KILL_TIMEOUT = Duration.ofSeconds(2);
+        private static final Duration FORCED_KILL_TIMEOUT = Duration.ofSeconds(2);
+
         private final String _name;
         private final Path _workingDirectory;
         private final Path _socketPath;
         private final Object _lock = new Object();
         private final AtomicReference<ClientConnection> _client = new AtomicReference<>();
-        private Process _process;
-        private OutputStream _processInput;
-        private List<String> _launchArgs = List.of();
+        private volatile Process _process;
+        private volatile OutputStream _processInput;
+        private volatile List<String> _launchArgs = List.of();
 
         private ManagedSession(String name, Path workingDirectory, Path socketPath) {
             _name = name;
@@ -352,6 +376,32 @@ final class SwimSessionServer {
             }
         }
 
+        KillResult kill() {
+            ClientConnection client;
+            Process process;
+            synchronized (_lock) {
+                client = _client.getAndSet(null);
+                process = _process;
+                _process = null;
+                closeQuietly(_processInput);
+                _processInput = null;
+                _launchArgs = List.of();
+            }
+            if (client != null) {
+                client.close();
+            }
+            if (process == null) {
+                return new KillResult("SWIM session " + _name + " was already stopped.", true);
+            }
+            boolean forced = terminateProcessTree(process);
+            if (process.isAlive()) {
+                return new KillResult("Unable to kill SWIM session " + _name + " completely; pid "
+                        + process.pid() + " is still alive.", false);
+            }
+            String suffix = forced ? " after forcing remaining processes." : ".";
+            return new KillResult("Killed SWIM session " + _name + " (pid " + process.pid() + ")" + suffix, true);
+        }
+
         private void ensureStarted(ClientRequest request) throws IOException {
             if (_process != null && _process.isAlive()) {
                 return;
@@ -363,9 +413,10 @@ final class SwimSessionServer {
                     .redirectErrorStream(true);
             builder.environment().put(SwimServerSessions.ENV_SOCKET, _socketPath.toString());
             builder.environment().put(SwimServerSessions.ENV_SESSION, _name);
-            _process = builder.start();
-            _processInput = _process.getOutputStream();
-            Thread.startVirtualThread(this::copyProcessToCurrentClient);
+            Process process = builder.start();
+            _process = process;
+            _processInput = process.getOutputStream();
+            Thread.startVirtualThread(() -> copyProcessToCurrentClient(process));
         }
 
         private List<String> ptyCommand(ClientRequest request) {
@@ -391,8 +442,8 @@ final class SwimSessionServer {
             }
         }
 
-        private void copyProcessToCurrentClient() {
-            try (InputStream processOutput = _process.getInputStream()) {
+        private void copyProcessToCurrentClient(Process process) {
+            try (InputStream processOutput = process.getInputStream()) {
                 byte[] buffer = new byte[8192];
                 int read;
                 while ((read = processOutput.read(buffer)) != -1) {
@@ -406,11 +457,65 @@ final class SwimSessionServer {
                 }
             } catch (IOException e) {
             } finally {
-                ClientConnection client = _client.getAndSet(null);
+                ClientConnection client = null;
+                synchronized (_lock) {
+                    if (_process == process) {
+                        _process = null;
+                        closeQuietly(_processInput);
+                        _processInput = null;
+                        _launchArgs = List.of();
+                        client = _client.getAndSet(null);
+                    }
+                }
                 if (client != null) {
                     client.close();
                 }
             }
+        }
+
+        private static boolean terminateProcessTree(Process process) {
+            ProcessHandle root = process.toHandle();
+            List<ProcessHandle> descendants = root.descendants().toList();
+            var processTree = new ArrayList<>(descendants);
+            processTree.add(root);
+            descendants.forEach(ProcessHandle::destroy);
+            root.destroy();
+            if (waitForExit(processTree, GRACEFUL_KILL_TIMEOUT)) {
+                return false;
+            }
+            processTree.forEach(handle -> {
+                if (handle.isAlive()) {
+                    handle.destroyForcibly();
+                }
+            });
+            waitForExit(processTree, FORCED_KILL_TIMEOUT);
+            return true;
+        }
+
+        private static boolean waitForExit(List<ProcessHandle> handles, Duration timeout) {
+            long deadline = System.nanoTime() + Math.max(0L, timeout.toNanos());
+            boolean allExited = true;
+            for (ProcessHandle handle : handles) {
+                if (!waitForExit(handle, deadline, timeout.isZero())) {
+                    allExited = false;
+                }
+            }
+            return allExited;
+        }
+
+        private static boolean waitForExit(ProcessHandle handle, long deadline, boolean zeroTimeout) {
+            while (handle.isAlive()) {
+                if (zeroTimeout || System.nanoTime() >= deadline) {
+                    return false;
+                }
+                try {
+                    Thread.sleep(Math.min(25L, Math.max(1L, Duration.ofNanos(deadline - System.nanoTime()).toMillis())));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static String shellCommand(List<String> command) {

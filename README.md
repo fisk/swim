@@ -30,7 +30,7 @@ Startup behavior:
 - `swim <file> [file...]` opens the requested file set, creating missing files when possible.
 - `swim <directory>` opens the built-in directory browser for that directory.
 - Normal launches do not restore an old session. `:reload` and `:rebuild` preserve the current editor state while the runtime restarts.
-- Normal launches attach to a background SWIM session server. Use `:sessions` to list live editor instances and `:session <name>` to move the terminal client to another named instance.
+- Normal launches attach to a background SWIM session server. Use `swim --attach <name>` to attach the terminal client directly to a named session, `:sessions` to list live editor instances, and `:session <name>` to move the current terminal client to another named instance. If a managed session is wedged, `swim --kill-session <name>` asks the server to terminate that session process tree.
 
 `mvn package` installs runtime artifacts into:
 
@@ -60,7 +60,7 @@ Nemo is the built-in assistant and harness. It uses the langchain4j chat backend
 
 ## Architecture
 
-SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, and switching.
+SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, sends explicit attach/kill requests, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, switching, and process-tree termination.
 
 Each live editor session is a separate app process. When a client attaches, it sends the server both the user launch arguments and the exact app command that should start that session. That is the version boundary: after `:rebuild`, new sessions can start with the rebuilt runtime while existing sessions keep running the older command they were created with. The server must not derive app launch commands from its own code version.
 

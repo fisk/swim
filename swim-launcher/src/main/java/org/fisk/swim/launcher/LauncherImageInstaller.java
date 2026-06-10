@@ -57,7 +57,7 @@ public final class LauncherImageInstaller {
         deleteRecursively(imageRoot);
         runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), imageRoot);
         installJavaLauncher(imageRoot);
-        patchLauncherScript(imageRoot.resolve("bin").resolve(APP_NAME), resolveNetBeansJvmArgs(swimHome));
+        installSourceLauncher(imageRoot.resolve("bin").resolve(APP_NAME), resolveNetBeansJvmArgs(swimHome));
     }
 
     static Path findLauncherJar(Path launcherTarget) throws IOException {
@@ -147,10 +147,6 @@ public final class LauncherImageInstaller {
             }
         }
         return new ArrayList<>(modules);
-    }
-
-    private static String shellQuote(String value) {
-        return "'" + value.replace("'", "'\"'\"'") + "'";
     }
 
     private static boolean isSupportedJvmArg(String arg) {
@@ -245,39 +241,387 @@ public final class LauncherImageInstaller {
         target.toFile().setExecutable(true, false);
     }
 
-    static void patchLauncherScript(Path launcherScript, List<String> launcherOptions) throws IOException {
-        if (!Files.isRegularFile(launcherScript)) {
+    static void installSourceLauncher(Path launcher, List<String> launcherOptions) throws IOException {
+        if (!Files.isRegularFile(launcher)) {
             return;
         }
-        String options = "-XX:+UseZGC -Xmx1g";
-        if (!launcherOptions.isEmpty()) {
-            options += " " + String.join(" ", launcherOptions);
-        }
-        String script = """
-                #!/bin/sh
-                JLINK_VM_OPTIONS=%s
-                DIR=`dirname $0`
-                if [ -d /tmp ]; then
-                    LOG_DIR=/tmp
-                else
-                    LOG_DIR=${TMPDIR:-.}
-                fi
-                LOG_FILE="$LOG_DIR/swim-$$.log"
-                exec 2>>"$LOG_FILE"
-                TTY_PATH=$(tty 2>&1)
-                TTY_SIZE=$(stty size 2>&1)
-                case "$TTY_SIZE" in
-                    [0-9]*" "[0-9]*)
-                        SWIM_TTY_ROWS=${TTY_SIZE%% *}
-                        SWIM_TTY_COLS=${TTY_SIZE##* }
-                        SWIM_TTY_PATH=$TTY_PATH
-                        export SWIM_TTY_ROWS SWIM_TTY_COLS SWIM_TTY_PATH
-                        ;;
-                esac
-                exec "$DIR/java" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main "$@"
-                """.formatted(shellQuote(options));
-        Files.writeString(launcherScript, script, StandardCharsets.UTF_8);
-        launcherScript.toFile().setExecutable(true, false);
+        var appOptions = new ArrayList<String>();
+        appOptions.add("-XX:+UseZGC");
+        appOptions.add("-Xmx1g");
+        appOptions.addAll(launcherOptions);
+        var serverOptions = List.of(
+                "-XX:+UseZGC",
+                "-Xmx4G",
+                "-XX:SoftMaxHeapSize=1G",
+                "--enable-native-access=org.fisk.swim.session");
+        Files.writeString(launcher, sourceLauncher(javaListLiteral(appOptions), javaListLiteral(serverOptions)),
+                StandardCharsets.UTF_8);
+        launcher.toFile().setExecutable(true, false);
+    }
+
+    private static String javaListLiteral(List<String> values) {
+        return values.stream()
+                .map(LauncherImageInstaller::javaStringLiteral)
+                .collect(java.util.stream.Collectors.joining(", ", "List.of(", ")"));
+    }
+
+    private static String javaStringLiteral(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static String sourceLauncher(String appOptions, String serverOptions) {
+        return """
+                #!/usr/bin/env -S java --source 25
+                import java.io.*;
+                import java.net.*;
+                import java.nio.channels.*;
+                import java.nio.file.*;
+                import java.time.*;
+                import java.util.*;
+
+                class swim {
+                    private static final String MAGIC = "SWIM_SESSION_2";
+                    private static final String APP_MODULE = "org.fisk.swim.launcher/org.fisk.swim.launcher.Main";
+                    private static final String SERVER_MODULE = "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
+                    private static final List<String> APP_JVM_OPTIONS = %s;
+                    private static final List<String> SERVER_JVM_OPTIONS = %s;
+                    private static final Duration SERVER_START_TIMEOUT = Duration.ofSeconds(5);
+
+                    public static void main(String[] args) throws Exception {
+                        if (args.length == 1 && "--swim-source-client-self-test".equals(args[0])) {
+                            return;
+                        }
+                        Path socket = defaultSocketPath();
+                        ControlCommand controlCommand = controlCommand(args);
+                        if (controlCommand != null) {
+                            runControlCommand(socket, controlCommand);
+                            return;
+                        }
+                        LaunchRequest request = LaunchRequest.parse(args);
+                        Path launcher = launcherPath();
+                        Path java = launcher.getParent().resolve("java");
+                        Path swimHome = swimHome(launcher);
+                        ensureServer(socket, swimHome, java);
+                        try (SocketChannel channel = connect(socket)) {
+                            sendAttach(channel, java, request);
+                            try (TerminalMode ignored = TerminalMode.enterRawMode()) {
+                                Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
+                                    try {
+                                        copy(System.in, Channels.newOutputStream(channel));
+                                        channel.shutdownOutput();
+                                    } catch (IOException e) {
+                                    }
+                                });
+                                copy(Channels.newInputStream(channel), System.out);
+                                inputRelay.join(Duration.ofSeconds(1));
+                            }
+                        }
+                    }
+
+                    private record ControlCommand(String name, String target) {
+                    }
+
+                    private record LaunchRequest(String sessionName, List<String> launchArgs) {
+                        static LaunchRequest parse(String[] args) throws IOException {
+                            if (args != null && args.length > 0 && "--attach".equals(args[0])) {
+                                if (args.length != 2 || args[1].isBlank()) {
+                                    throw new IOException("usage: swim --attach <session>");
+                                }
+                                return new LaunchRequest(normalizeName(args[1]), List.of());
+                            }
+                            return new LaunchRequest(swim.sessionName(), Arrays.asList(args == null ? new String[0] : args));
+                        }
+                    }
+
+                    private static Path launcherPath() throws IOException {
+                        String[] processArgs = ProcessHandle.current().info().arguments().orElse(new String[0]);
+                        for (int i = 0; i < processArgs.length; i++) {
+                            String arg = processArgs[i];
+                            if ("--source".equals(arg)) {
+                                i++;
+                                continue;
+                            }
+                            if (arg.startsWith("--source=") || arg.startsWith("-")) {
+                                continue;
+                            }
+                            return Path.of(arg).toAbsolutePath().normalize();
+                        }
+                        String command = System.getProperty("sun.java.command", "");
+                        int end = command.indexOf(' ');
+                        String path = end < 0 ? command : command.substring(0, end);
+                        if (!path.isBlank()) {
+                            return Path.of(path).toAbsolutePath().normalize();
+                        }
+                        throw new IOException("Unable to locate swim launcher source file");
+                    }
+
+                    private static Path swimHome(Path launcher) {
+                        Path image = launcher.getParent().getParent();
+                        Path home = image == null ? null : image.getParent();
+                        if (home != null && Files.isRegularFile(home.resolve("pom.xml"))
+                                && Files.isDirectory(home.resolve("swim-core"))) {
+                            return home.toAbsolutePath().normalize();
+                        }
+                        Path cwdRoot = findBuildRoot(Path.of(System.getProperty("user.dir")));
+                        return cwdRoot == null ? Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize() : cwdRoot;
+                    }
+
+                    private static Path findBuildRoot(Path start) {
+                        Path path = start.toAbsolutePath().normalize();
+                        while (path != null) {
+                            if (Files.isRegularFile(path.resolve("pom.xml")) && Files.isDirectory(path.resolve("swim-core"))) {
+                                return path;
+                            }
+                            path = path.getParent();
+                        }
+                        return null;
+                    }
+
+                    private static ControlCommand controlCommand(String[] args) throws IOException {
+                        if (args == null || args.length == 0) {
+                            return null;
+                        }
+                        if (!"--kill-session".equals(args[0]) && !"--swim-kill-session".equals(args[0])) {
+                            return null;
+                        }
+                        if (args.length > 2) {
+                            throw new IOException("usage: swim --kill-session [name]");
+                        }
+                        return new ControlCommand("kill", args.length == 2 ? args[1] : sessionName());
+                    }
+
+                    private static void runControlCommand(Path socket, ControlCommand command) throws IOException {
+                        if ("kill".equals(command.name())) {
+                            killSession(socket, command.target());
+                            return;
+                        }
+                        throw new IOException("unknown control command: " + command.name());
+                    }
+
+                    private static void killSession(Path socket, String target) throws IOException {
+                        try (SocketChannel channel = connect(socket)) {
+                            DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
+                            output.writeUTF(MAGIC);
+                            output.writeUTF("kill");
+                            output.writeUTF(normalizeName(target));
+                            output.flush();
+                            DataInputStream input = new DataInputStream(Channels.newInputStream(channel));
+                            String response = input.readUTF();
+                            if ("OK".equals(response)) {
+                                System.out.println(input.readUTF());
+                                return;
+                            }
+                            if ("ERR".equals(response)) {
+                                throw new IOException(input.readUTF());
+                            }
+                            throw new IOException("Unexpected SWIM session server response: " + response);
+                        }
+                    }
+
+                    private static void ensureServer(Path socket, Path swimHome, Path java) throws IOException {
+                        if (ping(socket)) {
+                            return;
+                        }
+                        Files.createDirectories(socket.getParent());
+                        ProcessBuilder builder = new ProcessBuilder(serverCommand(java, socket, swimHome));
+                        builder.redirectInput(ProcessBuilder.Redirect.DISCARD);
+                        Path logFile = socket.getParent().resolve("server.log");
+                        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
+                        builder.redirectError(ProcessBuilder.Redirect.appendTo(logFile.toFile()));
+                        builder.start();
+                        long deadline = System.nanoTime() + SERVER_START_TIMEOUT.toNanos();
+                        while (System.nanoTime() < deadline) {
+                            if (ping(socket)) {
+                                return;
+                            }
+                            try {
+                                Thread.sleep(50);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new IOException("interrupted while waiting for session server", e);
+                            }
+                        }
+                        throw new IOException("session server did not start; see " + logFile);
+                    }
+
+                    private static boolean ping(Path socket) {
+                        try (SocketChannel channel = connect(socket)) {
+                            DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
+                            output.writeUTF(MAGIC);
+                            output.writeUTF("ping");
+                            output.flush();
+                            return "OK".equals(new DataInputStream(Channels.newInputStream(channel)).readUTF());
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    }
+
+                    private static SocketChannel connect(Path socket) throws IOException {
+                        SocketChannel channel = SocketChannel.open(StandardProtocolFamily.UNIX);
+                        channel.connect(UnixDomainSocketAddress.of(socket));
+                        return channel;
+                    }
+
+                    private static void sendAttach(SocketChannel channel, Path java, LaunchRequest request) throws IOException {
+                        TerminalSize terminalSize = TerminalMode.currentSize();
+                        DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
+                        output.writeUTF(MAGIC);
+                        output.writeUTF("attach");
+                        output.writeUTF(request.sessionName());
+                        output.writeInt(terminalSize.rows());
+                        output.writeInt(terminalSize.columns());
+                        writeStringList(output, request.launchArgs());
+                        writeStringList(output, appCommand(java, request.launchArgs()));
+                        output.flush();
+                        String response = new DataInputStream(Channels.newInputStream(channel)).readUTF();
+                        if (!"OK".equals(response)) {
+                            throw new IOException(response);
+                        }
+                    }
+
+                    private static List<String> serverCommand(Path java, Path socket, Path swimHome) {
+                        var command = new ArrayList<String>();
+                        command.add(java.toString());
+                        command.addAll(SERVER_JVM_OPTIONS);
+                        command.add("-m");
+                        command.add(SERVER_MODULE);
+                        command.add(socket.toString());
+                        command.add(swimHome.toString());
+                        return List.copyOf(command);
+                    }
+
+                    private static List<String> appCommand(Path java, List<String> launchArgs) {
+                        var command = new ArrayList<String>();
+                        command.add(java.toString());
+                        command.addAll(APP_JVM_OPTIONS);
+                        command.add("-m");
+                        command.add(APP_MODULE);
+                        command.add("--swim-app");
+                        command.addAll(launchArgs);
+                        return List.copyOf(command);
+                    }
+
+                    private static void writeStringList(DataOutputStream output, List<String> values) throws IOException {
+                        output.writeInt(values.size());
+                        for (String value : values) {
+                            output.writeUTF(value);
+                        }
+                    }
+
+                    private static void copy(InputStream input, OutputStream output) throws IOException {
+                        byte[] buffer = new byte[8192];
+                        int read;
+                        while ((read = input.read(buffer)) != -1) {
+                            output.write(buffer, 0, read);
+                            output.flush();
+                        }
+                    }
+
+                    private static Path defaultSocketPath() {
+                        String user = System.getProperty("user.name", "unknown").replaceAll("[^A-Za-z0-9_.-]", "_");
+                        return Path.of("/tmp", "swim-" + user, "default.sock");
+                    }
+
+                    private static String sessionName() {
+                        String session = System.getenv("SWIM_SESSION");
+                        return normalizeName(session);
+                    }
+
+                    private static String normalizeName(String session) {
+                        return session == null || session.isBlank()
+                                ? "default"
+                                : session.trim().replaceAll("[^A-Za-z0-9_.-]", "_");
+                    }
+
+                    private record TerminalSize(int rows, int columns) {
+                    }
+
+                    private static final class TerminalMode implements AutoCloseable {
+                        private final String state;
+
+                        private TerminalMode(String state) {
+                            this.state = state;
+                        }
+
+                        static TerminalMode enterRawMode() {
+                            String state = runStty("-g");
+                            if (state == null || state.isBlank()) {
+                                return new TerminalMode(null);
+                            }
+                            runStty("raw", "-echo");
+                            return new TerminalMode(state);
+                        }
+
+                        static TerminalSize currentSize() {
+                            Integer rows = parsePositiveInt(System.getenv("SWIM_TTY_ROWS"));
+                            Integer columns = parsePositiveInt(System.getenv("SWIM_TTY_COLS"));
+                            if (rows != null && columns != null) {
+                                return new TerminalSize(rows, columns);
+                            }
+                            String output = runStty("size");
+                            if (output == null) {
+                                return new TerminalSize(24, 80);
+                            }
+                            String[] parts = output.trim().split("\\\\s+");
+                            if (parts.length != 2) {
+                                return new TerminalSize(24, 80);
+                            }
+                            rows = parsePositiveInt(parts[0]);
+                            columns = parsePositiveInt(parts[1]);
+                            return rows == null || columns == null ? new TerminalSize(24, 80) : new TerminalSize(rows, columns);
+                        }
+
+                        @Override
+                        public void close() {
+                            if (state != null && !state.isBlank()) {
+                                runStty(state);
+                            }
+                        }
+
+                        private static Integer parsePositiveInt(String value) {
+                            if (value == null || value.isBlank()) {
+                                return null;
+                            }
+                            try {
+                                int parsed = Integer.parseInt(value.trim());
+                                return parsed > 0 ? parsed : null;
+                            } catch (NumberFormatException e) {
+                                return null;
+                            }
+                        }
+
+                        private static String runStty(String... args) {
+                            StringBuilder command = new StringBuilder("stty");
+                            for (String arg : args) {
+                                command.append(' ').append(shellQuote(arg));
+                            }
+                            command.append(" < /dev/tty");
+                            ProcessBuilder builder = new ProcessBuilder(List.of("/bin/sh", "-c", command.toString()))
+                                    .redirectErrorStream(true);
+                            try {
+                                Process process = builder.start();
+                                String output;
+                                try (InputStream input = process.getInputStream()) {
+                                    output = new String(input.readAllBytes());
+                                }
+                                if (process.waitFor() != 0) {
+                                    return null;
+                                }
+                                return output.trim();
+                            } catch (IOException e) {
+                                return null;
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                return null;
+                            }
+                        }
+
+                        private static String shellQuote(String value) {
+                            return "'" + value.replace("'", "'\\\"'\\\"'") + "'";
+                        }
+                    }
+                }
+                """.formatted(appOptions, serverOptions);
     }
 
     private static void runTool(String name, List<String> args) throws IOException {

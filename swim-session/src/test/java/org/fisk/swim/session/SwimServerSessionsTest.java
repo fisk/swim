@@ -64,6 +64,25 @@ class SwimServerSessionsTest {
         assertEquals(List.of(SwimServerSessions.MAGIC, "switch", "default", "review"), request.get());
     }
 
+    @Test
+    void killUsesControlProtocolAndReturnsMessage() throws Exception {
+        Path socket = tempDir.resolve("kill.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeServer(socket, input -> {
+            request.set(List.of(input.readUTF(), input.readUTF(), input.readUTF()));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.writeUTF("Killed SWIM session review.");
+            output.flush();
+        });
+
+        String message = SwimServerSessions.kill(socket, "review");
+        server.join(1000);
+
+        assertEquals(List.of(SwimServerSessions.MAGIC, "kill", "review"), request.get());
+        assertEquals("Killed SWIM session review.", message);
+    }
+
     private static Thread fakeServer(Path socket, ServerHandler handler) throws Exception {
         var ready = new CountDownLatch(1);
         Thread thread = Thread.ofVirtual().start(() -> {

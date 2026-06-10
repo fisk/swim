@@ -9,12 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
+import java.nio.channels.Channels;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -35,6 +42,7 @@ import javax.tools.ToolProvider;
 
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.session.SwimServerSessions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -205,19 +213,108 @@ class MainTest {
     }
 
     @Test
-    void launcherImageInstallerPatchesImageLauncherScript() throws Exception {
+    void launcherImageInstallerInstallsSourceLauncher() throws Exception {
         Path launcher = tempDir.resolve("bin").resolve("swim");
         Files.createDirectories(launcher.getParent());
         Files.writeString(launcher, "#!/bin/sh\nJLINK_VM_OPTIONS=\nDIR=`dirname $0`\n$DIR/java $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\"\n");
 
-        LauncherImageInstaller.patchLauncherScript(launcher, List.of(
+        LauncherImageInstaller.installSourceLauncher(launcher, List.of(
                 "--add-opens=java.base/java.net=ALL-UNNAMED",
                 "-Djava.awt.headless=true"));
 
         String content = Files.readString(launcher);
-        assertTrue(content.contains("JLINK_VM_OPTIONS='-XX:+UseZGC -Xmx1g --add-opens=java.base/java.net=ALL-UNNAMED -Djava.awt.headless=true'"));
-        assertTrue(content.contains("exec 2>>\"$LOG_FILE\""));
-        assertTrue(content.contains("\"$DIR/java\" $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\""));
+        assertTrue(content.startsWith("#!/usr/bin/env -S java --source 25"));
+        assertTrue(content.contains("class swim"));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx1g\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("\"--attach\""));
+        assertTrue(content.contains("\"--kill-session\""));
+        assertTrue(Files.isExecutable(launcher));
+    }
+
+    @Test
+    void sourceLauncherSelfTestCompiles() throws Exception {
+        Path launcher = tempDir.resolve("bin").resolve("swim");
+        Files.createDirectories(launcher.getParent());
+        Files.writeString(launcher, "placeholder");
+        LauncherImageInstaller.installSourceLauncher(launcher, List.of());
+
+        String java = Path.of(System.getProperty("java.home")).resolve("bin").resolve("java").toString();
+        Process process = new ProcessBuilder(java, "--source", "25", launcher.toString(),
+                "--swim-source-client-self-test")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertTrue(process.waitFor(10, TimeUnit.SECONDS), output);
+        assertEquals(0, process.exitValue(), output);
+    }
+
+    @Test
+    void swimSessionClientAttachModeUsesNamedSessionWithoutLaunchArgs() throws Exception {
+        Path socket = tempDir.resolve("attach.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeSessionServer(socket, input -> {
+            assertEquals(SwimServerSessions.MAGIC, input.readUTF());
+            assertEquals("ping", input.readUTF());
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.flush();
+        }, input -> {
+            assertEquals(SwimServerSessions.MAGIC, input.readUTF());
+            assertEquals("attach", input.readUTF());
+            String session = input.readUTF();
+            input.readInt();
+            input.readInt();
+            int launchArgCount = input.readInt();
+            for (int i = 0; i < launchArgCount; i++) {
+                input.readUTF();
+            }
+            int commandArgCount = input.readInt();
+            var commandArgs = new ArrayList<String>();
+            for (int i = 0; i < commandArgCount; i++) {
+                commandArgs.add(input.readUTF());
+            }
+            request.set(List.of(session, String.valueOf(launchArgCount), commandArgs.getLast()));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.flush();
+        });
+
+        int exit = new SwimSessionClient(tempDir, socket).run(new String[] { "--attach", "review" });
+        server.join(1000);
+
+        assertEquals(0, exit);
+        assertEquals(List.of("review", "0", "--swim-app"), request.get());
+    }
+
+    @Test
+    void swimSessionClientKillModeUsesControlProtocolWithoutStartingServer() throws Exception {
+        Path socket = tempDir.resolve("kill.sock");
+        var request = new AtomicReference<List<String>>();
+        Thread server = fakeSessionServer(socket, input -> {
+            request.set(List.of(input.readUTF(), input.readUTF(), input.readUTF()));
+            var output = new DataOutputStream(Channels.newOutputStream(input.channel()));
+            output.writeUTF("OK");
+            output.writeUTF("Killed SWIM session review.");
+            output.flush();
+        });
+
+        var outputBuffer = new ByteArrayOutputStream();
+        PrintStream previousOut = System.out;
+        int exit;
+        try {
+            System.setOut(new PrintStream(outputBuffer, true, StandardCharsets.UTF_8));
+            exit = new SwimSessionClient(tempDir, socket).run(new String[] { "--kill-session", "review" });
+        } finally {
+            System.setOut(previousOut);
+        }
+        server.join(1000);
+
+        assertEquals(0, exit);
+        assertEquals(List.of(SwimServerSessions.MAGIC, "kill", "review"), request.get());
+        assertEquals("Killed SWIM session review." + System.lineSeparator(),
+                outputBuffer.toString(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -529,6 +626,44 @@ class MainTest {
         assertEquals(List.of("swim-close"), taskRunner.names);
         assertEquals(List.of(true), taskRunner.daemons);
         assertEquals(0L, getExitLatch(main).getCount());
+    }
+
+    private static Thread fakeSessionServer(Path socket, ServerHandler... handlers) throws Exception {
+        var ready = new CountDownLatch(1);
+        Thread thread = Thread.ofVirtual().start(() -> {
+            try {
+                Files.deleteIfExists(socket);
+                try (ServerSocketChannel server = ServerSocketChannel.open(StandardProtocolFamily.UNIX)) {
+                    server.bind(UnixDomainSocketAddress.of(socket));
+                    ready.countDown();
+                    for (ServerHandler handler : handlers) {
+                        try (var channel = server.accept()) {
+                            handler.handle(new ChannelInput(channel,
+                                    new DataInputStream(Channels.newInputStream(channel))));
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        assertTrue(ready.await(2, TimeUnit.SECONDS));
+        return thread;
+    }
+
+    @FunctionalInterface
+    private interface ServerHandler {
+        void handle(ChannelInput input) throws Exception;
+    }
+
+    private record ChannelInput(java.nio.channels.SocketChannel channel, DataInputStream input) {
+        String readUTF() throws Exception {
+            return input.readUTF();
+        }
+
+        int readInt() throws Exception {
+            return input.readInt();
+        }
     }
 
     private Path createSyntheticBuildRoot() throws Exception {

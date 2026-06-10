@@ -89,6 +89,7 @@ public class CommandView extends View {
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
             new CommandSpec("sessions", List.of(), "", "show live SWIM server sessions"),
             new CommandSpec("session", List.of(), "<name>", "switch to a live SWIM server session"),
+            new CommandSpec("session-kill", List.of(), "<name>", "kill a live SWIM server session"),
             new CommandSpec("mail", List.of(), "", "open the mail client"),
             new CommandSpec("todo", List.of(), "", "open the Todo workspace"),
             new CommandSpec("tree", List.of(), "", "open the tree view"),
@@ -453,6 +454,9 @@ public class CommandView extends View {
         case "session":
             switchServerSession(argument);
             break;
+        case "session-kill":
+            killServerSession(argument);
+            break;
         case "mail":
             MailUiSupport.toggle(Window.getInstance());
             break;
@@ -663,7 +667,7 @@ public class CommandView extends View {
                 "lgrep", "multicursor", "mc", "grep", "search",
                 "h", "help", "tree", "registers", "reg", "marks", "jumps",
                 "set", "normal", "norm" -> allowEditorDriveCommand(window, rawCommand);
-        case "sessions", "session" -> blockEditorDriveCommand(window, rawCommand,
+        case "sessions", "session", "session-kill" -> blockEditorDriveCommand(window, rawCommand,
                 "server session management requires host action");
         case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
         case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
@@ -853,6 +857,18 @@ public class CommandView extends View {
             _message = "Switching to SWIM session " + SwimServerSessions.normalizeName(argument);
         } catch (IOException e) {
             _message = "Unable to switch SWIM session: " + e.getMessage();
+        }
+    }
+
+    private void killServerSession(String argument) {
+        if (argument.isBlank()) {
+            _message = "Usage: :session-kill <name>";
+            return;
+        }
+        try {
+            _message = SwimServerSessions.kill(argument);
+        } catch (IOException e) {
+            _message = "Unable to kill SWIM session: " + e.getMessage();
         }
     }
 

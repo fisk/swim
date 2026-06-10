@@ -4251,6 +4251,7 @@ public class NemoClient {
             new CommandSpec("abort", List.of(), "[conversation-id|all]", "stop the current or selected worker"),
             new CommandSpec("sessions", List.of(), "", "list live SWIM server sessions"),
             new CommandSpec("session", List.of(), "<name>", "switch to a live SWIM server session"),
+            new CommandSpec("session-kill", List.of(), "<name>", "kill a live SWIM server session"),
             new CommandSpec("conversations", List.of("chats"), "", "list Nemo conversations for this workspace"),
             new CommandSpec("workers", List.of(), "", "list active Nemo workers"),
             new CommandSpec("new", List.of(), "[title]", "create a new Nemo conversation"),
@@ -4349,6 +4350,9 @@ public class NemoClient {
         case ":session":
             handleServerSessionCommand(conversation, argument);
             return;
+        case ":session-kill":
+            handleKillServerSessionCommand(conversation, argument);
+            return;
         case ":conversations":
         case ":chats":
             appendAssistantNote(conversation, formatConversations(conversation._workspaceRoot));
@@ -4397,7 +4401,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :sessions, :session <name>, :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :reset [conversation-id], :delete [conversation-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :sessions, :session <name>, :session-kill <name>, :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :reset [conversation-id], :delete [conversation-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -4811,6 +4815,18 @@ public class NemoClient {
                     + SwimServerSessions.normalizeName(argument) + ".");
         } catch (IOException e) {
             appendAssistantNote(conversation, "Unable to switch SWIM session: " + e.getMessage());
+        }
+    }
+
+    private void handleKillServerSessionCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :session-kill <name>");
+            return;
+        }
+        try {
+            appendAssistantNote(conversation, SwimServerSessions.kill(argument));
+        } catch (IOException e) {
+            appendAssistantNote(conversation, "Unable to kill SWIM session: " + e.getMessage());
         }
     }
 
