@@ -3552,16 +3552,16 @@ public class Window implements Drawable {
         _activeBufferView = _bufferContext.getBufferView();
         attachWorkspaceView();
 
-        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 3), terminalSize.getColumns(),
+        _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.getRows() - 3), terminalSize.getColumns(),
                 terminalSize.getRows() >= 3 ? 1 : 0));
+        _modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
+        _rootView.addSubview(_modeLineView);
+
+        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
+                terminalSize.getRows() >= 2 ? 1 : 0));
         _tabBarView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
                 | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_tabBarView);
-
-        _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
-                terminalSize.getRows() >= 2 ? 1 : 0));
-        _modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
-        _rootView.addSubview(_modeLineView);
 
         _commandView = new CommandView(Rect.create(0, Math.max(0, terminalSize.getRows() - 1), terminalSize.getColumns(),
                 terminalSize.getRows() >= 1 ? 1 : 0));
@@ -4165,12 +4165,13 @@ public class Window implements Drawable {
             int overlayHeight = Math.max(1, (int) Math.ceil(contentHeight * overlayRatio));
             _panelView.setBounds(Rect.create(0, contentTop + contentHeight - overlayHeight, size.getWidth(), overlayHeight));
         }
-        if (_tabBarView != null) {
-            _tabBarView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(), tabBarHeight));
-        }
         if (_modeLineView != null) {
-            _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight + tabBarHeight, size.getWidth(),
+            _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(),
                     modeLineHeight));
+        }
+        if (_tabBarView != null) {
+            _tabBarView.setBounds(Rect.create(0, contentTop + contentHeight + modeLineHeight, size.getWidth(),
+                    tabBarHeight));
         }
         if (_commandView != null) {
             _commandView.setBounds(Rect.create(0, contentTop + contentHeight + tabBarHeight + modeLineHeight,

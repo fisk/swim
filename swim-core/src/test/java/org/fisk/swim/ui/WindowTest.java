@@ -142,6 +142,31 @@ class WindowTest {
     }
 
     @Test
+    void modeLineRendersAboveTabBar() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        try {
+            Window.createInstance(writeFile("layout.txt", "abc"));
+            var window = Window.getInstance();
+
+            assertEquals(13, window.getModeLineView().getBounds().getPoint().getY());
+            assertEquals(14, window.getTabBarView().getBounds().getPoint().getY());
+            assertEquals(15, window.getCommandView().getBounds().getPoint().getY());
+
+            invoke(window, "applyLayout", new Class<?>[] { Size.class }, Size.create(60, 12));
+
+            assertEquals(9, window.getModeLineView().getBounds().getPoint().getY());
+            assertEquals(10, window.getTabBarView().getBounds().getPoint().getY());
+            assertEquals(11, window.getCommandView().getBounds().getPoint().getY());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
     void commandActivationUpdatesTopMenuContext() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();
