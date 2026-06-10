@@ -195,7 +195,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     JavaLSPClient(JavaLspProvider provider) {
         _provider = provider;
         if (!_provider.isAvailable()) {
-            _log.info("No LSP support");
+            _log.debug("No LSP support");
             _enabled = false;
         }
         initColours();
@@ -519,12 +519,12 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return new LanguageClient() {
             @Override
             public void telemetryEvent(Object object) {
-                _log.info("telemetryEvent called");
+                _log.debug("telemetryEvent called");
             }
 
             @Override
             public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {
-                _log.info("publishDiagnostics called");
+                _log.debug("publishDiagnostics called");
                 DiagnosticService.getInstance().publish(
                         DIAGNOSTIC_PROVIDER_ID,
                         diagnostics.getUri(),
@@ -535,18 +535,18 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
             @Override
             public void showMessage(MessageParams message) {
-                _log.info("showMessage: " + message.getMessage());
+                _log.debug("showMessage: " + message.getMessage());
             }
 
             @Override
             public CompletableFuture<MessageActionItem> showMessageRequest(ShowMessageRequestParams requestParams) {
-                _log.info("showMessageRequest called");
+                _log.debug("showMessageRequest called");
                 return CompletableFuture.completedFuture(null);
             }
 
             @Override
             public void logMessage(MessageParams message) {
-                _log.info("logMessage: " + message.getMessage());
+                _log.debug("logMessage: " + message.getMessage());
             }
 
             @Override
@@ -558,41 +558,41 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
             @Override
             public CompletableFuture<List<Object>> configuration(ConfigurationParams configurationParams) {
-                _log.info("Configuration?");
+                _log.debug("Configuration?");
                 return CompletableFuture.completedFuture(List.of());
             }
 
             @Override
             public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
-                _log.info("Workspace edit?");
+                _log.debug("Workspace edit?");
                 return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
             }
 
             @Override
             public CompletableFuture<Void> registerCapability(RegistrationParams params) {
-                _log.info("Register capability?");
+                _log.debug("Register capability?");
                 return CompletableFuture.completedFuture(null);
             }
 
             @Override
             public CompletableFuture<Void> unregisterCapability(UnregistrationParams params) {
-                _log.info("Unregister capability?");
+                _log.debug("Unregister capability?");
                 return CompletableFuture.completedFuture(null);
             }
 
             @Override
             public CompletableFuture<Void> createProgress(WorkDoneProgressCreateParams params) {
-                _log.info("createProgress: " + params);
+                _log.debug("createProgress: " + params);
                 return CompletableFuture.completedFuture(null);
             }
 
             @Override
             public void notifyProgress(ProgressParams params) {
-                _log.info("notifyProgress: " + params);
+                _log.debug("notifyProgress: " + params);
             }
 
             public void languageStatus(Object params) {
-                _log.info("language/status: " + params);
+                _log.debug("language/status: " + params);
             }
 
             @JsonRequest("output/write")
@@ -608,7 +608,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             public CompletableFuture<Void> showOutput(String outputName) {
                 if (outputName != null) {
                     _outputBuffers.computeIfAbsent(outputName, ignored -> new StringBuilder());
-                    _log.info("oracle-java output/show: " + outputName);
+                    _log.debug("oracle-java output/show: " + outputName);
                 }
                 return CompletableFuture.completedFuture(null);
             }
@@ -617,7 +617,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             public CompletableFuture<Void> closeOutput(String outputName) {
                 if (outputName != null) {
                     _outputBuffers.remove(outputName);
-                    _log.info("oracle-java output/close: " + outputName);
+                    _log.debug("oracle-java output/close: " + outputName);
                 }
                 return CompletableFuture.completedFuture(null);
             }
@@ -626,14 +626,14 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             public CompletableFuture<Void> resetOutput(String outputName) {
                 if (outputName != null) {
                     _outputBuffers.put(outputName, new StringBuilder());
-                    _log.info("oracle-java output/reset: " + outputName);
+                    _log.debug("oracle-java output/reset: " + outputName);
                 }
                 return CompletableFuture.completedFuture(null);
             }
 
             @JsonRequest("window/showHtmlPage")
             public CompletableFuture<Void> showHtmlPage(Object params) {
-                _log.info("oracle-java window/showHtmlPage: " + params);
+                _log.debug("oracle-java window/showHtmlPage: " + params);
                 return CompletableFuture.completedFuture(null);
             }
         };
@@ -658,13 +658,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private synchronized void appendOutput(String outputName, String message) {
         var buffer = _outputBuffers.computeIfAbsent(outputName, ignored -> new StringBuilder());
         buffer.append(message);
-        _log.info("oracle-java output[" + outputName + "]: " + message);
+        _log.debug("oracle-java output[" + outputName + "]: " + message);
     }
 
     private void setup() throws IOException {
         Files.createDirectories(_workspacePath);
-        _log.info("LSP workspace path: " + _projectPath);
-        _log.info("LSP workspace folder path: " + _workspacePath);
+        _log.debug("LSP workspace path: " + _projectPath);
+        _log.debug("LSP workspace folder path: " + _workspacePath);
         var client = createLanguageClient();
         try {
             var session = _provider.start(
@@ -678,7 +678,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             _capabilities = session.capabilities();
             _providerConnection = session.closeable();
             _providerDescription = session.description();
-            _log.info("Java LSP provider: " + session.description());
+            _log.debug("Java LSP provider: " + session.description());
             _shutdownHook = createShutdownHook();
             Runtime.getRuntime().addShutdownHook(_shutdownHook);
             signalStartupSuccess();
@@ -836,7 +836,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return new ArrayList<>();
         }
         try {
-            _log.info("Decorate buffer");
+            _log.debug("Decorate buffer");
             var colorParams = new DocumentColorParams(bufferContext.getBuffer().getTextDocumentID());
             return _server.getTextDocumentService().documentColor(colorParams).join();
         } catch (Exception e) {
@@ -854,14 +854,14 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
             var result = _server.getTextDocumentService().codeLens(params).get();
             for (var item : result) {
-                _log.info("Code lens item: " + item);
+                _log.debug("Code lens item: " + item);
                 var resolved = _server.getTextDocumentService().resolveCodeLens(item).get();
-                _log.info("Resolved code lens item: " + resolved);
+                _log.debug("Resolved code lens item: " + resolved);
                 var execute = new ExecuteCommandParams();
                 execute.setCommand(resolved.getCommand().getCommand());
                 execute.setArguments(resolved.getCommand().getArguments());
                 var commandResult = _server.getWorkspaceService().executeCommand(execute).get();
-                _log.info("Command result: " + commandResult);
+                _log.debug("Command result: " + commandResult);
             }
         } catch (InterruptedException | ExecutionException e) {
             _log.error("Code lens failed: ", e);
@@ -876,10 +876,10 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return List.of();
         }
         try {
-            _log.info("Get code actions");
+            _log.debug("Get code actions");
             var context = new CodeActionContext(diagnostics);
             var params = new CodeActionParams(bufferContext.getBuffer().getTextDocumentID(), range, context);
-            _log.info("Code action: " + params);
+            _log.debug("Code action: " + params);
             return _server.getTextDocumentService().codeAction(params).join();
         } catch (Exception e) {
             _log.error("Error getting code actions: ", e);
@@ -1705,8 +1705,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var buffer = context.getBuffer();
         for (var edit : edits) {
             var newText = edit._newText.replace("\t", "    ");
-            _log.info("Insert " + newText + " at " + edit._start);
-            _log.info("Remove [" + edit._start + ", " + edit._end + "]");
+            _log.debug("Insert " + newText + " at " + edit._start);
+            _log.debug("Remove [" + edit._start + ", " + edit._end + "]");
             buffer.remove(edit._start, edit._end);
             buffer.insert(edit._start, newText);
         }
@@ -1777,7 +1777,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                     params.setArguments(command.getArguments());
                     _server.getWorkspaceService().executeCommand(params).join();
                 } else {
-                    _log.info("Ignoring unsupported command: " + command);
+                    _log.debug("Ignoring unsupported command: " + command);
                 }
             } catch (Exception e) {
                 _log.debug("Executing code-action command failed", e);
@@ -1855,7 +1855,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        _log.info("willSave");
+        _log.debug("willSave");
         var params = new WillSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setReason(TextDocumentSaveReason.Manual);
@@ -1868,7 +1868,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
-        _log.info("didSave");
+        _log.debug("didSave");
         var params = new DidSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setText(bufferContext.getBuffer().getString());
@@ -1882,7 +1882,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
-        _log.info("didOpen");
+        _log.debug("didOpen");
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
         _server.getTextDocumentService().didOpen(params);
@@ -1898,7 +1898,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         DiagnosticService.getInstance().clear(DIAGNOSTIC_PROVIDER_ID, bufferContext.getBuffer().getURI().toString());
         cancelCompletion();
-        _log.info("didClose");
+        _log.debug("didClose");
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         _server.getTextDocumentService().didClose(params);
@@ -1915,7 +1915,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
         var lineIndex = line.getY();
         var charIndex = position - line.getStartPosition();
-        _log.info("didInsert " + text + " at " + position + " (" + lineIndex + ", " + charIndex + ")");
+        _log.debug("didInsert " + text + " at " + position + " (" + lineIndex + ", " + charIndex + ")");
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, 0, text));
         var params = new DidChangeTextDocumentParams();
@@ -1931,7 +1931,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
-        _log.info("didRemove at " + startPosition + ", " + endPosition);
+        _log.debug("didRemove at " + startPosition + ", " + endPosition);
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var startLine = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
         var startLineIndex = startLine.getY();

@@ -13,8 +13,8 @@ class SwimLoggingTest {
     }
 
     @Test
-    void configuredLogLevelDefaultsToInfo() {
-        assertEquals(Level.INFO, SwimLogging.configuredLogLevel());
+    void configuredLogLevelDefaultsToWarn() {
+        assertEquals(Level.WARN, SwimLogging.configuredLogLevel());
     }
 
     @Test
@@ -25,9 +25,9 @@ class SwimLoggingTest {
     }
 
     @Test
-    void configuredLogLevelFallsBackToInfoForInvalidValue() {
+    void configuredLogLevelFallsBackToWarnForInvalidValue() {
         System.setProperty(SwimLogging.LOG_LEVEL_PROPERTY, "not-a-level");
 
-        assertEquals(Level.INFO, SwimLogging.configuredLogLevel());
+        assertEquals(Level.WARN, SwimLogging.configuredLogLevel());
     }
 }

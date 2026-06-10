@@ -42,7 +42,7 @@ public final class JavaLspPluginSupport {
     }
 
     public static void ensureLoaded(Path path) {
-        LogFactory.createLog().info("Ensuring Java LSP plugin loaded for {}", path);
+        LogFactory.createLog().debug("Ensuring Java LSP plugin loaded for {}", path);
         SwimRuntime.loadPlugin(PLUGIN_ID, path);
     }
 
@@ -66,7 +66,7 @@ public final class JavaLspPluginSupport {
     public static LanguageMode createLanguageMode(Path path) {
         ensureLoaded(path);
         var lsp = getClient();
-        LogFactory.createLog().info("Creating Java language mode for {} using client {}", path, lsp.getClass().getName());
+        LogFactory.createLog().debug("Creating Java language mode for {} using client {}", path, lsp.getClass().getName());
         if (lsp.isEnabled() && !lsp.hasStarted()) {
             try {
                 lsp.startServer(path);

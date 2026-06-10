@@ -45,11 +45,11 @@ public class FileIndex {
                        Integer.MAX_VALUE,
                        (filePath, fileAttr) -> fileAttr.isRegularFile())
             .forEach((path) -> {
-                _log.info("Menu path: " + path);
+                _log.debug("Menu path: " + path);
                 var relative = root.relativize(path);
-                _log.info("Relative menu path: " + relative);
+                _log.debug("Relative menu path: " + relative);
                 if (!filter.isIncluded(relative, false)) {
-                    _log.info("Excluded project file: " + relative);
+                    _log.debug("Excluded project file: " + relative);
                     return;
                 }
                 list.add(new FileIndexItem(root, path));

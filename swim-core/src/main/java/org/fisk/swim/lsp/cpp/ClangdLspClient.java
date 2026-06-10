@@ -156,7 +156,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         _provider = provider;
         if (!_provider.isAvailable()) {
             _enabled = false;
-            _log.info("clangd is not available on PATH");
+            _log.debug("clangd is not available on PATH");
         }
     }
 
@@ -1299,7 +1299,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
             @Override
             public void showMessage(MessageParams message) {
-                _log.info("clangd message: {}", message.getMessage());
+                _log.debug("clangd message: {}", message.getMessage());
             }
 
             @Override
@@ -1309,7 +1309,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
             @Override
             public void logMessage(MessageParams message) {
-                _log.info("clangd log: {}", message.getMessage());
+                _log.debug("clangd log: {}", message.getMessage());
             }
 
             @Override

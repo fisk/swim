@@ -296,7 +296,7 @@ public class View implements Drawable, EventResponder {
         }
 
         _bounds = Rect.create(newLeft, newTop, newWidth, newHeight);
-        _log.info("Resizing view to " + _bounds);
+        _log.debug("Resizing view to " + _bounds);
     }
 
     public Rect getBounds() {

@@ -57,7 +57,7 @@ public class FindResponder implements EventResponder, KeyBindingHintProvider {
 
     @Override
     public void respond() {
-        _log.info("Responding");
+        _log.debug("Responding");
         if (Window.getInstance() != null) {
             Window.getInstance().allowEditorDriveAction("find motion");
         }

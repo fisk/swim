@@ -110,16 +110,16 @@ final class OracleNbcodeLspProvider implements JavaLspProvider {
         Path nbcodePath = findNbcode(_extensionPath, System.getProperty("os.name"), System.getProperty("os.arch"));
         ensureExecutablePermissions(nbcodePath);
 
-        _log.info("Oracle Java extension path: " + _extensionPath);
-        _log.info("Oracle Java userdir path: " + userDir);
+        _log.debug("Oracle Java extension path: " + _extensionPath);
+        _log.debug("Oracle Java userdir path: " + userDir);
 
         var command = buildLaunchCommand(nbcodePath, userDir);
         var processBuilder = new ProcessBuilder(command);
         processBuilder.directory(userDir.toFile());
         Process process = processBuilder.start();
 
-        _log.info("Process command: " + String.join(" ", command));
-        _log.info("Process PID: " + process.pid());
+        _log.debug("Process command: " + String.join(" ", command));
+        _log.debug("Process PID: " + process.pid());
 
         var stderrThread = new Thread(() -> logErrorStream(process.getErrorStream()), "swim-java-lsp-stderr");
         stderrThread.setDaemon(true);
@@ -174,7 +174,7 @@ final class OracleNbcodeLspProvider implements JavaLspProvider {
         try (var reader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                _log.info("oracle-java stderr: " + line);
+                _log.debug("oracle-java stderr: " + line);
             }
         } catch (IOException e) {
             _log.debug("Error stream reader stopped", e);
@@ -260,7 +260,7 @@ final class OracleNbcodeLspProvider implements JavaLspProvider {
         try (var reader = new BufferedReader(new InputStreamReader(outputStream, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                _log.info("oracle-java stdout: " + line);
+                _log.debug("oracle-java stdout: " + line);
                 var matcher = pattern.matcher(line);
                 if (matcher.find() && !socketFuture.isDone()) {
                     socketFuture.complete(connectToLanguageServer(

@@ -1907,15 +1907,15 @@ public class Buffer {
             AttributedString str = null;
             for (var decoration: _decorations) {
                 if (decoration._isDecorated) {
-                    _log.info("Found decorated string for version " + decoration._version);
+                    _log.debug("Found decorated string for version " + decoration._version);
                     str = AttributedString.create(decoration._str);
                 } else if (str != null) {
                     if (decoration._didInsert) {
-                        _log.info("Inserting string for version " + decoration._version);
+                        _log.debug("Inserting string for version " + decoration._version);
                         str.insert(decoration._insertString, decoration._insertPosition, TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
                     }
                     if (decoration._didRemove) {
-                        _log.info("Removing string for version " + decoration._version);
+                        _log.debug("Removing string for version " + decoration._version);
                         str.remove(decoration._removeStart, decoration._removeEnd);
                     }
                 }

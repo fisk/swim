@@ -71,7 +71,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             Object initializationOptions,
             long timeoutSeconds,
             boolean allowWorkspaceReset) throws Exception {
-        _log.info("Starting embedded Oracle Java LSP for project {}", projectPath);
+        _log.debug("Starting embedded Oracle Java LSP for project {}", projectPath);
         requireJvmCompatibility();
         Path nbcodeRoot = _extensionPath.resolve("nbcode");
         Path platformHome = nbcodeRoot.resolve("platform");
@@ -80,7 +80,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         Files.createDirectories(userDir);
         Files.createDirectories(cacheDir);
         List<String> clusterPaths = clusterPaths(nbcodeRoot);
-        _log.info("Embedded NetBeans clusters: {}", clusterPaths);
+        _log.debug("Embedded NetBeans clusters: {}", clusterPaths);
         var loader = new URLClassLoader(
                 platformLibClasspath(platformHome).toArray(URL[]::new),
                 EmbeddedOracleModuleLayerLspProvider.class.getClassLoader());
@@ -98,8 +98,8 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
 
         var launchArgs = buildLaunchArguments(userDir, cacheDir, clusterPaths, serverSocket.getLocalPort());
         var systemProperties = netBeansSystemProperties(platformHome, userDir, clusterPaths);
-        _log.info("Embedded NetBeans launch args: {}", java.util.Arrays.toString(launchArgs));
-        _log.info("Embedded NetBeans system properties: {}", systemProperties);
+        _log.debug("Embedded NetBeans launch args: {}", java.util.Arrays.toString(launchArgs));
+        _log.debug("Embedded NetBeans system properties: {}", systemProperties);
         var previousProperties = applySystemProperties(systemProperties);
         Socket languageServerSocket = null;
         var bootThread = new Thread(
@@ -114,7 +114,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
 
         try {
             languageServerSocket = socketFuture.get(timeoutSeconds, TimeUnit.SECONDS);
-            _log.info("Embedded NetBeans accepted language server socket on {}", serverSocket.getLocalPort());
+            _log.debug("Embedded NetBeans accepted language server socket on {}", serverSocket.getLocalPort());
             var launcher = LSPLauncher.createClientLauncher(client, languageServerSocket.getInputStream(), languageServerSocket.getOutputStream());
             launcher.startListening();
             LanguageServer server = launcher.getRemoteProxy();
@@ -318,9 +318,9 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
 
     private void acceptLanguageServerSocket(ServerSocket serverSocket, CompletableFuture<Socket> socketFuture) {
         try {
-            _log.info("Waiting for embedded language server connection on {}", serverSocket.getLocalPort());
+            _log.debug("Waiting for embedded language server connection on {}", serverSocket.getLocalPort());
             Socket socket = serverSocket.accept();
-            _log.info("Embedded language server connected from {}", socket.getRemoteSocketAddress());
+            _log.debug("Embedded language server connected from {}", socket.getRemoteSocketAddress());
             socketFuture.complete(socket);
         } catch (Exception e) {
             socketFuture.completeExceptionally(e);

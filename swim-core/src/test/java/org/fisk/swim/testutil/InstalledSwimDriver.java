@@ -68,7 +68,7 @@ public final class InstalledSwimDriver {
         if (currentPath != null && !currentPath.isBlank()) {
             environment.put("PATH", currentPath);
         }
-        String javaToolOptions = "-Duser.home=" + home;
+        String javaToolOptions = "-Duser.home=" + home + " -Dswim.log.level=debug";
         String existingJavaToolOptions = System.getenv("JAVA_TOOL_OPTIONS");
         if (existingJavaToolOptions != null && !existingJavaToolOptions.isBlank()) {
             javaToolOptions = existingJavaToolOptions + " " + javaToolOptions;

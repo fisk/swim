@@ -202,7 +202,7 @@ public class AttributedString {
     private static Logger _log = LogFactory.createLog();
     
     public void insert(String str, int position, TextColor foregroundColour, TextColor backgroundColour) {
-        _log.info("Inserting " + str + " at " + position);
+        _log.debug("Inserting " + str + " at " + position);
         if (position > _length || position < 0) {
             throw new IllegalArgumentException("Insert out of bounds: " + position + " length: " + _length);
         }

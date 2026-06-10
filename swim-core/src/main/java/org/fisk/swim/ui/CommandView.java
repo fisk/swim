@@ -195,7 +195,7 @@ public class CommandView extends View {
     }
 
     public void runSearch(String string) {
-        _log.info("Searching for: " + string);
+        _log.debug("Searching for: " + string);
         Pattern pattern;
         try {
           pattern = Pattern.compile(string);

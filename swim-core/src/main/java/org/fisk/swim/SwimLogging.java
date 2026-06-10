@@ -76,10 +76,10 @@ final class SwimLogging {
     static Level configuredLogLevel() {
         String configured = System.getProperty(LOG_LEVEL_PROPERTY, "").trim();
         if (configured.isEmpty()) {
-            return Level.INFO;
+            return Level.WARN;
         }
         Level level = Level.getLevel(configured.toUpperCase(java.util.Locale.ROOT));
-        return level == null ? Level.INFO : level;
+        return level == null ? Level.WARN : level;
     }
 
     private static Path resolveLogDirectory() {

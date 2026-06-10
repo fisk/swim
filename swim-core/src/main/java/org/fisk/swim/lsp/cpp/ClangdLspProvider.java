@@ -61,9 +61,9 @@ public class ClangdLspProvider {
         processBuilder.directory(workspacePath.toFile());
         Process process = processBuilder.start();
 
-        _log.info("Starting clangd with command {}", command);
-        _log.info("clangd workspace root: {}", projectPath);
-        _log.info("clangd scratch workspace: {}", workspacePath);
+        _log.debug("Starting clangd with command {}", command);
+        _log.debug("clangd workspace root: {}", projectPath);
+        _log.debug("clangd scratch workspace: {}", workspacePath);
 
         var stderrThread = new Thread(() -> logErrorStream(process.getErrorStream()), "swim-clangd-stderr");
         stderrThread.setDaemon(true);
@@ -178,7 +178,7 @@ public class ClangdLspProvider {
         try (var reader = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
-                _log.info("clangd stderr: {}", line);
+                _log.debug("clangd stderr: {}", line);
             }
         } catch (IOException e) {
             _log.debug("clangd stderr reader stopped", e);

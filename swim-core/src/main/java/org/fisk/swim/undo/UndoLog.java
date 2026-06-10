@@ -26,7 +26,7 @@ public class UndoLog {
         }
 
         void apply(BufferContext bufferContext) {
-            _log.info("apply InsertRecord " + _position + ", " + _string);
+            _log.debug("apply InsertRecord " + _position + ", " + _string);
             bufferContext.getBuffer().rawInsert(_position, _string);
         }
 
@@ -49,7 +49,7 @@ public class UndoLog {
         }
 
         void apply(BufferContext bufferContext) {
-            _log.info("apply RemoveRecord " + _position + ", " + _string);
+            _log.debug("apply RemoveRecord " + _position + ", " + _string);
             bufferContext.getBuffer().rawRemove(_position, _position + _string.length());
         }
 
@@ -78,11 +78,11 @@ public class UndoLog {
         }
 
         void apply(BufferContext bufferContext) {
-            _log.info("apply BatchRecord");
+            _log.debug("apply BatchRecord");
             for (var record: _changes) {
                 record.apply(bufferContext);
             }
-            _log.info("end apply BatchRecord");
+            _log.debug("end apply BatchRecord");
         }
 
         ChangeRecord inverse() {
@@ -90,7 +90,7 @@ public class UndoLog {
             for (var record: _changes) {
                 changes.addFirst(record.inverse());
             }
-            _log.info("Inverted BatchRecord, this size " + _changes.size() + " inverted size " + _changes.size());
+            _log.debug("Inverted BatchRecord, this size " + _changes.size() + " inverted size " + _changes.size());
             return new BatchRecord(changes);
         }
 

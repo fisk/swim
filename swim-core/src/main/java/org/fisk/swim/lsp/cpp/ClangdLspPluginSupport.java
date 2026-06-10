@@ -37,7 +37,7 @@ public final class ClangdLspPluginSupport {
     }
 
     public static void ensureLoaded(Path path) {
-        LogFactory.createLog().info("Ensuring clangd LSP plugin loaded for {}", path);
+        LogFactory.createLog().debug("Ensuring clangd LSP plugin loaded for {}", path);
         SwimRuntime.loadPlugin(PLUGIN_ID, path);
     }
 

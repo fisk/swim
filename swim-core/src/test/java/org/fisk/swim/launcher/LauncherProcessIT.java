@@ -685,6 +685,7 @@ class LauncherProcessIT {
 
     private static void startTmuxSession(String session, Path workdir, String... command) throws Exception {
         var tmuxCommand = new java.util.ArrayList<String>();
+        String javaToolOptions = javaToolOptionsWithVerboseLogging();
         tmuxCommand.add("tmux");
         tmuxCommand.add("new-session");
         tmuxCommand.add("-d");
@@ -694,7 +695,8 @@ class LauncherProcessIT {
         tmuxCommand.add("187");
         tmuxCommand.add("-y");
         tmuxCommand.add("51");
-        tmuxCommand.add("cd " + shellQuote(workdir.toString()) + " && " + joinShellCommand(command));
+        tmuxCommand.add("cd " + shellQuote(workdir.toString()) + " && JAVA_TOOL_OPTIONS="
+                + shellQuote(javaToolOptions) + " " + joinShellCommand(command));
         var process = new ProcessBuilder(tmuxCommand)
                 .redirectErrorStream(true)
                 .start();
@@ -798,12 +800,26 @@ class LauncherProcessIT {
         processBuilder.directory(workdir.toFile());
         processBuilder.redirectErrorStream(true);
         processBuilder.environment().putAll(environment);
+        processBuilder.environment().put("JAVA_TOOL_OPTIONS",
+                javaToolOptionsWithVerboseLogging(processBuilder.environment().get("JAVA_TOOL_OPTIONS")));
         var process = processBuilder.start();
         var output = new StringBuilder();
         var gobbler = new Thread(() -> readOutput(process, output), "launcher-process-it-output");
         gobbler.setDaemon(true);
         gobbler.start();
         return new StartedProcess(process, output, transcript);
+    }
+
+    private static String javaToolOptionsWithVerboseLogging() {
+        return javaToolOptionsWithVerboseLogging(System.getenv("JAVA_TOOL_OPTIONS"));
+    }
+
+    private static String javaToolOptionsWithVerboseLogging(String existing) {
+        String option = "-Dswim.log.level=debug";
+        if (existing == null || existing.isBlank()) {
+            return option;
+        }
+        return existing.contains("-Dswim.log.level=") ? existing : existing + " " + option;
     }
 
     private boolean scriptCanCaptureTranscript(Path scriptUtility) throws Exception {
