@@ -1213,6 +1213,193 @@ class H2MailClientTest {
     }
 
     @Test
+    void refreshBackfillMaintainsThreadsIncrementallyWhenParentArrivesAfterChild() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD",
+                          "folder": "INBOX"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            CountDownLatch backfillFinished = new CountDownLatch(1);
+            MailSyncAdapterFactory factory = account -> new MailSyncAdapter() {
+                private long nextBackfillUid;
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored) {
+                    nextBackfillUid = 50L;
+                    return MailSyncBatch.success(List.of(
+                            new ImportedMailMessage(
+                                    "work", "INBOX", "<child@example.com>", "reply:<parent@example.com>",
+                                    "Re: Project update", "Boss", "boss@example.com", "me@example.com",
+                                    List.of(new ImportedMailRecipient("TO", "Me", "me@example.com")),
+                                    "2026-05-13T09:00:00Z", "2026-05-13T09:00:05Z",
+                                    "Latest reply", "Latest reply", true, 100L)),
+                            "Fetched latest 1 of 2 messages", 2, 2, 2, 100L, nextBackfillUid);
+                }
+
+                @Override
+                public boolean hasMore() {
+                    return nextBackfillUid > 0L;
+                }
+
+                @Override
+                public MailSyncBatch fetchNext(EmailAccountConfig ignored) {
+                    nextBackfillUid = 0L;
+                    backfillFinished.countDown();
+                    return MailSyncBatch.success(List.of(
+                            new ImportedMailMessage(
+                                    "work", "INBOX", "<parent@example.com>", "message-id:<parent@example.com>",
+                                    "Project update", "Boss", "boss@example.com", "me@example.com",
+                                    List.of(new ImportedMailRecipient("TO", "Me", "me@example.com")),
+                                    "2026-05-13T08:30:00Z", "2026-05-13T08:30:05Z",
+                                    "Initial update", "Initial update", true, 40L)),
+                            "Cached 2 of 2 messages", 2, 1, 1, 0L, 0L);
+                }
+
+                @Override
+                public long backfillCursor() {
+                    return nextBackfillUid;
+                }
+            };
+
+            try (var client = new H2MailClient(paths, factory,
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false)) {
+                client.refresh();
+
+                assertTrue(backfillFinished.await(2, TimeUnit.SECONDS));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                var snapshot = client.snapshot();
+                while ((snapshot.threads().size() != 1 || snapshot.threads().getFirst().messageCount() != 2)
+                        && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                    snapshot = client.snapshot();
+                }
+
+                assertEquals(1, snapshot.threads().size());
+                assertEquals(2, snapshot.threads().getFirst().messageCount());
+                var messages = client.loadThreadMessages(snapshot.threads().getFirst().threadId());
+                var parent = messages.stream()
+                        .filter(message -> message.subject().equals("Project update"))
+                        .findFirst()
+                        .orElseThrow();
+                var child = messages.stream()
+                        .filter(message -> message.subject().equals("Re: Project update"))
+                        .findFirst()
+                        .orElseThrow();
+                assertEquals(parent.messageId(), child.parentMessageId());
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void refreshStopsBackfillWhenCursorDoesNotAdvance() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD",
+                          "folder": "INBOX"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            AtomicInteger fetchNextCalls = new AtomicInteger();
+            CountDownLatch fetchNextCalled = new CountDownLatch(1);
+            MailSyncAdapterFactory factory = account -> new MailSyncAdapter() {
+                private long nextBackfillUid;
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored) {
+                    throw new AssertionError("Expected refresh to pass stored sync state");
+                }
+
+                @Override
+                public MailSyncBatch fetch(EmailAccountConfig ignored, AccountSyncState syncState) {
+                    nextBackfillUid = syncState.nextBackfillUid();
+                    return MailSyncBatch.success(List.of(), "Up to date", 0, 0, 0, 456L, nextBackfillUid);
+                }
+
+                @Override
+                public boolean hasMore() {
+                    return nextBackfillUid > 0L;
+                }
+
+                @Override
+                public MailSyncBatch fetchNext(EmailAccountConfig ignored) {
+                    fetchNextCalls.incrementAndGet();
+                    fetchNextCalled.countDown();
+                    return MailSyncBatch.success(List.of(), "Still backfilling", 500, 0, 0, 0L, nextBackfillUid);
+                }
+
+                @Override
+                public long backfillCursor() {
+                    return nextBackfillUid;
+                }
+            };
+
+            try (var client = new H2MailClient(paths, factory,
+                    (account, draft) -> org.fisk.swim.mail.MailSendResult.success("sent"),
+                    false);
+                    var connection = DriverManager.getConnection(paths.databaseJdbcUrl())) {
+                MailDb.recordAccountSyncState(connection, "work", "2026-05-15T08:00:00Z", "Cached 250 of 500 messages", false,
+                        123L, 88L);
+
+                client.refresh();
+
+                assertTrue(fetchNextCalled.await(2, TimeUnit.SECONDS));
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                String status = client.snapshot().accounts().getFirst().syncStatus();
+                while (!status.contains("Backfill stopped") && System.nanoTime() < deadline) {
+                    Thread.sleep(10);
+                    status = client.snapshot().accounts().getFirst().syncStatus();
+                }
+
+                assertEquals(1, fetchNextCalls.get());
+                assertTrue(status.contains("sync cursor did not advance"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void closeDoesNotWaitForRefreshStuckInRemoteFetch() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());

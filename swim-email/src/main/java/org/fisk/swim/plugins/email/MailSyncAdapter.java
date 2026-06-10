@@ -17,6 +17,10 @@ interface MailSyncAdapter {
         return MailSyncBatch.success(List.of(), "");
     }
 
+    default long backfillCursor() {
+        return 0L;
+    }
+
     default String loadBody(EmailAccountConfig account, String folderName, String internetMessageId) throws Exception {
         return "";
     }

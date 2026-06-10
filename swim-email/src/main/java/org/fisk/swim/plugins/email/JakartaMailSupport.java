@@ -256,12 +256,13 @@ final class JakartaMailSupport {
                 if (!(folder instanceof UIDFolder uidFolder)) {
                     return MailSyncBatch.success(List.of(), "");
                 }
-                long startUid = Math.max(1L, nextBackfillUidInclusive - DEFAULT_MAX_MESSAGES_PER_SYNC + 1L);
                 int count = folder.getMessageCount();
-                Message[] messages = uidFolder.getMessagesByUID(startUid, nextBackfillUidInclusive);
-                if (messages == null || messages.length == 0) {
+                int endIndex = lastMessageIndexAtOrBelowUid(folder, uidFolder, nextBackfillUidInclusive, count);
+                if (endIndex <= 0) {
                     return MailSyncBatch.success(List.of(), backgroundSyncStatus(0, count), count, 0, 0, 0L, 0L);
                 }
+                int startIndex = syncStartIndex(endIndex, DEFAULT_MAX_MESSAGES_PER_SYNC);
+                Message[] messages = folder.getMessages(startIndex, endIndex);
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
                 fetchProfile.add(FetchProfile.Item.FLAGS);
@@ -280,7 +281,7 @@ final class JakartaMailSupport {
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
                 long nextBackfillUid = nextBackfillUid(imported);
-                return MailSyncBatch.success(imported, backgroundSyncStatus(imported.size(), count), count, 0, 0, 0L,
+                return MailSyncBatch.success(imported, backgroundSyncStatus(imported.size(), count), count, startIndex, endIndex, 0L,
                         nextBackfillUid);
             } finally {
                 if (folder.isOpen()) {
@@ -512,6 +513,31 @@ final class JakartaMailSupport {
             return "1 new message";
         }
         return importedMessages + " new messages";
+    }
+
+    private static int lastMessageIndexAtOrBelowUid(
+            Folder folder,
+            UIDFolder uidFolder,
+            long maxUid,
+            int messageCount) throws MessagingException {
+        int low = 1;
+        int high = messageCount;
+        int result = 0;
+        FetchProfile fetchProfile = new FetchProfile();
+        fetchProfile.add(UIDFolder.FetchProfileItem.UID);
+        while (low <= high) {
+            int mid = low + (high - low) / 2;
+            Message message = folder.getMessage(mid);
+            folder.fetch(new Message[] { message }, fetchProfile);
+            long uid = uidFolder.getUID(message);
+            if (uid > 0L && uid <= maxUid) {
+                result = mid;
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return result;
     }
 
     private static long nextBackfillUid(List<ImportedMailMessage> imported) {

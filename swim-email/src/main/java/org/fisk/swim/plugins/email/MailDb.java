@@ -250,21 +250,38 @@ final class MailDb {
         // Tags are resolved dynamically from tag_rules and message/thread fields.
     }
 
-    static void upsertAccountMessages(Connection connection, String accountId, List<ImportedMailMessage> messages)
+    static List<StoredMessage> upsertAccountMessages(Connection connection, String accountId, List<ImportedMailMessage> messages)
             throws SQLException {
         if (messages.isEmpty()) {
-            return;
+            return List.of();
         }
+        var changedMessages = new ArrayList<StoredMessage>();
         for (ImportedMailMessage message : messages) {
             Long existingMessageId = message.internetMessageId() != null && !message.internetMessageId().isBlank()
                     ? updateExistingMessage(connection, accountId, message)
                     : null;
             if (existingMessageId != null) {
                 replaceMessageRecipients(connection, existingMessageId, message.recipients());
+                StoredMessage changedMessage = loadStoredMessage(connection, existingMessageId);
+                if (changedMessage != null) {
+                    changedMessages.add(changedMessage);
+                }
                 continue;
             }
-            insertMessage(connection, message);
+            long insertedMessageId = insertMessage(connection, message);
+            StoredMessage changedMessage = loadStoredMessage(connection, insertedMessageId);
+            if (changedMessage != null) {
+                changedMessages.add(changedMessage);
+            }
         }
+        return List.copyOf(changedMessages);
+    }
+
+    static void upsertAccountMessagesAndRefreshThreads(
+            Connection connection,
+            String accountId,
+            List<ImportedMailMessage> messages) throws SQLException {
+        refreshThreadsForChangedMessages(connection, accountId, upsertAccountMessages(connection, accountId, messages));
     }
 
     static void recordAccountSyncState(
@@ -351,8 +368,7 @@ final class MailDb {
                 snippet(draft.body()),
                 draft.body(),
                 false);
-        upsertAccountMessages(connection, accountId, List.of(message));
-        rebuildThreads(connection, accountId);
+        upsertAccountMessagesAndRefreshThreads(connection, accountId, List.of(message));
     }
 
     static MailSnapshot loadSnapshot(Connection connection, EmailPaths paths, int threadLimit) throws SQLException {
@@ -1468,6 +1484,324 @@ final class MailDb {
         return result;
     }
 
+    static void refreshThreadsForChangedMessages(
+            Connection connection,
+            String accountId,
+            List<StoredMessage> changedMessages) throws SQLException {
+        if (changedMessages == null || changedMessages.isEmpty()) {
+            return;
+        }
+        var messageIds = new LinkedHashSet<Long>();
+        var threadIds = new LinkedHashSet<Long>();
+        var internetMessageIds = new LinkedHashSet<String>();
+        for (StoredMessage message : changedMessages) {
+            addThreadRefreshMessage(message, messageIds, threadIds, internetMessageIds);
+            addReferencedInternetMessageId(message, internetMessageIds);
+        }
+
+        boolean changed;
+        do {
+            changed = false;
+            changed |= addThreadRefreshMessages(
+                    loadStoredMessagesByThreadIds(connection, accountId, threadIds),
+                    messageIds,
+                    threadIds,
+                    internetMessageIds);
+            changed |= addThreadRefreshMessages(
+                    loadStoredMessagesByInternetIds(connection, accountId, internetMessageIds),
+                    messageIds,
+                    threadIds,
+                    internetMessageIds);
+            changed |= addThreadRefreshMessages(
+                    loadStoredMessagesReferencingInternetIds(connection, accountId, internetMessageIds),
+                    messageIds,
+                    threadIds,
+                    internetMessageIds);
+        } while (changed);
+
+        List<StoredMessage> rows = loadStoredMessagesByIds(connection, messageIds);
+        if (rows.isEmpty()) {
+            deleteThreads(connection, threadIds);
+            return;
+        }
+
+        Map<String, StoredMessage> messagesByInternetId = new HashMap<>();
+        for (StoredMessage row : rows) {
+            String internetMessageId = normalizeWhitespace(row.internetMessageId());
+            if (!internetMessageId.isBlank()) {
+                messagesByInternetId.put(internetMessageId, row);
+            }
+        }
+
+        Map<Long, String> resolvedThreadKeys = new HashMap<>();
+        Map<String, List<StoredMessage>> grouped = new LinkedHashMap<>();
+        for (StoredMessage row : rows) {
+            String key = resolveThreadKey(row, messagesByInternetId, resolvedThreadKeys, new java.util.HashSet<>());
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
+        }
+
+        deleteThreads(connection, threadIds);
+        try (PreparedStatement updateMessageThread = connection.prepareStatement("""
+                update messages
+                set thread_id = ?
+                where id = ?
+                """)) {
+            for (List<StoredMessage> group : grouped.values()) {
+                group.sort(Comparator
+                        .comparing(StoredMessage::effectiveTimestamp, Comparator.nullsFirst(Comparator.reverseOrder()))
+                        .thenComparing(StoredMessage::id, Comparator.reverseOrder()));
+                StoredMessage latest = group.getFirst();
+                long threadId = insertStoredThread(connection, accountId, group, latest);
+                for (StoredMessage message : group) {
+                    updateMessageThread.setLong(1, threadId);
+                    updateMessageThread.setLong(2, message.id());
+                    updateMessageThread.addBatch();
+                }
+            }
+            updateMessageThread.executeBatch();
+        }
+    }
+
+    private static boolean addThreadRefreshMessages(
+            List<StoredMessage> messages,
+            java.util.Set<Long> messageIds,
+            java.util.Set<Long> threadIds,
+            java.util.Set<String> internetMessageIds) {
+        boolean changed = false;
+        for (StoredMessage message : messages) {
+            changed |= addThreadRefreshMessage(message, messageIds, threadIds, internetMessageIds);
+            changed |= addReferencedInternetMessageId(message, internetMessageIds);
+        }
+        return changed;
+    }
+
+    private static boolean addThreadRefreshMessage(
+            StoredMessage message,
+            java.util.Set<Long> messageIds,
+            java.util.Set<Long> threadIds,
+            java.util.Set<String> internetMessageIds) {
+        if (message == null) {
+            return false;
+        }
+        boolean changed = messageIds.add(message.id());
+        if (message.threadId() > 0L) {
+            changed |= threadIds.add(message.threadId());
+        }
+        String internetMessageId = normalizeWhitespace(message.internetMessageId());
+        if (!internetMessageId.isBlank()) {
+            changed |= internetMessageIds.add(internetMessageId);
+        }
+        return changed;
+    }
+
+    private static boolean addReferencedInternetMessageId(
+            StoredMessage message,
+            java.util.Set<String> internetMessageIds) {
+        if (message == null || referenceKind(message.threadKey()) == ReferenceKind.NONE) {
+            return false;
+        }
+        String referencedMessageId = referencedMessageId(message.threadKey());
+        return !referencedMessageId.isBlank() && internetMessageIds.add(referencedMessageId);
+    }
+
+    private static StoredMessage loadStoredMessage(Connection connection, long messageId) throws SQLException {
+        List<StoredMessage> messages = loadStoredMessagesByIds(connection, java.util.Set.of(messageId));
+        return messages.isEmpty() ? null : messages.getFirst();
+    }
+
+    private static List<StoredMessage> loadStoredMessagesByIds(
+            Connection connection,
+            java.util.Set<Long> messageIds) throws SQLException {
+        if (messageIds == null || messageIds.isEmpty()) {
+            return List.of();
+        }
+        var rows = new ArrayList<StoredMessage>();
+        for (List<Long> chunk : chunks(messageIds.stream().filter(id -> id != null && id > 0L).toList())) {
+            if (chunk.isEmpty()) {
+                continue;
+            }
+            String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select id, account_id, thread_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email,
+                        to_summary, sent_at, received_at, snippet, is_read
+                    from messages
+                    where id in (%s)
+                    order by coalesce(received_at, sent_at, '') desc, id desc
+                    """.formatted(placeholders))) {
+                for (int i = 0; i < chunk.size(); i++) {
+                    statement.setLong(i + 1, chunk.get(i));
+                }
+                appendStoredMessages(rows, statement);
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    private static List<StoredMessage> loadStoredMessagesByThreadIds(
+            Connection connection,
+            String accountId,
+            java.util.Set<Long> threadIds) throws SQLException {
+        if (threadIds == null || threadIds.isEmpty()) {
+            return List.of();
+        }
+        var rows = new ArrayList<StoredMessage>();
+        for (List<Long> chunk : chunks(threadIds.stream().filter(id -> id != null && id > 0L).toList())) {
+            if (chunk.isEmpty()) {
+                continue;
+            }
+            String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select id, account_id, thread_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email,
+                        to_summary, sent_at, received_at, snippet, is_read
+                    from messages
+                    where account_id = ? and thread_id in (%s)
+                    order by coalesce(received_at, sent_at, '') desc, id desc
+                    """.formatted(placeholders))) {
+                statement.setString(1, accountId);
+                for (int i = 0; i < chunk.size(); i++) {
+                    statement.setLong(i + 2, chunk.get(i));
+                }
+                appendStoredMessages(rows, statement);
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    private static List<StoredMessage> loadStoredMessagesByInternetIds(
+            Connection connection,
+            String accountId,
+            java.util.Set<String> internetMessageIds) throws SQLException {
+        List<String> normalizedIds = internetMessageIds(internetMessageIds);
+        if (normalizedIds.isEmpty()) {
+            return List.of();
+        }
+        var rows = new ArrayList<StoredMessage>();
+        for (List<String> chunk : chunks(normalizedIds)) {
+            String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select id, account_id, thread_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email,
+                        to_summary, sent_at, received_at, snippet, is_read
+                    from messages
+                    where account_id = ? and trim(coalesce(internet_message_id, '')) in (%s)
+                    order by coalesce(received_at, sent_at, '') desc, id desc
+                    """.formatted(placeholders))) {
+                statement.setString(1, accountId);
+                for (int i = 0; i < chunk.size(); i++) {
+                    statement.setString(i + 2, chunk.get(i));
+                }
+                appendStoredMessages(rows, statement);
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    private static List<StoredMessage> loadStoredMessagesReferencingInternetIds(
+            Connection connection,
+            String accountId,
+            java.util.Set<String> internetMessageIds) throws SQLException {
+        List<String> referenceKeys = referenceKeys(internetMessageIds);
+        if (referenceKeys.isEmpty()) {
+            return List.of();
+        }
+        var rows = new ArrayList<StoredMessage>();
+        for (List<String> chunk : chunks(referenceKeys)) {
+            String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    select id, account_id, thread_id, internet_message_id, thread_key, folder_name, subject, from_name, from_email,
+                        to_summary, sent_at, received_at, snippet, is_read
+                    from messages
+                    where account_id = ? and thread_key in (%s)
+                    order by coalesce(received_at, sent_at, '') desc, id desc
+                    """.formatted(placeholders))) {
+                statement.setString(1, accountId);
+                for (int i = 0; i < chunk.size(); i++) {
+                    statement.setString(i + 2, chunk.get(i));
+                }
+                appendStoredMessages(rows, statement);
+            }
+        }
+        return List.copyOf(rows);
+    }
+
+    private static void appendStoredMessages(List<StoredMessage> rows, PreparedStatement statement) throws SQLException {
+        try (ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                rows.add(storedMessage(resultSet));
+            }
+        }
+    }
+
+    private static StoredMessage storedMessage(ResultSet resultSet) throws SQLException {
+        return new StoredMessage(
+                resultSet.getLong(1),
+                resultSet.getString(2),
+                resultSet.getLong(3),
+                resultSet.getString(4),
+                resultSet.getString(5),
+                resultSet.getString(6),
+                resultSet.getString(7),
+                resultSet.getString(8),
+                resultSet.getString(9),
+                resultSet.getString(10),
+                resultSet.getString(11),
+                resultSet.getString(12),
+                resultSet.getString(13),
+                resultSet.getInt(14) == 0);
+    }
+
+    private static List<String> internetMessageIds(java.util.Set<String> internetMessageIds) {
+        if (internetMessageIds == null || internetMessageIds.isEmpty()) {
+            return List.of();
+        }
+        return internetMessageIds.stream()
+                .map(MailDb::normalizeWhitespace)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private static List<String> referenceKeys(java.util.Set<String> internetMessageIds) {
+        var keys = new ArrayList<String>();
+        for (String internetMessageId : internetMessageIds(internetMessageIds)) {
+            keys.add("reply:" + internetMessageId);
+            keys.add("ref:" + internetMessageId);
+        }
+        return List.copyOf(keys);
+    }
+
+    private static <T> List<List<T>> chunks(List<T> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        int chunkSize = 250;
+        var chunks = new ArrayList<List<T>>();
+        for (int start = 0; start < values.size(); start += chunkSize) {
+            chunks.add(values.subList(start, Math.min(values.size(), start + chunkSize)));
+        }
+        return chunks;
+    }
+
+    private static void deleteThreads(Connection connection, java.util.Set<Long> threadIds) throws SQLException {
+        if (threadIds == null || threadIds.isEmpty()) {
+            return;
+        }
+        for (List<Long> chunk : chunks(threadIds.stream().filter(id -> id != null && id > 0L).toList())) {
+            if (chunk.isEmpty()) {
+                continue;
+            }
+            String placeholders = String.join(", ", java.util.Collections.nCopies(chunk.size(), "?"));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    delete from threads
+                    where id in (%s)
+                    """.formatted(placeholders))) {
+                for (int i = 0; i < chunk.size(); i++) {
+                    statement.setLong(i + 1, chunk.get(i));
+                }
+                statement.executeUpdate();
+            }
+        }
+    }
+
     static void rebuildThreads(Connection connection, String accountId) throws SQLException {
         List<StoredMessage> rows = new ArrayList<>();
         try (PreparedStatement select = connection.prepareStatement("""
@@ -1701,7 +2035,7 @@ final class MailDb {
         }
     }
 
-    private static void insertMessage(Connection connection, ImportedMailMessage message) throws SQLException {
+    private static long insertMessage(Connection connection, ImportedMailMessage message) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into messages (
                     account_id, thread_id, thread_key, internet_message_id, folder_name, subject, from_name, from_email,
@@ -1724,10 +2058,13 @@ final class MailDb {
             statement.executeUpdate();
             try (ResultSet generatedKeys = statement.getGeneratedKeys()) {
                 if (generatedKeys.next()) {
-                    replaceMessageRecipients(connection, generatedKeys.getLong(1), message.recipients());
+                    long messageId = generatedKeys.getLong(1);
+                    replaceMessageRecipients(connection, messageId, message.recipients());
+                    return messageId;
                 }
             }
         }
+        throw new SQLException("Failed to insert message for account " + message.accountId());
     }
 
     private static void replaceMessageRecipients(

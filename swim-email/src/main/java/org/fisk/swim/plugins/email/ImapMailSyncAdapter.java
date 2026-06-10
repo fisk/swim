@@ -55,6 +55,11 @@ final class ImapMailSyncAdapter implements MailSyncAdapter {
     }
 
     @Override
+    public long backfillCursor() {
+        return _nextBackfillUid;
+    }
+
+    @Override
     public String loadBody(EmailAccountConfig account, String folderName, String internetMessageId) throws Exception {
         return JakartaMailSupport.loadImapBody(account, folderName, internetMessageId);
     }

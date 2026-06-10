@@ -312,6 +312,7 @@ final class H2MailClient implements MailClient {
             for (MailSyncEngine.AccountSyncResult result : plan.results()) {
                 while (!_closed && generation == _refreshGeneration.get() && result.adapter().hasMore()) {
                     MailSyncBatch batch;
+                    long cursorBeforeFetch = result.adapter().backfillCursor();
                     try {
                         batch = result.adapter().fetchNext(result.account());
                     } catch (Exception e) {
@@ -319,7 +320,14 @@ final class H2MailClient implements MailClient {
                         recordBackfillFailure(result.account().normalizedId(), rootMessage(e), generation);
                         break;
                     }
+                    boolean cursorStalled = backfillCursorStalled(cursorBeforeFetch, result.adapter());
                     applyBackfillBatch(result.account(), result.adapter(), batch, generation);
+                    if (cursorStalled) {
+                        LOG.warn("Stopped mail backfill for {} because the sync cursor did not advance",
+                                result.account().normalizedId());
+                        recordBackfillStopped(result.account().normalizedId(), "sync cursor did not advance", generation);
+                        break;
+                    }
                 }
             }
         } finally {
@@ -341,9 +349,8 @@ final class H2MailClient implements MailClient {
                 _writeConnection.setAutoCommit(false);
                 try {
                     if (batch.success()) {
-                        MailDb.upsertAccountMessages(_writeConnection, account.normalizedId(), batch.messages());
-                        MailDb.rebuildThreads(_writeConnection, account.normalizedId());
-                        MailDb.reapplyTags(_writeConnection);
+                        MailDb.upsertAccountMessagesAndRefreshThreads(
+                                _writeConnection, account.normalizedId(), batch.messages());
                         int cachedMessages = MailDb.countMessages(_writeConnection, account.normalizedId());
                         String status = adapter.hasMore()
                                 ? JakartaMailSupport.backgroundSyncStatus(cachedMessages, batch.totalMessages())
@@ -374,7 +381,15 @@ final class H2MailClient implements MailClient {
         }
     }
 
+    private void recordBackfillStopped(String accountId, String message, long generation) {
+        recordBackfillStatus(accountId, "Backfill stopped: " + message, generation);
+    }
+
     private void recordBackfillFailure(String accountId, String message, long generation) {
+        recordBackfillStatus(accountId, "Backfill failed: " + message, generation);
+    }
+
+    private void recordBackfillStatus(String accountId, String statusMessage, long generation) {
         synchronized (_writeLock) {
             if (_closed || generation != _refreshGeneration.get()) {
                 return;
@@ -382,13 +397,17 @@ final class H2MailClient implements MailClient {
             try {
                 AccountSyncState currentState = MailDb.loadAccountSyncStates(_writeConnection)
                         .getOrDefault(accountId, AccountSyncState.empty(accountId));
-                MailDb.recordAccountSyncState(_writeConnection, accountId, null, "Backfill failed: " + message, false,
+                MailDb.recordAccountSyncState(_writeConnection, accountId, null, statusMessage, false,
                         currentState.lastSeenUid(),
                         currentState.nextBackfillUid());
             } catch (SQLException e) {
-                LOG.warn("Failed to record backfill failure for {}", accountId, e);
+                LOG.warn("Failed to record backfill status for {}", accountId, e);
             }
         }
+    }
+
+    private static boolean backfillCursorStalled(long cursorBeforeFetch, MailSyncAdapter adapter) {
+        return adapter.hasMore() && cursorBeforeFetch > 0L && adapter.backfillCursor() >= cursorBeforeFetch;
     }
 
     private static String rootMessage(Throwable throwable) {

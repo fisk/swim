@@ -34,8 +34,8 @@ final class MailSyncEngine {
         try {
             for (AccountSyncResult result : plan.results()) {
                 if (result.batch().success()) {
-                    MailDb.upsertAccountMessages(connection, result.account().normalizedId(), result.batch().messages());
-                    MailDb.rebuildThreads(connection, result.account().normalizedId());
+                    MailDb.upsertAccountMessagesAndRefreshThreads(
+                            connection, result.account().normalizedId(), result.batch().messages());
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), Instant.now().toString(),
                             result.batch().statusMessage().isBlank()
                                     ? result.batch().messages().size() + " messages"
