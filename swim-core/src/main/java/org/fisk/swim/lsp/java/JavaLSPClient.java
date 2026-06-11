@@ -13,7 +13,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -203,22 +202,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     private static JavaLspProvider createDefaultProvider() {
         Path extensionPath = EmbeddedOracleModuleLayerLspProvider.resolveOracleExtensionPath();
-        String override = System.getProperty("swim.java.lsp.provider", "").trim().toLowerCase(Locale.ROOT);
-        if ("embedded".equals(override)) {
-            return new EmbeddedOracleModuleLayerLspProvider(extensionPath);
-        }
-        if ("process".equals(override)) {
-            return new OracleNbcodeLspProvider(extensionPath);
-        }
         return new EmbeddedOracleModuleLayerLspProvider(extensionPath);
-    }
-
-    static boolean prefersProcessProvider(String osName) {
-        if (osName == null) {
-            return false;
-        }
-        String normalized = osName.toLowerCase(Locale.ROOT);
-        return normalized.contains("mac") || normalized.contains("darwin");
     }
 
     public boolean hasStarted() {
@@ -238,15 +222,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     static Path findOracleExtensionPath(Path extensionsDir) {
-        return OracleNbcodeLspProvider.findOracleExtensionPath(extensionsDir);
-    }
-
-    static String getNbcodeExecutableName(String osName, String arch) {
-        return OracleNbcodeLspProvider.getNbcodeExecutableName(osName, arch);
-    }
-
-    static Path findNbcode(Path oracleExtensionPath, String osName, String arch) {
-        return OracleNbcodeLspProvider.findNbcode(oracleExtensionPath, osName, arch);
+        return EmbeddedOracleModuleLayerLspProvider.findOracleExtensionPath(extensionsDir);
     }
 
     static Path getWorkspacePath(Path swimHomePath, Path projectPath) {
@@ -2307,15 +2283,4 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }));
     }
 
-    private static Path resolveOracleExtensionPath() {
-        String override = System.getProperty("swim.oracle.java.extension.path", "").trim();
-        if (!override.isEmpty()) {
-            return Paths.get(override).toAbsolutePath().normalize();
-        }
-        Path bundled = Paths.get(System.getProperty("user.home"), ".swim", "deps", "oracle.oracle-java");
-        if (Files.isDirectory(bundled)) {
-            return bundled;
-        }
-        return findOracleExtensionPath(Paths.get(System.getProperty("user.home"), ".vscode", "extensions"));
-    }
 }

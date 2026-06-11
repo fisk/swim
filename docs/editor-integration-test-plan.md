@@ -171,7 +171,6 @@ Targets:
 - logging property permutations
 - terminal env size permutations
 - shell selection through `SHELL`
-- Java provider selection through `swim.java.lsp.provider`
 - mail poll/notification properties
 - Oracle extension install overrides
 

@@ -212,6 +212,8 @@ class MainTest {
         assertTrue(command.contains("-Xmx128M"));
         assertFalse(command.contains("-Xmx4G"));
         assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
+        assertFalse(command.contains("--sun-misc-unsafe-memory-access=allow"));
+        assertFalse(command.contains("--enable-final-field-mutation=ALL-UNNAMED"));
         assertTrue(command.contains("--enable-native-access=org.fisk.swim.session"));
         assertTrue(command.contains("org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain"));
         assertFalse(command.contains("--swim-server"));
@@ -224,9 +226,21 @@ class MainTest {
         assertTrue(command.contains("-XX:+UseZGC"));
         assertTrue(command.contains("-Xmx4G"));
         assertTrue(command.contains("-XX:SoftMaxHeapSize=1G"));
+        assertTrue(command.contains("--sun-misc-unsafe-memory-access=allow"));
+        assertEquals(
+                Runtime.version().feature() >= 26,
+                command.contains("--enable-final-field-mutation=ALL-UNNAMED"));
         assertFalse(command.contains("-Xmx128M"));
         assertTrue(command.contains("--swim-app"));
         assertTrue(command.contains("file.txt"));
+    }
+
+    @Test
+    void appJvmPolicyEnablesFinalFieldMutationOnJdk26AndLater() {
+        assertFalse(SwimJavaCommand.appJvmOptions(25)
+                .contains("--enable-final-field-mutation=ALL-UNNAMED"));
+        assertTrue(SwimJavaCommand.appJvmOptions(26)
+                .contains("--enable-final-field-mutation=ALL-UNNAMED"));
     }
 
     @Test
@@ -256,8 +270,11 @@ class MainTest {
         assertTrue(content.startsWith("#!" + embeddedJava + " -XX:+UseZGC -Xmx128M --source 25"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
-        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("Runtime.version().feature() >= 26"));
+        assertTrue(content.contains("options.add(FINAL_FIELD_MUTATION_OPTION)"));
         assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
         assertTrue(content.contains("clientWorkingDirectory()"));
         assertTrue(content.contains("clientEnvironment()"));

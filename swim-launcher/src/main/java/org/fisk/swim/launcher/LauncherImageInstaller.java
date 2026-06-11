@@ -22,13 +22,15 @@ public final class LauncherImageInstaller {
     private static final Pattern DEFAULT_OPTIONS_PATTERN =
             Pattern.compile("(?m)^default_options=\"(.*)\"$");
     private static final String APP_NAME = "swim";
+    private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
     private static final List<String> CLIENT_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M");
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx4G",
-            "-XX:SoftMaxHeapSize=1G");
+            "-XX:SoftMaxHeapSize=1G",
+            "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M",
@@ -269,7 +271,8 @@ public final class LauncherImageInstaller {
         clientOptions.addAll(CLIENT_JVM_OPTIONS);
         Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
         Files.writeString(launcher, sourceLauncher(embeddedJava, javaShebangOptions(clientOptions),
-                javaListLiteral(appOptions), javaListLiteral(SERVER_JVM_OPTIONS)), StandardCharsets.UTF_8);
+                javaListLiteral(appOptions), javaListLiteral(SERVER_JVM_OPTIONS),
+                javaStringLiteral(FINAL_FIELD_MUTATION_OPTION)), StandardCharsets.UTF_8);
         launcher.toFile().setExecutable(true, false);
     }
 
@@ -287,7 +290,12 @@ public final class LauncherImageInstaller {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    private static String sourceLauncher(Path embeddedJava, String clientOptions, String appOptions, String serverOptions) {
+    private static String sourceLauncher(
+            Path embeddedJava,
+            String clientOptions,
+            String appOptions,
+            String serverOptions,
+            String finalFieldMutationOption) {
         return String.format("""
                 #!%s %s --source 25
                 import java.io.*;
@@ -301,6 +309,7 @@ public final class LauncherImageInstaller {
                     private static final String MAGIC = "SWIM_SESSION_6";
                     private static final String APP_MODULE = "org.fisk.swim.launcher/org.fisk.swim.launcher.Main";
                     private static final String SERVER_MODULE = "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
+                    private static final String FINAL_FIELD_MUTATION_OPTION = %s;
                     private static final List<String> APP_JVM_OPTIONS = %s;
                     private static final List<String> SERVER_JVM_OPTIONS = %s;
                     private static final Duration SERVER_START_TIMEOUT = Duration.ofSeconds(5);
@@ -564,12 +573,21 @@ public final class LauncherImageInstaller {
                     private static List<String> appCommand(Path java, List<String> launchArgs) {
                         var command = new ArrayList<String>();
                         command.add(java.toString());
-                        command.addAll(APP_JVM_OPTIONS);
+                        command.addAll(appJvmOptions());
                         command.add("-m");
                         command.add(APP_MODULE);
                         command.add("--swim-app");
                         command.addAll(launchArgs);
                         return List.copyOf(command);
+                    }
+
+                    private static List<String> appJvmOptions() {
+                        var options = new ArrayList<String>();
+                        options.addAll(APP_JVM_OPTIONS);
+                        if (Runtime.version().feature() >= 26) {
+                            options.add(FINAL_FIELD_MUTATION_OPTION);
+                        }
+                        return List.copyOf(options);
                     }
 
                     private static Path clientWorkingDirectory() {
@@ -708,7 +726,7 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """, embeddedJava, clientOptions, appOptions, serverOptions);
+                """, embeddedJava, clientOptions, finalFieldMutationOption, appOptions, serverOptions);
     }
 
     private static void runTool(String name, List<String> args) throws IOException {

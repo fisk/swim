@@ -48,24 +48,14 @@ class JavaLSPClientTest {
     Path tempDir;
 
     @Test
-    void choosesPlatformSpecificNbcodeExecutable() {
-        assertEquals("nbcode.sh", JavaLSPClient.getNbcodeExecutableName("Darwin", "aarch64"));
-        assertEquals("nbcode.sh", JavaLSPClient.getNbcodeExecutableName("Linux", "x86_64"));
-        assertEquals("nbcode64.exe", JavaLSPClient.getNbcodeExecutableName("Windows 11", "x86_64"));
-    }
-
-    @Test
-    void findsOracleExtensionAndNbcodeExecutable() throws IOException {
+    void findsOracleExtension() throws IOException {
         Path extensions = tempDir.resolve("extensions");
         Path oldVersion = extensions.resolve("oracle.oracle-java-23.0.0");
         Path newVersion = extensions.resolve("oracle.oracle-java-24.0.0");
         Files.createDirectories(oldVersion.resolve("nbcode/bin"));
         Files.createDirectories(newVersion.resolve("nbcode/bin"));
-        Path executable = newVersion.resolve("nbcode/bin/nbcode.sh");
-        Files.writeString(executable, "#!/bin/sh\n");
 
         assertEquals(newVersion, JavaLSPClient.findOracleExtensionPath(extensions));
-        assertEquals(executable, JavaLSPClient.findNbcode(newVersion, "Linux", "x86_64"));
     }
 
     @Test
@@ -485,7 +475,7 @@ class JavaLSPClientTest {
 
     @Test
     void realEmbeddedJavaClientColorsRealSwimRuntimeBuffer() throws Exception {
-        Path extensionPath = OracleNbcodeLspProvider.resolveOracleExtensionPath();
+        Path extensionPath = EmbeddedOracleModuleLayerLspProvider.resolveOracleExtensionPath();
         var provider = new EmbeddedOracleModuleLayerLspProvider(extensionPath);
         org.junit.jupiter.api.Assumptions.assumeTrue(provider.isAvailable(), "Oracle Java extension payload not available");
         org.junit.jupiter.api.Assumptions.assumeTrue(

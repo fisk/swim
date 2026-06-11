@@ -434,7 +434,6 @@ Passive behavior:
 - `swim.log.level`
 - `swim.mail.poll.interval.ms`
 - `swim.mail.notification.duration.ms`
-- `swim.java.lsp.provider`
 - `swim.oracle.java.extension.path`
 - `swim.install.oracle.java.skip`
 - `swim.install.oracle.java.force`

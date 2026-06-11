@@ -10,10 +10,12 @@ final class SwimJavaCommand {
     private static final String SESSION_SERVER_MODULE =
             "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
     private static final String NATIVE_ACCESS_OPTION = "--enable-native-access=org.fisk.swim.session";
+    private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx4G",
-            "-XX:SoftMaxHeapSize=1G");
+            "-XX:SoftMaxHeapSize=1G",
+            "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SESSION_SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M");
@@ -44,7 +46,7 @@ final class SwimJavaCommand {
             command.addAll(SESSION_SERVER_JVM_OPTIONS);
         } else {
             command.addAll(inheritedNonMemoryPolicyJvmArgs(jvmArgs));
-            command.addAll(APP_JVM_OPTIONS);
+            command.addAll(appJvmOptions());
         }
         if (nativeAccess && jvmArgs.stream().noneMatch(NATIVE_ACCESS_OPTION::equals)) {
             command.add(NATIVE_ACCESS_OPTION);
@@ -64,8 +66,24 @@ final class SwimJavaCommand {
         return jvmArgs.stream()
                 .filter(arg -> !arg.startsWith("-Xmx"))
                 .filter(arg -> !arg.startsWith("-XX:SoftMaxHeapSize="))
+                .filter(arg -> !arg.startsWith("--sun-misc-unsafe-memory-access="))
+                .filter(arg -> !arg.startsWith("--enable-final-field-mutation="))
+                .filter(arg -> !arg.startsWith("--illegal-final-field-mutation="))
                 .filter(arg -> !isCollectorSelectionOption(arg))
                 .toList();
+    }
+
+    static List<String> appJvmOptions(int javaFeatureVersion) {
+        var options = new ArrayList<String>();
+        options.addAll(APP_JVM_OPTIONS);
+        if (javaFeatureVersion >= 26) {
+            options.add(FINAL_FIELD_MUTATION_OPTION);
+        }
+        return List.copyOf(options);
+    }
+
+    private static List<String> appJvmOptions() {
+        return appJvmOptions(Runtime.version().feature());
     }
 
     private static boolean isCollectorSelectionOption(String arg) {

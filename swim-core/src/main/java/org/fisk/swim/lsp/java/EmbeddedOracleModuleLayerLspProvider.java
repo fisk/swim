@@ -12,6 +12,7 @@ import java.net.URLClassLoader;
 import java.net.Socket;
 import java.nio.file.Path;
 import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -44,7 +45,34 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
     }
 
     static Path resolveOracleExtensionPath() {
-        return OracleNbcodeLspProvider.resolveOracleExtensionPath();
+        String override = System.getProperty("swim.oracle.java.extension.path", "").trim();
+        if (!override.isEmpty()) {
+            return Paths.get(override).toAbsolutePath().normalize();
+        }
+        Path bundled = Paths.get(System.getProperty("user.home"), ".swim", "deps", "oracle.oracle-java");
+        if (Files.isDirectory(bundled)) {
+            return bundled;
+        }
+        return findOracleExtensionPath(Paths.get(System.getProperty("user.home"), ".vscode", "extensions"));
+    }
+
+    static Path findOracleExtensionPath(Path extensionsDir) {
+        if (!Files.isDirectory(extensionsDir)) {
+            return null;
+        }
+        try (var entries = Files.list(extensionsDir)) {
+            return entries
+                    .filter(Files::isDirectory)
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        return name.equals("oracle.oracle-java") || name.startsWith("oracle.oracle-java-");
+                    })
+                    .sorted(Comparator.reverseOrder())
+                    .findFirst()
+                    .orElse(null);
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to inspect VS Code extensions in " + extensionsDir, e);
+        }
     }
 
     @Override
@@ -73,6 +101,10 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             boolean allowWorkspaceReset) throws Exception {
         _log.debug("Starting embedded Oracle Java LSP for project {}", projectPath);
         requireJvmCompatibility();
+        if (allowWorkspaceReset && shouldResetWorkspace(workspacePath, null)) {
+            _log.warn("Resetting embedded Java LSP workspace at {} after stale recoverable workspace failure", workspacePath);
+            deleteRecursively(workspacePath);
+        }
         Path nbcodeRoot = _extensionPath.resolve("nbcode");
         Path platformHome = nbcodeRoot.resolve("platform");
         Path userDir = workspacePath.resolve("userdir");
@@ -136,12 +168,12 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
                     server.exit();
                 } catch (Exception e) {
                 }
-                closeBootstrapResources(finalLanguageServerSocket, serverSocket, loader, previousProperties);
+                closeBootstrapResources(finalLanguageServerSocket, serverSocket, bootThread, previousProperties);
             };
 
             return new Session(server, initialized.getCapabilities(), closeable, "oracle-embedded");
         } catch (Exception e) {
-            closeBootstrapResources(languageServerSocket, serverSocket, loader, previousProperties);
+            closeBootstrapResources(languageServerSocket, serverSocket, bootThread, previousProperties);
             if (allowWorkspaceReset && shouldResetWorkspace(workspacePath, e)) {
                 _log.warn("Resetting embedded Java LSP workspace at {} after recoverable bootstrap failure", workspacePath);
                 deleteRecursively(workspacePath);
@@ -233,10 +265,10 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
     }
 
     static boolean shouldResetWorkspace(Path workspacePath, Throwable failure) {
-        if (workspacePath == null || failure == null) {
+        if (workspacePath == null) {
             return false;
         }
-        if (containsBootstrapExitCode(failure, "-255")) {
+        if (failure != null && containsBootstrapExitCode(failure, "-255")) {
             return true;
         }
         Path messagesLog = workspacePath.resolve("userdir").resolve("var").resolve("log").resolve("messages.log");
@@ -245,11 +277,17 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         }
         try {
             String logText = Files.readString(messagesLog);
-            return logText.contains("ClassNotFoundException: org.netbeans.api.maven.MavenActions")
-                    || logText.contains("ClassNotFoundException: maven.actions.override");
+            return containsRecoverableWorkspaceFailure(logText);
         } catch (IOException e) {
             return false;
         }
+    }
+
+    private static boolean containsRecoverableWorkspaceFailure(String logText) {
+        return logText.contains("ClassNotFoundException: org.netbeans.api.maven.MavenActions")
+                || logText.contains("ClassNotFoundException: maven.actions.override")
+                || logText.contains("org.apache.lucene.index.CorruptIndexException")
+                || logText.contains("CorruptIndexException: doc counts differ");
     }
 
     private static boolean containsBootstrapExitCode(Throwable failure, String code) {
@@ -265,7 +303,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
     private static void closeBootstrapResources(
             Socket languageServerSocket,
             ServerSocket serverSocket,
-            URLClassLoader loader,
+            Thread bootThread,
             java.util.Map<String, String> previousProperties) {
         try {
             if (languageServerSocket != null) {
@@ -279,13 +317,9 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             }
         } catch (Exception e) {
         }
-        try {
-            if (loader != null) {
-                loader.close();
-            }
-        } catch (Exception e) {
-        }
-        if (previousProperties != null) {
+        boolean stopped = waitForNetBeansBootThread(bootThread);
+        // Do not close the loader; NetBeans may still load platform classes on shutdown cleanup threads.
+        if (stopped && previousProperties != null) {
             for (var entry : previousProperties.entrySet()) {
                 if (entry.getValue() == null) {
                     System.clearProperty(entry.getKey());
@@ -294,6 +328,19 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
                 }
             }
         }
+    }
+
+    private static boolean waitForNetBeansBootThread(Thread bootThread) {
+        if (bootThread == null || Thread.currentThread() == bootThread) {
+            return false;
+        }
+        try {
+            bootThread.join(TimeUnit.SECONDS.toMillis(5));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !bootThread.isAlive();
     }
 
     private static void deleteRecursively(Path path) throws IOException {

@@ -289,8 +289,6 @@ class LauncherProcessIT {
                     "Expected Java provider was not activated.\nLog:\n" + Files.readString(logFile) + "\nOutput:\n" + process.output());
             logFile = providerLog;
             if ("oracle-embedded".equals(EXPECTED_JAVA_PROVIDER)) {
-                assertTrue(!Files.readString(logFile).contains("Java LSP provider: oracle-process (fallback)"),
-                        "Embedded provider fell back to oracle-process.\nLog:\n" + Files.readString(logFile));
                 assertTrue(!waitForFileText(logFile, "netbeans.user is not set.", java.time.Duration.ofSeconds(5)),
                         "Embedded provider crashed after activation.\nLog:\n" + Files.readString(logFile));
             }

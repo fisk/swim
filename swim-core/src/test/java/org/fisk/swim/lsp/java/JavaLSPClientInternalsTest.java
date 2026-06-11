@@ -2,7 +2,6 @@ package org.fisk.swim.lsp.java;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -137,41 +136,6 @@ class JavaLSPClientInternalsTest {
         var provider = new EmbeddedOracleModuleLayerLspProvider(extension);
 
         assertTrue(provider.isAvailable());
-    }
-
-    @Test
-    void macOsPrefersProcessProvider() {
-        assertTrue(JavaLSPClient.prefersProcessProvider("Mac OS X"));
-        assertTrue(JavaLSPClient.prefersProcessProvider("Darwin"));
-        assertFalse(JavaLSPClient.prefersProcessProvider("Linux"));
-    }
-
-    @Test
-    void providerOverrideCanForceEmbeddedOrProcess() throws Exception {
-        String previous = System.getProperty("swim.java.lsp.provider");
-        Path extension = tempDir.resolve("oracle.oracle-java");
-        Files.createDirectories(extension.resolve("nbcode/bin"));
-        System.setProperty("swim.oracle.java.extension.path", extension.toString());
-        try {
-            System.setProperty("swim.java.lsp.provider", "embedded");
-            assertInstanceOf(EmbeddedOracleModuleLayerLspProvider.class, instantiateProvider());
-
-            System.setProperty("swim.java.lsp.provider", "process");
-            assertInstanceOf(OracleNbcodeLspProvider.class, instantiateProvider());
-        } finally {
-            if (previous == null) {
-                System.clearProperty("swim.java.lsp.provider");
-            } else {
-                System.setProperty("swim.java.lsp.provider", previous);
-            }
-            System.clearProperty("swim.oracle.java.extension.path");
-        }
-    }
-
-    private static Object instantiateProvider() throws Exception {
-        var method = JavaLSPClient.class.getDeclaredMethod("createDefaultProvider");
-        method.setAccessible(true);
-        return method.invoke(null);
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
