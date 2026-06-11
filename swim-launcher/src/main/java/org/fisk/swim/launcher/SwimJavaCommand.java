@@ -10,10 +10,12 @@ final class SwimJavaCommand {
     private static final String SESSION_SERVER_MODULE =
             "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
     private static final String NATIVE_ACCESS_OPTION = "--enable-native-access=org.fisk.swim.session";
+    private static final List<String> APP_JVM_OPTIONS = List.of(
+            "-XX:+UseZGC",
+            "-Xmx1g");
     private static final List<String> SESSION_SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx4G",
-            "-XX:SoftMaxHeapSize=1G");
+            "-Xmx128M");
 
     private SwimJavaCommand() {
     }
@@ -36,9 +38,12 @@ final class SwimJavaCommand {
         var command = new ArrayList<String>();
         command.add(javaExecutable().toString());
         var jvmArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
-        command.addAll(nativeAccess ? sessionServerInheritedJvmArgs(jvmArgs) : jvmArgs);
         if (nativeAccess) {
+            command.addAll(inheritedNonMemoryPolicyJvmArgs(jvmArgs));
             command.addAll(SESSION_SERVER_JVM_OPTIONS);
+        } else {
+            command.addAll(inheritedNonMemoryPolicyJvmArgs(jvmArgs));
+            command.addAll(APP_JVM_OPTIONS);
         }
         if (nativeAccess && jvmArgs.stream().noneMatch(NATIVE_ACCESS_OPTION::equals)) {
             command.add(NATIVE_ACCESS_OPTION);
@@ -54,7 +59,7 @@ final class SwimJavaCommand {
         return List.copyOf(command);
     }
 
-    private static List<String> sessionServerInheritedJvmArgs(List<String> jvmArgs) {
+    private static List<String> inheritedNonMemoryPolicyJvmArgs(List<String> jvmArgs) {
         return jvmArgs.stream()
                 .filter(arg -> !arg.startsWith("-Xmx"))
                 .filter(arg -> !arg.startsWith("-XX:SoftMaxHeapSize="))

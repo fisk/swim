@@ -38,6 +38,9 @@ public class TerminalContext {
     private static final String DISABLE_BRACKETED_PASTE = "\u001b[?2004l";
     private static final String ENABLE_SGR_MOUSE = "\u001b[?1006h";
     private static final String DISABLE_SGR_MOUSE = "\u001b[?1006l";
+    private static final String EXIT_ALTERNATE_SCREEN = "\u001b[?1049l";
+    private static final String SHOW_CURSOR = "\u001b[?25h";
+    private static final String RESET_ATTRIBUTES = "\u001b[0m";
     static final String LAST_ROWS_PROPERTY = "swim.terminal.last_rows";
     static final String LAST_COLS_PROPERTY = "swim.terminal.last_cols";
     static final String FREEZE_SIZE_PROPERTY = "swim.terminal.freeze_size";
@@ -204,6 +207,7 @@ public class TerminalContext {
             _screen.stopScreen();
         } catch (IOException | IllegalStateException e) {
         }
+        restoreTerminalDisplayState();
         setCursorShape(TerminalCursorShape.BLOCK, true);
         try {
             restoreTerminalShortcuts(_terminalModeState);
@@ -214,6 +218,29 @@ public class TerminalContext {
                 _terminal.close();
             }
         } catch (IOException | IllegalStateException e) {
+        }
+    }
+
+    private void restoreTerminalDisplayState() {
+        if (_terminal == null) {
+            return;
+        }
+        try {
+            writeShutdownSequence(DISABLE_SGR_MOUSE);
+            writeShutdownSequence(DISABLE_BRACKETED_PASTE);
+            writeShutdownSequence(SHOW_CURSOR);
+            writeShutdownSequence(EXIT_ALTERNATE_SCREEN);
+            writeShutdownSequence(RESET_ATTRIBUTES);
+            _terminal.flush();
+        } catch (IOException | IllegalStateException e) {
+        }
+    }
+
+    private void writeShutdownSequence(String sequence) throws IOException {
+        if (_terminal instanceof TerminalControlWriter controlWriter) {
+            controlWriter.writeControlSequence(sequence);
+        } else {
+            _terminal.putString(sequence);
         }
     }
 

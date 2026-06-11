@@ -64,6 +64,7 @@ class TerminalContextTest {
 
         assertEquals(1, installed.stopCalls().get());
         assertEquals(1, installed.closeCalls().get());
+        assertTrue(installed.terminalWrites().contains("\u001b[?1049l"));
     }
 
     @Test
@@ -262,7 +263,14 @@ class TerminalContextTest {
         installed.context().setCursorShape(TerminalCursorShape.BAR);
         TerminalContext.shutdownInstance();
 
-        assertEquals(java.util.Arrays.asList("\u001b[6 q", "\u001b[2 q"), installed.terminalWrites());
+        assertEquals(java.util.Arrays.asList(
+                "\u001b[6 q",
+                "\u001b[?1006l",
+                "\u001b[?2004l",
+                "\u001b[?25h",
+                "\u001b[?1049l",
+                "\u001b[0m",
+                "\u001b[2 q"), installed.terminalWrites());
     }
 
     private static void assertServerStreamDecodesCommandEnter(String lineEnding) throws Exception {

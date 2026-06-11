@@ -192,15 +192,40 @@ class MainTest {
     }
 
     @Test
+    void launcherImageInstallerJlinkArgsUseSmallClientJvmPolicy() {
+        List<String> args = LauncherImageInstaller.jlinkArgs(Path.of("swim-launcher.jar"), Path.of("runtime-libs"),
+                Path.of("image"), List.of("--add-opens=java.base/java.net=ALL-UNNAMED"));
+
+        assertTrue(args.contains("--add-options=-XX:+UseZGC"));
+        assertTrue(args.contains("--add-options=-Xmx128M"));
+        assertFalse(args.contains("--add-options=-Xmx1g"));
+        assertFalse(args.contains("--add-options=-Xmx4G"));
+        assertFalse(args.contains("--add-options=-XX:SoftMaxHeapSize=1G"));
+        assertTrue(args.contains("--add-options=--add-opens=java.base/java.net=ALL-UNNAMED"));
+    }
+
+    @Test
     void sessionServerCommandUsesDedicatedJvmPolicy() {
         List<String> command = SwimJavaCommand.serverCommand(Path.of("server.sock"), Path.of("swim-root"));
 
         assertTrue(command.contains("-XX:+UseZGC"));
-        assertTrue(command.contains("-Xmx4G"));
-        assertTrue(command.contains("-XX:SoftMaxHeapSize=1G"));
+        assertTrue(command.contains("-Xmx128M"));
+        assertFalse(command.contains("-Xmx4G"));
+        assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
         assertTrue(command.contains("--enable-native-access=org.fisk.swim.session"));
         assertTrue(command.contains("org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain"));
         assertFalse(command.contains("--swim-server"));
+    }
+
+    @Test
+    void appCommandUsesLargerAppJvmPolicy() {
+        List<String> command = SwimJavaCommand.appCommand(List.of("file.txt"));
+
+        assertTrue(command.contains("-XX:+UseZGC"));
+        assertTrue(command.contains("-Xmx1g"));
+        assertFalse(command.contains("-Xmx128M"));
+        assertTrue(command.contains("--swim-app"));
+        assertTrue(command.contains("file.txt"));
     }
 
     @Test
@@ -227,11 +252,11 @@ class MainTest {
 
         String content = Files.readString(launcher);
         Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
-        assertTrue(content.startsWith("#!" + embeddedJava + " --source 25"));
+        assertTrue(content.startsWith("#!" + embeddedJava + " -XX:+UseZGC -Xmx128M --source 25"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx1g\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
-        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
         assertTrue(content.contains("clientWorkingDirectory()"));
         assertTrue(content.contains("clientEnvironment()"));

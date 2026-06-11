@@ -22,6 +22,16 @@ public final class LauncherImageInstaller {
     private static final Pattern DEFAULT_OPTIONS_PATTERN =
             Pattern.compile("(?m)^default_options=\"(.*)\"$");
     private static final String APP_NAME = "swim";
+    private static final List<String> CLIENT_JVM_OPTIONS = List.of(
+            "-XX:+UseZGC",
+            "-Xmx128M");
+    private static final List<String> APP_JVM_OPTIONS = List.of(
+            "-XX:+UseZGC",
+            "-Xmx1g");
+    private static final List<String> SERVER_JVM_OPTIONS = List.of(
+            "-XX:+UseZGC",
+            "-Xmx128M",
+            "--enable-native-access=org.fisk.swim.session");
     private static final List<String> NETBEANS_RUNTIME_MODULES = List.of(
             "java.base", "java.compiler", "java.datatransfer", "java.desktop", "java.instrument",
             "java.logging", "java.management", "java.management.rmi", "java.naming", "java.net.http",
@@ -73,6 +83,10 @@ public final class LauncherImageInstaller {
 
     static void runJlink(Path swimHome, Path launcherJar, Path runtimeLibs, Path output) throws IOException {
         List<String> launcherOptions = resolveNetBeansJvmArgs(swimHome);
+        runTool("jlink", jlinkArgs(launcherJar, runtimeLibs, output, launcherOptions));
+    }
+
+    static List<String> jlinkArgs(Path launcherJar, Path runtimeLibs, Path output, List<String> launcherOptions) {
         var args = new ArrayList<String>();
         args.add("--module-path");
         args.add(String.join(
@@ -84,7 +98,9 @@ public final class LauncherImageInstaller {
         args.add(String.join(",", collectJlinkModules(launcherOptions)));
         args.add("--launcher");
         args.add(APP_NAME + "=org.fisk.swim.launcher/org.fisk.swim.launcher.Main");
-        args.add("--add-options=-XX:+UseZGC");
+        for (String option : CLIENT_JVM_OPTIONS) {
+            args.add("--add-options=" + option);
+        }
         for (String option : launcherOptions) {
             args.add("--add-options=" + option);
         }
@@ -93,7 +109,7 @@ public final class LauncherImageInstaller {
         args.add("--no-man-pages");
         args.add("--output");
         args.add(output.toString());
-        runTool("jlink", args);
+        return List.copyOf(args);
     }
 
     static List<String> resolveNetBeansJvmArgs(Path swimHome) throws IOException {
@@ -246,18 +262,18 @@ public final class LauncherImageInstaller {
             return;
         }
         var appOptions = new ArrayList<String>();
-        appOptions.add("-XX:+UseZGC");
-        appOptions.add("-Xmx1g");
+        appOptions.addAll(APP_JVM_OPTIONS);
         appOptions.addAll(launcherOptions);
-        var serverOptions = List.of(
-                "-XX:+UseZGC",
-                "-Xmx4G",
-                "-XX:SoftMaxHeapSize=1G",
-                "--enable-native-access=org.fisk.swim.session");
+        var clientOptions = new ArrayList<String>();
+        clientOptions.addAll(CLIENT_JVM_OPTIONS);
         Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
-        Files.writeString(launcher, sourceLauncher(embeddedJava, javaListLiteral(appOptions),
-                javaListLiteral(serverOptions)), StandardCharsets.UTF_8);
+        Files.writeString(launcher, sourceLauncher(embeddedJava, javaShebangOptions(clientOptions),
+                javaListLiteral(appOptions), javaListLiteral(SERVER_JVM_OPTIONS)), StandardCharsets.UTF_8);
         launcher.toFile().setExecutable(true, false);
+    }
+
+    private static String javaShebangOptions(List<String> values) {
+        return values.stream().collect(java.util.stream.Collectors.joining(" "));
     }
 
     private static String javaListLiteral(List<String> values) {
@@ -270,9 +286,9 @@ public final class LauncherImageInstaller {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
-    private static String sourceLauncher(Path embeddedJava, String appOptions, String serverOptions) {
+    private static String sourceLauncher(Path embeddedJava, String clientOptions, String appOptions, String serverOptions) {
         return String.format("""
-                #!%s --source 25
+                #!%s %s --source 25
                 import java.io.*;
                 import java.net.*;
                 import java.nio.channels.*;
@@ -691,7 +707,7 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """, embeddedJava, appOptions, serverOptions);
+                """, embeddedJava, clientOptions, appOptions, serverOptions);
     }
 
     private static void runTool(String name, List<String> args) throws IOException {
