@@ -205,23 +205,67 @@ public class Buffer {
         if (_readOnly) {
             return;
         }
+        var mode = languageMode();
         adjustFoldsForInsert(position, str.length());
         _string.insert(position, str);
         _version++;
-        invalidateAttributedStringCache();
-        languageMode().didInsert(_bufferContext, position, str);
+        if (!updateAttributedStringCacheForInsert(mode, position, str)) {
+            invalidateAttributedStringCache();
+        }
+        mode.didInsert(_bufferContext, position, str);
     }
 
     public void rawRemove(int startPosition, int endPosition) {
         if (_readOnly) {
             return;
         }
+        var mode = languageMode();
         adjustFoldsForRemove(startPosition, endPosition);
         _string.delete(startPosition, endPosition);
         removeInvalidFolds();
         _version++;
-        invalidateAttributedStringCache();
-        languageMode().didRemove(_bufferContext, startPosition, endPosition);
+        if (!updateAttributedStringCacheForRemove(mode, startPosition, endPosition)) {
+            invalidateAttributedStringCache();
+        }
+        mode.didRemove(_bufferContext, startPosition, endPosition);
+    }
+
+    private boolean updateAttributedStringCacheForInsert(LanguageMode mode, int position, String str) {
+        if (str == null || str.isEmpty()
+                || mode == null
+                || !mode.canReuseAttributedStringCacheAfterEdit(_bufferContext)
+                || _attributedStringCache == null
+                || _attributedStringCacheVersion != _version - 1
+                || position < 0
+                || position > _attributedStringCache.length()) {
+            return false;
+        }
+        TextColor foreground = TextColor.ANSI.DEFAULT;
+        TextColor background = TextColor.ANSI.DEFAULT;
+        if (_attributedStringCache.length() > 0) {
+            int sourcePosition = Math.max(0, Math.min(position, _attributedStringCache.length() - 1));
+            var attributes = _attributedStringCache.attributesAt(sourcePosition);
+            foreground = attributes.foregroundColour();
+            background = attributes.backgroundColour();
+        }
+        _attributedStringCache.insert(str, position, foreground, background);
+        _attributedStringCacheVersion = _version;
+        return true;
+    }
+
+    private boolean updateAttributedStringCacheForRemove(LanguageMode mode, int startPosition, int endPosition) {
+        if (mode == null
+                || !mode.canReuseAttributedStringCacheAfterEdit(_bufferContext)
+                || _attributedStringCache == null
+                || _attributedStringCacheVersion != _version - 1
+                || startPosition < 0
+                || endPosition < startPosition
+                || endPosition > _attributedStringCache.length()) {
+            return false;
+        }
+        _attributedStringCache.remove(startPosition, endPosition);
+        _attributedStringCacheVersion = _version;
+        return true;
     }
 
     public void remove(int startPosition, int endPosition) {

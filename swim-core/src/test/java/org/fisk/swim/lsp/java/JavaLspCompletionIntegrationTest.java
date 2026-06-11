@@ -56,6 +56,7 @@ class JavaLspCompletionIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            waitForCompletionSession(client);
 
             assertTrue(client.hasCompletionSession());
 
@@ -85,6 +86,7 @@ class JavaLspCompletionIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            waitForCompletionSession(client);
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('('));
 
             assertEquals("alpha(", window.getBufferContext().getBuffer().getString());
@@ -108,6 +110,7 @@ class JavaLspCompletionIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            waitForCompletionSession(client);
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.pageDown());
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.enter());
 
@@ -132,6 +135,7 @@ class JavaLspCompletionIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            waitForCompletionSession(client);
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.enter());
 
             assertTrue(client.hasActiveSnippet());
@@ -154,6 +158,17 @@ class JavaLspCompletionIntegrationTest {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
         return path;
+    }
+
+    private static void waitForCompletionSession(JavaLSPClient client) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (client.hasCompletionSession()) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for completion session");
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

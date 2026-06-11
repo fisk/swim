@@ -22,6 +22,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.googlecode.lanterna.TextColor;
+
 class BufferTest {
     @TempDir
     Path tempDir;
@@ -316,6 +318,37 @@ class BufferTest {
     }
 
     @Test
+    void attributedStringCacheCanBeReusedAfterInsertWhenLanguageModeOptsIn() throws Exception {
+        var mode = new CountingLanguageMode(true, TextColor.ANSI.RED);
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            buffer.getAttributedString();
+
+            buffer.insert(2, "Z");
+            var attributed = buffer.getAttributedString();
+
+            assertEquals("alZpha", attributed.toString());
+            assertEquals(TextColor.ANSI.RED, attributed.getCharacter(2).getFragments().get(0).getAttributes().foregroundColour());
+            assertEquals(1, mode.colouringCount());
+        }
+    }
+
+    @Test
+    void attributedStringCacheCanBeReusedAfterRemoveWhenLanguageModeOptsIn() throws Exception {
+        var mode = new CountingLanguageMode(true, TextColor.ANSI.RED);
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            buffer.getAttributedString();
+
+            buffer.remove(1, 3);
+            var attributed = buffer.getAttributedString();
+
+            assertEquals("aha", attributed.toString());
+            assertEquals(1, mode.colouringCount());
+        }
+    }
+
+    @Test
     void attributedStringCacheCanBeInvalidatedForSemanticRefresh() throws Exception {
         var mode = new CountingLanguageMode();
         try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
@@ -373,6 +406,17 @@ class BufferTest {
     private static final class CountingLanguageMode implements LanguageMode {
         private int _colouringCount;
         private int _openCount;
+        private final boolean _reuseCacheAfterEdit;
+        private final TextColor _foregroundColour;
+
+        private CountingLanguageMode() {
+            this(false, null);
+        }
+
+        private CountingLanguageMode(boolean reuseCacheAfterEdit, TextColor foregroundColour) {
+            _reuseCacheAfterEdit = reuseCacheAfterEdit;
+            _foregroundColour = foregroundColour;
+        }
 
         int colouringCount() {
             return _colouringCount;
@@ -425,6 +469,14 @@ class BufferTest {
         @Override
         public void applyColouring(BufferContext bufferContext, AttributedString str) {
             _colouringCount++;
+            if (_foregroundColour != null) {
+                str.format(0, str.length(), _foregroundColour, TextColor.ANSI.DEFAULT);
+            }
+        }
+
+        @Override
+        public boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
+            return _reuseCacheAfterEdit;
         }
     }
 }

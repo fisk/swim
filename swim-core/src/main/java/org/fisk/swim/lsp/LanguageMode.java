@@ -17,6 +17,10 @@ public interface LanguageMode {
     TextDocumentItem getTextDocument(BufferContext bufferContext);
     void applyColouring(BufferContext bufferContext, AttributedString str);
 
+    default boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
+        return false;
+    }
+
     default String getIndentationString(BufferContext bufferContext) {
         return Settings.getIndentationString();
     }

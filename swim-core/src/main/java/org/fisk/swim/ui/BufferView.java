@@ -137,13 +137,16 @@ public class BufferView extends View {
         int textX = rect.getPoint().getX() + getTextColumnStart();
         for (var line : visibleLines) {
             for (var glyph : line.getGlyphs()) {
-                AttributedString character;
+                AttributedString character = null;
                 if (!glyph.isSynthetic()
                         && glyph.getPosition() >= 0
-                        && glyph.getPosition() < attrString.length()
-                        && attrString.getCharacter(glyph.getPosition()).toString().equals(glyph.getCharacter())) {
+                        && glyph.getPosition() < attrString.length()) {
                     character = attrString.getCharacter(glyph.getPosition());
-                } else {
+                    if (!character.toString().equals(glyph.getCharacter())) {
+                        character = null;
+                    }
+                }
+                if (character == null) {
                     character = AttributedString.create(glyph.getCharacter(), UiTheme.TEXT_MUTED, _backgroundColour);
                 }
                 character = applyDiagnosticBackground(glyph, character);

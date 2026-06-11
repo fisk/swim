@@ -1,6 +1,7 @@
 package org.fisk.swim.text;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -55,9 +56,14 @@ public class AttributedString {
         }
     }
 
+    public static record FormatRange(int start, int end, TextColor foregroundColour, TextColor backgroundColour) {
+    }
+
     private List<AttributedStringFragment> _fragments = new ArrayList<>();
     private List<ClickRange> _clickRanges = new ArrayList<>();
     private int _length = 0;
+    private int _characterLookupFragmentIndex = -1;
+    private int _characterLookupFragmentStart = 0;
     private static final Object CLICK_MAP_LOCK = new Object();
     private static final List<RenderedClickRange> _renderedClickRanges = new ArrayList<>();
 
@@ -84,6 +90,7 @@ public class AttributedString {
     public void append(String string, TextColor foregroundColour, TextColor backgroundColour) {
         _fragments.add(new AttributedStringFragment(string, new AttributeSet(foregroundColour, backgroundColour)));
         _length += string.length();
+        resetCharacterLookupCache();
     }
 
     public void append(AttributedString str) {
@@ -93,6 +100,7 @@ public class AttributedString {
         for (ClickRange range : str._clickRanges) {
             _clickRanges.add(range.shift(offset));
         }
+        resetCharacterLookupCache();
     }
 
     public AttributedString onClick(int start, int end, ClickHandler handler) {
@@ -197,6 +205,62 @@ public class AttributedString {
             }
             currentX += fragmentLength;
         }
+        resetCharacterLookupCache();
+    }
+
+    public void format(List<FormatRange> ranges) {
+        if (ranges == null || ranges.isEmpty() || _length == 0) {
+            return;
+        }
+        var validRanges = new ArrayList<FormatRange>();
+        for (var range : ranges) {
+            if (range == null) {
+                continue;
+            }
+            int start = Math.max(0, range.start());
+            int end = Math.min(_length, range.end());
+            if (end > start) {
+                validRanges.add(new FormatRange(start, end, range.foregroundColour(), range.backgroundColour()));
+            }
+        }
+        if (validRanges.isEmpty()) {
+            return;
+        }
+        var text = new StringBuilder(_length);
+        var foregroundColours = new TextColor[_length];
+        var backgroundColours = new TextColor[_length];
+        int currentX = 0;
+        for (var fragment : _fragments) {
+            int fragmentLength = fragment._string.length();
+            text.append(fragment._string);
+            Arrays.fill(foregroundColours, currentX, currentX + fragmentLength, fragment._attributes._foregroundColour);
+            Arrays.fill(backgroundColours, currentX, currentX + fragmentLength, fragment._attributes._backgroundColour);
+            currentX += fragmentLength;
+        }
+
+        for (var range : validRanges) {
+            Arrays.fill(foregroundColours, range.start(), range.end(), range.foregroundColour());
+            Arrays.fill(backgroundColours, range.start(), range.end(), range.backgroundColour());
+        }
+
+        _fragments = new ArrayList<>();
+        int start = 0;
+        String string = text.toString();
+        while (start < _length) {
+            TextColor foreground = foregroundColours[start];
+            TextColor background = backgroundColours[start];
+            int end = start + 1;
+            while (end < _length
+                    && Objects.equals(foreground, foregroundColours[end])
+                    && Objects.equals(background, backgroundColours[end])) {
+                ++end;
+            }
+            _fragments.add(new AttributedStringFragment(
+                    string.substring(start, end),
+                    new AttributeSet(foreground, background)));
+            start = end;
+        }
+        resetCharacterLookupCache();
     }
 
     private static Logger _log = LogFactory.createLog();
@@ -250,6 +314,7 @@ public class AttributedString {
         if (length != _length) {
             throw new RuntimeException("Unexpected length: " + length + ", expected: " + _length);
         }
+        resetCharacterLookupCache();
     }
     
     public void remove(int startPosition, int endPosition) {
@@ -279,20 +344,46 @@ public class AttributedString {
                 _clickRanges.add(removed);
             }
         }
+        resetCharacterLookupCache();
     }
     
     public AttributedString getCharacter(int position) {
+        AttributeSet attributes = attributesAt(position);
+        int fragmentStart = _characterLookupFragmentStart;
+        var fragment = _fragments.get(_characterLookupFragmentIndex);
+        return AttributedString.create(fragment._string.substring(position - fragmentStart, position - fragmentStart + 1),
+                attributes._foregroundColour, attributes._backgroundColour);
+    }
+
+    public AttributeSet attributesAt(int position) {
+        if (position < 0 || position >= _length) {
+            throw new RuntimeException("Invalid range at " + position);
+        }
+        int fragmentIndex = 0;
         int currentX = 0;
-        for (var fragment: _fragments) {
+        if (_characterLookupFragmentIndex >= 0
+                && _characterLookupFragmentIndex < _fragments.size()
+                && position >= _characterLookupFragmentStart) {
+            fragmentIndex = _characterLookupFragmentIndex;
+            currentX = _characterLookupFragmentStart;
+        }
+        for (int i = fragmentIndex; i < _fragments.size(); ++i) {
+            var fragment = _fragments.get(i);
             int fragmentLength = fragment._string.length();
             if (position >= currentX &&
                 position + 1 <= currentX + fragmentLength) {
-                return AttributedString.create(fragment._string.substring(position - currentX, position - currentX + 1), 
-                        fragment._attributes._foregroundColour, fragment._attributes._backgroundColour);
+                _characterLookupFragmentIndex = i;
+                _characterLookupFragmentStart = currentX;
+                return fragment._attributes;
             }
             currentX += fragmentLength;
         }
         throw new RuntimeException("Invalid range at " + currentX);
+    }
+
+    private void resetCharacterLookupCache() {
+        _characterLookupFragmentIndex = -1;
+        _characterLookupFragmentStart = 0;
     }
 
     public void drawAt(Point point, TextGraphics graphics) {

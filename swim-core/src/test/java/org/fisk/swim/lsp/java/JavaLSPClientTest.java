@@ -4,17 +4,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionOptions;
+import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensLegend;
 import org.eclipse.lsp4j.SemanticTokensParams;
@@ -142,6 +147,7 @@ class JavaLSPClientTest {
 
         var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
         client.applyColouring(context, first);
+        waitForSemanticCache(client, context.getBuffer().getURI().toString());
         var second = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
         client.applyColouring(context, second);
 
@@ -198,11 +204,305 @@ class JavaLSPClientTest {
 
         var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
         client.applyColouring(context, first);
+        waitForSemanticCache(client, context.getBuffer().getURI().toString());
         var second = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
         client.applyColouring(context, second);
 
         assertEquals(JavaLSPClient.SEMANTIC_TYPE, foregroundColour(second.getCharacter(6)));
         assertEquals(2, requests.get());
+    }
+
+    @Test
+    void applyColouringDoesNotWaitForSemanticTokens() throws Exception {
+        Path file = tempDir.resolve("SemanticBlocked.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var requests = new AtomicInteger();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+                requests.incrementAndGet();
+                return new CompletableFuture<>();
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
+        var semanticOptions = new SemanticTokensWithRegistrationOptions();
+        semanticOptions.setLegend(legend);
+        semanticOptions.setFull(Either.forLeft(true));
+        capabilities.setSemanticTokensProvider(semanticOptions);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+
+        var attributed = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+
+        assertTimeoutPreemptively(Duration.ofMillis(500), () -> client.applyColouring(context, attributed));
+    }
+
+    @Test
+    void handleInsertedCharacterDoesNotWaitForCompletionRequest() throws Exception {
+        Path file = tempDir.resolve("CompletionBlocked.java");
+        Files.writeString(file, "a");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        context.getBuffer().getCursor().setPosition(1);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var completionRequests = new AtomicInteger();
+        var completionGate = new CompletableFuture<Void>();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<Either<List<CompletionItem>, org.eclipse.lsp4j.CompletionList>> completion(
+                    CompletionParams params) {
+                completionRequests.incrementAndGet();
+                completionGate.join();
+                return CompletableFuture.completedFuture(Either.forLeft(List.of(new CompletionItem("alpha"))));
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        capabilities.setCompletionProvider(new CompletionOptions(Boolean.FALSE, List.of(".")));
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+
+        assertTimeoutPreemptively(Duration.ofMillis(500), () -> client.handleInsertedCharacter(context, 'a'));
+
+        waitForRequestCount(completionRequests, 1);
+        completionGate.complete(null);
+        client.shutdown();
+    }
+
+    @Test
+    void insertDoesNotWaitForSemanticRefreshInProgress() throws Exception {
+        Path file = tempDir.resolve("SemanticTypingBlocked.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var requests = new AtomicInteger();
+        var semanticResponse = new CompletableFuture<SemanticTokens>();
+        var didChangeRequests = new AtomicInteger();
+        var didChangeBatchSize = new AtomicInteger();
+        var didChangeVersion = new AtomicInteger();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+                didChangeRequests.incrementAndGet();
+                didChangeBatchSize.set(params.getContentChanges().size());
+                didChangeVersion.set(params.getTextDocument().getVersion());
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+                requests.incrementAndGet();
+                return semanticResponse;
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
+        var semanticOptions = new SemanticTokensWithRegistrationOptions();
+        semanticOptions.setLegend(legend);
+        semanticOptions.setFull(Either.forLeft(true));
+        capabilities.setSemanticTokensProvider(semanticOptions);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+        setNamedField(context.getBuffer(), org.fisk.swim.text.Buffer.class, "_languageMode", client);
+
+        var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, first);
+        waitForRequestCount(requests, 1);
+
+        int insertPosition = context.getBuffer().getString().indexOf("Demo") + 2;
+        assertTimeoutPreemptively(Duration.ofMillis(500), () -> {
+            context.getBuffer().insert(insertPosition, "X");
+            context.getBuffer().insert(insertPosition + 1, "Y");
+        });
+
+        semanticResponse.complete(new SemanticTokens(List.of(
+                0, 0, 5, 0, 0,
+                0, 6, 4, 1, 0)));
+        waitForRequestCount(didChangeRequests, 1);
+        assertEquals(1, didChangeRequests.get());
+        assertEquals(2, didChangeBatchSize.get());
+        assertEquals(context.getBuffer().getVersionedTextDocumentID().getVersion(), didChangeVersion.get());
+        client.shutdown();
+    }
+
+    @Test
+    void semanticRefreshAppliesMutationsRecordedAfterSnapshot() throws Exception {
+        Path file = tempDir.resolve("SemanticSnapshotMutation.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var requests = new AtomicInteger();
+        var firstResponse = new CompletableFuture<SemanticTokens>();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+                if (requests.getAndIncrement() == 0) {
+                    return firstResponse;
+                }
+                return new CompletableFuture<>();
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
+        var semanticOptions = new SemanticTokensWithRegistrationOptions();
+        semanticOptions.setLegend(legend);
+        semanticOptions.setFull(Either.forLeft(true));
+        capabilities.setSemanticTokensProvider(semanticOptions);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+        setNamedField(context.getBuffer(), org.fisk.swim.text.Buffer.class, "_languageMode", client);
+
+        var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, first);
+        waitForRequestCount(requests, 1);
+
+        int insertPosition = context.getBuffer().getString().indexOf("Demo") + 2;
+        context.getBuffer().insert(insertPosition, "X");
+        firstResponse.complete(new SemanticTokens(List.of(
+                0, 0, 5, 0, 0,
+                0, 6, 4, 1, 0)));
+        waitForSemanticCache(client, context.getBuffer().getURI().toString());
+
+        var coloured = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, coloured);
+
+        assertEquals(JavaLSPClient.SEMANTIC_TYPE, foregroundColour(coloured.getCharacter(insertPosition)));
+    }
+
+    @Test
+    void insertedTextUsesAdjacentCachedSemanticColourWhileRefreshIsPending() throws Exception {
+        Path file = tempDir.resolve("SemanticMutation.txt");
+        Files.writeString(file, "class Demo {}\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var requests = new AtomicInteger();
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<SemanticTokens> semanticTokensFull(SemanticTokensParams params) {
+                if (requests.getAndIncrement() == 0) {
+                    return CompletableFuture.completedFuture(new SemanticTokens(List.of(
+                            0, 0, 5, 0, 0,
+                            0, 6, 4, 1, 0)));
+                }
+                return new CompletableFuture<>();
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+
+        var capabilities = new ServerCapabilities();
+        var legend = new SemanticTokensLegend(List.of("keyword", "class"), List.of());
+        var semanticOptions = new SemanticTokensWithRegistrationOptions();
+        semanticOptions.setLegend(legend);
+        semanticOptions.setFull(Either.forLeft(true));
+        capabilities.setSemanticTokensProvider(semanticOptions);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", capabilities);
+        setNamedField(context.getBuffer(), org.fisk.swim.text.Buffer.class, "_languageMode", client);
+
+        var first = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, first);
+        waitForSemanticCache(client, context.getBuffer().getURI().toString());
+
+        int insertPosition = context.getBuffer().getString().indexOf("Demo") + 2;
+        context.getBuffer().insert(insertPosition, "X");
+        var coloured = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        client.applyColouring(context, coloured);
+
+        assertEquals(JavaLSPClient.SEMANTIC_TYPE, foregroundColour(coloured.getCharacter(insertPosition)));
     }
 
     @Test
@@ -600,6 +900,17 @@ class JavaLSPClientTest {
             Thread.sleep(50);
         }
         throw new AssertionError("Timed out waiting for semantic token cache for " + uri);
+    }
+
+    private static void waitForRequestCount(AtomicInteger requests, int expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (requests.get() >= expected) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for semantic token requests");
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

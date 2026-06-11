@@ -2,6 +2,7 @@ package org.fisk.swim.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -23,6 +24,32 @@ class AttributedStringTest {
         assertEquals(5, string.length());
         assertEquals(3, string.getFragments().size());
         assertEquals("h,ell,o", fragments(string));
+    }
+
+    @Test
+    void batchFormatAppliesRangesInOrder() {
+        var string = AttributedString.create("abcdef", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+
+        string.format(List.of(
+                new AttributedString.FormatRange(1, 5, TextColor.ANSI.RED, TextColor.ANSI.BLACK),
+                new AttributedString.FormatRange(3, 4, TextColor.ANSI.GREEN, TextColor.ANSI.BLACK)));
+
+        assertEquals("abcdef", string.toString());
+        assertEquals("a,bc,d,e,f", fragments(string));
+        assertEquals(TextColor.ANSI.RED, foreground(string, 1));
+        assertEquals(TextColor.ANSI.GREEN, foreground(string, 3));
+        assertEquals(TextColor.ANSI.RED, foreground(string, 4));
+    }
+
+    @Test
+    void batchFormatIgnoresEmptyRanges() {
+        var string = new AttributedString();
+        string.append("a", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+        string.append("b", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+
+        string.format(List.of(new AttributedString.FormatRange(1, 1, TextColor.ANSI.RED, TextColor.ANSI.BLACK)));
+
+        assertEquals("a,b", fragments(string));
     }
 
     @Test
@@ -121,5 +148,9 @@ class AttributedStringTest {
         return string.getFragments().stream()
                 .map(AttributedString.AttributedStringFragment::toString)
                 .collect(Collectors.joining(","));
+    }
+
+    private static TextColor foreground(AttributedString string, int position) {
+        return string.getCharacter(position).getFragments().get(0).getAttributes().foregroundColour();
     }
 }

@@ -16,6 +16,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -75,10 +78,12 @@ import org.eclipse.lsp4j.LocationLink;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentEdit;
+import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextDocumentSaveReason;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.UnregistrationParams;
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
 import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
@@ -114,6 +119,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private static final Logger _log = LogFactory.createLog();
     private static final Gson _gson = new Gson();
     private static final String DIAGNOSTIC_PROVIDER_ID = "java-lsp";
+    private static final long DID_CHANGE_BATCH_DELAY_MILLIS = 15;
     static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
     static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
     static final TextColor SEMANTIC_PARAMETER = TextColor.Factory.fromString("#ffb86c");
@@ -132,6 +138,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private boolean _enabled = true;
     private Throwable _startupError;
     private Thread _workerThread;
+    private final Object _lspRequestLock = new Object();
+    private ScheduledExecutorService _lspRequestExecutor;
 
     private LanguageServer _server;
     private ServerCapabilities _capabilities;
@@ -147,11 +155,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
     private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
-    private final Map<String, Integer> _semanticRefreshVersions = new HashMap<>();
+    private final Map<String, SemanticRefresh> _semanticRefreshes = new HashMap<>();
+    private final Map<String, PendingDocumentChanges> _pendingDocumentChanges = new HashMap<>();
     private final Object _completionLock = new Object();
     private final Object _definitionLock = new Object();
     private final Object _snippetLock = new Object();
 
+    private long _completionRequestGeneration;
     private JavaCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
     private JavaDefinitionMenuSession _definitionMenuSession;
@@ -162,6 +172,58 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private static record CachedSemanticTokens(int version, List<SemanticHighlight> highlights) {
+    }
+
+    private static record SemanticSnapshot(String uri, int version, String text) {
+    }
+
+    private interface SemanticMutation {
+        List<SemanticHighlight> apply(List<SemanticHighlight> highlights);
+    }
+
+    private static record InsertSemanticMutation(int position, int length) implements SemanticMutation {
+        @Override
+        public List<SemanticHighlight> apply(List<SemanticHighlight> highlights) {
+            return transformInsert(highlights, position, length);
+        }
+    }
+
+    private static record DeleteSemanticMutation(int start, int end) implements SemanticMutation {
+        @Override
+        public List<SemanticHighlight> apply(List<SemanticHighlight> highlights) {
+            return transformDelete(highlights, start, end);
+        }
+    }
+
+    private static final class SemanticRefresh {
+        private final SemanticSnapshot _snapshot;
+        private final List<SemanticMutation> _mutations = new ArrayList<>();
+        private int _attempts;
+        private boolean _reschedule;
+
+        private SemanticRefresh(SemanticSnapshot snapshot) {
+            _snapshot = snapshot;
+        }
+    }
+
+    private static final class PendingDocumentChanges {
+        private VersionedTextDocumentIdentifier _textDocument;
+        private final List<TextDocumentContentChangeEvent> _changes = new ArrayList<>();
+        private boolean _flushScheduled;
+    }
+
+    private static record CompletionRequestSnapshot(
+            BufferContext bufferContext,
+            String uri,
+            int version,
+            int cursor,
+            Position position,
+            String prefix,
+            int replacementStart,
+            int replacementEnd,
+            CompletionTriggerKind triggerKind,
+            String triggerCharacter,
+            long generation) {
     }
 
     public static JavaLSPClient getInstance() {
@@ -470,12 +532,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     private synchronized void clearSemanticTokensCache() {
         _semanticTokensCache.clear();
-        _semanticRefreshVersions.clear();
+        _semanticRefreshes.clear();
     }
 
     private synchronized void clearSemanticTokensCache(String uri) {
         if (uri != null) {
             _semanticTokensCache.remove(uri);
+            _semanticRefreshes.remove(uri);
         }
     }
 
@@ -770,7 +833,102 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
+    private ScheduledExecutorService lspRequestExecutor() {
+        synchronized (_lspRequestLock) {
+            if (_lspRequestExecutor == null || _lspRequestExecutor.isShutdown() || _lspRequestExecutor.isTerminated()) {
+                _lspRequestExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                    var thread = new Thread(r, "swim-java-lsp-requests");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+            }
+            return _lspRequestExecutor;
+        }
+    }
+
+    private void enqueueLspRequest(String description, Runnable action) {
+        try {
+            lspRequestExecutor().execute(() -> runLspRequest(description, action));
+        } catch (RejectedExecutionException e) {
+            _log.debug("Java LSP request queue rejected " + description, e);
+        }
+    }
+
+    private void scheduleLspRequest(String description, Runnable action, long delayMillis) {
+        try {
+            lspRequestExecutor().schedule(
+                    () -> runLspRequest(description, action),
+                    Math.max(0, delayMillis),
+                    TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            _log.debug("Java LSP request queue rejected " + description, e);
+        }
+    }
+
+    private void runLspRequest(String description, Runnable action) {
+        if (!_enabled || _server == null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (Throwable e) {
+            _log.debug("Java LSP request failed: " + description, e);
+        }
+    }
+
+    private void shutdownLspRequestExecutor() {
+        synchronized (_lspRequestLock) {
+            if (_lspRequestExecutor != null) {
+                _lspRequestExecutor.shutdownNow();
+                _lspRequestExecutor = null;
+            }
+        }
+    }
+
+    private void queueDocumentChanges(
+            String uri,
+            VersionedTextDocumentIdentifier textDocument,
+            List<TextDocumentContentChangeEvent> contentChanges) {
+        if (uri == null || textDocument == null || contentChanges == null || contentChanges.isEmpty()) {
+            return;
+        }
+        boolean scheduleFlush = false;
+        synchronized (this) {
+            var pending = _pendingDocumentChanges.computeIfAbsent(uri, ignored -> new PendingDocumentChanges());
+            pending._textDocument = textDocument;
+            pending._changes.addAll(contentChanges);
+            if (!pending._flushScheduled) {
+                pending._flushScheduled = true;
+                scheduleFlush = true;
+            }
+        }
+        if (scheduleFlush) {
+            scheduleLspRequest(
+                    "didChange",
+                    () -> flushPendingDocumentChanges(uri),
+                    DID_CHANGE_BATCH_DELAY_MILLIS);
+        }
+    }
+
+    private void flushPendingDocumentChanges(String uri) {
+        PendingDocumentChanges pending;
+        synchronized (this) {
+            pending = _pendingDocumentChanges.remove(uri);
+        }
+        if (pending == null || pending._changes.isEmpty()) {
+            return;
+        }
+        var params = new DidChangeTextDocumentParams();
+        params.setTextDocument(pending._textDocument);
+        params.setContentChanges(List.copyOf(pending._changes));
+        _server.getTextDocumentService().didChange(params);
+    }
+
     public synchronized void shutdown() {
+        shutdownLspRequestExecutor();
+        synchronized (this) {
+            _pendingDocumentChanges.clear();
+        }
         if (_shutdownHook != null) {
             try {
                 Runtime.getRuntime().removeShutdownHook(_shutdownHook);
@@ -921,7 +1079,19 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return Character.isJavaIdentifierPart(character) || isCompletionTriggerCharacter(character);
     }
 
-    private JavaCompletionSession requestCompletionSession(
+    private long nextCompletionRequestGeneration() {
+        synchronized (_completionLock) {
+            return ++_completionRequestGeneration;
+        }
+    }
+
+    private boolean isCurrentCompletionRequest(long generation) {
+        synchronized (_completionLock) {
+            return _completionRequestGeneration == generation;
+        }
+    }
+
+    private CompletionRequestSnapshot createCompletionRequestSnapshot(
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
             String triggerCharacter) {
@@ -929,10 +1099,31 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return null;
         }
         int cursor = bufferContext.getBuffer().getCursor().getPosition();
-        var params = new CompletionParams(
-                bufferContext.getBuffer().getTextDocumentID(),
+        String prefix = currentCompletionPrefix(bufferContext);
+        int replacementEnd = cursor;
+        int replacementStart = replacementEnd - prefix.length();
+        return new CompletionRequestSnapshot(
+                bufferContext,
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getVersionedTextDocumentID().getVersion(),
+                cursor,
                 getPosition(bufferContext, cursor),
-                new CompletionContext(triggerKind, triggerCharacter));
+                prefix,
+                replacementStart,
+                replacementEnd,
+                triggerKind,
+                triggerCharacter,
+                nextCompletionRequestGeneration());
+    }
+
+    private JavaCompletionSession requestCompletionSession(CompletionRequestSnapshot snapshot) {
+        if (!supportsCompletion() || !isCurrentCompletionRequest(snapshot.generation())) {
+            return null;
+        }
+        var params = new CompletionParams(
+                snapshot.bufferContext().getBuffer().getTextDocumentID(),
+                snapshot.position(),
+                new CompletionContext(snapshot.triggerKind(), snapshot.triggerCharacter()));
         try {
             var completion = _server.getTextDocumentService().completion(params).get(400, TimeUnit.MILLISECONDS);
             List<CompletionItem> items;
@@ -951,14 +1142,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             if (items == null || items.isEmpty()) {
                 return null;
             }
-            String prefix = currentCompletionPrefix(bufferContext);
-            int replacementEnd = bufferContext.getBuffer().getCursor().getPosition();
-            int replacementStart = replacementEnd - prefix.length();
             return JavaCompletionSession.create(
-                    bufferContext,
-                    prefix,
-                    replacementStart,
-                    replacementEnd,
+                    snapshot.bufferContext(),
+                    snapshot.prefix(),
+                    snapshot.replacementStart(),
+                    snapshot.replacementEnd(),
                     items,
                     incomplete);
         } catch (Exception e) {
@@ -985,16 +1173,52 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         window.getRootView().setNeedsRedraw();
     }
 
+    private void runOnEventThread(Runnable action) {
+        var eventThread = EventThread.getInstance();
+        if (eventThread.isAlive()) {
+            eventThread.enqueue(new RunnableEvent(action));
+        } else {
+            action.run();
+        }
+    }
+
+    private boolean completionRequestStillMatchesBuffer(CompletionRequestSnapshot snapshot) {
+        var buffer = snapshot.bufferContext().getBuffer();
+        return snapshot.uri().equals(buffer.getURI().toString())
+                && buffer.getVersionedTextDocumentID().getVersion() == snapshot.version()
+                && buffer.getCursor().getPosition() == snapshot.cursor();
+    }
+
+    private void applyCompletionResult(CompletionRequestSnapshot snapshot, JavaCompletionSession session) {
+        runOnEventThread(() -> {
+            if (!isCurrentCompletionRequest(snapshot.generation())
+                    || !completionRequestStillMatchesBuffer(snapshot)) {
+                return;
+            }
+            if (session == null) {
+                cancelCompletion();
+                return;
+            }
+            showCompletionSession(session);
+        });
+    }
+
     private void refreshCompletion(
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
             String triggerCharacter) {
-        JavaCompletionSession session = requestCompletionSession(bufferContext, triggerKind, triggerCharacter);
-        if (session == null) {
-            cancelCompletion();
+        CompletionRequestSnapshot snapshot = createCompletionRequestSnapshot(bufferContext, triggerKind, triggerCharacter);
+        if (snapshot == null) {
             return;
         }
-        showCompletionSession(session);
+        enqueueLspRequest("completion", () -> {
+            if (!isCurrentCompletionRequest(snapshot.generation())) {
+                return;
+            }
+            flushPendingDocumentChanges(snapshot.uri());
+            JavaCompletionSession session = requestCompletionSession(snapshot);
+            applyCompletionResult(snapshot, session);
+        });
     }
 
     @Override
@@ -1003,9 +1227,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return false;
         }
         refreshCompletion(bufferContext, CompletionTriggerKind.Invoked, null);
-        synchronized (_completionLock) {
-            return _completionSession != null;
-        }
+        return true;
     }
 
     @Override
@@ -1133,6 +1355,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     public boolean cancelCompletion() {
         CompletionPopupView popupView;
         synchronized (_completionLock) {
+            ++_completionRequestGeneration;
             if (_completionSession == null && _completionPopupView == null) {
                 return false;
             }
@@ -1832,10 +2055,14 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return;
         }
         _log.debug("willSave");
+        String uri = bufferContext.getBuffer().getURI().toString();
         var params = new WillSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setReason(TextDocumentSaveReason.Manual);
-        _server.getTextDocumentService().willSave(params);
+        enqueueLspRequest("willSave", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().willSave(params);
+        });
     }
 
     @Override
@@ -1843,12 +2070,15 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         _log.debug("didSave");
+        String uri = bufferContext.getBuffer().getURI().toString();
         var params = new DidSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setText(bufferContext.getBuffer().getString());
-        _server.getTextDocumentService().didSave(params);
+        enqueueLspRequest("didSave", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().didSave(params);
+        });
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -1861,7 +2091,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         _log.debug("didOpen");
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
-        _server.getTextDocumentService().didOpen(params);
+        enqueueLspRequest("didOpen", () -> _server.getTextDocumentService().didOpen(params));
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -1875,9 +2105,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         DiagnosticService.getInstance().clear(DIAGNOSTIC_PROVIDER_ID, bufferContext.getBuffer().getURI().toString());
         cancelCompletion();
         _log.debug("didClose");
+        String uri = bufferContext.getBuffer().getURI().toString();
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
-        _server.getTextDocumentService().didClose(params);
+        enqueueLspRequest("didClose", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().didClose(params);
+        });
         refreshDiagnosticsUi();
     }
 
@@ -1886,7 +2120,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        recordSemanticMutation(bufferContext, new InsertSemanticMutation(position, text == null ? 0 : text.length()));
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
         var lineIndex = line.getY();
@@ -1894,10 +2128,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         _log.debug("didInsert " + text + " at " + position + " (" + lineIndex + ", " + charIndex + ")");
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, 0, text));
-        var params = new DidChangeTextDocumentParams();
-        params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
-        params.setContentChanges(contentChanges);
-        _server.getTextDocumentService().didChange(params);
+        var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
+        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -1906,7 +2138,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        recordSemanticMutation(bufferContext, new DeleteSemanticMutation(startPosition, endPosition));
         _log.debug("didRemove at " + startPosition + ", " + endPosition);
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var startLine = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
@@ -1917,10 +2149,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var endIndex = endPosition - endLine.getStartPosition();
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, endPosition - startPosition, ""));
-        var params = new DidChangeTextDocumentParams();
-        params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
-        params.setContentChanges(contentChanges);
-        _server.getTextDocumentService().didChange(params);
+        var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
+        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -1967,9 +2197,17 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     static List<SemanticHighlight> decodeSemanticHighlights(BufferContext bufferContext, SemanticTokens tokens, SemanticTokensLegend legend) {
+        String text = bufferContext == null || bufferContext.getBuffer() == null
+                ? ""
+                : bufferContext.getBuffer().getString();
+        return decodeSemanticHighlights(text, tokens, legend);
+    }
+
+    static List<SemanticHighlight> decodeSemanticHighlights(String text, SemanticTokens tokens, SemanticTokensLegend legend) {
         if (tokens == null || tokens.getData() == null || legend == null || legend.getTokenTypes() == null) {
             return List.of();
         }
+        String snapshotText = text == null ? "" : text;
         var tokenTypes = legend.getTokenTypes();
         var tokenModifiers = legend.getTokenModifiers() == null ? List.<String>of() : legend.getTokenModifiers();
         var client = JavaLSPClient.getInstance();
@@ -1992,50 +2230,65 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             }
 
             try {
-                int start = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character);
-                int end = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character + length);
-                highlights.add(new SemanticHighlight(
-                        start,
-                        end,
-                        client.semanticTokenColor(tokenTypes.get(tokenTypeIndex), modifiersBitset, tokenModifiers)));
+                TextColor color = client.semanticTokenColor(tokenTypes.get(tokenTypeIndex), modifiersBitset, tokenModifiers);
+                if (TextColor.ANSI.DEFAULT.equals(color)) {
+                    continue;
+                }
+                int start = indexForLineCharacter(snapshotText, line, character);
+                int end = indexForLineCharacter(snapshotText, line, character + length);
+                highlights.add(new SemanticHighlight(start, end, color));
             } catch (RuntimeException e) {
                 _log.debug("Skipping invalid semantic token at line " + line + " character " + character, e);
             }
         }
-        return highlights;
+        return mergeSemanticHighlights(highlights);
     }
 
     private List<SemanticHighlight> getSemanticHighlights(BufferContext bufferContext) {
-        if (!supportsSemanticTokens()) {
+        if (!supportsSemanticTokens() || bufferContext == null || bufferContext.getBuffer() == null) {
             return List.of();
         }
         String uri = bufferContext.getBuffer().getURI().toString();
         int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+        List<SemanticHighlight> staleHighlights = List.of();
         synchronized (this) {
             var cached = _semanticTokensCache.get(uri);
             if (cached != null && cached.version() == version) {
                 return cached.highlights();
             }
-        }
-
-        List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
-
-        synchronized (this) {
-            if (highlights.isEmpty()) {
-                _semanticTokensCache.remove(uri);
-            } else {
-                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
+            if (cached != null) {
+                staleHighlights = cached.highlights();
             }
         }
-        return highlights;
+        scheduleSemanticHighlightRefresh(bufferContext);
+        return staleHighlights;
     }
 
-    private List<SemanticHighlight> fetchSemanticHighlights(BufferContext bufferContext) {
+    private static int indexForLineCharacter(String text, int targetLine, int targetCharacter) {
+        if (targetLine < 0 || targetCharacter < 0) {
+            throw new IllegalArgumentException("Negative semantic token position");
+        }
+        int lineStart = 0;
+        for (int line = 0; line < targetLine; line++) {
+            int nextLine = text.indexOf('\n', lineStart);
+            if (nextLine < 0) {
+                throw new IllegalArgumentException("Semantic token line outside snapshot");
+            }
+            lineStart = nextLine + 1;
+        }
+        int lineEnd = text.indexOf('\n', lineStart);
+        if (lineEnd < 0) {
+            lineEnd = text.length();
+        }
+        return Math.min(lineStart + targetCharacter, lineEnd);
+    }
+
+    private List<SemanticHighlight> fetchSemanticHighlights(SemanticSnapshot snapshot) {
         try {
             var legend = _capabilities.getSemanticTokensProvider().getLegend();
-            var params = new SemanticTokensParams(bufferContext.getBuffer().getTextDocumentID());
+            var params = new SemanticTokensParams(new TextDocumentIdentifier(snapshot.uri()));
             var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
-            return decodeSemanticHighlights(bufferContext, tokens, legend);
+            return decodeSemanticHighlights(snapshot.text(), tokens, legend);
         } catch (Exception e) {
             _log.debug("Semantic token request failed", e);
             return List.of();
@@ -2043,58 +2296,220 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private void scheduleSemanticHighlightRefresh(BufferContext bufferContext) {
-        if (!supportsSemanticTokens()) {
+        if (!supportsSemanticTokens() || bufferContext == null || bufferContext.getBuffer() == null) {
             return;
         }
         String uri = bufferContext.getBuffer().getURI().toString();
         int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
         synchronized (this) {
-            Integer queuedVersion = _semanticRefreshVersions.get(uri);
-            if (queuedVersion != null && queuedVersion >= version) {
+            var queuedRefresh = _semanticRefreshes.get(uri);
+            if (queuedRefresh != null) {
+                if (version > queuedRefresh._snapshot.version()) {
+                    queuedRefresh._reschedule = true;
+                }
                 return;
             }
-            _semanticRefreshVersions.put(uri, version);
         }
 
-        var thread = new Thread(() -> refreshSemanticHighlights(uri, version, bufferContext), "swim-java-semantic-refresh");
-        thread.setDaemon(true);
-        thread.start();
+        var snapshot = new SemanticSnapshot(uri, version, bufferContext.getBuffer().getString());
+        synchronized (this) {
+            var queuedRefresh = _semanticRefreshes.get(uri);
+            if (queuedRefresh != null) {
+                if (version > queuedRefresh._snapshot.version()) {
+                    queuedRefresh._reschedule = true;
+                }
+                return;
+            }
+            _semanticRefreshes.put(uri, new SemanticRefresh(snapshot));
+        }
+
+        enqueueSemanticRefresh(snapshot, bufferContext, 0);
     }
 
-    private void refreshSemanticHighlights(String uri, int version, BufferContext bufferContext) {
-        try {
-            for (int attempt = 0; attempt < 20; ++attempt) {
-                if (!supportsSemanticTokens()) {
+    private void enqueueSemanticRefresh(SemanticSnapshot snapshot, BufferContext bufferContext, long delayMillis) {
+        scheduleLspRequest(
+                "semantic token refresh",
+                () -> refreshSemanticHighlights(snapshot, bufferContext),
+                delayMillis);
+    }
+
+    private void refreshSemanticHighlights(SemanticSnapshot snapshot, BufferContext bufferContext) {
+        boolean reschedule = false;
+        if (!supportsSemanticTokens()) {
+            return;
+        }
+        synchronized (this) {
+            SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
+            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
+                return;
+            }
+            queuedRefresh._attempts++;
+        }
+
+        flushPendingDocumentChanges(snapshot.uri());
+        List<SemanticHighlight> highlights = fetchSemanticHighlights(snapshot);
+        if (!highlights.isEmpty()) {
+            synchronized (this) {
+                SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
+                if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
                     return;
+                }
+                for (var mutation : queuedRefresh._mutations) {
+                    highlights = mutation.apply(highlights);
                 }
                 int currentVersion = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-                synchronized (this) {
-                    Integer queuedVersion = _semanticRefreshVersions.get(uri);
-                    if (queuedVersion == null || queuedVersion != version || currentVersion != version) {
-                        return;
-                    }
-                }
-                List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
-                if (!highlights.isEmpty()) {
-                    synchronized (this) {
-                        _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
-                        _semanticRefreshVersions.remove(uri);
-                    }
-                    requestSemanticRedraw(bufferContext);
-                    return;
-                }
-                Thread.sleep(250);
+                _semanticTokensCache.put(snapshot.uri(), new CachedSemanticTokens(currentVersion, highlights));
+                reschedule = queuedRefresh._reschedule && currentVersion != snapshot.version();
+                _semanticRefreshes.remove(snapshot.uri());
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            synchronized (this) {
-                Integer queuedVersion = _semanticRefreshVersions.get(uri);
-                if (queuedVersion != null && queuedVersion == version) {
-                    _semanticRefreshVersions.remove(uri);
+            requestSemanticRedraw(bufferContext);
+            if (reschedule) {
+                scheduleSemanticHighlightRefresh(bufferContext);
+            }
+            return;
+        }
+
+        synchronized (this) {
+            SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
+            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
+                return;
+            }
+            if (queuedRefresh._attempts < 20) {
+                enqueueSemanticRefresh(snapshot, bufferContext, 250);
+                return;
+            }
+            reschedule = queuedRefresh._reschedule
+                    && bufferContext.getBuffer().getVersionedTextDocumentID().getVersion() != snapshot.version();
+            _semanticRefreshes.remove(snapshot.uri());
+        }
+        if (reschedule) {
+            scheduleSemanticHighlightRefresh(bufferContext);
+        }
+    }
+
+    private void recordSemanticMutation(BufferContext bufferContext, SemanticMutation mutation) {
+        if (bufferContext == null || bufferContext.getBuffer() == null || mutation == null) {
+            return;
+        }
+        String uri = bufferContext.getBuffer().getURI().toString();
+        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+        synchronized (this) {
+            var cached = _semanticTokensCache.get(uri);
+            if (cached != null) {
+                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, mutation.apply(cached.highlights())));
+            }
+            var queuedRefresh = _semanticRefreshes.get(uri);
+            if (queuedRefresh != null) {
+                queuedRefresh._mutations.add(mutation);
+                queuedRefresh._reschedule = true;
+            }
+        }
+    }
+
+    private static List<SemanticHighlight> transformInsert(List<SemanticHighlight> highlights, int position, int length) {
+        if (length <= 0 || highlights == null || highlights.isEmpty()) {
+            return highlights == null ? List.of() : highlights;
+        }
+        TextColor insertedColor = adjacentSemanticColour(highlights, position);
+        var transformed = new ArrayList<SemanticHighlight>(highlights.size() + 1);
+        for (var highlight : highlights) {
+            if (highlight.end() <= position) {
+                transformed.add(highlight);
+            } else if (highlight.start() >= position) {
+                transformed.add(new SemanticHighlight(
+                        highlight.start() + length,
+                        highlight.end() + length,
+                        highlight.foregroundColor()));
+            } else {
+                transformed.add(new SemanticHighlight(
+                        highlight.start(),
+                        highlight.end() + length,
+                        highlight.foregroundColor()));
+            }
+        }
+        if (insertedColor != null && !TextColor.ANSI.DEFAULT.equals(insertedColor)) {
+            transformed.add(new SemanticHighlight(position, position + length, insertedColor));
+        }
+        return mergeSemanticHighlights(transformed);
+    }
+
+    private static TextColor adjacentSemanticColour(List<SemanticHighlight> highlights, int position) {
+        TextColor left = null;
+        TextColor right = null;
+        for (var highlight : highlights) {
+            if (highlight.start() <= position && position < highlight.end()) {
+                return highlight.foregroundColor();
+            }
+            if (highlight.end() == position) {
+                left = highlight.foregroundColor();
+            }
+            if (highlight.start() == position && right == null) {
+                right = highlight.foregroundColor();
+            }
+        }
+        return left != null ? left : right;
+    }
+
+    private static List<SemanticHighlight> transformDelete(List<SemanticHighlight> highlights, int start, int end) {
+        if (end <= start || highlights == null || highlights.isEmpty()) {
+            return highlights == null ? List.of() : highlights;
+        }
+        int length = end - start;
+        var transformed = new ArrayList<SemanticHighlight>(highlights.size());
+        for (var highlight : highlights) {
+            if (highlight.end() <= start) {
+                transformed.add(highlight);
+            } else if (highlight.start() >= end) {
+                transformed.add(new SemanticHighlight(
+                        highlight.start() - length,
+                        highlight.end() - length,
+                        highlight.foregroundColor()));
+            } else {
+                int nextStart = highlight.start() < start ? highlight.start() : start;
+                int nextEnd = highlight.end() > end ? highlight.end() - length : start;
+                if (nextEnd > nextStart) {
+                    transformed.add(new SemanticHighlight(nextStart, nextEnd, highlight.foregroundColor()));
                 }
             }
         }
+        return mergeSemanticHighlights(transformed);
+    }
+
+    private static List<SemanticHighlight> mergeSemanticHighlights(List<SemanticHighlight> highlights) {
+        if (highlights == null || highlights.isEmpty()) {
+            return List.of();
+        }
+        var sorted = new ArrayList<SemanticHighlight>(highlights.size());
+        for (var highlight : highlights) {
+            if (highlight == null
+                    || highlight.end() <= highlight.start()
+                    || highlight.foregroundColor() == null
+                    || TextColor.ANSI.DEFAULT.equals(highlight.foregroundColor())) {
+                continue;
+            }
+            sorted.add(highlight);
+        }
+        if (sorted.isEmpty()) {
+            return List.of();
+        }
+        sorted.sort(Comparator.comparingInt(SemanticHighlight::start)
+                .thenComparingInt(SemanticHighlight::end));
+        var merged = new ArrayList<SemanticHighlight>(sorted.size());
+        for (var highlight : sorted) {
+            if (!merged.isEmpty()) {
+                int lastIndex = merged.size() - 1;
+                var last = merged.get(lastIndex);
+                if (last.foregroundColor().equals(highlight.foregroundColor()) && highlight.start() <= last.end()) {
+                    merged.set(lastIndex, new SemanticHighlight(
+                            last.start(),
+                            Math.max(last.end(), highlight.end()),
+                            last.foregroundColor()));
+                    continue;
+                }
+            }
+            merged.add(highlight);
+        }
+        return List.copyOf(merged);
     }
 
     private void requestSemanticRedraw(BufferContext bufferContext) {
@@ -2127,11 +2542,19 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             Pattern.MULTILINE);
     private static Pattern _javaKeywordTokenPattern = Pattern.compile("(\\bnull\\b)|(\\btrue\\b)|(\\bfalse\\b)", Pattern.MULTILINE);
 
-    private void formatToken(AttributedString str, String string, Pattern pattern, TextColor colour) {
+    private void collectTokenRanges(
+            List<AttributedString.FormatRange> ranges,
+            String string,
+            Pattern pattern,
+            TextColor colour) {
         try {
             var matcher = pattern.matcher(string);
             while (matcher.find()) {
-                str.format(matcher.start(), matcher.end(), colour, TextColor.ANSI.DEFAULT);
+                ranges.add(new AttributedString.FormatRange(
+                        matcher.start(),
+                        matcher.end(),
+                        colour,
+                        TextColor.ANSI.DEFAULT));
             }
         } catch (Throwable e) {
         }
@@ -2140,16 +2563,27 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     @Override
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         var string = str.toString();
-        formatToken(str, string, _javaKeywordPattern, TextColor.ANSI.RED);
-        formatToken(str, string, _javaKeywordTokenPattern, TextColor.ANSI.CYAN);
-        formatToken(str, string, _javaCharacterPattern, TextColor.ANSI.CYAN);
-        formatToken(str, string, _javaCommentPattern, TextColor.ANSI.GREEN);
-        formatToken(str, string, _javaStringPattern, TextColor.ANSI.CYAN);
+        var ranges = new ArrayList<AttributedString.FormatRange>();
+        collectTokenRanges(ranges, string, _javaKeywordPattern, TextColor.ANSI.RED);
+        collectTokenRanges(ranges, string, _javaKeywordTokenPattern, TextColor.ANSI.CYAN);
+        collectTokenRanges(ranges, string, _javaCharacterPattern, TextColor.ANSI.CYAN);
+        collectTokenRanges(ranges, string, _javaCommentPattern, TextColor.ANSI.GREEN);
+        collectTokenRanges(ranges, string, _javaStringPattern, TextColor.ANSI.CYAN);
         if (bufferContext != null) {
             for (var highlight : getSemanticHighlights(bufferContext)) {
-                str.format(highlight.start(), highlight.end(), highlight.foregroundColor(), TextColor.ANSI.DEFAULT);
+                ranges.add(new AttributedString.FormatRange(
+                        highlight.start(),
+                        highlight.end(),
+                        highlight.foregroundColor(),
+                        TextColor.ANSI.DEFAULT));
             }
         }
+        str.format(ranges);
+    }
+
+    @Override
+    public boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
+        return true;
     }
 
     private static Pattern _bracketPattern = Pattern.compile("\\{|\\}");
