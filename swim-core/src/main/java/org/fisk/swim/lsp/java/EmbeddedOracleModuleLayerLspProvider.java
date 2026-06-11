@@ -165,7 +165,6 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             AutoCloseable closeable = () -> {
                 try {
                     server.shutdown().get(5, TimeUnit.SECONDS);
-                    server.exit();
                 } catch (Exception e) {
                 }
                 closeBootstrapResources(finalLanguageServerSocket, serverSocket, bootThread, previousProperties);

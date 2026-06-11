@@ -15,11 +15,11 @@ import com.googlecode.lanterna.input.KeyType;
 class TextEventResponderTest {
     @Test
     void matchesCompleteMultiKeySequence() {
-        var responder = new TextEventResponder("<SPACE> e i", () -> {});
+        var responder = new TextEventResponder("<SPACE> l o", () -> {});
         var events = new KeyStrokes(List.of(
                 new KeyStroke(' ', false, false),
-                new KeyStroke('e', false, false),
-                new KeyStroke('i', false, false)));
+                new KeyStroke('l', false, false),
+                new KeyStroke('o', false, false)));
 
         var response = responder.processEvent(events);
 
@@ -29,17 +29,17 @@ class TextEventResponderTest {
 
     @Test
     void returnsMaybeForMatchingPrefix() {
-        var responder = new TextEventResponder("<SPACE> e i", () -> {});
+        var responder = new TextEventResponder("<SPACE> l o", () -> {});
         var events = new KeyStrokes(List.of(
                 new KeyStroke(' ', false, false),
-                new KeyStroke('e', false, false)));
+                new KeyStroke('l', false, false)));
 
         var response = responder.processEvent(events);
 
         assertEquals(Response.MAYBE, response);
         assertFalse(events.consumed());
         assertEquals(0, events.remaining());
-        assertEquals('e', events.current().getCharacter());
+        assertEquals('l', events.current().getCharacter());
     }
 
     @Test

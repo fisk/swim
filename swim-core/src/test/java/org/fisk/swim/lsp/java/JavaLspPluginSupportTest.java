@@ -30,7 +30,7 @@ class JavaLspPluginSupportTest {
     }
 
     @Test
-    void normalModeOOrganizesImportsForJavaBuffers() throws IOException {
+    void normalModeOKeepsDefaultOpenBelowForJavaBuffers() throws IOException {
         var client = new RecordingJavaLspClient();
         JavaLSPClient.installInstance(client);
         JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
@@ -40,8 +40,46 @@ class JavaLspPluginSupportTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('o'));
 
+            assertEquals(0, client.organizeImportsCalls);
+            assertEquals("class Demo {}\n\n", buffer.getString());
+            assertSame(window.getInputMode(), window.getCurrentMode());
+        }
+    }
+
+    @Test
+    void normalModeLeaderLOOrganizesImportsForJavaBuffers() throws IOException {
+        var client = new RecordingJavaLspClient();
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+        try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key('o'));
+
             assertEquals(1, client.organizeImportsCalls);
             assertEquals("class Demo {}\n", buffer.getString());
+            assertSame(window.getNormalMode(), window.getCurrentMode());
+        }
+    }
+
+    @Test
+    void normalModeLeaderLOWorksWhenJavaBindingsRegisterAfterModeConstruction() throws IOException {
+        var client = new RecordingJavaLspClient();
+        JavaLSPClient.installInstance(client);
+        try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
+            var window = harness.getWindow();
+
+            JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+            HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key('o'));
+
+            assertEquals(1, client.organizeImportsCalls);
             assertSame(window.getNormalMode(), window.getCurrentMode());
         }
     }

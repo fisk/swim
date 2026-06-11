@@ -2,6 +2,7 @@ package org.fisk.swim.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -328,6 +329,21 @@ class BufferTest {
         }
     }
 
+    @Test
+    void bufferRefreshesLanguageModeWhenPluginRegistersAfterOpen() throws Exception {
+        var buffer = createBufferContext("alpha", 80, "lateplugin").getBuffer();
+        buffer.getAttributedString();
+
+        var mode = new CountingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("lateplugin", "buffer-late-plugin", path -> mode)) {
+            assertSame(mode, buffer.getLanguageMode());
+            buffer.getAttributedString();
+
+            assertEquals(1, mode.openCount());
+            assertEquals(1, mode.colouringCount());
+        }
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }
@@ -356,9 +372,14 @@ class BufferTest {
 
     private static final class CountingLanguageMode implements LanguageMode {
         private int _colouringCount;
+        private int _openCount;
 
         int colouringCount() {
             return _colouringCount;
+        }
+
+        int openCount() {
+            return _openCount;
         }
 
         @Override
@@ -383,6 +404,7 @@ class BufferTest {
 
         @Override
         public void didOpen(BufferContext bufferContext) {
+            _openCount++;
         }
 
         @Override

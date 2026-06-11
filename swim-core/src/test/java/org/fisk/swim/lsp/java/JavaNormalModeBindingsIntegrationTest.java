@@ -36,7 +36,7 @@ class JavaNormalModeBindingsIntegrationTest {
     }
 
     @Test
-    void normalModeOBindingOrganizesImportsForJavaBuffer() throws Exception {
+    void normalModeLeaderLOBindingOrganizesImportsForJavaBuffer() throws Exception {
         Path project = tempDir.resolve("java-project");
         Path file = project.resolve("src/main/java/demo/Main.java");
         Files.createDirectories(file.getParent());
@@ -57,7 +57,10 @@ class JavaNormalModeBindingsIntegrationTest {
         try (var harness = HeadlessWindowHarness.create(file, 48, 10)) {
             var window = harness.getWindow();
 
-            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('o'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key('o'));
 
             assertEquals("""
                     package demo;

@@ -51,7 +51,7 @@ public final class JavaLspPluginSupport {
                 JavaLspPluginSupport::createLanguageMode));
         registerJavaKey(context, "g d", "go to definition", "lsp-definition", JavaLspPluginSupport::goToDefinition);
         registerJavaKey(context, "g r", "find references", "lsp-references", JavaLspPluginSupport::findReferences);
-        registerJavaKey(context, "<SPACE> e i", "organize imports", "lsp-organize-imports",
+        registerJavaKey(context, "<SPACE> l o", "organize imports", "lsp-organize-imports",
                 JavaLspPluginSupport::organizeImports);
         registerJavaKey(context, "<SPACE> e f", "make field final", "lsp-make-final",
                 JavaLspPluginSupport::makeFinal);
@@ -60,7 +60,6 @@ public final class JavaLspPluginSupport {
         registerJavaKey(context, "<SPACE> e s", "generate toString", "lsp-generate-tostring",
                 JavaLspPluginSupport::generateToString);
         registerJavaKey(context, "<SPACE> e l", "code lens", "lsp-code-lens", JavaLspPluginSupport::codeLens);
-        registerJavaKey(context, "o", "organize imports", "lsp-organize-imports", JavaLspPluginSupport::organizeImports);
     }
 
     public static LanguageMode createLanguageMode(Path path) {

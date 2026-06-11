@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
@@ -17,6 +18,7 @@ import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguageModeProvider;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Window;
@@ -94,6 +96,8 @@ public class Buffer {
     }
 
     private LanguageMode _languageMode;
+    private LanguagePluginRegistry.Registration _languageModeRegistration;
+    private boolean _open;
 
     public Buffer(Path path, BufferContext bufferContext) {
         this(path, bufferContext, null, false);
@@ -116,6 +120,7 @@ public class Buffer {
             setInitialString(initialText);
         }
         _readOnly = readOnly;
+        _languageModeRegistration = LanguagePluginRegistry.find(_path);
         _languageMode = LanguageModeProvider.getInstance().getLanguageMode(_path);
     }
 
@@ -132,7 +137,28 @@ public class Buffer {
     }
 
     public LanguageMode getLanguageMode() {
+        return languageMode();
+    }
+
+    private LanguageMode languageMode() {
+        refreshLanguageModeIfNeeded();
         return _languageMode;
+    }
+
+    private void refreshLanguageModeIfNeeded() {
+        var registration = LanguagePluginRegistry.find(_path);
+        if (Objects.equals(registration, _languageModeRegistration)) {
+            return;
+        }
+        var previous = _languageMode;
+        var next = LanguageModeProvider.getInstance().getLanguageMode(_path);
+        _languageModeRegistration = registration;
+        _languageMode = next;
+        invalidateAttributedStringCache();
+        if (_open) {
+            previous.didClose(_bufferContext);
+            next.didOpen(_bufferContext);
+        }
     }
 
     public void setReadOnly(boolean readOnly) {
@@ -183,7 +209,7 @@ public class Buffer {
         _string.insert(position, str);
         _version++;
         invalidateAttributedStringCache();
-        _languageMode.didInsert(_bufferContext, position, str);
+        languageMode().didInsert(_bufferContext, position, str);
     }
 
     public void rawRemove(int startPosition, int endPosition) {
@@ -195,7 +221,7 @@ public class Buffer {
         removeInvalidFolds();
         _version++;
         invalidateAttributedStringCache();
-        _languageMode.didRemove(_bufferContext, startPosition, endPosition);
+        languageMode().didRemove(_bufferContext, startPosition, endPosition);
     }
 
     public void remove(int startPosition, int endPosition) {
@@ -274,7 +300,8 @@ public class Buffer {
     }
 
     private String getIndentationString() {
-        return _languageMode == null ? Settings.getIndentationString() : _languageMode.getIndentationString(_bufferContext);
+        var mode = languageMode();
+        return mode == null ? Settings.getIndentationString() : mode.getIndentationString(_bufferContext);
     }
 
     private char previousNonWhitespaceOnLine(int position) {
@@ -1774,21 +1801,29 @@ public class Buffer {
         if (_path == null) {
             throw new IOException("Buffer has no file path");
         }
-        _languageMode.willSave(_bufferContext);
+        languageMode().willSave(_bufferContext);
         Files.writeString(_path, _string.toString());
         _savedVersion = _version;
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {
             window.getCommandView().setMessage("Saved file");
         }
-        _languageMode.didSave(_bufferContext);
+        languageMode().didSave(_bufferContext);
     }
 
     public void close() {
+        if (!_open) {
+            return;
+        }
+        _open = false;
         _languageMode.didClose(_bufferContext);
     }
 
     public void open() {
+        if (_open) {
+            return;
+        }
+        _open = true;
         _languageMode.didOpen(_bufferContext);
     }
 
@@ -1809,11 +1844,11 @@ public class Buffer {
     }
 
     public int getIndentationLevel() {
-        return _languageMode.getIndentationLevel(_bufferContext);
+        return languageMode().getIndentationLevel(_bufferContext);
     }
 
     public boolean isIndentationEnd(String character) {
-        return _languageMode.isIndentationEnd(_bufferContext, character);
+        return languageMode().isIndentationEnd(_bufferContext, character);
     }
 
     public void invalidateAttributedStringCache() {
@@ -1822,20 +1857,21 @@ public class Buffer {
     }
 
     public AttributedString getAttributedString() {
+        var mode = languageMode();
         int version = _version;
         AttributedString cached = _attributedStringCache;
         if (cached != null && _attributedStringCacheVersion == version) {
             return AttributedString.create(cached);
         }
         var str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-        _languageMode.applyColouring(_bufferContext, str);
+        mode.applyColouring(_bufferContext, str);
         _attributedStringCache = AttributedString.create(str);
         _attributedStringCacheVersion = version;
         return str;
     }
 
     public TextDocumentItem getTextDocument() {
-        return _languageMode.getTextDocument(_bufferContext);
+        return languageMode().getTextDocument(_bufferContext);
     }
 
     public TextDocumentIdentifier getTextDocumentID() {

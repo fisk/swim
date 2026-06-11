@@ -524,13 +524,59 @@ public class NormalMode extends Mode {
     }
 
     private void installPluginKeyBindings(Window window) {
-        List<SwimPluginKeyBindingDescriptor> bindings = SwimPluginKeyBindingRegistry.listBindings();
-        if (bindings.isEmpty()) {
-            return;
-        }
         var layer = _rootResponder.addLayer();
-        for (SwimPluginKeyBindingDescriptor binding : bindings) {
-            layer.addEventResponder(new PluginKeyBindingResponder(window, binding));
+        layer.addEventResponder(new PluginKeyBindingRegistryResponder(window));
+    }
+
+    private static final class PluginKeyBindingRegistryResponder implements EventResponder, KeyBindingHintProvider {
+        private final Window _window;
+        private PluginKeyBindingResponder _responder;
+
+        private PluginKeyBindingRegistryResponder(Window window) {
+            _window = window;
+        }
+
+        @Override
+        public Response processEvent(KeyStrokes events) {
+            _responder = null;
+            boolean maybe = false;
+            PluginKeyBindingResponder yes = null;
+            for (SwimPluginKeyBindingDescriptor binding : SwimPluginKeyBindingRegistry.listBindings()) {
+                var responder = new PluginKeyBindingResponder(_window, binding);
+                var response = responder.processEvent(new KeyStrokes(events));
+                if (response == Response.MAYBE) {
+                    maybe = true;
+                }
+                if (response == Response.YES) {
+                    yes = responder;
+                }
+            }
+            if (maybe) {
+                return Response.MAYBE;
+            }
+            if (yes != null) {
+                _responder = yes;
+                return Response.YES;
+            }
+            return Response.NO;
+        }
+
+        @Override
+        public void respond() {
+            if (_responder != null) {
+                _responder.respond();
+                _responder = null;
+            }
+        }
+
+        @Override
+        public List<KeyBindingHint> keyBindingHints() {
+            var hints = new ArrayList<KeyBindingHint>();
+            for (SwimPluginKeyBindingDescriptor binding : SwimPluginKeyBindingRegistry.listBindings()) {
+                var responder = new PluginKeyBindingResponder(_window, binding);
+                hints.addAll(responder.keyBindingHints());
+            }
+            return List.copyOf(hints);
         }
     }
 

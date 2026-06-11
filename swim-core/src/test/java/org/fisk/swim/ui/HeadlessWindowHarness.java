@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 
@@ -146,6 +147,22 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         var response = responder.processEvent(new KeyStrokes(List.of(keys)));
         if (response == Response.YES) {
             responder.respond();
+        }
+        return response;
+    }
+
+    public static Response dispatchIncrementally(EventResponder responder, KeyStroke... keys) {
+        var pending = new ArrayList<KeyStroke>();
+        Response response = Response.NO;
+        for (KeyStroke key : keys) {
+            pending.add(key);
+            response = responder.processEvent(new KeyStrokes(List.copyOf(pending)));
+            if (response == Response.YES) {
+                responder.respond();
+                pending.clear();
+            } else if (response == Response.NO) {
+                pending.clear();
+            }
         }
         return response;
     }
