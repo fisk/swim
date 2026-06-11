@@ -2,12 +2,14 @@ package org.fisk.swim.ui;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 
 import org.eclipse.lsp4j.DiagnosticSeverity;
+import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.lsp.DiagnosticService;
@@ -26,6 +28,7 @@ public class BufferView extends View {
     private static final Logger _log = LogFactory.createLog();
     private int _startLine = 0;
     private Integer _mouseSelectionAnchorPosition;
+    private Function<EventResponder, EventResponder> _firstResponderDecorator;
 
     public int getStartLine() {
         return _startLine;
@@ -74,6 +77,18 @@ public class BufferView extends View {
 
     BufferContext getBufferContext() {
         return _bufferContext;
+    }
+
+    public void setFirstResponderDecorator(Function<EventResponder, EventResponder> decorator) {
+        _firstResponderDecorator = decorator;
+    }
+
+    EventResponder firstResponderForMode(EventResponder mode) {
+        if (_firstResponderDecorator == null) {
+            return mode;
+        }
+        EventResponder decorated = _firstResponderDecorator.apply(mode);
+        return decorated == null ? mode : decorated;
     }
 
     @Override

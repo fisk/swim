@@ -11,8 +11,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailDraft;
 import org.fisk.swim.mail.MailMessageDetail;
@@ -55,6 +58,36 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         @Override
         public TerminalCursorShape getShape() {
             return TerminalCursorShape.BAR;
+        }
+    }
+
+    private final class MessageBufferResponder implements EventResponder {
+        private final EventResponder _delegate;
+        private boolean _close;
+
+        private MessageBufferResponder(EventResponder delegate) {
+            _delegate = delegate;
+        }
+
+        @Override
+        public Response processEvent(KeyStrokes events) {
+            _close = _mode == Mode.BROWSE
+                    && events.remaining() == 0
+                    && events.current().getKeyType() == KeyType.Escape;
+            if (_close) {
+                return Response.YES;
+            }
+            return _delegate == null ? Response.NO : _delegate.processEvent(events);
+        }
+
+        @Override
+        public void respond() {
+            if (_close) {
+                close();
+            } else if (_delegate != null) {
+                _delegate.respond();
+            }
+            _close = false;
         }
     }
 
@@ -208,6 +241,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
     void attachMessageBuffer(BufferContext messageBufferContext) {
         _messageBufferContext = messageBufferContext;
+        _messageBufferContext.getBufferView().setFirstResponderDecorator(MessageBufferResponder::new);
         updateMessageBuffer();
     }
 

@@ -375,16 +375,6 @@ public class Window implements Drawable {
         if (client == null) {
             return false;
         }
-        if (_currentWorkspace != null && _currentWorkspace._kind == WorkspaceKind.MAIL) {
-            moveWorkspaceToFront(_currentWorkspace);
-            activateView(_workspaceView);
-            return true;
-        }
-        for (var workspace : _workspaceHistory) {
-            if (workspace._kind == WorkspaceKind.MAIL) {
-                return activateWorkspace(workspace);
-            }
-        }
         return openMailWorkspace(client);
     }
 
@@ -636,7 +626,7 @@ public class Window implements Drawable {
         }
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_currentMode != null) {
-            _activeBufferView.setFirstResponder(_currentMode);
+            setActiveBufferFirstResponderForCurrentMode();
         }
         if (_rootView != null) {
             _rootView.setFirstResponder(_activeView);
@@ -678,7 +668,7 @@ public class Window implements Drawable {
         }
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_currentMode != null) {
-            _activeBufferView.setFirstResponder(_currentMode);
+            setActiveBufferFirstResponderForCurrentMode();
         }
         if (_rootView != null) {
             _rootView.setFirstResponder(_activeView);
@@ -941,7 +931,7 @@ public class Window implements Drawable {
                 if (bufferContext != previousBufferContext) {
                     rebuildModesForActiveBuffer(previousMode);
                 } else if (_currentMode != null) {
-                    bufferView.setFirstResponder(_currentMode);
+                    setActiveBufferFirstResponderForCurrentMode();
                 }
                 if (_modeLineView != null) {
                     _modeLineView.setNeedsRedraw();
@@ -1782,15 +1772,10 @@ public class Window implements Drawable {
         if (_currentWorkspace == null || _currentWorkspace._kind == WorkspaceKind.BUFFER) {
             return false;
         }
-        var closing = _currentWorkspace;
-        untrackWorkspace(closing);
-        closeWorkspaceViews(closing);
-        if (_workspaceHistory.isEmpty()) {
-            _currentWorkspace = null;
-            return openBufferWorkspace(null);
+        if (closeCurrentWorkspaceAndActivateFallback()) {
+            return true;
         }
-        _currentWorkspace = null;
-        return activateWorkspace(_workspaceHistory.getFirst());
+        return openBufferWorkspace(null);
     }
 
     public boolean hideCurrentWorkspaceWindow() {
@@ -1928,7 +1913,7 @@ public class Window implements Drawable {
         }
         _currentMode = mode;
         if (_activeBufferView != null) {
-            _activeBufferView.setFirstResponder(_currentMode);
+            setActiveBufferFirstResponderForCurrentMode();
         }
         if (_modeLineView != null) {
             _modeLineView.setNeedsRedraw();
@@ -4476,7 +4461,7 @@ public class Window implements Drawable {
         applyLayout(_size != null ? _size : _rootView.getBounds().getSize());
         if (_activeBufferView != null && _currentMode != null) {
             trackBufferContext(_bufferContext);
-            _activeBufferView.setFirstResponder(_currentMode);
+            setActiveBufferFirstResponderForCurrentMode();
         }
         if (_rootView != null && _activeView != null) {
             _rootView.setFirstResponder(_activeView);
@@ -4790,9 +4775,16 @@ public class Window implements Drawable {
         }
 
         if (_activeBufferView != null) {
-            _activeBufferView.setFirstResponder(_currentMode);
+            setActiveBufferFirstResponderForCurrentMode();
         }
         refreshChromeState();
+    }
+
+    private void setActiveBufferFirstResponderForCurrentMode() {
+        if (_activeBufferView == null) {
+            return;
+        }
+        _activeBufferView.setFirstResponder(_activeBufferView.firstResponderForMode(_currentMode));
     }
 
     private WorkspaceState captureCurrentWorkspace() {

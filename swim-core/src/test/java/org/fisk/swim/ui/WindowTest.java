@@ -246,6 +246,7 @@ class WindowTest {
 
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
             assertTrue(window.showMailWorkspace(new MailClient() {
                 @Override
                 public MailSnapshot snapshot() {
@@ -326,12 +327,13 @@ class WindowTest {
     }
 
     @Test
-    void mailWorkspaceIsReusedAcrossHideAndReopen() throws Exception {
-        Path path = tempDir.resolve("mail-reuse.txt");
+    void mailWorkspaceOpensNewTabInsteadOfReusingExistingMailWorkspace() throws Exception {
+        Path path = tempDir.resolve("mail-new-tab.txt");
         Files.writeString(path, "abc");
 
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
             MailClient client = new MailClient() {
                 @Override
                 public MailSnapshot snapshot() {
@@ -368,15 +370,13 @@ class WindowTest {
             HeadlessWindowHarness.dispatch(firstMailView, HeadlessWindowHarness.key('j'));
             assertEquals(1, HeadlessWindowHarness.getField(firstMailView, "_selectedIndex", Integer.class));
 
-            assertTrue(window.hideCurrentWorkspaceWindow());
-            assertFalse(window.isShowingMailWorkspace());
-
             assertTrue(window.showMailWorkspace(client));
             var secondSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
             var secondMailView = assertInstanceOf(MailPanelView.class, secondSplit.getFirstView());
 
-            assertSame(firstMailView, secondMailView);
-            assertEquals(1, HeadlessWindowHarness.getField(secondMailView, "_selectedIndex", Integer.class));
+            assertNotSame(firstMailView, secondMailView);
+            assertEquals(0, HeadlessWindowHarness.getField(secondMailView, "_selectedIndex", Integer.class));
+            assertEquals(2L, tabLabels(window).stream().filter("mail"::equals).count());
         }
     }
 
@@ -387,6 +387,7 @@ class WindowTest {
 
         try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
             var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
             MailClient client = new MailClient() {
                 @Override
                 public MailSnapshot snapshot() {
@@ -420,11 +421,108 @@ class WindowTest {
             HeadlessWindowHarness.dispatch(firstMailView, HeadlessWindowHarness.escape());
 
             assertFalse(window.isShowingMailWorkspace());
+            assertFalse(tabLabels(window).contains("mail"));
             assertTrue(window.showMailWorkspace(client));
             var secondSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
             var secondMailView = assertInstanceOf(MailPanelView.class, secondSplit.getFirstView());
 
             assertNotSame(firstMailView, secondMailView);
+        }
+    }
+
+    @Test
+    void mailWorkspaceEscapeDoesNotExitSwim() throws Exception {
+        Path path = tempDir.resolve("mail-close-no-exit.txt");
+        Files.writeString(path, "abc");
+        RecordingHost host = new RecordingHost();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            SwimRuntime.setHost(host);
+            var window = harness.getWindow();
+            assertTrue(window.showMailWorkspace(new MailClient() {
+                @Override
+                public MailSnapshot snapshot() {
+                    return new MailSnapshot(
+                            java.util.List.of(),
+                            java.util.List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                    "snippet", "2026-05-15T10:00:00Z", true, 1, java.util.List.of())),
+                            "");
+                }
+
+                @Override
+                public MailMessageDetail loadMessage(long threadId) {
+                    return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                            "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+                }
+
+                @Override
+                public void refresh() {
+                }
+
+                @Override
+                public Path getDataPath() {
+                    return tempDir.resolve(".swim/email");
+                }
+            }));
+
+            var mailView = assertInstanceOf(MailPanelView.class, ((SplitView) HeadlessWindowHarness.getField(window,
+                    "_workspaceView")).getFirstView());
+
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.escape());
+
+            assertEquals(0, host.exitRequests);
+            assertFalse(window.isShowingMailWorkspace());
+            assertFalse(tabLabels(window).contains("mail"));
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void mailMessageBufferEscapeRemovesMailTab() throws Exception {
+        Path path = tempDir.resolve("mail-message-close.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
+            assertTrue(window.showMailWorkspace(new MailClient() {
+                @Override
+                public MailSnapshot snapshot() {
+                    return new MailSnapshot(
+                            java.util.List.of(),
+                            java.util.List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                    "snippet", "2026-05-15T10:00:00Z", true, 1, java.util.List.of())),
+                            "");
+                }
+
+                @Override
+                public MailMessageDetail loadMessage(long threadId) {
+                    return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                            "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+                }
+
+                @Override
+                public void refresh() {
+                }
+
+                @Override
+                public Path getDataPath() {
+                    return tempDir.resolve(".swim/email");
+                }
+            }));
+
+            var mailView = assertInstanceOf(MailPanelView.class, ((SplitView) HeadlessWindowHarness.getField(window,
+                    "_workspaceView")).getFirstView());
+            HeadlessWindowHarness.dispatch(mailView, HeadlessWindowHarness.enter());
+            assertInstanceOf(BufferView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(window.getRootView(), HeadlessWindowHarness.escape());
+
+            assertFalse(window.isShowingMailWorkspace());
+            assertFalse(tabLabels(window).contains("mail"));
+            assertEquals(path.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
         }
     }
 
@@ -1165,6 +1263,48 @@ class WindowTest {
             assertTrue(window.switchToRecentWindow(2));
 
             assertEquals(2, leafViews(window).size());
+        }
+    }
+
+    @Test
+    void closingBufferTabActivatesMostRecentlyUsedRemainingTab() throws Exception {
+        Path first = writeFile("close-mru-first.txt", "one");
+        Path second = writeFile("close-mru-second.txt", "two");
+        Path third = writeFile("close-mru-third.txt", "three");
+
+        try (var harness = HeadlessWindowHarness.create(first, 40, 12)) {
+            var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, third));
+
+            window.closeCurrentTabOrExit();
+
+            assertEquals(second.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertFalse(tabLabels(window).contains("close-mru-third.txt"));
+        }
+    }
+
+    @Test
+    void closingWorkspaceTabActivatesMostRecentlyUsedRemainingTab() throws Exception {
+        Path first = writeFile("close-window-mru-first.txt", "one");
+        Path second = writeFile("close-window-mru-second.txt", "two");
+        Path directory = tempDir.resolve("close-window-mru-browse");
+        Files.createDirectories(directory);
+
+        try (var harness = HeadlessWindowHarness.create(first, 40, 12)) {
+            var window = harness.getWindow();
+            invoke(window, "initializeWorkspaceHistory", new Class<?>[0]);
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            assertTrue((Boolean) invoke(window, "openDirectoryWorkspace", new Class<?>[] { Path.class }, directory));
+            assertInstanceOf(DirectoryBrowserView.class, window.getActiveView());
+
+            assertTrue(window.closeCurrentWorkspaceWindow());
+
+            assertEquals(second.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertFalse(tabLabels(window).contains("Browse: close-window-mru-browse"));
         }
     }
 

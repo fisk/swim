@@ -15,11 +15,6 @@ public final class MailUiSupport {
         if (window == null) {
             return;
         }
-        if (window.isShowingMailWorkspace()) {
-            window.hideCurrentWorkspaceWindow();
-            return;
-        }
-
         MailClient client = MailPluginRegistry.getClient();
         if (client == null) {
             SwimRuntime.loadPlugin(PLUGIN_ID);
