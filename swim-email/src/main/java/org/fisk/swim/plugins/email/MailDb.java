@@ -372,17 +372,33 @@ final class MailDb {
     }
 
     static MailSnapshot loadSnapshot(Connection connection, EmailPaths paths, int threadLimit) throws SQLException {
+        return loadSnapshot(connection, paths, threadLimit, true);
+    }
+
+    static MailSnapshot loadSnapshotWithoutUnreadCounts(Connection connection, EmailPaths paths, int threadLimit)
+            throws SQLException {
+        return loadSnapshot(connection, paths, threadLimit, false);
+    }
+
+    private static MailSnapshot loadSnapshot(
+            Connection connection,
+            EmailPaths paths,
+            int threadLimit,
+            boolean includeAccountUnreadCounts) throws SQLException {
         List<MailAccountSummary> accounts = new ArrayList<>();
+        String unreadCountExpression = includeAccountUnreadCounts
+                ? "coalesce((select sum(t.unread_count) from threads t where t.account_id = a.id), 0)"
+                : "0";
         try (PreparedStatement statement = connection.prepareStatement("""
                 select a.id, a.name, a.protocol,
                     coalesce((select count(*) from threads t where t.account_id = a.id), 0),
-                    coalesce((select sum(t.unread_count) from threads t where t.account_id = a.id), 0),
+                    %s,
                     s.last_sync_at,
                     s.status_message
                 from accounts a
                 left join account_sync_state s on s.account_id = a.id
                 order by a.name
-                """);
+                """.formatted(unreadCountExpression));
                 ResultSet resultSet = statement.executeQuery()) {
             while (resultSet.next()) {
                 accounts.add(new MailAccountSummary(
@@ -400,6 +416,23 @@ final class MailDb {
 
         String status = statusMessage(accounts, threads, paths);
         return new MailSnapshot(accounts, threads, status);
+    }
+
+    static Map<String, Integer> loadAccountUnreadCounts(Connection connection) throws SQLException {
+        var counts = new LinkedHashMap<String, Integer>();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                select a.id, coalesce(sum(t.unread_count), 0)
+                from accounts a
+                left join threads t on t.account_id = a.id
+                group by a.id, a.name
+                order by a.name
+                """);
+                ResultSet resultSet = statement.executeQuery()) {
+            while (resultSet.next()) {
+                counts.put(resultSet.getString(1), resultSet.getInt(2));
+            }
+        }
+        return counts;
     }
 
     static MailThreadPage loadThreadPage(Connection connection, String query, int offset, int limit) throws SQLException {

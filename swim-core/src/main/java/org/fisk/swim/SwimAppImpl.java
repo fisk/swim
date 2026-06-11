@@ -7,8 +7,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
-import org.fisk.swim.mail.MailPluginRegistry;
-import org.fisk.swim.mail.MailUiSupport;
 import org.fisk.swim.event.IOThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
@@ -42,7 +40,6 @@ public class SwimAppImpl implements SwimApp {
         WindowAccess getWindow();
         EventThreadAccess getEventThread();
         Thread createIoThread();
-        void preloadMailPlugin(Path path);
         void shutdownEventThread();
         void shutdownTerminalContext();
         void clearRuntime();
@@ -134,22 +131,6 @@ public class SwimAppImpl implements SwimApp {
         }
 
         @Override
-        public void preloadMailPlugin(Path path) {
-            if (MailPluginRegistry.getClient() != null) {
-                return;
-            }
-            Thread thread = new Thread(() -> {
-                try {
-                    SwimRuntime.loadPlugin(MailUiSupport.PLUGIN_ID, path);
-                } catch (RuntimeException e) {
-                    LOG.debug("Background mail preload failed", e);
-                }
-            }, "mail-plugin-preload");
-            thread.setDaemon(true);
-            thread.start();
-        }
-
-        @Override
         public void shutdownEventThread() {
             EventThread.shutdownInstance();
         }
@@ -200,7 +181,6 @@ public class SwimAppImpl implements SwimApp {
         if (!_ioThread.isAlive()) {
             _ioThread.start();
         }
-        _bindings.preloadMailPlugin(launchPaths.isEmpty() ? null : launchPaths.getFirst());
         LOG.info("swim started");
     }
 

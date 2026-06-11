@@ -2,9 +2,11 @@ package org.fisk.swim.ui;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -60,6 +62,12 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     private static final int THREAD_PREFETCH_THRESHOLD = 10;
 
     private record ThreadRow(MailThreadSummary thread, MailMessageSummary message, String treePrefix) {
+    }
+
+    private record UnreadCounts(
+            Map<String, Integer> accountUnreadCounts,
+            Map<String, Integer> tagUnreadCounts,
+            int unsortedUnreadCount) {
     }
 
     private enum BrowsePane {
@@ -139,6 +147,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     private MailSnapshot _snapshot;
     private List<SidebarRow> _sidebarRows = List.of();
     private List<String> _availableTags = List.of();
+    private Map<String, Integer> _accountUnreadCounts = Map.of();
     private Map<String, Integer> _tagUnreadCounts = Map.of();
     private int _unsortedUnreadCount;
     private int _allUnreadCount;
@@ -179,6 +188,9 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _sendInFlight = new AtomicBoolean();
     private final AtomicLong _messageLoadGeneration = new AtomicLong();
+    private final AtomicLong _unreadCountLoadGeneration = new AtomicLong();
+    private final AtomicBoolean _unreadCountLoadInFlight = new AtomicBoolean();
+    private final AtomicBoolean _unreadCountLoadRequested = new AtomicBoolean();
     private String _lastActionableUrl;
     private boolean _awaitingOAuthCompletion;
     private long _oauthPollGeneration;
@@ -954,7 +966,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         _oauthPollGeneration++;
         var window = Window.getInstance();
         if (window != null) {
-            if (!window.hideCurrentWorkspaceWindow() && !window.closeCurrentWorkspaceWindow()) {
+            if (!window.closeCurrentWorkspaceWindow()) {
                 window.hidePanel();
             }
         }
@@ -1351,11 +1363,11 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void reload() {
-        _snapshot = _client.snapshot();
+        _snapshot = _client.snapshotWithoutUnreadCounts();
         _availableTags = _client.loadTagNames();
-        _tagUnreadCounts = _client.loadTagUnreadCounts();
-        _unsortedUnreadCount = _client.loadUnsortedUnreadCount();
-        _allUnreadCount = _snapshot.accounts().stream().mapToInt(org.fisk.swim.mail.MailAccountSummary::unreadCount).sum();
+        _accountUnreadCounts = retainAccountUnreadCounts(_accountUnreadCounts, _snapshot.accounts());
+        _tagUnreadCounts = retainTagUnreadCounts(_tagUnreadCounts, _availableTags);
+        _allUnreadCount = totalUnreadCount(_accountUnreadCounts);
         rebuildSidebarRows();
         String actionableStatus = actionableSnapshotStatus();
         _lastActionableUrl = firstUrl(actionableStatus);
@@ -1367,7 +1379,103 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         }
         reloadThreads();
         updateMessageBuffer();
+        loadUnreadCountsAsync();
         setNeedsRedraw();
+    }
+
+    private Map<String, Integer> retainAccountUnreadCounts(
+            Map<String, Integer> currentCounts,
+            List<org.fisk.swim.mail.MailAccountSummary> accounts) {
+        if (currentCounts == null || currentCounts.isEmpty() || accounts == null || accounts.isEmpty()) {
+            return Map.of();
+        }
+        var retained = new LinkedHashMap<String, Integer>();
+        for (var account : accounts) {
+            Integer count = currentCounts.get(account.id());
+            if (count != null) {
+                retained.put(account.id(), count);
+            }
+        }
+        return Map.copyOf(retained);
+    }
+
+    private Map<String, Integer> retainTagUnreadCounts(Map<String, Integer> currentCounts, List<String> tags) {
+        if (currentCounts == null || currentCounts.isEmpty() || tags == null || tags.isEmpty()) {
+            return Map.of();
+        }
+        var retained = new LinkedHashMap<String, Integer>();
+        for (String tag : tags) {
+            Integer count = currentCounts.get(tag);
+            if (count != null) {
+                retained.put(tag, count);
+            }
+        }
+        return Map.copyOf(retained);
+    }
+
+    private int totalUnreadCount(Map<String, Integer> counts) {
+        if (counts == null || counts.isEmpty()) {
+            return 0;
+        }
+        return counts.values().stream().mapToInt(count -> Math.max(0, count == null ? 0 : count)).sum();
+    }
+
+    private void loadUnreadCountsAsync() {
+        _unreadCountLoadGeneration.incrementAndGet();
+        _unreadCountLoadRequested.set(true);
+        startUnreadCountLoadIfNeeded();
+    }
+
+    private void startUnreadCountLoadIfNeeded() {
+        if (!_unreadCountLoadRequested.compareAndSet(true, false)) {
+            return;
+        }
+        if (!_unreadCountLoadInFlight.compareAndSet(false, true)) {
+            _unreadCountLoadRequested.set(true);
+            return;
+        }
+        long generation = _unreadCountLoadGeneration.get();
+        Thread worker = new Thread(() -> {
+            UnreadCounts counts = null;
+            RuntimeException failure = null;
+            try {
+                counts = new UnreadCounts(_client.loadAccountUnreadCounts(), _client.loadTagUnreadCounts(),
+                        _client.loadUnsortedUnreadCount());
+            } catch (RuntimeException e) {
+                failure = e;
+            }
+            UnreadCounts finalCounts = counts;
+            RuntimeException finalFailure = failure;
+            Runnable finish = () -> {
+                try {
+                    if (generation != _unreadCountLoadGeneration.get()) {
+                        return;
+                    }
+                    if (finalFailure == null && finalCounts != null) {
+                        _accountUnreadCounts = finalCounts.accountUnreadCounts() == null
+                                ? Map.of()
+                                : Map.copyOf(finalCounts.accountUnreadCounts());
+                        _allUnreadCount = totalUnreadCount(_accountUnreadCounts);
+                        _tagUnreadCounts = finalCounts.tagUnreadCounts() == null ? Map.of() : Map.copyOf(finalCounts.tagUnreadCounts());
+                        _unsortedUnreadCount = Math.max(0, finalCounts.unsortedUnreadCount());
+                        setNeedsRedraw();
+                    }
+                } finally {
+                    _unreadCountLoadInFlight.set(false);
+                    if (_unreadCountLoadRequested.get()) {
+                        startUnreadCountLoadIfNeeded();
+                    }
+                }
+            };
+            var eventThread = EventThread.getInstance();
+            if (eventThread.isAlive()) {
+                eventThread.enqueue(new RunnableEvent(finish));
+            } else {
+                finish.run();
+            }
+        }, "mail-unread-counts");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private boolean shouldAutoRefreshOnOpen() {
@@ -1390,6 +1498,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         ThreadRow row = rows.get(Math.max(0, Math.min(_selectedIndex, rows.size() - 1)));
         long threadId = row.thread().threadId();
         long messageId = row.message().messageId();
+        boolean loadThreadMessages = !_threadMessagesByThreadId.containsKey(threadId);
         long generation = _messageLoadGeneration.incrementAndGet();
         _selectedMessage = placeholderMessageDetail(row);
         updateMessageBuffer();
@@ -1399,22 +1508,44 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
             if (_messageLoadGeneration.get() != generation) {
                 return;
             }
-            MailMessageDetail loaded = messageId > 0L
-                    ? _client.loadMessageById(messageId)
+            List<MailMessageSummary> loadedThreadMessages = null;
+            long detailMessageId = messageId;
+            if (loadThreadMessages) {
+                List<MailMessageSummary> clientThreadMessages = _client.loadThreadMessages(threadId);
+                loadedThreadMessages = clientThreadMessages == null ? List.of() : List.copyOf(clientThreadMessages);
+            }
+            if (_messageLoadGeneration.get() != generation) {
+                return;
+            }
+            MailMessageDetail loaded = detailMessageId > 0L
+                    ? _client.loadMessageById(detailMessageId)
                     : _client.loadMessage(threadId);
+            List<MailMessageSummary> finalLoadedThreadMessages = loadedThreadMessages;
             Runnable applyLoadedMessage = () -> {
+                if (_messageLoadGeneration.get() != generation) {
+                    return;
+                }
+                if (finalLoadedThreadMessages != null && !_threadMessagesByThreadId.containsKey(threadId)) {
+                    _threadMessagesByThreadId.put(threadId, finalLoadedThreadMessages);
+                    rebuildThreadRows();
+                }
                 var visibleRows = visibleThreadRows();
-                if (_messageLoadGeneration.get() != generation || visibleRows.isEmpty()) {
+                if (visibleRows.isEmpty()) {
                     return;
                 }
-                int safeIndex = Math.max(0, Math.min(_selectedIndex, visibleRows.size() - 1));
+                if (loaded == null) {
+                    return;
+                }
+                long loadedMessageId = loaded.messageId();
+                int safeIndex = selectedRowIndex(visibleRows, threadId, loadedMessageId > 0L ? loadedMessageId : messageId);
+                if (safeIndex < 0) {
+                    return;
+                }
+                _selectedIndex = safeIndex;
                 ThreadRow safeRow = visibleRows.get(safeIndex);
-                if (safeRow.thread().threadId() != threadId || safeRow.message().messageId() != messageId) {
-                    return;
-                }
                 _selectedMessage = loaded;
                 updateMessageBuffer();
-                markDisplayedMessageRead(safeRow);
+                markDisplayedMessageRead(safeRow, loaded);
                 setNeedsRedraw();
             };
             var eventThread = EventThread.getInstance();
@@ -1426,6 +1557,23 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         }, "mail-load-message");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    private int selectedRowIndex(List<ThreadRow> rows, long threadId, long messageId) {
+        int firstThreadRow = -1;
+        for (int i = 0; i < rows.size(); i++) {
+            ThreadRow row = rows.get(i);
+            if (row.thread().threadId() != threadId) {
+                continue;
+            }
+            if (firstThreadRow < 0) {
+                firstThreadRow = i;
+            }
+            if (messageId > 0L && row.message().messageId() == messageId) {
+                return i;
+            }
+        }
+        return firstThreadRow;
     }
 
     private void reloadThreads() {
@@ -1489,13 +1637,6 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         var combined = new ArrayList<>(_threads);
         combined.addAll(page.threads());
         _threads = combined;
-        var threadIds = page.threads().stream()
-                .map(MailThreadSummary::threadId)
-                .toList();
-        _threadMessagesByThreadId.putAll(_client.loadThreadMessages(threadIds));
-        for (MailThreadSummary thread : page.threads()) {
-            _threadMessagesByThreadId.putIfAbsent(thread.threadId(), List.of());
-        }
         rebuildThreadRows();
         return true;
     }
@@ -1571,13 +1712,16 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         var childrenByParent = new LinkedHashMap<Long, List<MailMessageSummary>>();
         for (MailMessageSummary message : effectiveMessages) {
             long parentId = message.parentMessageId();
+            if (parentId == message.messageId()) {
+                parentId = 0L;
+            }
             if (parentId > 0L && !byId.containsKey(parentId)) {
                 parentId = 0L;
             }
             childrenByParent.computeIfAbsent(parentId, ignored -> new ArrayList<>()).add(message);
         }
         var rows = new ArrayList<ThreadRow>();
-        appendTreeRows(thread, childrenByParent, 0L, "", rows, effectiveMessages.size());
+        appendTreeRows(thread, childrenByParent, 0L, "", rows, new HashSet<>());
         return rows;
     }
 
@@ -1587,7 +1731,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
             long parentId,
             String ancestorPrefix,
             List<ThreadRow> rows,
-            int messageCount) {
+            Set<Long> ancestorIds) {
         List<MailMessageSummary> children = childrenByParent.get(parentId);
         if (children == null || children.isEmpty()) {
             return;
@@ -1609,13 +1753,17 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
             String nextPrefix = parentId == 0L
                     ? ""
                     : ancestorPrefix + (last ? "   " : "|  ");
-            appendTreeRows(thread, childrenByParent, child.messageId(), nextPrefix, rows, messageCount);
+            if (child.messageId() > 0L && !ancestorIds.contains(child.messageId())) {
+                var nextAncestorIds = new HashSet<>(ancestorIds);
+                nextAncestorIds.add(child.messageId());
+                appendTreeRows(thread, childrenByParent, child.messageId(), nextPrefix, rows, nextAncestorIds);
+            }
         }
     }
 
     private MailMessageSummary syntheticMessageSummary(MailThreadSummary thread) {
         return new MailMessageSummary(
-                0L,
+                -Math.max(1L, thread.threadId()),
                 thread.threadId(),
                 0L,
                 thread.subject(),
@@ -1638,16 +1786,19 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 row.thread().tags());
     }
 
-    private void markDisplayedMessageRead(ThreadRow row) {
+    private void markDisplayedMessageRead(ThreadRow row, MailMessageDetail detail) {
         if (row == null || row.message().messageId() <= 0L || (!row.message().unread() && !row.thread().unread())) {
-            return;
+            if (row == null || detail == null || detail.messageId() <= 0L || (!row.message().unread() && !row.thread().unread())) {
+                return;
+            }
         }
-        long messageId = row.message().messageId();
+        long messageId = row.message().messageId() > 0L ? row.message().messageId() : detail.messageId();
         long threadId = row.thread().threadId();
         String accountId = row.thread().accountId();
         List<String> tags = row.thread().tags();
         boolean addressedToAccount = row.thread().addressedToAccount();
         boolean wasUnread = row.message().unread() || row.thread().unread();
+        _unreadCountLoadGeneration.incrementAndGet();
         Thread worker = new Thread(() -> {
             _client.markMessageRead(messageId);
             var eventThread = EventThread.getInstance();
@@ -1674,7 +1825,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         var threadUnread = new HashMap<Long, Boolean>();
         for (ThreadRow row : _threadRows) {
             MailMessageSummary message = row.message();
-            if (message.messageId() == messageId && message.unread()) {
+            if ((message.messageId() == messageId || message.messageId() <= 0L && row.thread().threadId() == threadId)
+                    && message.unread()) {
                 message = new MailMessageSummary(
                         message.messageId(),
                         message.threadId(),
@@ -1719,12 +1871,27 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         }
         _threadRows = List.copyOf(finalRows);
         _allUnreadCount = Math.max(0, _allUnreadCount - 1);
+        _accountUnreadCounts = decrementUnreadCount(_accountUnreadCounts, accountId);
         _tagUnreadCounts = decrementTagUnreadCounts(_tagUnreadCounts, tags);
         if (tags.isEmpty() || addressedToAccount) {
             _unsortedUnreadCount = Math.max(0, _unsortedUnreadCount - 1);
         }
         _snapshot = new MailSnapshot(adjustAccountUnreadCounts(_snapshot.accounts(), accountId),
                 _snapshot.threads(), _snapshot.statusMessage());
+        setNeedsRedraw();
+        loadUnreadCountsAsync();
+    }
+
+    private static Map<String, Integer> decrementUnreadCount(Map<String, Integer> counts, String key) {
+        if (counts == null || counts.isEmpty() || key == null || key.isBlank()) {
+            return counts == null ? Map.of() : counts;
+        }
+        var updated = new LinkedHashMap<String, Integer>(counts);
+        Integer current = updated.get(key);
+        if (current != null && current > 0) {
+            updated.put(key, current - 1);
+        }
+        return Map.copyOf(updated);
     }
 
     private static Map<String, Integer> decrementTagUnreadCounts(Map<String, Integer> counts, List<String> tags) {
@@ -1877,11 +2044,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         int unread = switch (row.kind()) {
         case ALL -> _allUnreadCount;
         case UNSORTED -> _unsortedUnreadCount;
-        case ACCOUNT -> _snapshot.accounts().stream()
-                .filter(account -> row.value().equals(account.id()))
-                .mapToInt(org.fisk.swim.mail.MailAccountSummary::unreadCount)
-                .findFirst()
-                .orElse(0);
+        case ACCOUNT -> _accountUnreadCounts.getOrDefault(row.value(), 0);
         case TAG -> _tagUnreadCounts.getOrDefault(row.value(), 0);
         };
         var output = new AttributedString();
@@ -2012,7 +2175,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         if (_selectedMessage == null) {
             return "";
         }
-        if (_selectedMessage.messageId() == 0L) {
+        if (_selectedMessage.messageId() <= 0L) {
             return "";
         }
         String from = safe(_selectedMessage.from(), "");
@@ -2036,7 +2199,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private String replyAllRecipients() {
-        if (_selectedMessage == null || _selectedMessage.messageId() == 0L) {
+        if (_selectedMessage == null || _selectedMessage.messageId() <= 0L) {
             return "";
         }
         var recipients = new java.util.LinkedHashSet<String>();

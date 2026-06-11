@@ -53,7 +53,6 @@ class SwimAppImplTest {
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
-        assertEquals(path, bindings.preloadMailPluginPath);
 
         bindings.eventThread.fireOnEvent();
 
@@ -74,11 +73,10 @@ class SwimAppImplTest {
         assertEquals(List.of(true), bindings.window.updateCalls);
         assertTrue(bindings.eventThread.started);
         assertTrue(bindings.ioThread.started);
-        assertNull(bindings.preloadMailPluginPath);
     }
 
     @Test
-    void startPassesMultiplePathsToWindowAndPreloadsFirstPath() {
+    void startPassesMultiplePathsToWindow() {
         FakeBindings bindings = new FakeBindings();
         SwimAppImpl app = new SwimAppImpl(bindings);
         RecordingHost host = new RecordingHost();
@@ -90,7 +88,6 @@ class SwimAppImplTest {
         assertSame(host, bindings.host);
         assertEquals(first, bindings.createdWindowPath);
         assertEquals(List.of(first, second), bindings.createdWindowPaths);
-        assertEquals(first, bindings.preloadMailPluginPath);
         assertEquals(List.of(true), bindings.window.updateCalls);
     }
 
@@ -253,7 +250,6 @@ class SwimAppImplTest {
         private boolean shutdownEventThreadCalled;
         private boolean shutdownTerminalContextCalled;
         private boolean clearRuntimeCalled;
-        private Path preloadMailPluginPath;
 
         @Override
         public void setHost(SwimHost host) {
@@ -290,11 +286,6 @@ class SwimAppImplTest {
         @Override
         public Thread createIoThread() {
             return ioThread;
-        }
-
-        @Override
-        public void preloadMailPlugin(Path path) {
-            preloadMailPluginPath = path;
         }
 
         @Override

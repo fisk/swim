@@ -150,6 +150,50 @@ class H2MailClientTest {
     }
 
     @Test
+    void snapshotWithoutUnreadCountsLeavesAccountUnreadCountsForAsyncLoad() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        System.setProperty("user.home", tempDir.toString());
+        try {
+            EmailPaths paths = EmailPaths.fromUserHome();
+            Files.createDirectories(paths.emailHome());
+            Files.writeString(paths.accountsPath(), """
+                    {
+                      "accounts": [
+                        {
+                          "id": "work",
+                          "name": "Work",
+                          "protocol": "IMAP",
+                          "host": "mail.example.com",
+                          "port": 993,
+                          "username": "me@example.com",
+                          "passwordEnv": "SWIM_MAIL_PASSWORD"
+                        }
+                      ]
+                    }
+                    """);
+            Files.writeString(paths.tagRulesPath(), """
+                    { "rules": [] }
+                    """);
+
+            MailSyncAdapterFactory factory = account -> ignored -> MailSyncBatch.success(List.of(
+                    new ImportedMailMessage(
+                            "work", "INBOX", "<m1@example.com>", "thread:one",
+                            "Unread", "Boss", "boss@example.com", "me@example.com",
+                            List.of(new ImportedMailRecipient("TO", "Me", "me@example.com")),
+                            "2026-05-13T08:30:00Z", "2026-05-13T08:31:00Z",
+                            "Please review", "Please review", true)), "1 messages");
+
+            try (var client = new H2MailClient(paths, factory)) {
+                assertEquals(1, client.snapshot().accounts().getFirst().unreadCount());
+                assertEquals(0, client.snapshotWithoutUnreadCounts().accounts().getFirst().unreadCount());
+                assertEquals(1, client.loadAccountUnreadCounts().get("work"));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void loadTagNamesPreservesConfigFileOrder() throws Exception {
         String originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", tempDir.toString());

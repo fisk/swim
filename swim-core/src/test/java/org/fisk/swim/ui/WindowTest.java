@@ -381,6 +381,54 @@ class WindowTest {
     }
 
     @Test
+    void mailWorkspaceEscapeClosesInsteadOfHidingForReuse() throws Exception {
+        Path path = tempDir.resolve("mail-close.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            MailClient client = new MailClient() {
+                @Override
+                public MailSnapshot snapshot() {
+                    return new MailSnapshot(
+                            java.util.List.of(new org.fisk.swim.mail.MailAccountSummary("work", "Work", "IMAP", 1, 1, "", "")),
+                            java.util.List.of(new MailThreadSummary(1L, "work", "Subject", "sender@example.com",
+                                    "snippet", "2026-05-15T10:00:00Z", true, 1, java.util.List.of())),
+                            "");
+                }
+
+                @Override
+                public MailMessageDetail loadMessage(long threadId) {
+                    return new MailMessageDetail(1L, threadId, "Subject", "sender@example.com",
+                            "dest@example.com", "2026-05-15T10:00:00Z", "body", java.util.List.of());
+                }
+
+                @Override
+                public void refresh() {
+                }
+
+                @Override
+                public Path getDataPath() {
+                    return tempDir.resolve(".swim/email");
+                }
+            };
+
+            assertTrue(window.showMailWorkspace(client));
+            var firstSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            var firstMailView = assertInstanceOf(MailPanelView.class, firstSplit.getFirstView());
+
+            HeadlessWindowHarness.dispatch(firstMailView, HeadlessWindowHarness.escape());
+
+            assertFalse(window.isShowingMailWorkspace());
+            assertTrue(window.showMailWorkspace(client));
+            var secondSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
+            var secondMailView = assertInstanceOf(MailPanelView.class, secondSplit.getFirstView());
+
+            assertNotSame(firstMailView, secondMailView);
+        }
+    }
+
+    @Test
     void slackWorkspacePlacesMessageViewerBelowSlackPanelAndComposeSendsFromBuffer() throws Exception {
         Path path = tempDir.resolve("slack-layout.txt");
         Files.writeString(path, "abc");

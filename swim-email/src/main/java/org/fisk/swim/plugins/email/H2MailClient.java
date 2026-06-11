@@ -102,6 +102,20 @@ final class H2MailClient implements MailClient {
     }
 
     @Override
+    public MailSnapshot snapshotWithoutUnreadCounts() {
+        synchronized (_readLock) {
+            try {
+                return augmentSnapshotWithPendingAuth(MailDb.loadSnapshotWithoutUnreadCounts(_readConnection, _paths,
+                        SNAPSHOT_THREAD_LIMIT));
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail snapshot", e);
+                return new MailSnapshot(java.util.List.of(), java.util.List.of(),
+                        "Failed to load mail from " + _paths.databaseFilePath() + ": " + e.getMessage());
+            }
+        }
+    }
+
+    @Override
     public MailThreadPage loadThreads(String query, int offset, int limit) {
         return loadThreads(query, offset, limit, MailThreadFilter.all());
     }
@@ -171,6 +185,18 @@ final class H2MailClient implements MailClient {
                 return MailDb.loadTagUnreadCounts(_readConnection);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail tag unread counts", e);
+                return Map.of();
+            }
+        }
+    }
+
+    @Override
+    public Map<String, Integer> loadAccountUnreadCounts() {
+        synchronized (_readLock) {
+            try {
+                return MailDb.loadAccountUnreadCounts(_readConnection);
+            } catch (SQLException e) {
+                LOG.error("Failed to load mail account unread counts", e);
                 return Map.of();
             }
         }

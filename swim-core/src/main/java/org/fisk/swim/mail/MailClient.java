@@ -11,6 +11,22 @@ import java.util.Map;
 public interface MailClient extends AutoCloseable {
     MailSnapshot snapshot();
 
+    default MailSnapshot snapshotWithoutUnreadCounts() {
+        MailSnapshot snapshot = snapshot();
+        var accounts = new ArrayList<MailAccountSummary>();
+        for (MailAccountSummary account : snapshot.accounts()) {
+            accounts.add(new MailAccountSummary(
+                    account.id(),
+                    account.name(),
+                    account.protocol(),
+                    account.threadCount(),
+                    0,
+                    account.lastSyncAt(),
+                    account.syncStatus()));
+        }
+        return new MailSnapshot(accounts, snapshot.threads(), snapshot.statusMessage());
+    }
+
     MailMessageDetail loadMessage(long threadId);
 
     default MailMessageDetail loadMessageById(long messageId) {
@@ -58,6 +74,14 @@ public interface MailClient extends AutoCloseable {
 
     default Map<String, Integer> loadTagUnreadCounts() {
         return Map.of();
+    }
+
+    default Map<String, Integer> loadAccountUnreadCounts() {
+        var counts = new LinkedHashMap<String, Integer>();
+        for (MailAccountSummary account : snapshot().accounts()) {
+            counts.put(account.id(), account.unreadCount());
+        }
+        return counts;
     }
 
     default int loadUnsortedUnreadCount() {
