@@ -15,6 +15,7 @@ import com.googlecode.lanterna.TextCharacter;
 import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.screen.Screen;
+import com.googlecode.lanterna.screen.Screen.RefreshType;
 import com.googlecode.lanterna.terminal.Terminal;
 
 public final class TerminalContextTestSupport {
@@ -32,7 +33,9 @@ public final class TerminalContextTestSupport {
     public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure, Supplier<TerminalSize> terminalSizeSupplier) {
         var stopCalls = new AtomicInteger();
         var closeCalls = new AtomicInteger();
+        var clearCalls = new AtomicInteger();
         var drawCalls = new CopyOnWriteArrayList<DrawCall>();
+        var refreshCalls = new CopyOnWriteArrayList<RefreshType>();
         var terminalWrites = new CopyOnWriteArrayList<String>();
         var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
@@ -99,11 +102,19 @@ public final class TerminalContextTestSupport {
                         return graphics;
                     case "doResizeIfNecessary":
                         return null;
+                    case "clear":
+                        clearCalls.incrementAndGet();
+                        return null;
                     case "getCursorPosition":
                         return cursorPosition.get();
                     case "setCursorPosition":
                         if (args != null && args.length == 1 && args[0] instanceof TerminalPosition position) {
                             cursorPosition.set(position);
+                        }
+                        return null;
+                    case "refresh":
+                        if (args != null && args.length == 1 && args[0] instanceof RefreshType refreshType) {
+                            refreshCalls.add(refreshType);
                         }
                         return null;
                     case "getFrontCharacter":
@@ -125,7 +136,7 @@ public final class TerminalContextTestSupport {
                 });
         var context = new TerminalContext(screen, terminal, graphics, terminalSizeSupplier);
         setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls, closeCalls, drawCalls, cursorPosition, terminalWrites);
+        return new InstalledTerminalContext(context, stopCalls, closeCalls, clearCalls, drawCalls, refreshCalls, cursorPosition, terminalWrites);
     }
 
     private static void setInstance(TerminalContext context) {
@@ -170,7 +181,9 @@ public final class TerminalContextTestSupport {
             TerminalContext context,
             AtomicInteger stopCalls,
             AtomicInteger closeCalls,
+            AtomicInteger clearCalls,
             List<DrawCall> drawCalls,
+            List<RefreshType> refreshCalls,
             AtomicReference<TerminalPosition> cursorPosition,
             List<String> terminalWrites) {
     }

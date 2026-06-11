@@ -245,6 +245,7 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
+        boolean reloading = SwimRuntime.isReloading();
         Thread ioThread = _ioThread;
         if (_ioThread != null) {
             _ioThread.interrupt();
@@ -255,7 +256,10 @@ public class SwimAppImpl implements SwimApp {
         if (window != null) {
             window.dispose();
         }
-        _bindings.shutdownTerminalContext();
+        // Keep the alternate screen active while the replacement app starts.
+        if (!reloading) {
+            _bindings.shutdownTerminalContext();
+        }
         if (ioThread != null && Thread.currentThread() != ioThread) {
             try {
                 ioThread.join(2000);

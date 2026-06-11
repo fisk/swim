@@ -1,6 +1,7 @@
 package org.fisk.swim;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -156,7 +157,7 @@ class SwimAppImplTest {
     }
 
     @Test
-    void closeDuringReloadStillResetsIoAndTerminalForFreshStartup() {
+    void closeDuringReloadKeepsTerminalContextAliveForSeamlessRestart() {
         FakeBindings bindings = new FakeBindings();
         SwimAppImpl app = new SwimAppImpl(bindings);
         RecordingHost host = new RecordingHost();
@@ -169,7 +170,7 @@ class SwimAppImplTest {
         assertTrue(bindings.window.disposed);
         assertTrue(bindings.clearRuntimeCalled);
         assertTrue(bindings.ioThread.interrupted);
-        assertTrue(bindings.shutdownTerminalContextCalled);
+        assertFalse(bindings.shutdownTerminalContextCalled);
     }
 
     @Test

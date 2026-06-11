@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.KeyStrokes;
@@ -29,8 +30,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import com.googlecode.lanterna.TerminalPosition;
+import com.googlecode.lanterna.TerminalSize;
 import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
+import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 class WindowTest {
     @TempDir
@@ -205,6 +208,32 @@ class WindowTest {
             window.getKeyMenuView().setBounds(Rect.create(0, 0, 80, 1));
 
             assertTrue((Boolean) invoke(window, "keyMenuNeedsRelayout", new Class<?>[] { Size.class }, Size.create(80, 12)));
+        }
+    }
+
+    @Test
+    void terminalResizeRelayoutsAndRedrawsEvenWhenViewTreeIsClean() throws Exception {
+        var terminalSize = new AtomicReference<>(new TerminalSize(40, 12));
+        var installed = TerminalContextTestSupport.install(40, 12, null, terminalSize::get);
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-redraw.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            window.update(true);
+            int clearCalls = installed.clearCalls().get();
+            installed.drawCalls().clear();
+            installed.refreshCalls().clear();
+
+            terminalSize.set(new TerminalSize(66, 18));
+            window.update(false);
+
+            assertEquals(66, window.getRootView().getBounds().getSize().getWidth());
+            assertEquals(18, window.getRootView().getBounds().getSize().getHeight());
+            assertEquals(2, window.getBufferContext().getBufferView().getBounds().getPoint().getY());
+            assertFalse(installed.drawCalls().isEmpty());
+            assertEquals(List.of(RefreshType.COMPLETE), installed.refreshCalls());
+            assertEquals(clearCalls + 1, installed.clearCalls().get());
+        } finally {
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
         }
     }
 

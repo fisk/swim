@@ -3152,10 +3152,6 @@ public class Window implements Drawable {
     public void update(boolean forced) {
         ensureLayoutState();
         _log.debug("Maybe relayout");
-        if (!forced && !_rootView.needsRedraw()) {
-            _log.debug("Relayout not needed");
-            return;
-        }
         var screen = TerminalContext.getInstance().getScreen();
         var terminalContext = TerminalContext.getInstance();
         var terminalSize = terminalContext.getTerminalSize();
@@ -3168,13 +3164,24 @@ public class Window implements Drawable {
         }
         _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
         var size = Size.create(terminalSize.getColumns(), terminalSize.getRows());
-        if (_size == null || !_size.equals(size) || keyMenuNeedsRelayout(size)) {
+        boolean needsRelayout = _size == null || !_size.equals(size) || keyMenuNeedsRelayout(size);
+        boolean completeRedraw = forced || needsRelayout;
+        if (needsRelayout) {
             _log.debug("Relayout");
             applyLayout(size);
+            _rootView.setNeedsRedraw();
+            forced = true;
         } else {
             _log.debug("Relayout not needed due to same size");
         }
+        if (!forced && !_rootView.needsRedraw()) {
+            _log.debug("Relayout not needed");
+            return;
+        }
         AttributedString.clearRenderedClickRanges();
+        if (completeRedraw) {
+            screen.clear();
+        }
         _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
         _size = size;
         if (_activeView instanceof BufferView bufferView) {
@@ -3187,7 +3194,7 @@ public class Window implements Drawable {
             shape = cursorShape(cursor);
         }
         try {
-            screen.refresh(RefreshType.DELTA);
+            screen.refresh(completeRedraw ? RefreshType.COMPLETE : RefreshType.DELTA);
         } catch (IOException e) {
         }
         terminalContext.setCursorShape(shape);
