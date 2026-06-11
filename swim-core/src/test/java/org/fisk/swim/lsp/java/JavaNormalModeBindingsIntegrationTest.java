@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 
 import org.eclipse.lsp4j.CodeAction;
 import org.eclipse.lsp4j.CodeActionParams;
@@ -12,7 +13,13 @@ import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.fisk.swim.EventThread;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
+import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.Response;
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
@@ -21,6 +28,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+
+import com.googlecode.lanterna.input.KeyStroke;
 
 class JavaNormalModeBindingsIntegrationTest {
     @TempDir
@@ -33,10 +42,12 @@ class JavaNormalModeBindingsIntegrationTest {
         if (Window.getInstance() != null) {
             Window.getInstance().dispose();
         }
+        EventThread.shutdownInstance();
+        TerminalContext.shutdownInstance();
     }
 
     @Test
-    void normalModeLeaderLOBindingOrganizesImportsForJavaBuffer() throws Exception {
+    void normalModeLeaderCommaOBindingOrganizesImportsForJavaBuffer() throws Exception {
         Path project = tempDir.resolve("java-project");
         Path file = project.resolve("src/main/java/demo/Main.java");
         Files.createDirectories(file.getParent());
@@ -59,7 +70,7 @@ class JavaNormalModeBindingsIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(),
                     HeadlessWindowHarness.key(' '),
-                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key(','),
                     HeadlessWindowHarness.key('o'));
 
             assertEquals("""
@@ -67,6 +78,161 @@ class JavaNormalModeBindingsIntegrationTest {
                     class Main {}
                     """, window.getBufferContext().getBuffer().getString());
         }
+    }
+
+    @Test
+    void windowLeaderCommaOBindingOrganizesImportsForJavaBuffer() throws Exception {
+        Path project = tempDir.resolve("java-window-project");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                import java.util.List;
+                class Main {}
+                """);
+
+        var client = new TestJavaLspClient();
+        setField(client, "_enabled", true);
+        setField(client, "_server", new OrganizeImportsLanguageServer());
+        setField(client, "_capabilities", new ServerCapabilities());
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        TerminalContextTestSupport.install(48, 10);
+        Window.createInstance(file);
+        var responder = EventThread.getInstance().getResponder();
+        var pending = new ArrayList<KeyStroke>();
+
+        assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key(' ')));
+        assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key(',')));
+        assertEquals(Response.YES, processSequenceStep(responder, pending, HeadlessWindowHarness.key('o')));
+
+        assertEquals("""
+                package demo;
+                class Main {}
+                """, Window.getInstance().getBufferContext().getBuffer().getString());
+    }
+
+    @Test
+    void organizeImportsRequestsSourceOrganizeImportsActionKind() throws Exception {
+        Path project = tempDir.resolve("java-organize-kind-project");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                import java.util.List;
+                class Main {}
+                """);
+
+        var client = new TestJavaLspClient();
+        setField(client, "_enabled", true);
+        setField(client, "_server", new OrganizeImportsByKindLanguageServer());
+        setField(client, "_capabilities", new ServerCapabilities());
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        try (var harness = HeadlessWindowHarness.create(file, 48, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key(','),
+                    HeadlessWindowHarness.key('o'));
+
+            assertEquals("""
+                    package demo;
+                    class Main {}
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void organizeImportsResolvesSourceOrganizeImportsActionBeforeApplying() throws Exception {
+        Path project = tempDir.resolve("java-organize-resolve-project");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                import java.util.List;
+                class Main {}
+                """);
+
+        var client = new TestJavaLspClient();
+        var server = new ResolvingOrganizeImportsLanguageServer();
+        setField(client, "_enabled", true);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", new ServerCapabilities());
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        try (var harness = HeadlessWindowHarness.create(file, 48, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key(','),
+                    HeadlessWindowHarness.key('o'));
+
+            assertEquals(2, server.rangeEndLine);
+            assertEquals(13, server.rangeEndCharacter);
+            assertEquals(1, server.resolveCalls);
+            assertEquals("""
+                    package demo;
+                    class Main {}
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
+    void organizeImportsFallsBackWhenFilteredActionHasNoEditOrCommand() throws Exception {
+        Path project = tempDir.resolve("java-organize-fallback-project");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                import java.util.List;
+                class Main {}
+                """);
+
+        var client = new TestJavaLspClient();
+        var server = new FilteredNoopOrganizeImportsLanguageServer();
+        setField(client, "_enabled", true);
+        setField(client, "_server", server);
+        setField(client, "_capabilities", new ServerCapabilities());
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        try (var harness = HeadlessWindowHarness.create(file, 48, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key(','),
+                    HeadlessWindowHarness.key('o'));
+
+            assertEquals(1, server.filteredCalls);
+            assertEquals(1, server.unfilteredCalls);
+            assertEquals("""
+                    package demo;
+                    class Main {}
+                    """, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    private static Response processSequenceStep(EventResponder responder, ArrayList<KeyStroke> pending, KeyStroke next) {
+        pending.add(next);
+        var response = responder.processEvent(new KeyStrokes(List.copyOf(pending)));
+        if (response == Response.YES) {
+            responder.respond();
+            pending.clear();
+        } else if (response == Response.NO) {
+            pending.clear();
+        }
+        return response;
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
@@ -154,6 +320,213 @@ class JavaNormalModeBindingsIntegrationTest {
                 public void didChangeWatchedFiles(org.eclipse.lsp4j.DidChangeWatchedFilesParams params) {
                 }
             };
+        }
+    }
+
+    private static final class OrganizeImportsByKindLanguageServer implements LanguageServer {
+        private final TextDocumentService _textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
+                if (!List.of("source.organizeImports").equals(params.getContext().getOnly())) {
+                    return CompletableFuture.completedFuture(List.of());
+                }
+                var edit = new org.eclipse.lsp4j.WorkspaceEdit();
+                edit.setChanges(java.util.Map.of(
+                        params.getTextDocument().getUri(),
+                        List.of(new org.eclipse.lsp4j.TextEdit(
+                                new org.eclipse.lsp4j.Range(
+                                        new org.eclipse.lsp4j.Position(1, 0),
+                                        new org.eclipse.lsp4j.Position(2, 0)),
+                                ""))));
+                var action = new CodeAction("source.organizeImports");
+                action.setKind("source.organizeImports");
+                action.setEdit(edit);
+                return CompletableFuture.completedFuture(List.of(Either.forRight(action)));
+            }
+        };
+
+        @Override
+        public CompletableFuture<org.eclipse.lsp4j.InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
+            return CompletableFuture.completedFuture(new org.eclipse.lsp4j.InitializeResult());
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return _textDocumentService;
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            return null;
+        }
+    }
+
+    private static final class ResolvingOrganizeImportsLanguageServer implements LanguageServer {
+        private int resolveCalls;
+        private int rangeEndLine;
+        private int rangeEndCharacter;
+        private String _uri;
+
+        private final TextDocumentService _textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
+                _uri = params.getTextDocument().getUri();
+                rangeEndLine = params.getRange().getEnd().getLine();
+                rangeEndCharacter = params.getRange().getEnd().getCharacter();
+                var action = new CodeAction("Organize Imports");
+                action.setKind("source.organizeImports");
+                action.setData(java.util.Map.of("id", "organize-imports"));
+                return CompletableFuture.completedFuture(List.of(Either.forRight(action)));
+            }
+
+            @Override
+            public CompletableFuture<CodeAction> resolveCodeAction(CodeAction unresolved) {
+                resolveCalls++;
+                var edit = new org.eclipse.lsp4j.WorkspaceEdit();
+                edit.setChanges(java.util.Map.of(
+                        _uri,
+                        List.of(new org.eclipse.lsp4j.TextEdit(
+                                new org.eclipse.lsp4j.Range(
+                                        new org.eclipse.lsp4j.Position(1, 0),
+                                        new org.eclipse.lsp4j.Position(2, 0)),
+                                ""))));
+                unresolved.setEdit(edit);
+                return CompletableFuture.completedFuture(unresolved);
+            }
+        };
+
+        @Override
+        public CompletableFuture<org.eclipse.lsp4j.InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
+            return CompletableFuture.completedFuture(new org.eclipse.lsp4j.InitializeResult());
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return _textDocumentService;
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            return null;
+        }
+    }
+
+    private static final class FilteredNoopOrganizeImportsLanguageServer implements LanguageServer {
+        private int filteredCalls;
+        private int unfilteredCalls;
+
+        private final TextDocumentService _textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+
+            @Override
+            public CompletableFuture<List<Either<Command, CodeAction>>> codeAction(CodeActionParams params) {
+                if (List.of("source.organizeImports").equals(params.getContext().getOnly())) {
+                    filteredCalls++;
+                    var action = new CodeAction("Organize Imports");
+                    action.setKind("source.organizeImports");
+                    return CompletableFuture.completedFuture(List.of(Either.forRight(action)));
+                }
+                unfilteredCalls++;
+                var edit = new org.eclipse.lsp4j.WorkspaceEdit();
+                edit.setChanges(java.util.Map.of(
+                        params.getTextDocument().getUri(),
+                        List.of(new org.eclipse.lsp4j.TextEdit(
+                                new org.eclipse.lsp4j.Range(
+                                        new org.eclipse.lsp4j.Position(1, 0),
+                                        new org.eclipse.lsp4j.Position(2, 0)),
+                                ""))));
+                var action = new CodeAction("Organize imports");
+                action.setEdit(edit);
+                return CompletableFuture.completedFuture(List.of(Either.forRight(action)));
+            }
+        };
+
+        @Override
+        public CompletableFuture<org.eclipse.lsp4j.InitializeResult> initialize(org.eclipse.lsp4j.InitializeParams params) {
+            return CompletableFuture.completedFuture(new org.eclipse.lsp4j.InitializeResult());
+        }
+
+        @Override
+        public CompletableFuture<Object> shutdown() {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void exit() {
+        }
+
+        @Override
+        public TextDocumentService getTextDocumentService() {
+            return _textDocumentService;
+        }
+
+        @Override
+        public org.eclipse.lsp4j.services.WorkspaceService getWorkspaceService() {
+            return null;
         }
     }
 }

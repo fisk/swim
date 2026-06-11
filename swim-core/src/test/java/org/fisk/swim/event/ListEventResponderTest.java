@@ -99,6 +99,18 @@ class ListEventResponderTest {
                 KeyBindingHint.of("j", "Navigation", "down")), hints);
     }
 
+    @Test
+    void exposesDocumentedKeyBindingHintsExcludingLayer() {
+        var responder = new ListEventResponder();
+        responder.addEventResponder("j", "Navigation", "down", () -> {});
+        var layer = responder.addLayer();
+        layer.addEventResponder("<ENTER>", "Actions", "open", () -> {});
+
+        var hints = responder.keyBindingHintsExcluding(layer);
+
+        assertEquals(List.of(KeyBindingHint.of("j", "Navigation", "down")), hints);
+    }
+
     private static EventResponder stub(Response response, AtomicInteger calls) {
         return new EventResponder() {
             @Override

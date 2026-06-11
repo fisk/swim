@@ -58,6 +58,7 @@ class ClangdLspCompletionIntegrationTest {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('a'));
+            waitForCompletionSession(client);
 
             assertTrue(client.hasCompletionSession());
 
@@ -67,6 +68,17 @@ class ClangdLspCompletionIntegrationTest {
             assertEquals("beta", window.getBufferContext().getBuffer().getString());
             assertFalse(client.hasCompletionSession());
         }
+    }
+
+    private static void waitForCompletionSession(ClangdLspClient client) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (client.hasCompletionSession()) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for completion session");
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

@@ -18,6 +18,7 @@
   <modules>
     <module>swim-session</module>
     <module>swim-launcher</module>
+    <module>swim-lsp</module>
     <module>swim-core</module>
     <module>swim-java-lsp</module>
     <module>swim-clangd-lsp</module>

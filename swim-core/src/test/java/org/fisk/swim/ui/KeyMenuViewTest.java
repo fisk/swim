@@ -41,14 +41,14 @@ class KeyMenuViewTest {
     }
 
     @Test
-    void leaderLChainShowsOrganizeImportsContinuation() {
+    void leaderCommaChainShowsOrganizeImportsContinuation() {
         var view = normalMenu(180);
         view.setAnimationStepOverride(1L);
 
         view.observe(HeadlessWindowHarness.key(' '));
-        view.observe(HeadlessWindowHarness.key('l'));
+        view.observe(HeadlessWindowHarness.key(','));
 
-        assertEquals("SPC l", view.getBreadcrumb());
+        assertEquals("SPC ,", view.getBreadcrumb());
         assertTrue(view.bodyText().contains("Code"));
         assertTrue(view.bodyText().contains("o organize imports"));
     }
@@ -393,7 +393,7 @@ class KeyMenuViewTest {
                 KeyBindingHint.of("<SPACE> m", "Workspace", "mail"),
                 KeyBindingHint.of("<SPACE> s", "Workspace", "Slack"),
                 KeyBindingHint.of("<SPACE> t", "Workspace", "Todo"),
-                KeyBindingHint.of("<SPACE> l o", "Code", "organize imports"),
+                KeyBindingHint.of("<SPACE> , o", "Code", "organize imports"),
                 KeyBindingHint.of("<SPACE> e f", "Code", "make final"),
                 KeyBindingHint.of("<SPACE> e a", "Code", "generate accessors"));
     }

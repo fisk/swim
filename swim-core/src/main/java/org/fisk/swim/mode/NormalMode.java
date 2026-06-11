@@ -1,8 +1,10 @@
 package org.fisk.swim.mode;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -30,12 +32,15 @@ import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.ShellPanelView;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.Window;
+import org.fisk.swim.utils.LogFactory;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.MotionResponder;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.TextEventResponder;
+import org.slf4j.Logger;
 
 public class NormalMode extends Mode {
+    private static final Logger _log = LogFactory.createLog();
     private FancyJumpResponder _fancyWordJump;
     private FancyJumpResponder _fancyCharacterJump;
     private Character _lastFindCharacter;
@@ -525,15 +530,23 @@ public class NormalMode extends Mode {
 
     private void installPluginKeyBindings(Window window) {
         var layer = _rootResponder.addLayer();
-        layer.addEventResponder(new PluginKeyBindingRegistryResponder(window));
+        layer.addEventResponder(new PluginKeyBindingRegistryResponder(window, _rootResponder, layer));
     }
 
     private static final class PluginKeyBindingRegistryResponder implements EventResponder, KeyBindingHintProvider {
         private final Window _window;
+        private final org.fisk.swim.event.ListEventResponder _rootResponder;
+        private final org.fisk.swim.event.ListEventResponder.Layer _pluginLayer;
+        private final Set<String> _reportedConflicts = new HashSet<>();
         private PluginKeyBindingResponder _responder;
 
-        private PluginKeyBindingRegistryResponder(Window window) {
+        private PluginKeyBindingRegistryResponder(
+                Window window,
+                org.fisk.swim.event.ListEventResponder rootResponder,
+                org.fisk.swim.event.ListEventResponder.Layer pluginLayer) {
             _window = window;
+            _rootResponder = rootResponder;
+            _pluginLayer = pluginLayer;
         }
 
         @Override
@@ -541,7 +554,9 @@ public class NormalMode extends Mode {
             _responder = null;
             boolean maybe = false;
             PluginKeyBindingResponder yes = null;
-            for (SwimPluginKeyBindingDescriptor binding : SwimPluginKeyBindingRegistry.listBindings()) {
+            var bindings = SwimPluginKeyBindingRegistry.listBindings();
+            reportPluginKeyBindingConflicts(bindings);
+            for (SwimPluginKeyBindingDescriptor binding : bindings) {
                 var responder = new PluginKeyBindingResponder(_window, binding);
                 var response = responder.processEvent(new KeyStrokes(events));
                 if (response == Response.MAYBE) {
@@ -551,12 +566,12 @@ public class NormalMode extends Mode {
                     yes = responder;
                 }
             }
-            if (maybe) {
-                return Response.MAYBE;
-            }
             if (yes != null) {
                 _responder = yes;
                 return Response.YES;
+            }
+            if (maybe) {
+                return Response.MAYBE;
             }
             return Response.NO;
         }
@@ -572,12 +587,82 @@ public class NormalMode extends Mode {
         @Override
         public List<KeyBindingHint> keyBindingHints() {
             var hints = new ArrayList<KeyBindingHint>();
-            for (SwimPluginKeyBindingDescriptor binding : SwimPluginKeyBindingRegistry.listBindings()) {
+            var bindings = SwimPluginKeyBindingRegistry.listBindings();
+            reportPluginKeyBindingConflicts(bindings);
+            for (SwimPluginKeyBindingDescriptor binding : bindings) {
                 var responder = new PluginKeyBindingResponder(_window, binding);
                 hints.addAll(responder.keyBindingHints());
             }
             return List.copyOf(hints);
         }
+
+        private void reportPluginKeyBindingConflicts(List<SwimPluginKeyBindingDescriptor> bindings) {
+            for (var conflict : findPluginKeyBindingConflicts(bindings,
+                    _rootResponder.keyBindingHintsExcluding(_pluginLayer))) {
+                String conflictKey = conflict.pluginId() + ":" + conflict.key() + ":" + conflict.prefix();
+                if (!_reportedConflicts.add(conflictKey)) {
+                    continue;
+                }
+                _log.warn(
+                        "Plugin key binding {} from {} conflicts with existing key binding prefix {} ({}). "
+                                + "Use a non-conflicting prefix so both key strokes can trigger reliably.",
+                        conflict.key(),
+                        conflict.pluginId(),
+                        conflict.prefix(),
+                        conflict.prefixSummary());
+            }
+        }
+    }
+
+    record KeyBindingConflict(String pluginId, String key, String prefix, String prefixSummary) {
+    }
+
+    static List<KeyBindingConflict> findPluginKeyBindingConflicts(
+            List<SwimPluginKeyBindingDescriptor> pluginBindings,
+            List<KeyBindingHint> normalModeHints) {
+        var conflicts = new ArrayList<KeyBindingConflict>();
+        if (pluginBindings == null || normalModeHints == null) {
+            return conflicts;
+        }
+        for (var binding : pluginBindings) {
+            if (binding == null || binding.key() == null || binding.key().isBlank()) {
+                continue;
+            }
+            for (var hint : normalModeHints) {
+                if (hint == null || hint.key() == null || hint.key().isBlank()) {
+                    continue;
+                }
+                if (isStrictKeyPrefix(hint.key(), binding.key())) {
+                    conflicts.add(new KeyBindingConflict(
+                            binding.pluginId(),
+                            binding.key(),
+                            hint.key(),
+                            hint.summary()));
+                }
+            }
+        }
+        return List.copyOf(conflicts);
+    }
+
+    private static boolean isStrictKeyPrefix(String prefix, String key) {
+        var prefixTokens = keyTokens(prefix);
+        var keyTokens = keyTokens(key);
+        if (prefixTokens.isEmpty() || prefixTokens.size() >= keyTokens.size()) {
+            return false;
+        }
+        for (int i = 0; i < prefixTokens.size(); ++i) {
+            if (!prefixTokens.get(i).equals(keyTokens.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static List<String> keyTokens(String key) {
+        if (key == null || key.isBlank()) {
+            return List.of();
+        }
+        return List.of(key.strip().split("\\s+"));
     }
 
     private static final class PluginKeyBindingResponder implements EventResponder, KeyBindingHintProvider {

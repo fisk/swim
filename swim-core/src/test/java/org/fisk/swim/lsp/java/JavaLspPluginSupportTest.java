@@ -47,7 +47,7 @@ class JavaLspPluginSupportTest {
     }
 
     @Test
-    void normalModeLeaderLOOrganizesImportsForJavaBuffers() throws IOException {
+    void normalModeLeaderCommaOOrganizesImportsForJavaBuffers() throws IOException {
         var client = new RecordingJavaLspClient();
         JavaLSPClient.installInstance(client);
         JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
@@ -57,7 +57,7 @@ class JavaLspPluginSupportTest {
 
             HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
                     HeadlessWindowHarness.key(' '),
-                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key(','),
                     HeadlessWindowHarness.key('o'));
 
             assertEquals(1, client.organizeImportsCalls);
@@ -67,7 +67,7 @@ class JavaLspPluginSupportTest {
     }
 
     @Test
-    void normalModeLeaderLOWorksWhenJavaBindingsRegisterAfterModeConstruction() throws IOException {
+    void normalModeLeaderCommaOWorksWhenJavaBindingsRegisterAfterModeConstruction() throws IOException {
         var client = new RecordingJavaLspClient();
         JavaLSPClient.installInstance(client);
         try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
@@ -76,7 +76,7 @@ class JavaLspPluginSupportTest {
             JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
             HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
                     HeadlessWindowHarness.key(' '),
-                    HeadlessWindowHarness.key('l'),
+                    HeadlessWindowHarness.key(','),
                     HeadlessWindowHarness.key('o'));
 
             assertEquals(1, client.organizeImportsCalls);

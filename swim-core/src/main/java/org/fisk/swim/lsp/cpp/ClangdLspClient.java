@@ -32,7 +32,6 @@ import org.eclipse.lsp4j.CompletionOptions;
 import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.ConfigurationParams;
-import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
@@ -61,10 +60,12 @@ import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.TextDocumentClientCapabilities;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentEdit;
+import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.TokenFormat;
 import org.eclipse.lsp4j.UnregistrationParams;
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
 import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
@@ -80,6 +81,10 @@ import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
+import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
+import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
+import org.fisk.swim.lsp.shared.LspDocumentChangeBatcher;
 import org.fisk.swim.lsp.java.JavaDefinitionMenuSession;
 import org.fisk.swim.lsp.java.JavaCompletionSession;
 import org.fisk.swim.text.AttributedString;
@@ -131,8 +136,27 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     private Path _workspacePath;
     private Path _compilationDatabaseRoot;
     private final Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
-    private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
-    private final Map<String, Integer> _semanticRefreshVersions = new HashMap<>();
+    private final AsyncLspRequestQueue _lspRequestQueue = new AsyncLspRequestQueue(
+            _log,
+            "swim-clangd-lsp-requests",
+            () -> _enabled && _server != null);
+    private final LspDocumentChangeBatcher _documentChangeBatcher = new LspDocumentChangeBatcher(
+            _lspRequestQueue,
+            () -> _server == null ? null : _server.getTextDocumentService(),
+            15);
+    private final AsyncSemanticTokenHighlighter _semanticTokens = new AsyncSemanticTokenHighlighter(
+            _lspRequestQueue,
+            _log,
+            "clangd semantic token refresh",
+            this::supportsSemanticTokens,
+            this::flushPendingDocumentChanges,
+            this::fetchSemanticHighlights,
+            250,
+            20);
+    private final AsyncCompletionCoordinator<CompletionRequestSnapshot, JavaCompletionSession> _completionRequests =
+            new AsyncCompletionCoordinator<>(_lspRequestQueue, this::runOnEventThread);
+    private final Map<String, AsyncSemanticTokenHighlighter.CachedSemanticTokens> _semanticTokensCache =
+            _semanticTokens.cacheView();
     private final Object _completionLock = new Object();
     private JavaCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
@@ -145,7 +169,18 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     static record SemanticHighlight(int start, int end, TextColor foregroundColor) {
     }
 
-    private static record CachedSemanticTokens(int version, List<SemanticHighlight> highlights) {
+    private static record CompletionRequestSnapshot(
+            BufferContext bufferContext,
+            String uri,
+            int version,
+            int cursor,
+            Position position,
+            String prefix,
+            int replacementStart,
+            int replacementEnd,
+            CompletionTriggerKind triggerKind,
+            String triggerCharacter,
+            long generation) implements AsyncCompletionCoordinator.Snapshot {
     }
 
     public ClangdLspClient() {
@@ -229,6 +264,8 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     public void shutdown() {
         clearSemanticTokensCache();
+        _lspRequestQueue.shutdown();
+        _documentChangeBatcher.clear();
         DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER_ID);
         _enabled = false;
         if (_shutdownHook != null) {
@@ -265,16 +302,15 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        _semanticTokens.recordInsert(semanticDocument(bufferContext), position, text == null ? 0 : text.length());
         var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
         int lineIndex = line.getY();
         int charIndex = position - line.getStartPosition();
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         var change = new TextDocumentContentChangeEvent(range, 0, text);
-        var params = new DidChangeTextDocumentParams();
-        params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
-        params.setContentChanges(List.of(change));
-        _server.getTextDocumentService().didChange(params);
+        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getVersionedTextDocumentID(),
+                List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -283,7 +319,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        _semanticTokens.recordDelete(semanticDocument(bufferContext), startPosition, endPosition);
         var startLine = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
         int startLineIndex = startLine.getY();
         int startIndex = startPosition - startLine.getStartPosition();
@@ -292,10 +328,9 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         int endIndex = endPosition - endLine.getStartPosition();
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         var change = new TextDocumentContentChangeEvent(range, endPosition - startPosition, "");
-        var params = new DidChangeTextDocumentParams();
-        params.setTextDocument(bufferContext.getBuffer().getVersionedTextDocumentID());
-        params.setContentChanges(List.of(change));
-        _server.getTextDocumentService().didChange(params);
+        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getVersionedTextDocumentID(),
+                List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -306,7 +341,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         }
         var params = new WillSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
-        _server.getTextDocumentService().willSave(params);
+        String uri = bufferContext.getBuffer().getURI().toString();
+        enqueueLspRequest("willSave", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().willSave(params);
+        });
     }
 
     @Override
@@ -314,11 +353,14 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         if (!_enabled || _server == null) {
             return;
         }
-        clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         var params = new DidSaveTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
         params.setText(bufferContext.getBuffer().getString());
-        _server.getTextDocumentService().didSave(params);
+        String uri = bufferContext.getBuffer().getURI().toString();
+        enqueueLspRequest("didSave", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().didSave(params);
+        });
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -331,7 +373,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         DiagnosticService.getInstance().clear(DIAGNOSTIC_PROVIDER_ID, bufferContext.getBuffer().getURI().toString());
         var params = new DidCloseTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
-        _server.getTextDocumentService().didClose(params);
+        String uri = bufferContext.getBuffer().getURI().toString();
+        enqueueLspRequest("didClose", () -> {
+            flushPendingDocumentChanges(uri);
+            _server.getTextDocumentService().didClose(params);
+        });
         refreshDiagnosticsUi();
     }
 
@@ -343,8 +389,32 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
-        _server.getTextDocumentService().didOpen(params);
+        enqueueLspRequest("didOpen", () -> _server.getTextDocumentService().didOpen(params));
         scheduleSemanticHighlightRefresh(bufferContext);
+    }
+
+    private void enqueueLspRequest(String description, Runnable action) {
+        _lspRequestQueue.execute(description, action);
+    }
+
+    private void queueDocumentChanges(
+            String uri,
+            VersionedTextDocumentIdentifier textDocument,
+            List<TextDocumentContentChangeEvent> contentChanges) {
+        _documentChangeBatcher.queue(uri, textDocument, contentChanges);
+    }
+
+    private void flushPendingDocumentChanges(String uri) {
+        _documentChangeBatcher.flush(uri);
+    }
+
+    private void runOnEventThread(Runnable action) {
+        var eventThread = EventThread.getInstance();
+        if (eventThread.isAlive()) {
+            eventThread.enqueue(new RunnableEvent(action));
+        } else {
+            action.run();
+        }
     }
 
     @Override
@@ -383,9 +453,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
             return false;
         }
         refreshCompletion(bufferContext, CompletionTriggerKind.Invoked, null);
-        synchronized (_completionLock) {
-            return _completionSession != null;
-        }
+        return true;
     }
 
     @Override
@@ -476,6 +544,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     @Override
     public boolean cancelCompletion() {
         CompletionPopupView popupView;
+        _completionRequests.cancelPending();
         synchronized (_completionLock) {
             if (_completionSession == null && _completionPopupView == null) {
                 return false;
@@ -990,6 +1059,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         }
     }
 
+    @Override
+    public boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
+        return true;
+    }
+
     static Path getWorkspacePath(Path swimHomePath, Path projectPath) {
         String projectName = projectPath.getFileName() == null ? "project" : projectPath.getFileName().toString();
         projectName = projectName.replaceAll("[^A-Za-z0-9._-]", "_");
@@ -1087,18 +1161,40 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         return Character.isJavaIdentifierPart(character) || isCompletionTriggerCharacter(character);
     }
 
-    private JavaCompletionSession requestCompletionSession(
+    private CompletionRequestSnapshot createCompletionRequestSnapshot(
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
-            String triggerCharacter) {
+            String triggerCharacter,
+            long generation) {
         if (!supportsCompletion()) {
             return null;
         }
         int cursor = bufferContext.getBuffer().getCursor().getPosition();
-        var params = new CompletionParams(
-                bufferContext.getBuffer().getTextDocumentID(),
+        String prefix = currentCompletionPrefix(bufferContext);
+        int replacementEnd = cursor;
+        int replacementStart = replacementEnd - prefix.length();
+        return new CompletionRequestSnapshot(
+                bufferContext,
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getVersionedTextDocumentID().getVersion(),
+                cursor,
                 getPosition(bufferContext, cursor),
-                new CompletionContext(triggerKind, triggerCharacter));
+                prefix,
+                replacementStart,
+                replacementEnd,
+                triggerKind,
+                triggerCharacter,
+                generation);
+    }
+
+    private JavaCompletionSession requestCompletionSession(CompletionRequestSnapshot snapshot) {
+        if (!supportsCompletion() || !_completionRequests.isCurrent(snapshot)) {
+            return null;
+        }
+        var params = new CompletionParams(
+                snapshot.bufferContext().getBuffer().getTextDocumentID(),
+                snapshot.position(),
+                new CompletionContext(snapshot.triggerKind(), snapshot.triggerCharacter()));
         try {
             var completion = _server.getTextDocumentService().completion(params).get(400, TimeUnit.MILLISECONDS);
             List<CompletionItem> items;
@@ -1117,14 +1213,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
             if (items == null || items.isEmpty()) {
                 return null;
             }
-            String prefix = currentCompletionPrefix(bufferContext);
-            int replacementEnd = bufferContext.getBuffer().getCursor().getPosition();
-            int replacementStart = replacementEnd - prefix.length();
             return JavaCompletionSession.create(
-                    bufferContext,
-                    prefix,
-                    replacementStart,
-                    replacementEnd,
+                    snapshot.bufferContext(),
+                    snapshot.prefix(),
+                    snapshot.replacementStart(),
+                    snapshot.replacementEnd(),
                     items,
                     incomplete);
         } catch (Exception e) {
@@ -1155,12 +1248,21 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
             String triggerCharacter) {
-        JavaCompletionSession session = requestCompletionSession(bufferContext, triggerKind, triggerCharacter);
-        if (session == null) {
-            cancelCompletion();
-            return;
-        }
-        showCompletionSession(session);
+        _completionRequests.request(
+                "completion",
+                generation -> createCompletionRequestSnapshot(bufferContext, triggerKind, triggerCharacter, generation),
+                this::flushPendingDocumentChanges,
+                this::requestCompletionSession,
+                this::completionRequestStillMatchesBuffer,
+                (snapshot, session) -> showCompletionSession(session),
+                () -> cancelCompletion());
+    }
+
+    private boolean completionRequestStillMatchesBuffer(CompletionRequestSnapshot snapshot) {
+        var buffer = snapshot.bufferContext().getBuffer();
+        return snapshot.uri().equals(buffer.getURI().toString())
+                && buffer.getVersionedTextDocumentID().getVersion() == snapshot.version()
+                && buffer.getCursor().getPosition() == snapshot.cursor();
     }
 
     private CompletionItem resolveCompletionItem(CompletionItem item) {
@@ -1218,14 +1320,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     private synchronized void clearSemanticTokensCache() {
-        _semanticTokensCache.clear();
-        _semanticRefreshVersions.clear();
+        _semanticTokens.clear();
     }
 
     private synchronized void clearSemanticTokensCache(String uri) {
-        if (uri != null) {
-            _semanticTokensCache.remove(uri);
-        }
+        _semanticTokens.clear(uri);
     }
 
     private void run() {
@@ -1385,36 +1484,22 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     private List<SemanticHighlight> getSemanticHighlights(BufferContext bufferContext) {
-        if (!supportsSemanticTokens()) {
-            return List.of();
-        }
-        String uri = bufferContext.getBuffer().getURI().toString();
-        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-        synchronized (this) {
-            var cached = _semanticTokensCache.get(uri);
-            if (cached != null && cached.version() == version) {
-                return cached.highlights();
-            }
-        }
-
-        List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
-        synchronized (this) {
-            if (highlights.isEmpty()) {
-                _semanticTokensCache.remove(uri);
-            } else {
-                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
-            }
-        }
-        return highlights;
+        return toSemanticHighlights(_semanticTokens.getHighlights(semanticDocument(bufferContext)));
     }
 
-    private List<SemanticHighlight> fetchSemanticHighlights(BufferContext bufferContext) {
+    private List<AsyncSemanticTokenHighlighter.Highlight> fetchSemanticHighlights(
+            AsyncSemanticTokenHighlighter.Snapshot snapshot) {
         try {
             var provider = _capabilities.getSemanticTokensProvider();
             SemanticTokensLegend legend = provider == null ? null : provider.getLegend();
-            var params = new SemanticTokensParams(bufferContext.getBuffer().getTextDocumentID());
+            var params = new SemanticTokensParams(new TextDocumentIdentifier(snapshot.uri()));
             var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
-            return decodeSemanticHighlights(bufferContext, tokens, legend);
+            return AsyncSemanticTokenHighlighter.decodeSemanticHighlights(
+                    snapshot.text(),
+                    tokens,
+                    legend,
+                    ClangdLspClient::semanticTokenColor,
+                    _log);
         } catch (Exception e) {
             _log.debug("clangd semantic token request failed", e);
             return List.of();
@@ -1422,58 +1507,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     private void scheduleSemanticHighlightRefresh(BufferContext bufferContext) {
-        if (!supportsSemanticTokens()) {
-            return;
-        }
-        String uri = bufferContext.getBuffer().getURI().toString();
-        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-        synchronized (this) {
-            Integer queuedVersion = _semanticRefreshVersions.get(uri);
-            if (queuedVersion != null && queuedVersion >= version) {
-                return;
-            }
-            _semanticRefreshVersions.put(uri, version);
-        }
-
-        var thread = new Thread(() -> refreshSemanticHighlights(uri, version, bufferContext), "swim-clangd-semantic-refresh");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    private void refreshSemanticHighlights(String uri, int version, BufferContext bufferContext) {
-        try {
-            for (int attempt = 0; attempt < 20; ++attempt) {
-                if (!supportsSemanticTokens()) {
-                    return;
-                }
-                int currentVersion = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-                synchronized (this) {
-                    Integer queuedVersion = _semanticRefreshVersions.get(uri);
-                    if (queuedVersion == null || queuedVersion != version || currentVersion != version) {
-                        return;
-                    }
-                }
-                List<SemanticHighlight> highlights = fetchSemanticHighlights(bufferContext);
-                if (!highlights.isEmpty()) {
-                    synchronized (this) {
-                        _semanticTokensCache.put(uri, new CachedSemanticTokens(version, highlights));
-                        _semanticRefreshVersions.remove(uri);
-                    }
-                    requestSemanticRedraw(bufferContext);
-                    return;
-                }
-                Thread.sleep(250);
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        } finally {
-            synchronized (this) {
-                Integer queuedVersion = _semanticRefreshVersions.get(uri);
-                if (queuedVersion != null && queuedVersion == version) {
-                    _semanticRefreshVersions.remove(uri);
-                }
-            }
-        }
+        _semanticTokens.scheduleRefresh(semanticDocument(bufferContext));
     }
 
     private void requestSemanticRedraw(BufferContext bufferContext) {
@@ -1494,41 +1528,54 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     static List<SemanticHighlight> decodeSemanticHighlights(BufferContext bufferContext, SemanticTokens tokens, SemanticTokensLegend legend) {
-        if (tokens == null || tokens.getData() == null || legend == null || legend.getTokenTypes() == null) {
+        String text = bufferContext == null || bufferContext.getBuffer() == null
+                ? ""
+                : bufferContext.getBuffer().getString();
+        return toSemanticHighlights(AsyncSemanticTokenHighlighter.decodeSemanticHighlights(
+                text,
+                tokens,
+                legend,
+                ClangdLspClient::semanticTokenColor,
+                _log));
+    }
+
+    private AsyncSemanticTokenHighlighter.Document semanticDocument(BufferContext bufferContext) {
+        if (bufferContext == null || bufferContext.getBuffer() == null) {
+            return null;
+        }
+        return new AsyncSemanticTokenHighlighter.Document() {
+            @Override
+            public String uri() {
+                return bufferContext.getBuffer().getURI().toString();
+            }
+
+            @Override
+            public int version() {
+                return bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
+            }
+
+            @Override
+            public String text() {
+                return bufferContext.getBuffer().getString();
+            }
+
+            @Override
+            public void requestSemanticRedraw() {
+                ClangdLspClient.this.requestSemanticRedraw(bufferContext);
+            }
+        };
+    }
+
+    private static List<SemanticHighlight> toSemanticHighlights(
+            List<AsyncSemanticTokenHighlighter.Highlight> highlights) {
+        if (highlights == null || highlights.isEmpty()) {
             return List.of();
         }
-        var tokenTypes = legend.getTokenTypes();
-        var tokenModifiers = legend.getTokenModifiers() == null ? List.<String>of() : legend.getTokenModifiers();
-        var data = tokens.getData();
-        var highlights = new ArrayList<SemanticHighlight>();
-        int line = 0;
-        int character = 0;
-
-        for (int i = 0; i + 4 < data.size(); i += 5) {
-            int deltaLine = data.get(i);
-            int deltaStart = data.get(i + 1);
-            int length = data.get(i + 2);
-            int tokenTypeIndex = data.get(i + 3);
-            int modifiersBitset = data.get(i + 4);
-
-            line += deltaLine;
-            character = deltaLine == 0 ? character + deltaStart : deltaStart;
-            if (length <= 0 || tokenTypeIndex < 0 || tokenTypeIndex >= tokenTypes.size()) {
-                continue;
-            }
-
-            try {
-                int start = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character);
-                int end = bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(line, character + length);
-                highlights.add(new SemanticHighlight(
-                        start,
-                        end,
-                        semanticTokenColor(tokenTypes.get(tokenTypeIndex), modifiersBitset, tokenModifiers)));
-            } catch (RuntimeException e) {
-                _log.debug("Skipping invalid clangd semantic token at line {} character {}", line, character, e);
-            }
+        var result = new ArrayList<SemanticHighlight>(highlights.size());
+        for (var highlight : highlights) {
+            result.add(new SemanticHighlight(highlight.start(), highlight.end(), highlight.foregroundColor()));
         }
-        return highlights;
+        return List.copyOf(result);
     }
 
     private static TextColor semanticTokenColor(String tokenType, int modifiersBitset, List<String> modifiers) {

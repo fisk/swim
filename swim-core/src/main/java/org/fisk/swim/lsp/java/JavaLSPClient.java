@@ -16,9 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
@@ -29,6 +26,7 @@ import org.eclipse.lsp4j.CodeAction;
 import org.eclipse.lsp4j.CodeActionCapabilities;
 import org.eclipse.lsp4j.CodeActionContext;
 import org.eclipse.lsp4j.CodeActionParams;
+import org.eclipse.lsp4j.CodeActionResolveSupportCapabilities;
 import org.eclipse.lsp4j.CodeLensCapabilities;
 import org.eclipse.lsp4j.CodeLensParams;
 import org.eclipse.lsp4j.ColorInformation;
@@ -44,7 +42,6 @@ import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.ConfigurationParams;
 import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.Diagnostic;
-import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
@@ -83,7 +80,6 @@ import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.TextDocumentSaveReason;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.UnregistrationParams;
-import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WillSaveTextDocumentParams;
 import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
@@ -102,6 +98,10 @@ import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
+import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
+import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
+import org.fisk.swim.lsp.shared.LspDocumentChangeBatcher;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.Settings;
@@ -119,6 +119,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private static final Logger _log = LogFactory.createLog();
     private static final Gson _gson = new Gson();
     private static final String DIAGNOSTIC_PROVIDER_ID = "java-lsp";
+    private static final String CODE_ACTION_SOURCE_ORGANIZE_IMPORTS = "source.organizeImports";
     private static final long DID_CHANGE_BATCH_DELAY_MILLIS = 15;
     static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
     static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
@@ -138,11 +139,27 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private boolean _enabled = true;
     private Throwable _startupError;
     private Thread _workerThread;
-    private final Object _lspRequestLock = new Object();
-    private ScheduledExecutorService _lspRequestExecutor;
-
     private LanguageServer _server;
     private ServerCapabilities _capabilities;
+    private final AsyncLspRequestQueue _lspRequestQueue = new AsyncLspRequestQueue(
+            _log,
+            "swim-java-lsp-requests",
+            () -> _enabled && _server != null);
+    private final LspDocumentChangeBatcher _documentChangeBatcher = new LspDocumentChangeBatcher(
+            _lspRequestQueue,
+            () -> _server == null ? null : _server.getTextDocumentService(),
+            DID_CHANGE_BATCH_DELAY_MILLIS);
+    private final AsyncSemanticTokenHighlighter _semanticTokens = new AsyncSemanticTokenHighlighter(
+            _lspRequestQueue,
+            _log,
+            "semantic token refresh",
+            this::supportsSemanticTokens,
+            this::flushPendingDocumentChanges,
+            this::fetchSemanticHighlights,
+            250,
+            20);
+    private final AsyncCompletionCoordinator<CompletionRequestSnapshot, JavaCompletionSession> _completionRequests =
+            new AsyncCompletionCoordinator<>(_lspRequestQueue, this::runOnEventThread);
     private Thread _shutdownHook;
     private AutoCloseable _providerConnection;
 
@@ -154,14 +171,12 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
-    private final Map<String, CachedSemanticTokens> _semanticTokensCache = new HashMap<>();
-    private final Map<String, SemanticRefresh> _semanticRefreshes = new HashMap<>();
-    private final Map<String, PendingDocumentChanges> _pendingDocumentChanges = new HashMap<>();
+    private final Map<String, AsyncSemanticTokenHighlighter.CachedSemanticTokens> _semanticTokensCache =
+            _semanticTokens.cacheView();
     private final Object _completionLock = new Object();
     private final Object _definitionLock = new Object();
     private final Object _snippetLock = new Object();
 
-    private long _completionRequestGeneration;
     private JavaCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
     private JavaDefinitionMenuSession _definitionMenuSession;
@@ -169,47 +184,6 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private JavaSnippetSession _snippetSession;
 
     static record SemanticHighlight(int start, int end, TextColor foregroundColor) {
-    }
-
-    private static record CachedSemanticTokens(int version, List<SemanticHighlight> highlights) {
-    }
-
-    private static record SemanticSnapshot(String uri, int version, String text) {
-    }
-
-    private interface SemanticMutation {
-        List<SemanticHighlight> apply(List<SemanticHighlight> highlights);
-    }
-
-    private static record InsertSemanticMutation(int position, int length) implements SemanticMutation {
-        @Override
-        public List<SemanticHighlight> apply(List<SemanticHighlight> highlights) {
-            return transformInsert(highlights, position, length);
-        }
-    }
-
-    private static record DeleteSemanticMutation(int start, int end) implements SemanticMutation {
-        @Override
-        public List<SemanticHighlight> apply(List<SemanticHighlight> highlights) {
-            return transformDelete(highlights, start, end);
-        }
-    }
-
-    private static final class SemanticRefresh {
-        private final SemanticSnapshot _snapshot;
-        private final List<SemanticMutation> _mutations = new ArrayList<>();
-        private int _attempts;
-        private boolean _reschedule;
-
-        private SemanticRefresh(SemanticSnapshot snapshot) {
-            _snapshot = snapshot;
-        }
-    }
-
-    private static final class PendingDocumentChanges {
-        private VersionedTextDocumentIdentifier _textDocument;
-        private final List<TextDocumentContentChangeEvent> _changes = new ArrayList<>();
-        private boolean _flushScheduled;
     }
 
     private static record CompletionRequestSnapshot(
@@ -223,7 +197,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             int replacementEnd,
             CompletionTriggerKind triggerKind,
             String triggerCharacter,
-            long generation) {
+            long generation) implements AsyncCompletionCoordinator.Snapshot {
     }
 
     public static JavaLSPClient getInstance() {
@@ -531,15 +505,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private synchronized void clearSemanticTokensCache() {
-        _semanticTokensCache.clear();
-        _semanticRefreshes.clear();
+        _semanticTokens.clear();
     }
 
     private synchronized void clearSemanticTokensCache(String uri) {
-        if (uri != null) {
-            _semanticTokensCache.remove(uri);
-            _semanticRefreshes.remove(uri);
-        }
+        _semanticTokens.clear(uri);
     }
 
     Thread createShutdownHook() {
@@ -603,8 +573,17 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
             @Override
             public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
-                _log.debug("Workspace edit?");
-                return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                var window = Window.getInstance();
+                if (window == null || window.getBufferContext() == null) {
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                }
+                try {
+                    applyWorkspaceEdit(window.getBufferContext(), params == null ? null : params.getEdit());
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(true));
+                } catch (RuntimeException e) {
+                    _log.debug("Applying workspace edit failed", e);
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                }
             }
 
             @Override
@@ -754,6 +733,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var textDocument = new TextDocumentClientCapabilities();
 
         var codeAction = new CodeActionCapabilities(true);
+        codeAction.setDataSupport(true);
+        codeAction.setResolveSupport(new CodeActionResolveSupportCapabilities(List.of("edit", "command")));
         textDocument.setCodeAction(codeAction);
 
         var codeLens = new CodeLensCapabilities();
@@ -833,102 +814,24 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
-    private ScheduledExecutorService lspRequestExecutor() {
-        synchronized (_lspRequestLock) {
-            if (_lspRequestExecutor == null || _lspRequestExecutor.isShutdown() || _lspRequestExecutor.isTerminated()) {
-                _lspRequestExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-                    var thread = new Thread(r, "swim-java-lsp-requests");
-                    thread.setDaemon(true);
-                    return thread;
-                });
-            }
-            return _lspRequestExecutor;
-        }
-    }
-
     private void enqueueLspRequest(String description, Runnable action) {
-        try {
-            lspRequestExecutor().execute(() -> runLspRequest(description, action));
-        } catch (RejectedExecutionException e) {
-            _log.debug("Java LSP request queue rejected " + description, e);
-        }
-    }
-
-    private void scheduleLspRequest(String description, Runnable action, long delayMillis) {
-        try {
-            lspRequestExecutor().schedule(
-                    () -> runLspRequest(description, action),
-                    Math.max(0, delayMillis),
-                    TimeUnit.MILLISECONDS);
-        } catch (RejectedExecutionException e) {
-            _log.debug("Java LSP request queue rejected " + description, e);
-        }
-    }
-
-    private void runLspRequest(String description, Runnable action) {
-        if (!_enabled || _server == null) {
-            return;
-        }
-        try {
-            action.run();
-        } catch (Throwable e) {
-            _log.debug("Java LSP request failed: " + description, e);
-        }
-    }
-
-    private void shutdownLspRequestExecutor() {
-        synchronized (_lspRequestLock) {
-            if (_lspRequestExecutor != null) {
-                _lspRequestExecutor.shutdownNow();
-                _lspRequestExecutor = null;
-            }
-        }
+        _lspRequestQueue.execute(description, action);
     }
 
     private void queueDocumentChanges(
             String uri,
-            VersionedTextDocumentIdentifier textDocument,
+            org.eclipse.lsp4j.VersionedTextDocumentIdentifier textDocument,
             List<TextDocumentContentChangeEvent> contentChanges) {
-        if (uri == null || textDocument == null || contentChanges == null || contentChanges.isEmpty()) {
-            return;
-        }
-        boolean scheduleFlush = false;
-        synchronized (this) {
-            var pending = _pendingDocumentChanges.computeIfAbsent(uri, ignored -> new PendingDocumentChanges());
-            pending._textDocument = textDocument;
-            pending._changes.addAll(contentChanges);
-            if (!pending._flushScheduled) {
-                pending._flushScheduled = true;
-                scheduleFlush = true;
-            }
-        }
-        if (scheduleFlush) {
-            scheduleLspRequest(
-                    "didChange",
-                    () -> flushPendingDocumentChanges(uri),
-                    DID_CHANGE_BATCH_DELAY_MILLIS);
-        }
+        _documentChangeBatcher.queue(uri, textDocument, contentChanges);
     }
 
     private void flushPendingDocumentChanges(String uri) {
-        PendingDocumentChanges pending;
-        synchronized (this) {
-            pending = _pendingDocumentChanges.remove(uri);
-        }
-        if (pending == null || pending._changes.isEmpty()) {
-            return;
-        }
-        var params = new DidChangeTextDocumentParams();
-        params.setTextDocument(pending._textDocument);
-        params.setContentChanges(List.copyOf(pending._changes));
-        _server.getTextDocumentService().didChange(params);
+        _documentChangeBatcher.flush(uri);
     }
 
     public synchronized void shutdown() {
-        shutdownLspRequestExecutor();
-        synchronized (this) {
-            _pendingDocumentChanges.clear();
-        }
+        _lspRequestQueue.shutdown();
+        _documentChangeBatcher.clear();
         if (_shutdownHook != null) {
             try {
                 Runtime.getRuntime().removeShutdownHook(_shutdownHook);
@@ -1006,15 +909,41 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             BufferContext bufferContext,
             Range range,
             List<Diagnostic> diagnostics) {
+        return requestCodeActions(bufferContext, range, diagnostics, List.of());
+    }
+
+    private List<Either<Command, CodeAction>> requestCodeActions(
+            BufferContext bufferContext,
+            Range range,
+            List<Diagnostic> diagnostics,
+            List<String> only) {
         if (!_enabled || _server == null) {
             return List.of();
         }
         try {
             _log.debug("Get code actions");
             var context = new CodeActionContext(diagnostics);
+            if (only != null && !only.isEmpty()) {
+                context.setOnly(only);
+            }
             var params = new CodeActionParams(bufferContext.getBuffer().getTextDocumentID(), range, context);
             _log.debug("Code action: " + params);
-            return _server.getTextDocumentService().codeAction(params).join();
+            var actions = _server.getTextDocumentService().codeAction(params).join();
+            _log.debug("Code actions returned: " + actions.size());
+            for (var either : actions) {
+                if (either.isLeft()) {
+                    var command = either.getLeft();
+                    _log.debug("Code action command returned: title=" + command.getTitle()
+                            + ", command=" + command.getCommand());
+                } else {
+                    var action = either.getRight();
+                    _log.debug("Code action returned: title=" + action.getTitle()
+                            + ", kind=" + action.getKind()
+                            + ", command=" + (action.getCommand() == null ? null : action.getCommand().getCommand())
+                            + ", hasEdit=" + hasWorkspaceEditChanges(action.getEdit()));
+                }
+            }
+            return actions;
         } catch (Exception e) {
             _log.error("Error getting code actions: ", e);
             throw new RuntimeException("Error getting code actions: ", e);
@@ -1022,10 +951,28 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private List<Either<Command, CodeAction>> getCodeActions(BufferContext bufferContext) {
-        var lineCount = bufferContext.getTextLayout().getPhysicalLineCount();
-        var line = bufferContext.getTextLayout().getLastPhysicalLine();
-        var range = new Range(new Position(0, 0), new Position(lineCount - 1, line.getGlyphs().size()));
-        return requestCodeActions(bufferContext, range, new ArrayList<>());
+        return getCodeActions(bufferContext, List.of());
+    }
+
+    private List<Either<Command, CodeAction>> getCodeActions(BufferContext bufferContext, List<String> only) {
+        var range = wholeDocumentRange(bufferContext);
+        return requestCodeActions(bufferContext, range, new ArrayList<>(), only);
+    }
+
+    private static Range wholeDocumentRange(BufferContext bufferContext) {
+        String text = bufferContext.getBuffer().getString();
+        int end = text.endsWith("\n") ? text.length() - 1 : text.length();
+        int line = 0;
+        int character = 0;
+        for (int i = 0; i < end; i++) {
+            if (text.charAt(i) == '\n') {
+                line++;
+                character = 0;
+            } else {
+                character++;
+            }
+        }
+        return new Range(new Position(0, 0), new Position(line, character));
     }
 
     private boolean supportsCompletion() {
@@ -1079,22 +1026,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return Character.isJavaIdentifierPart(character) || isCompletionTriggerCharacter(character);
     }
 
-    private long nextCompletionRequestGeneration() {
-        synchronized (_completionLock) {
-            return ++_completionRequestGeneration;
-        }
-    }
-
-    private boolean isCurrentCompletionRequest(long generation) {
-        synchronized (_completionLock) {
-            return _completionRequestGeneration == generation;
-        }
-    }
-
     private CompletionRequestSnapshot createCompletionRequestSnapshot(
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
-            String triggerCharacter) {
+            String triggerCharacter,
+            long generation) {
         if (!supportsCompletion()) {
             return null;
         }
@@ -1113,11 +1049,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 replacementEnd,
                 triggerKind,
                 triggerCharacter,
-                nextCompletionRequestGeneration());
+                generation);
     }
 
     private JavaCompletionSession requestCompletionSession(CompletionRequestSnapshot snapshot) {
-        if (!supportsCompletion() || !isCurrentCompletionRequest(snapshot.generation())) {
+        if (!supportsCompletion() || !_completionRequests.isCurrent(snapshot)) {
             return null;
         }
         var params = new CompletionParams(
@@ -1189,36 +1125,18 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 && buffer.getCursor().getPosition() == snapshot.cursor();
     }
 
-    private void applyCompletionResult(CompletionRequestSnapshot snapshot, JavaCompletionSession session) {
-        runOnEventThread(() -> {
-            if (!isCurrentCompletionRequest(snapshot.generation())
-                    || !completionRequestStillMatchesBuffer(snapshot)) {
-                return;
-            }
-            if (session == null) {
-                cancelCompletion();
-                return;
-            }
-            showCompletionSession(session);
-        });
-    }
-
     private void refreshCompletion(
             BufferContext bufferContext,
             CompletionTriggerKind triggerKind,
             String triggerCharacter) {
-        CompletionRequestSnapshot snapshot = createCompletionRequestSnapshot(bufferContext, triggerKind, triggerCharacter);
-        if (snapshot == null) {
-            return;
-        }
-        enqueueLspRequest("completion", () -> {
-            if (!isCurrentCompletionRequest(snapshot.generation())) {
-                return;
-            }
-            flushPendingDocumentChanges(snapshot.uri());
-            JavaCompletionSession session = requestCompletionSession(snapshot);
-            applyCompletionResult(snapshot, session);
-        });
+        _completionRequests.request(
+                "completion",
+                generation -> createCompletionRequestSnapshot(bufferContext, triggerKind, triggerCharacter, generation),
+                this::flushPendingDocumentChanges,
+                this::requestCompletionSession,
+                this::completionRequestStillMatchesBuffer,
+                (snapshot, session) -> showCompletionSession(session),
+                () -> cancelCompletion());
     }
 
     @Override
@@ -1354,8 +1272,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     @Override
     public boolean cancelCompletion() {
         CompletionPopupView popupView;
+        _completionRequests.cancelPending();
         synchronized (_completionLock) {
-            ++_completionRequestGeneration;
             if (_completionSession == null && _completionPopupView == null) {
                 return false;
             }
@@ -1974,7 +1892,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                     var params = new ExecuteCommandParams();
                     params.setCommand(command.getCommand());
                     params.setArguments(command.getArguments());
-                    _server.getWorkspaceService().executeCommand(params).join();
+                    applyCommandResult(bufferContext, _server.getWorkspaceService().executeCommand(params).join());
                 } else {
                     _log.debug("Ignoring unsupported command: " + command);
                 }
@@ -1985,19 +1903,66 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
+    private void applyCommandResult(BufferContext bufferContext, Object result) {
+        if (result == null) {
+            return;
+        }
+        if (result instanceof WorkspaceEdit workspaceEdit) {
+            applyWorkspaceEdit(bufferContext, workspaceEdit);
+            return;
+        }
+        if (result instanceof ApplyWorkspaceEditParams applyParams) {
+            applyWorkspaceEdit(bufferContext, applyParams.getEdit());
+            return;
+        }
+        WorkspaceEdit workspaceEdit = decodeWorkspaceEdit(result);
+        if (hasWorkspaceEditChanges(workspaceEdit)) {
+            applyWorkspaceEdit(bufferContext, workspaceEdit);
+        }
+    }
+
     private boolean applyCodeActionByTitle(BufferContext bufferContext, String title) {
-        for (var either : getCodeActions(bufferContext)) {
+        return applyCodeAction(bufferContext, getCodeActions(bufferContext), title, null);
+    }
+
+    private boolean applyCodeActionByTitleOrKind(
+            BufferContext bufferContext,
+            String title,
+            String kind,
+            List<String> only) {
+        return applyCodeAction(bufferContext, getCodeActions(bufferContext, only), title, kind);
+    }
+
+    private boolean applyCodeAction(
+            BufferContext bufferContext,
+            List<Either<Command, CodeAction>> actions,
+            String title,
+            String kind) {
+        for (var either : actions) {
             if (either.isLeft()) {
                 var command = either.getLeft();
-                if (title.equals(command.getTitle())) {
+                if (matchesCodeActionTitle(title, command.getTitle())) {
+                    _log.debug("Applying code action command: title=" + command.getTitle()
+                            + ", command=" + command.getCommand());
                     applyCommand(bufferContext, command);
                     return true;
                 }
             } else {
                 var action = either.getRight();
-                if (title.equals(action.getTitle())) {
-                    applyWorkspaceEdit(bufferContext, action.getEdit());
-                    applyCommand(bufferContext, action.getCommand());
+                if (matchesCodeActionTitle(title, action.getTitle()) || matchesCodeActionKind(kind, action.getKind())) {
+                    var resolved = resolveCodeAction(action);
+                    boolean hasEdit = hasWorkspaceEditChanges(resolved.getEdit());
+                    boolean hasCommand = resolved.getCommand() != null;
+                    _log.debug("Applying code action: title=" + resolved.getTitle()
+                            + ", kind=" + resolved.getKind()
+                            + ", command=" + (resolved.getCommand() == null ? null : resolved.getCommand().getCommand())
+                            + ", hasEdit=" + hasEdit);
+                    if (!hasEdit && !hasCommand) {
+                        _log.debug("Skipping code action without edit or command");
+                        continue;
+                    }
+                    applyWorkspaceEdit(bufferContext, resolved.getEdit());
+                    applyCommand(bufferContext, resolved.getCommand());
                     return true;
                 }
             }
@@ -2005,12 +1970,52 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return false;
     }
 
+    private CodeAction resolveCodeAction(CodeAction action) {
+        if (action == null || hasWorkspaceEditChanges(action.getEdit()) || action.getCommand() != null
+                || _server == null || _server.getTextDocumentService() == null) {
+            return action;
+        }
+        try {
+            _log.debug("Resolving code action: title=" + action.getTitle() + ", kind=" + action.getKind());
+            var resolved = _server.getTextDocumentService().resolveCodeAction(action).join();
+            if (resolved != null) {
+                _log.debug("Resolved code action: title=" + resolved.getTitle()
+                        + ", kind=" + resolved.getKind()
+                        + ", command=" + (resolved.getCommand() == null ? null : resolved.getCommand().getCommand())
+                        + ", hasEdit=" + hasWorkspaceEditChanges(resolved.getEdit()));
+                return resolved;
+            }
+        } catch (Exception e) {
+            _log.debug("Resolving code action failed", e);
+        }
+        return action;
+    }
+
+    private static boolean matchesCodeActionTitle(String expected, String actual) {
+        return expected != null && actual != null && expected.equalsIgnoreCase(actual);
+    }
+
+    private static boolean matchesCodeActionKind(String expected, String actual) {
+        return expected != null && expected.equals(actual);
+    }
+
+    private static boolean hasWorkspaceEditChanges(WorkspaceEdit workspaceEdit) {
+        if (workspaceEdit == null) {
+            return false;
+        }
+        return workspaceEdit.getChanges() != null && !workspaceEdit.getChanges().isEmpty()
+                || workspaceEdit.getDocumentChanges() != null && !workspaceEdit.getDocumentChanges().isEmpty();
+    }
+
     public void organizeImports(BufferContext bufferContext) {
         if (!_enabled) {
             return;
         }
         try {
-            applyCodeActionByTitle(bufferContext, "Organize imports");
+            if (!applyCodeActionByTitleOrKind(bufferContext, "Organize imports",
+                    CODE_ACTION_SOURCE_ORGANIZE_IMPORTS, List.of(CODE_ACTION_SOURCE_ORGANIZE_IMPORTS))) {
+                applyCodeActionByTitle(bufferContext, "Organize imports");
+            }
         } catch (Exception e) {
             _log.error("Exception: ", e);
         }
@@ -2120,7 +2125,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        recordSemanticMutation(bufferContext, new InsertSemanticMutation(position, text == null ? 0 : text.length()));
+        recordSemanticInsert(bufferContext, position, text == null ? 0 : text.length());
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
         var lineIndex = line.getY();
@@ -2138,7 +2143,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (!_enabled || _server == null) {
             return;
         }
-        recordSemanticMutation(bufferContext, new DeleteSemanticMutation(startPosition, endPosition));
+        recordSemanticDelete(bufferContext, startPosition, endPosition);
         _log.debug("didRemove at " + startPosition + ", " + endPosition);
         var contentChanges = new ArrayList<TextDocumentContentChangeEvent>();
         var startLine = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
@@ -2204,91 +2209,29 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     static List<SemanticHighlight> decodeSemanticHighlights(String text, SemanticTokens tokens, SemanticTokensLegend legend) {
-        if (tokens == null || tokens.getData() == null || legend == null || legend.getTokenTypes() == null) {
-            return List.of();
-        }
-        String snapshotText = text == null ? "" : text;
-        var tokenTypes = legend.getTokenTypes();
-        var tokenModifiers = legend.getTokenModifiers() == null ? List.<String>of() : legend.getTokenModifiers();
-        var client = JavaLSPClient.getInstance();
-        var data = tokens.getData();
-        var highlights = new ArrayList<SemanticHighlight>();
-        int line = 0;
-        int character = 0;
-
-        for (int i = 0; i + 4 < data.size(); i += 5) {
-            int deltaLine = data.get(i);
-            int deltaStart = data.get(i + 1);
-            int length = data.get(i + 2);
-            int tokenTypeIndex = data.get(i + 3);
-            int modifiersBitset = data.get(i + 4);
-
-            line += deltaLine;
-            character = deltaLine == 0 ? character + deltaStart : deltaStart;
-            if (length <= 0 || tokenTypeIndex < 0 || tokenTypeIndex >= tokenTypes.size()) {
-                continue;
-            }
-
-            try {
-                TextColor color = client.semanticTokenColor(tokenTypes.get(tokenTypeIndex), modifiersBitset, tokenModifiers);
-                if (TextColor.ANSI.DEFAULT.equals(color)) {
-                    continue;
-                }
-                int start = indexForLineCharacter(snapshotText, line, character);
-                int end = indexForLineCharacter(snapshotText, line, character + length);
-                highlights.add(new SemanticHighlight(start, end, color));
-            } catch (RuntimeException e) {
-                _log.debug("Skipping invalid semantic token at line " + line + " character " + character, e);
-            }
-        }
-        return mergeSemanticHighlights(highlights);
+        return toSemanticHighlights(AsyncSemanticTokenHighlighter.decodeSemanticHighlights(
+                text,
+                tokens,
+                legend,
+                JavaLSPClient.getInstance()::semanticTokenColor,
+                _log));
     }
 
     private List<SemanticHighlight> getSemanticHighlights(BufferContext bufferContext) {
-        if (!supportsSemanticTokens() || bufferContext == null || bufferContext.getBuffer() == null) {
-            return List.of();
-        }
-        String uri = bufferContext.getBuffer().getURI().toString();
-        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-        List<SemanticHighlight> staleHighlights = List.of();
-        synchronized (this) {
-            var cached = _semanticTokensCache.get(uri);
-            if (cached != null && cached.version() == version) {
-                return cached.highlights();
-            }
-            if (cached != null) {
-                staleHighlights = cached.highlights();
-            }
-        }
-        scheduleSemanticHighlightRefresh(bufferContext);
-        return staleHighlights;
+        return toSemanticHighlights(_semanticTokens.getHighlights(semanticDocument(bufferContext)));
     }
 
-    private static int indexForLineCharacter(String text, int targetLine, int targetCharacter) {
-        if (targetLine < 0 || targetCharacter < 0) {
-            throw new IllegalArgumentException("Negative semantic token position");
-        }
-        int lineStart = 0;
-        for (int line = 0; line < targetLine; line++) {
-            int nextLine = text.indexOf('\n', lineStart);
-            if (nextLine < 0) {
-                throw new IllegalArgumentException("Semantic token line outside snapshot");
-            }
-            lineStart = nextLine + 1;
-        }
-        int lineEnd = text.indexOf('\n', lineStart);
-        if (lineEnd < 0) {
-            lineEnd = text.length();
-        }
-        return Math.min(lineStart + targetCharacter, lineEnd);
-    }
-
-    private List<SemanticHighlight> fetchSemanticHighlights(SemanticSnapshot snapshot) {
+    private List<AsyncSemanticTokenHighlighter.Highlight> fetchSemanticHighlights(AsyncSemanticTokenHighlighter.Snapshot snapshot) {
         try {
             var legend = _capabilities.getSemanticTokensProvider().getLegend();
             var params = new SemanticTokensParams(new TextDocumentIdentifier(snapshot.uri()));
             var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
-            return decodeSemanticHighlights(snapshot.text(), tokens, legend);
+            return AsyncSemanticTokenHighlighter.decodeSemanticHighlights(
+                    snapshot.text(),
+                    tokens,
+                    legend,
+                    this::semanticTokenColor,
+                    _log);
         } catch (Exception e) {
             _log.debug("Semantic token request failed", e);
             return List.of();
@@ -2296,220 +2239,54 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private void scheduleSemanticHighlightRefresh(BufferContext bufferContext) {
-        if (!supportsSemanticTokens() || bufferContext == null || bufferContext.getBuffer() == null) {
-            return;
-        }
-        String uri = bufferContext.getBuffer().getURI().toString();
-        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-        synchronized (this) {
-            var queuedRefresh = _semanticRefreshes.get(uri);
-            if (queuedRefresh != null) {
-                if (version > queuedRefresh._snapshot.version()) {
-                    queuedRefresh._reschedule = true;
-                }
-                return;
-            }
-        }
-
-        var snapshot = new SemanticSnapshot(uri, version, bufferContext.getBuffer().getString());
-        synchronized (this) {
-            var queuedRefresh = _semanticRefreshes.get(uri);
-            if (queuedRefresh != null) {
-                if (version > queuedRefresh._snapshot.version()) {
-                    queuedRefresh._reschedule = true;
-                }
-                return;
-            }
-            _semanticRefreshes.put(uri, new SemanticRefresh(snapshot));
-        }
-
-        enqueueSemanticRefresh(snapshot, bufferContext, 0);
+        _semanticTokens.scheduleRefresh(semanticDocument(bufferContext));
     }
 
-    private void enqueueSemanticRefresh(SemanticSnapshot snapshot, BufferContext bufferContext, long delayMillis) {
-        scheduleLspRequest(
-                "semantic token refresh",
-                () -> refreshSemanticHighlights(snapshot, bufferContext),
-                delayMillis);
+    private void recordSemanticInsert(BufferContext bufferContext, int position, int length) {
+        _semanticTokens.recordInsert(semanticDocument(bufferContext), position, length);
     }
 
-    private void refreshSemanticHighlights(SemanticSnapshot snapshot, BufferContext bufferContext) {
-        boolean reschedule = false;
-        if (!supportsSemanticTokens()) {
-            return;
-        }
-        synchronized (this) {
-            SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
-            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
-                return;
-            }
-            queuedRefresh._attempts++;
-        }
-
-        flushPendingDocumentChanges(snapshot.uri());
-        List<SemanticHighlight> highlights = fetchSemanticHighlights(snapshot);
-        if (!highlights.isEmpty()) {
-            synchronized (this) {
-                SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
-                if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
-                    return;
-                }
-                for (var mutation : queuedRefresh._mutations) {
-                    highlights = mutation.apply(highlights);
-                }
-                int currentVersion = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-                _semanticTokensCache.put(snapshot.uri(), new CachedSemanticTokens(currentVersion, highlights));
-                reschedule = queuedRefresh._reschedule && currentVersion != snapshot.version();
-                _semanticRefreshes.remove(snapshot.uri());
-            }
-            requestSemanticRedraw(bufferContext);
-            if (reschedule) {
-                scheduleSemanticHighlightRefresh(bufferContext);
-            }
-            return;
-        }
-
-        synchronized (this) {
-            SemanticRefresh queuedRefresh = _semanticRefreshes.get(snapshot.uri());
-            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
-                return;
-            }
-            if (queuedRefresh._attempts < 20) {
-                enqueueSemanticRefresh(snapshot, bufferContext, 250);
-                return;
-            }
-            reschedule = queuedRefresh._reschedule
-                    && bufferContext.getBuffer().getVersionedTextDocumentID().getVersion() != snapshot.version();
-            _semanticRefreshes.remove(snapshot.uri());
-        }
-        if (reschedule) {
-            scheduleSemanticHighlightRefresh(bufferContext);
-        }
+    private void recordSemanticDelete(BufferContext bufferContext, int start, int end) {
+        _semanticTokens.recordDelete(semanticDocument(bufferContext), start, end);
     }
 
-    private void recordSemanticMutation(BufferContext bufferContext, SemanticMutation mutation) {
-        if (bufferContext == null || bufferContext.getBuffer() == null || mutation == null) {
-            return;
+    private AsyncSemanticTokenHighlighter.Document semanticDocument(BufferContext bufferContext) {
+        if (bufferContext == null || bufferContext.getBuffer() == null) {
+            return null;
         }
-        String uri = bufferContext.getBuffer().getURI().toString();
-        int version = bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
-        synchronized (this) {
-            var cached = _semanticTokensCache.get(uri);
-            if (cached != null) {
-                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, mutation.apply(cached.highlights())));
+        return new AsyncSemanticTokenHighlighter.Document() {
+            @Override
+            public String uri() {
+                return bufferContext.getBuffer().getURI().toString();
             }
-            var queuedRefresh = _semanticRefreshes.get(uri);
-            if (queuedRefresh != null) {
-                queuedRefresh._mutations.add(mutation);
-                queuedRefresh._reschedule = true;
+
+            @Override
+            public int version() {
+                return bufferContext.getBuffer().getVersionedTextDocumentID().getVersion();
             }
-        }
+
+            @Override
+            public String text() {
+                return bufferContext.getBuffer().getString();
+            }
+
+            @Override
+            public void requestSemanticRedraw() {
+                JavaLSPClient.this.requestSemanticRedraw(bufferContext);
+            }
+        };
     }
 
-    private static List<SemanticHighlight> transformInsert(List<SemanticHighlight> highlights, int position, int length) {
-        if (length <= 0 || highlights == null || highlights.isEmpty()) {
-            return highlights == null ? List.of() : highlights;
-        }
-        TextColor insertedColor = adjacentSemanticColour(highlights, position);
-        var transformed = new ArrayList<SemanticHighlight>(highlights.size() + 1);
-        for (var highlight : highlights) {
-            if (highlight.end() <= position) {
-                transformed.add(highlight);
-            } else if (highlight.start() >= position) {
-                transformed.add(new SemanticHighlight(
-                        highlight.start() + length,
-                        highlight.end() + length,
-                        highlight.foregroundColor()));
-            } else {
-                transformed.add(new SemanticHighlight(
-                        highlight.start(),
-                        highlight.end() + length,
-                        highlight.foregroundColor()));
-            }
-        }
-        if (insertedColor != null && !TextColor.ANSI.DEFAULT.equals(insertedColor)) {
-            transformed.add(new SemanticHighlight(position, position + length, insertedColor));
-        }
-        return mergeSemanticHighlights(transformed);
-    }
-
-    private static TextColor adjacentSemanticColour(List<SemanticHighlight> highlights, int position) {
-        TextColor left = null;
-        TextColor right = null;
-        for (var highlight : highlights) {
-            if (highlight.start() <= position && position < highlight.end()) {
-                return highlight.foregroundColor();
-            }
-            if (highlight.end() == position) {
-                left = highlight.foregroundColor();
-            }
-            if (highlight.start() == position && right == null) {
-                right = highlight.foregroundColor();
-            }
-        }
-        return left != null ? left : right;
-    }
-
-    private static List<SemanticHighlight> transformDelete(List<SemanticHighlight> highlights, int start, int end) {
-        if (end <= start || highlights == null || highlights.isEmpty()) {
-            return highlights == null ? List.of() : highlights;
-        }
-        int length = end - start;
-        var transformed = new ArrayList<SemanticHighlight>(highlights.size());
-        for (var highlight : highlights) {
-            if (highlight.end() <= start) {
-                transformed.add(highlight);
-            } else if (highlight.start() >= end) {
-                transformed.add(new SemanticHighlight(
-                        highlight.start() - length,
-                        highlight.end() - length,
-                        highlight.foregroundColor()));
-            } else {
-                int nextStart = highlight.start() < start ? highlight.start() : start;
-                int nextEnd = highlight.end() > end ? highlight.end() - length : start;
-                if (nextEnd > nextStart) {
-                    transformed.add(new SemanticHighlight(nextStart, nextEnd, highlight.foregroundColor()));
-                }
-            }
-        }
-        return mergeSemanticHighlights(transformed);
-    }
-
-    private static List<SemanticHighlight> mergeSemanticHighlights(List<SemanticHighlight> highlights) {
+    private static List<SemanticHighlight> toSemanticHighlights(
+            List<AsyncSemanticTokenHighlighter.Highlight> highlights) {
         if (highlights == null || highlights.isEmpty()) {
             return List.of();
         }
-        var sorted = new ArrayList<SemanticHighlight>(highlights.size());
+        var result = new ArrayList<SemanticHighlight>(highlights.size());
         for (var highlight : highlights) {
-            if (highlight == null
-                    || highlight.end() <= highlight.start()
-                    || highlight.foregroundColor() == null
-                    || TextColor.ANSI.DEFAULT.equals(highlight.foregroundColor())) {
-                continue;
-            }
-            sorted.add(highlight);
+            result.add(new SemanticHighlight(highlight.start(), highlight.end(), highlight.foregroundColor()));
         }
-        if (sorted.isEmpty()) {
-            return List.of();
-        }
-        sorted.sort(Comparator.comparingInt(SemanticHighlight::start)
-                .thenComparingInt(SemanticHighlight::end));
-        var merged = new ArrayList<SemanticHighlight>(sorted.size());
-        for (var highlight : sorted) {
-            if (!merged.isEmpty()) {
-                int lastIndex = merged.size() - 1;
-                var last = merged.get(lastIndex);
-                if (last.foregroundColor().equals(highlight.foregroundColor()) && highlight.start() <= last.end()) {
-                    merged.set(lastIndex, new SemanticHighlight(
-                            last.start(),
-                            Math.max(last.end(), highlight.end()),
-                            last.foregroundColor()));
-                    continue;
-                }
-            }
-            merged.add(highlight);
-        }
-        return List.copyOf(merged);
+        return List.copyOf(result);
     }
 
     private void requestSemanticRedraw(BufferContext bufferContext) {

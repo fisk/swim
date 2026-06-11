@@ -73,8 +73,16 @@ public final class InstalledSwimDriver {
         if (existingJavaToolOptions != null && !existingJavaToolOptions.isBlank()) {
             javaToolOptions = existingJavaToolOptions + " " + javaToolOptions;
         }
+        String extraJavaToolOptions = extraEnvironment.get("JAVA_TOOL_OPTIONS");
+        if (extraJavaToolOptions != null && !extraJavaToolOptions.isBlank()) {
+            javaToolOptions = javaToolOptions + " " + extraJavaToolOptions;
+        }
         environment.put("JAVA_TOOL_OPTIONS", javaToolOptions);
-        environment.putAll(extraEnvironment);
+        for (var entry : extraEnvironment.entrySet()) {
+            if (!"JAVA_TOOL_OPTIONS".equals(entry.getKey())) {
+                environment.put(entry.getKey(), entry.getValue());
+            }
+        }
 
         String[] command = new String[arguments.length + 1];
         command[0] = launcherBinary.toString();

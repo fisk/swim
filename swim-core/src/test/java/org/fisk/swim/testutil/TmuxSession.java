@@ -55,6 +55,17 @@ public final class TmuxSession implements AutoCloseable {
         Thread.sleep(120);
     }
 
+    public void sendLiteralKeyStrokes(String text) throws Exception {
+        for (int i = 0; i < text.length(); i++) {
+            char ch = text.charAt(i);
+            if (ch == ' ') {
+                sendKey("Space");
+            } else {
+                sendLiteral(Character.toString(ch));
+            }
+        }
+    }
+
     public void sendEnter() throws Exception {
         sendKey("Enter");
     }

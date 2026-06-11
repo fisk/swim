@@ -84,8 +84,15 @@ public class ListEventResponder implements EventResponder, KeyBindingHintProvide
 
     @Override
     public List<KeyBindingHint> keyBindingHints() {
+        return keyBindingHintsExcluding(null);
+    }
+
+    public List<KeyBindingHint> keyBindingHintsExcluding(Layer excludedLayer) {
         var hints = new ArrayList<KeyBindingHint>();
         for (var layer : _layers) {
+            if (layer == excludedLayer) {
+                continue;
+            }
             hints.addAll(layer.keyBindingHints());
         }
         return List.copyOf(hints);
