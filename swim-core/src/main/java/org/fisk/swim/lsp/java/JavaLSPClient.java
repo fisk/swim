@@ -2134,6 +2134,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, 0, text));
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
+        DiagnosticService.getInstance().applyTextChange(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                range,
+                text);
         queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }
@@ -2155,6 +2160,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, endPosition - startPosition, ""));
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
+        DiagnosticService.getInstance().applyTextChange(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                range,
+                "");
         queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }

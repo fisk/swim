@@ -308,6 +308,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         int charIndex = position - line.getStartPosition();
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         var change = new TextDocumentContentChangeEvent(range, 0, text);
+        DiagnosticService.getInstance().applyTextChange(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                range,
+                text);
         queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));
@@ -328,6 +333,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         int endIndex = endPosition - endLine.getStartPosition();
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         var change = new TextDocumentContentChangeEvent(range, endPosition - startPosition, "");
+        DiagnosticService.getInstance().applyTextChange(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                range,
+                "");
         queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));

@@ -81,6 +81,7 @@ public class UndoLog {
             _log.debug("apply BatchRecord");
             for (var record: _changes) {
                 record.apply(bufferContext);
+                bufferContext.getTextLayout().calculate();
             }
             _log.debug("end apply BatchRecord");
         }

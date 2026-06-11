@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
@@ -377,6 +379,25 @@ class BufferTest {
         }
     }
 
+    @Test
+    void undoRecalculatesLayoutBetweenBatchedChangesBeforeNotifyingLanguageMode() throws Exception {
+        var mode = new LayoutRecordingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("undoevents", "buffer-undo-events", path -> mode)) {
+            var buffer = createBufferContext("aa\nbb\ncc", 80, "undoevents").getBuffer();
+
+            buffer.remove(3, 6);
+            buffer.remove(0, 3);
+            buffer.getUndoLog().commit();
+            mode.clear();
+
+            buffer.undo();
+
+            assertEquals("aa\nbb\ncc", buffer.getString());
+            assertEquals(new LayoutRecordingLanguageMode.Event("insert", 0, 0, "aa\n"), mode.events().get(0));
+            assertEquals(new LayoutRecordingLanguageMode.Event("insert", 1, 0, "bb\n"), mode.events().get(1));
+        }
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }
@@ -477,6 +498,69 @@ class BufferTest {
         @Override
         public boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
             return _reuseCacheAfterEdit;
+        }
+    }
+
+    private static final class LayoutRecordingLanguageMode implements LanguageMode {
+        private record Event(String kind, int line, int character, String text) {
+        }
+
+        private final List<Event> _events = new ArrayList<>();
+
+        List<Event> events() {
+            return _events;
+        }
+
+        void clear() {
+            _events.clear();
+        }
+
+        @Override
+        public void didInsert(BufferContext bufferContext, int position, String str) {
+            var line = bufferContext.getTextLayout().getPhysicalLineAt(position);
+            _events.add(new Event("insert", line.getY(), position - line.getStartPosition(), str));
+        }
+
+        @Override
+        public void didRemove(BufferContext bufferContext, int startPosition, int endPosition) {
+            var line = bufferContext.getTextLayout().getPhysicalLineAt(startPosition);
+            _events.add(new Event("remove", line.getY(), startPosition - line.getStartPosition(),
+                    bufferContext.getBuffer().getSubstring(startPosition, startPosition)));
+        }
+
+        @Override
+        public void willSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didClose(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didOpen(BufferContext bufferContext) {
+        }
+
+        @Override
+        public int getIndentationLevel(BufferContext bufferContext) {
+            return 0;
+        }
+
+        @Override
+        public boolean isIndentationEnd(BufferContext bufferContext, String chracter) {
+            return false;
+        }
+
+        @Override
+        public TextDocumentItem getTextDocument(BufferContext bufferContext) {
+            return null;
+        }
+
+        @Override
+        public void applyColouring(BufferContext bufferContext, AttributedString str) {
         }
     }
 }

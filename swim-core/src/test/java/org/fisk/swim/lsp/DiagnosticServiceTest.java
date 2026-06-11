@@ -80,6 +80,46 @@ class DiagnosticServiceTest {
         assertEquals(0, DiagnosticService.getInstance().diagnosticsFor(context).size());
     }
 
+    @Test
+    void textChangeShiftsDiagnosticsAfterDeletedLine() throws Exception {
+        Path file = tempDir.resolve("shift-after-delete.txt");
+        Files.writeString(file, "one\ntwo\nthree\n");
+        var context = new BufferContext(Rect.create(0, 0, 40, 8), file);
+
+        DiagnosticService.getInstance().publish(PROVIDER, file.toUri().toString(), file,
+                List.of(diagnostic(2, 0, DiagnosticSeverity.Warning, "shifted warning")));
+
+        DiagnosticService.getInstance().applyTextChange(
+                file.toUri().toString(),
+                file,
+                new Range(new Position(0, 0), new Position(1, 0)),
+                "");
+
+        assertEquals(0, DiagnosticService.getInstance().diagnosticsForLine(context, 2).size());
+        var shifted = DiagnosticService.getInstance().diagnosticsForLine(context, 1);
+        assertEquals(1, shifted.size());
+        assertEquals(1, shifted.get(0).startLine());
+        assertEquals("shifted warning", shifted.get(0).message());
+    }
+
+    @Test
+    void textChangeDropsDiagnosticsOverlappingDeletedText() throws Exception {
+        Path file = tempDir.resolve("drop-overlap-delete.txt");
+        Files.writeString(file, "one\ntwo\nthree\n");
+        var context = new BufferContext(Rect.create(0, 0, 40, 8), file);
+
+        DiagnosticService.getInstance().publish(PROVIDER, file.toUri().toString(), file,
+                List.of(diagnostic(1, 0, DiagnosticSeverity.Error, "deleted error")));
+
+        DiagnosticService.getInstance().applyTextChange(
+                file.toUri().toString(),
+                file,
+                new Range(new Position(1, 0), new Position(2, 0)),
+                "");
+
+        assertEquals(0, DiagnosticService.getInstance().diagnosticsFor(context).size());
+    }
+
     private static Diagnostic diagnostic(int line, int character, DiagnosticSeverity severity, String message) {
         var diagnostic = new Diagnostic();
         diagnostic.setRange(new Range(new Position(line, character), new Position(line, character + 1)));

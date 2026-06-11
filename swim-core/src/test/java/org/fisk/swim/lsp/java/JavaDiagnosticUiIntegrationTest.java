@@ -153,6 +153,42 @@ class JavaDiagnosticUiIntegrationTest {
         }
     }
 
+    @Test
+    void javaLspDiagnosticsShiftAfterLocalLineDelete() throws Exception {
+        Path project = tempDir.resolve("java-project-shift-diagnostics");
+        Path file = project.resolve("src/main/java/demo/Main.java");
+        Files.createDirectories(file.getParent());
+        Files.writeString(project.resolve("pom.xml"), "<project />\n");
+        Files.writeString(file, """
+                package demo;
+                class Main {}
+                class Other {}
+                """);
+
+        var client = new TestJavaLspClient(new CodeActionLanguageServer());
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+        var terminal = TerminalContextTestSupport.install(24, 10);
+
+        try (var harness = HeadlessWindowHarness.create(file, 24, 10)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            LanguageClient languageClient = client.createLanguageClient();
+            languageClient.publishDiagnostics(new PublishDiagnosticsParams(
+                    buffer.getURI().toString(),
+                    List.of(diagnostic(2, 0, DiagnosticSeverity.Warning, "Warning line"))));
+
+            window.update(true);
+            assertEquals(WARNING_COLOR, foregroundAt(terminal.drawCalls(), 0, 4));
+
+            terminal.drawCalls().clear();
+            buffer.remove(0, buffer.getString().indexOf("class Main"));
+            window.update(true);
+
+            assertEquals(WARNING_COLOR, foregroundAt(terminal.drawCalls(), 0, 3));
+        }
+    }
+
     private static Diagnostic diagnostic(int line, int character, DiagnosticSeverity severity, String message) {
         var diagnostic = new Diagnostic();
         diagnostic.setRange(new Range(new Position(line, character), new Position(line, character + 1)));

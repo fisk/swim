@@ -9,6 +9,8 @@ import java.util.Map;
 
 import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DiagnosticSeverity;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.Range;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.text.BufferContext;
 
@@ -47,6 +49,44 @@ public final class DiagnosticService {
                 _diagnosticsByKey.remove(key);
             } else {
                 _diagnosticsByKey.put(key, List.copyOf(entries));
+            }
+        }
+    }
+
+    public void applyTextChange(String uri, Path path, Range range, String replacementText) {
+        var editRange = TextRange.from(range);
+        if (editRange == null) {
+            return;
+        }
+        Path normalizedPath = normalize(path);
+        var insertedEnd = insertedEnd(editRange.start(), replacementText == null ? "" : replacementText);
+        Map<String, List<DiagnosticEntry>> updates = new HashMap<>();
+        synchronized (_lock) {
+            for (var stored : _diagnosticsByKey.entrySet()) {
+                boolean changed = false;
+                var transformed = new ArrayList<DiagnosticEntry>();
+                for (var entry : stored.getValue()) {
+                    if (!matches(entry, uri, normalizedPath)) {
+                        transformed.add(entry);
+                        continue;
+                    }
+                    changed = true;
+                    var diagnostic = transformDiagnostic(entry.diagnostic(), editRange, insertedEnd);
+                    if (diagnostic != null) {
+                        transformed.add(new DiagnosticEntry(entry.providerId(), entry.uri(), entry.path(), diagnostic));
+                    }
+                }
+                if (changed) {
+                    transformed.sort(DIAGNOSTIC_ORDER);
+                    updates.put(stored.getKey(), List.copyOf(transformed));
+                }
+            }
+            for (var update : updates.entrySet()) {
+                if (update.getValue().isEmpty()) {
+                    _diagnosticsByKey.remove(update.getKey());
+                } else {
+                    _diagnosticsByKey.put(update.getKey(), update.getValue());
+                }
             }
         }
     }
@@ -249,6 +289,119 @@ public final class DiagnosticService {
             return normalize(Path.of(java.net.URI.create(uri)));
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private static boolean matches(DiagnosticEntry entry, String uri, Path path) {
+        return uri != null && !uri.isBlank() && uri.equals(entry.uri())
+                || path != null && path.equals(entry.path());
+    }
+
+    private static Diagnostic transformDiagnostic(Diagnostic diagnostic, TextRange editRange, TextPosition insertedEnd) {
+        var diagnosticRange = TextRange.from(diagnostic.getRange());
+        if (diagnosticRange == null) {
+            return copyDiagnostic(diagnostic, diagnostic.getRange());
+        }
+        if (!editRange.isEmpty() && diagnosticRange.intersects(editRange)) {
+            return null;
+        }
+        var start = transformPosition(diagnosticRange.start(), editRange, insertedEnd);
+        var end = transformPosition(diagnosticRange.end(), editRange, insertedEnd);
+        if (end.compareTo(start) < 0) {
+            end = start;
+        }
+        return copyDiagnostic(diagnostic, new Range(start.toLspPosition(), end.toLspPosition()));
+    }
+
+    private static TextPosition transformPosition(TextPosition position, TextRange editRange, TextPosition insertedEnd) {
+        if (position.compareTo(editRange.start()) < 0) {
+            return position;
+        }
+        if (position.compareTo(editRange.end()) < 0) {
+            return insertedEnd;
+        }
+        if (position.line() == editRange.end().line()) {
+            return new TextPosition(
+                    insertedEnd.line(),
+                    Math.max(0, insertedEnd.character() + position.character() - editRange.end().character()));
+        }
+        return new TextPosition(
+                Math.max(0, position.line() + insertedEnd.line() - editRange.end().line()),
+                position.character());
+    }
+
+    private static TextPosition insertedEnd(TextPosition start, String text) {
+        int line = start.line();
+        int character = start.character();
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') {
+                line++;
+                character = 0;
+            } else {
+                character++;
+            }
+        }
+        return new TextPosition(line, character);
+    }
+
+    private static Diagnostic copyDiagnostic(Diagnostic source, Range range) {
+        var copy = new Diagnostic();
+        copy.setRange(range);
+        copy.setSeverity(source.getSeverity());
+        copy.setCode(source.getCode());
+        copy.setCodeDescription(source.getCodeDescription());
+        copy.setSource(source.getSource());
+        copy.setMessage(source.getMessage());
+        copy.setTags(source.getTags());
+        copy.setRelatedInformation(source.getRelatedInformation());
+        copy.setData(source.getData());
+        return copy;
+    }
+
+    private record TextRange(TextPosition start, TextPosition end) {
+        static TextRange from(Range range) {
+            if (range == null || range.getStart() == null || range.getEnd() == null) {
+                return null;
+            }
+            var start = TextPosition.from(range.getStart());
+            var end = TextPosition.from(range.getEnd());
+            if (end.compareTo(start) < 0) {
+                return new TextRange(end, start);
+            }
+            return new TextRange(start, end);
+        }
+
+        boolean isEmpty() {
+            return start.compareTo(end) == 0;
+        }
+
+        boolean intersects(TextRange other) {
+            if (isEmpty()) {
+                return other.start().compareTo(start) <= 0 && start.compareTo(other.end()) < 0;
+            }
+            if (other.isEmpty()) {
+                return start.compareTo(other.start()) <= 0 && other.start().compareTo(end) < 0;
+            }
+            return start.compareTo(other.end()) < 0 && other.start().compareTo(end) < 0;
+        }
+    }
+
+    private record TextPosition(int line, int character) implements Comparable<TextPosition> {
+        static TextPosition from(Position position) {
+            return new TextPosition(Math.max(0, position.getLine()), Math.max(0, position.getCharacter()));
+        }
+
+        Position toLspPosition() {
+            return new Position(line, character);
+        }
+
+        @Override
+        public int compareTo(TextPosition other) {
+            int lineCompare = Integer.compare(line, other.line);
+            if (lineCompare != 0) {
+                return lineCompare;
+            }
+            return Integer.compare(character, other.character);
         }
     }
 }

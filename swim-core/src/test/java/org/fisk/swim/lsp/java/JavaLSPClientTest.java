@@ -12,6 +12,7 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -90,6 +91,60 @@ class JavaLSPClientTest {
         JavaLSPClient.applyWorkspaceEdit(context, edit);
 
         assertEquals("A beta G", context.getBuffer().getString());
+    }
+
+    @Test
+    void undoAfterWorkspaceEditKeepsIncrementalLspDocumentInSync() throws Exception {
+        Path file = tempDir.resolve("UndoWorkspaceEdit.java");
+        String original = "aa\nbb\ncc";
+        Files.writeString(file, original);
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var client = new JavaLSPClient();
+        setField(client, "_enabled", true);
+
+        var mirror = new IncrementalDocumentMirror(original);
+        TextDocumentService textDocumentService = new TextDocumentService() {
+            @Override
+            public void didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams params) {
+            }
+
+            @Override
+            public void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+                mirror.didChange(params);
+            }
+
+            @Override
+            public void didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams params) {
+            }
+
+            @Override
+            public void didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams params) {
+            }
+        };
+        LanguageServer server = new SemanticTokensLanguageServer(textDocumentService);
+        setField(client, "_server", server);
+        setNamedField(context.getBuffer(), org.fisk.swim.text.Buffer.class, "_languageMode", client);
+
+        try {
+            var edit = new WorkspaceEdit();
+            edit.setChanges(Map.of(
+                    file.toUri().toString(),
+                    List.of(
+                            new TextEdit(new Range(new Position(1, 0), new Position(2, 0)), ""),
+                            new TextEdit(new Range(new Position(0, 0), new Position(1, 0)), ""))));
+
+            JavaLSPClient.applyWorkspaceEdit(context, edit);
+            assertEquals("cc", context.getBuffer().getString());
+
+            context.getBuffer().undo();
+
+            assertEquals(original, context.getBuffer().getString());
+            waitForMirrorChangeCount(mirror, 8);
+            assertEquals(List.of(), mirror.invalidRanges());
+            assertEquals(original, mirror.text());
+        } finally {
+            client.shutdown();
+        }
     }
 
     @Test
@@ -913,6 +968,17 @@ class JavaLSPClientTest {
         throw new AssertionError("Timed out waiting for semantic token requests");
     }
 
+    private static void waitForMirrorChangeCount(IncrementalDocumentMirror mirror, int expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (mirror.changeCount() >= expected) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Timed out waiting for LSP document changes");
+    }
+
     private static void setField(Object target, String name, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(name);
         field.setAccessible(true);
@@ -939,6 +1005,73 @@ class JavaLSPClientTest {
         Field foregroundField = attributes.getClass().getDeclaredField("_foregroundColour");
         foregroundField.setAccessible(true);
         return (TextColor) foregroundField.get(attributes);
+    }
+
+    private static final class IncrementalDocumentMirror {
+        private final StringBuilder _text;
+        private final AtomicInteger _changeCount = new AtomicInteger();
+        private final List<String> _invalidRanges = new ArrayList<>();
+
+        private IncrementalDocumentMirror(String initialText) {
+            _text = new StringBuilder(initialText);
+        }
+
+        synchronized void didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams params) {
+            for (var change : params.getContentChanges()) {
+                _changeCount.incrementAndGet();
+                apply(change);
+            }
+        }
+
+        synchronized String text() {
+            return _text.toString();
+        }
+
+        int changeCount() {
+            return _changeCount.get();
+        }
+
+        synchronized List<String> invalidRanges() {
+            return List.copyOf(_invalidRanges);
+        }
+
+        private void apply(org.eclipse.lsp4j.TextDocumentContentChangeEvent change) {
+            String text = change.getText() == null ? "" : change.getText();
+            if (change.getRange() == null) {
+                _text.replace(0, _text.length(), text);
+                return;
+            }
+            int start = offset(change.getRange().getStart());
+            int end = offset(change.getRange().getEnd());
+            if (start < 0 || end < 0 || start > end) {
+                _invalidRanges.add(change.getRange().toString());
+                return;
+            }
+            _text.replace(start, end, text);
+        }
+
+        private int offset(Position position) {
+            if (position == null || position.getLine() < 0 || position.getCharacter() < 0) {
+                return -1;
+            }
+            int lineStart = 0;
+            for (int line = 0; line < position.getLine(); line++) {
+                int newline = _text.indexOf("\n", lineStart);
+                if (newline < 0) {
+                    return -1;
+                }
+                lineStart = newline + 1;
+            }
+            int lineEnd = _text.indexOf("\n", lineStart);
+            if (lineEnd < 0) {
+                lineEnd = _text.length();
+            }
+            int lineLength = lineEnd - lineStart;
+            if (position.getCharacter() > lineLength) {
+                return -1;
+            }
+            return lineStart + position.getCharacter();
+        }
     }
 
     private static final class SemanticTokensTextDocumentService implements TextDocumentService {
