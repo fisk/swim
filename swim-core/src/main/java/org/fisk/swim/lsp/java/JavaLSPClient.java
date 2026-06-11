@@ -148,7 +148,12 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private final LspDocumentChangeBatcher _documentChangeBatcher = new LspDocumentChangeBatcher(
             _lspRequestQueue,
             () -> _server == null ? null : _server.getTextDocumentService(),
-            DID_CHANGE_BATCH_DELAY_MILLIS);
+            DID_CHANGE_BATCH_DELAY_MILLIS,
+            (uri, path, change) -> DiagnosticService.getInstance().applyTextChange(
+                    uri,
+                    path,
+                    change.getRange(),
+                    change.getText()));
     private final AsyncSemanticTokenHighlighter _semanticTokens = new AsyncSemanticTokenHighlighter(
             _lspRequestQueue,
             _log,
@@ -819,10 +824,14 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private void queueDocumentChanges(
-            String uri,
+            BufferContext bufferContext,
             org.eclipse.lsp4j.VersionedTextDocumentIdentifier textDocument,
             List<TextDocumentContentChangeEvent> contentChanges) {
-        _documentChangeBatcher.queue(uri, textDocument, contentChanges);
+        _documentChangeBatcher.queue(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                textDocument,
+                contentChanges);
     }
 
     private void flushPendingDocumentChanges(String uri) {
@@ -2134,12 +2143,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, 0, text));
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
-        DiagnosticService.getInstance().applyTextChange(
-                bufferContext.getBuffer().getURI().toString(),
-                bufferContext.getBuffer().getPath(),
-                range,
-                text);
-        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
+        queueDocumentChanges(bufferContext, textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 
@@ -2160,12 +2164,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         contentChanges.add(new TextDocumentContentChangeEvent(range, endPosition - startPosition, ""));
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
-        DiagnosticService.getInstance().applyTextChange(
-                bufferContext.getBuffer().getURI().toString(),
-                bufferContext.getBuffer().getPath(),
-                range,
-                "");
-        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(), textDocument, contentChanges);
+        queueDocumentChanges(bufferContext, textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
     }
 

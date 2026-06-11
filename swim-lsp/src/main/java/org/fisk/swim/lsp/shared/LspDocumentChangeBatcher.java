@@ -1,5 +1,6 @@
 package org.fisk.swim.lsp.shared;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -13,26 +14,52 @@ import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.services.TextDocumentService;
 
 public final class LspDocumentChangeBatcher {
+    @FunctionalInterface
+    public interface LocalChangeObserver {
+        void didChange(String uri, Path path, TextDocumentContentChangeEvent change);
+    }
+
     private final AsyncLspRequestQueue _requestQueue;
     private final Supplier<TextDocumentService> _textDocumentService;
     private final long _batchDelayMillis;
+    private final LocalChangeObserver _localChangeObserver;
     private final Map<String, PendingDocumentChanges> _pendingDocumentChanges = new HashMap<>();
 
     public LspDocumentChangeBatcher(
             AsyncLspRequestQueue requestQueue,
             Supplier<TextDocumentService> textDocumentService,
             long batchDelayMillis) {
+        this(requestQueue, textDocumentService, batchDelayMillis, null);
+    }
+
+    public LspDocumentChangeBatcher(
+            AsyncLspRequestQueue requestQueue,
+            Supplier<TextDocumentService> textDocumentService,
+            long batchDelayMillis,
+            LocalChangeObserver localChangeObserver) {
         _requestQueue = Objects.requireNonNull(requestQueue, "requestQueue");
         _textDocumentService = Objects.requireNonNull(textDocumentService, "textDocumentService");
         _batchDelayMillis = Math.max(0, batchDelayMillis);
+        _localChangeObserver = localChangeObserver == null ? (uri, path, change) -> {} : localChangeObserver;
     }
 
     public void queue(
             String uri,
             VersionedTextDocumentIdentifier textDocument,
             List<TextDocumentContentChangeEvent> contentChanges) {
+        queue(uri, null, textDocument, contentChanges);
+    }
+
+    public void queue(
+            String uri,
+            Path path,
+            VersionedTextDocumentIdentifier textDocument,
+            List<TextDocumentContentChangeEvent> contentChanges) {
         if (uri == null || textDocument == null || contentChanges == null || contentChanges.isEmpty()) {
             return;
+        }
+        for (var change : contentChanges) {
+            _localChangeObserver.didChange(uri, path, change);
         }
         boolean scheduleFlush = false;
         synchronized (this) {

@@ -143,7 +143,12 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     private final LspDocumentChangeBatcher _documentChangeBatcher = new LspDocumentChangeBatcher(
             _lspRequestQueue,
             () -> _server == null ? null : _server.getTextDocumentService(),
-            15);
+            15,
+            (uri, path, change) -> DiagnosticService.getInstance().applyTextChange(
+                    uri,
+                    path,
+                    change.getRange(),
+                    change.getText()));
     private final AsyncSemanticTokenHighlighter _semanticTokens = new AsyncSemanticTokenHighlighter(
             _lspRequestQueue,
             _log,
@@ -308,12 +313,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         int charIndex = position - line.getStartPosition();
         var range = new Range(new Position(lineIndex, charIndex), new Position(lineIndex, charIndex));
         var change = new TextDocumentContentChangeEvent(range, 0, text);
-        DiagnosticService.getInstance().applyTextChange(
-                bufferContext.getBuffer().getURI().toString(),
-                bufferContext.getBuffer().getPath(),
-                range,
-                text);
-        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
+        queueDocumentChanges(bufferContext,
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
@@ -333,12 +333,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         int endIndex = endPosition - endLine.getStartPosition();
         var range = new Range(new Position(startLineIndex, startIndex), new Position(endLineIndex, endIndex));
         var change = new TextDocumentContentChangeEvent(range, endPosition - startPosition, "");
-        DiagnosticService.getInstance().applyTextChange(
-                bufferContext.getBuffer().getURI().toString(),
-                bufferContext.getBuffer().getPath(),
-                range,
-                "");
-        queueDocumentChanges(bufferContext.getBuffer().getURI().toString(),
+        queueDocumentChanges(bufferContext,
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
@@ -408,10 +403,14 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     private void queueDocumentChanges(
-            String uri,
+            BufferContext bufferContext,
             VersionedTextDocumentIdentifier textDocument,
             List<TextDocumentContentChangeEvent> contentChanges) {
-        _documentChangeBatcher.queue(uri, textDocument, contentChanges);
+        _documentChangeBatcher.queue(
+                bufferContext.getBuffer().getURI().toString(),
+                bufferContext.getBuffer().getPath(),
+                textDocument,
+                contentChanges);
     }
 
     private void flushPendingDocumentChanges(String uri) {
