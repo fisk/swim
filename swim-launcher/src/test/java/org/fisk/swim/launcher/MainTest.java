@@ -222,7 +222,8 @@ class MainTest {
         List<String> command = SwimJavaCommand.appCommand(List.of("file.txt"));
 
         assertTrue(command.contains("-XX:+UseZGC"));
-        assertTrue(command.contains("-Xmx1g"));
+        assertTrue(command.contains("-Xmx4G"));
+        assertTrue(command.contains("-XX:SoftMaxHeapSize=1G"));
         assertFalse(command.contains("-Xmx128M"));
         assertTrue(command.contains("--swim-app"));
         assertTrue(command.contains("file.txt"));
@@ -255,7 +256,7 @@ class MainTest {
         assertTrue(content.startsWith("#!" + embeddedJava + " -XX:+UseZGC -Xmx128M --source 25"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
-        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx1g\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
         assertTrue(content.contains("clientWorkingDirectory()"));

@@ -27,7 +27,8 @@ public final class LauncherImageInstaller {
             "-Xmx128M");
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx1g");
+            "-Xmx4G",
+            "-XX:SoftMaxHeapSize=1G");
     private static final List<String> SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M",

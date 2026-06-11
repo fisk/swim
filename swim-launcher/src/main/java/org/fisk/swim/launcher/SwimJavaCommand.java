@@ -12,7 +12,8 @@ final class SwimJavaCommand {
     private static final String NATIVE_ACCESS_OPTION = "--enable-native-access=org.fisk.swim.session";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx1g");
+            "-Xmx4G",
+            "-XX:SoftMaxHeapSize=1G");
     private static final List<String> SESSION_SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M");
