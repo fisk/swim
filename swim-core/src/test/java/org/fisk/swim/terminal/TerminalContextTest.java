@@ -257,7 +257,7 @@ class TerminalContextTest {
     }
 
     @Test
-    void shutdownRestoresBlockCursorShape() {
+    void shutdownRestoresDefaultCursorShape() {
         var installed = TerminalContextTestSupport.install(80, 24);
 
         installed.context().setCursorShape(TerminalCursorShape.BAR);
@@ -270,7 +270,7 @@ class TerminalContextTest {
                 "\u001b[?25h",
                 "\u001b[?1049l",
                 "\u001b[0m",
-                "\u001b[2 q"), installed.terminalWrites());
+                "\u001b[0 q"), installed.terminalWrites());
     }
 
     private static void assertServerStreamDecodesCommandEnter(String lineEnding) throws Exception {

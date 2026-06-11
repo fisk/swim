@@ -311,13 +311,18 @@ public class BufferView extends View {
                     Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
             return;
         }
-        window.hideHoverDiagnostics();
+        if (action.getActionType() != MouseActionType.CLICK_RELEASE) {
+            window.hideHoverDiagnostics();
+        }
         int textX = localX - textStart;
         boolean insideTextColumns = textX >= 0 && textX < getTextWidth();
         if (!insideTextColumns && action.getActionType() == MouseActionType.CLICK_DOWN) {
             return;
         }
         if (!insideTextColumns && _mouseSelectionAnchorPosition == null) {
+            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+                showDiagnosticsAtMouse(window, sourceLine, action);
+            }
             return;
         }
         textX = Math.max(0, Math.min(textX, getTextWidth()));
@@ -329,9 +334,21 @@ public class BufferView extends View {
             window.allowEditorDriveAction("mouse visual selection");
             updateVisualSelectionForDrag(window, mousePosition);
         } else if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+            Integer anchor = _mouseSelectionAnchorPosition;
             window.allowEditorDriveAction("mouse visual selection");
             updateVisualSelectionForRelease(window, mousePosition);
+            if (anchor == null || anchor == mousePosition) {
+                showDiagnosticsAtMouse(window, sourceLine, action);
+            } else {
+                window.hideHoverDiagnostics();
+            }
         }
+    }
+
+    private void showDiagnosticsAtMouse(Window window, int sourceLine, MouseAction action) {
+        window.updateHoveredDiagnostics(_bufferContext,
+                sourceLine,
+                Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
     }
 
     private void beginMouseSelection(Window window, int position) {

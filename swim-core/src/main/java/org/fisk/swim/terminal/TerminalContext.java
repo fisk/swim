@@ -208,7 +208,7 @@ public class TerminalContext {
         } catch (IOException | IllegalStateException e) {
         }
         restoreTerminalDisplayState();
-        setCursorShape(TerminalCursorShape.BLOCK, true);
+        setCursorShape(TerminalCursorShape.DEFAULT, true);
         try {
             restoreTerminalShortcuts(_terminalModeState);
         } catch (RuntimeException e) {
@@ -269,6 +269,9 @@ public class TerminalContext {
         try {
             if (_terminal instanceof TerminalControlWriter controlWriter) {
                 controlWriter.writeControlSequence(next.escapeSequence());
+            } else if (_terminal != null) {
+                _terminal.putString(next.escapeSequence());
+                _terminal.flush();
             }
         } catch (IOException | IllegalStateException e) {
         }

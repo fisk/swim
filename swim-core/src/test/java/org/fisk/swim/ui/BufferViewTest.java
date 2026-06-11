@@ -105,6 +105,75 @@ class BufferViewTest {
     }
 
     @Test
+    void mouseClickShowsDiagnosticPopupForAffectedLine() throws Exception {
+        Path path = tempDir.resolve("click-diagnostic.txt");
+        Files.writeString(path, "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+            Point origin = absoluteScreenOrigin(view);
+            int textX = origin.getX() + view.getTextColumnStart();
+            int textY = origin.getY() + 1;
+            DiagnosticService.getInstance().publish(PROVIDER, window.getBufferContext().getBuffer().getURI().toString(), path,
+                    List.of(diagnostic(1, 0, DiagnosticSeverity.Warning, "click warning")));
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 1, textY)));
+
+            var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
+            assertNotNull(popup);
+            assertEquals("Line Diagnostics", popup.getTitle());
+            assertEquals("click warning", popup.getEntries().get(0).message());
+        }
+    }
+
+    @Test
+    void mouseClickShowsDiagnosticPopupFromLineNumberGutter() throws Exception {
+        Path path = tempDir.resolve("click-gutter-diagnostic.txt");
+        Files.writeString(path, "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 80, 10)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+            Point origin = absoluteScreenOrigin(view);
+            DiagnosticService.getInstance().publish(PROVIDER, window.getBufferContext().getBuffer().getURI().toString(), path,
+                    List.of(diagnostic(1, 0, DiagnosticSeverity.Warning, "gutter click warning")));
+
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+            HeadlessWindowHarness.dispatch(view,
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+
+            var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
+            assertNotNull(popup);
+            assertEquals("Line Diagnostics", popup.getTitle());
+            assertEquals("gutter click warning", popup.getEntries().get(0).message());
+        }
+    }
+
+    @Test
+    void currentLineDiagnosticsUsePhysicalLineForWrappedText() throws Exception {
+        Path path = tempDir.resolve("wrapped-current-diagnostics.txt");
+        Files.writeString(path, "abcdefghijklmnop\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 16, 10)) {
+            var window = harness.getWindow();
+            DiagnosticService.getInstance().publish(PROVIDER, window.getBufferContext().getBuffer().getURI().toString(), path,
+                    List.of(diagnostic(0, 0, DiagnosticSeverity.Warning, "wrapped warning")));
+            window.getBufferContext().getBuffer().getCursor().setPosition(14);
+
+            assertTrue(window.showDiagnosticsForCurrentLine(true));
+
+            var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
+            assertNotNull(popup);
+            assertEquals("wrapped warning", popup.getEntries().get(0).message());
+        }
+    }
+
+    @Test
     void singletonMouseClickMovesCursorToClickedTextPosition() throws Exception {
         Path path = tempDir.resolve("click-cursor.txt");
         Files.writeString(path, "alpha\nbeta\n");

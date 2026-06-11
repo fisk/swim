@@ -3365,8 +3365,8 @@ public class Window implements Drawable {
         if (context == null || _rootView == null) {
             return false;
         }
-        int logicalLine = context.getBuffer().getCursor().getLogicalLine().getY();
-        var diagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, logicalLine);
+        int sourceLine = context.getBuffer().getCursor().getPhysicalLine().getY();
+        var diagnostics = DiagnosticService.getInstance().diagnosticsForLine(context, sourceLine);
         if (diagnostics.isEmpty()) {
             hideDiagnosticPopup();
             if (takeFocus && _commandView != null) {
@@ -3402,8 +3402,8 @@ public class Window implements Drawable {
         if (context == null || _rootView == null) {
             return false;
         }
-        int logicalLine = context.getBuffer().getCursor().getLogicalLine().getY();
-        return showCodeActionsForLine(context, logicalLine, currentCursorAnchor());
+        int sourceLine = context.getBuffer().getCursor().getPhysicalLine().getY();
+        return showCodeActionsForLine(context, sourceLine, currentCursorAnchor());
     }
 
     private boolean showCodeActionsForDiagnosticPopup() {
@@ -3457,10 +3457,12 @@ public class Window implements Drawable {
             return false;
         }
         var cursor = context.getBuffer().getCursor();
+        var physicalLine = cursor.getPhysicalLine();
+        int sourceColumn = Math.max(0, cursor.getPosition() - physicalLine.getStartPosition());
         var target = DiagnosticService.getInstance().findNext(
                 path,
-                cursor.getLogicalLine().getY(),
-                cursor.getX(),
+                physicalLine.getY(),
+                sourceColumn,
                 forward,
                 errorsOnly);
         if (target == null || target.path() == null) {

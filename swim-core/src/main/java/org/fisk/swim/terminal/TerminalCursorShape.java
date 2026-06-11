@@ -1,6 +1,7 @@
 package org.fisk.swim.terminal;
 
 public enum TerminalCursorShape {
+    DEFAULT(0),
     BLOCK(2),
     UNDERLINE(4),
     BAR(6);
