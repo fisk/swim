@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
@@ -49,6 +48,8 @@ public class Buffer {
     private int _version = 1;
     private int _savedVersion = 1;
     private boolean _readOnly;
+    private volatile AttributedString _attributedStringCache;
+    private volatile int _attributedStringCacheVersion = -1;
     private static Logger _log = LogFactory.createLog();
     private final List<Fold> _folds = new ArrayList<>();
 
@@ -120,10 +121,7 @@ public class Buffer {
 
     private void setInitialString(String string) {
         _string.append(string);
-        var decoration = new Decoration();
-        decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-        decoration._version = _version;
-        _decorations.add(decoration);
+        invalidateAttributedStringCache();
     }
 
     public String getCharacter(int position) {
@@ -184,13 +182,7 @@ public class Buffer {
         adjustFoldsForInsert(position, str.length());
         _string.insert(position, str);
         _version++;
-        var decoration = new Decoration();
-        decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-        decoration._version = _version;
-        decoration._didInsert = true;
-        decoration._insertPosition = position;
-        decoration._insertString = str;
-        _decorations.add(decoration);
+        invalidateAttributedStringCache();
         _languageMode.didInsert(_bufferContext, position, str);
     }
 
@@ -202,13 +194,7 @@ public class Buffer {
         _string.delete(startPosition, endPosition);
         removeInvalidFolds();
         _version++;
-        var decoration = new Decoration();
-        decoration._str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-        decoration._version = _version;
-        decoration._didRemove = true;
-        decoration._removeStart = startPosition;
-        decoration._removeEnd = endPosition;
-        _decorations.add(decoration);
+        invalidateAttributedStringCache();
         _languageMode.didRemove(_bufferContext, startPosition, endPosition);
     }
 
@@ -1830,112 +1816,22 @@ public class Buffer {
         return _languageMode.isIndentationEnd(_bufferContext, character);
     }
 
-    private static class Decoration {
-        private volatile AttributedString _str;
-        private int _version;
-
-        private boolean _didInsert;
-        private int _insertPosition;
-        private String _insertString;
-
-        private boolean _didRemove;
-        private int _removeStart;
-        private int _removeEnd;
-
-        private volatile boolean _isDecorated;
-    }
-
-    private CopyOnWriteArrayList<Decoration> _decorations = new CopyOnWriteArrayList<>();
-
-    // TODO: Fix this
-    public void applyDecorations(int version) { //, List<SemanticHighlightingInformation> info) {
-        //        _log.info("Applying decorations for version " + version);
-        //        AttributedString str = null;
-        //        for (var decoration: _decorations) {
-        //            if (decoration._isDecorated) {
-        //                _log.info("Found decorated string for version " + decoration._version);
-        //                str = AttributedString.create(decoration._str);
-        //            } else if (str != null) {
-        //                if (decoration._didInsert) {
-        //                    _log.info("Inserting string for version " + decoration._version);
-        //                    str.insert(decoration._insertString, decoration._insertPosition, TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-        //                }
-        //                if (decoration._didRemove) {
-        //                    _log.info("Removing string for version " + decoration._version);
-        //                    str.remove(decoration._removeStart, decoration._removeEnd);
-        //                }
-        //            }
-        //            if (decoration._version != version) {
-        //                _log.info("Skipping version " + decoration._version);
-        //            } else {
-        //                _log.info("Found version " + version);
-        //                if (str != null) {
-        //                    if (!decoration._str.toString().equals(str.toString())) {
-        //                        throw new RuntimeException("Strings do not match: 1) " + decoration._str.toString() + "\n2) " + str.toString());
-        //                    }
-        //                    decoration._str = AttributedString.create(str);
-        //                }
-        //                _log.info("String length: " + decoration._str.length());
-        //                for (var line: info) {
-        //                    var decodedTokens = SemanticHighlightingTokens.decode(line.getTokens());
-        //                    var lineNum = line.getLine();
-        //                    for (var token: decodedTokens) {
-        //                        var charNum = token.character;
-        //                        int index = _bufferContext.getTextLayout().getIndexForPhysicalLineCharacter(lineNum, charNum);
-        //                        _log.info("Format range [" + index + ", " + (index + token.length) + ")");
-        //                        decoration._str.format(index, index + token.length,
-        //                                JavaLSPClient.getInstance().foregroundColourForScope(token.scope),
-        //                                TextColor.ANSI.DEFAULT);
-        //                    }
-        //                }
-        //                _languageMode.applyColouring(_bufferContext, decoration._str);
-        //                decoration._isDecorated = true;
-        //                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
-        //                    _log.info("Redrawing version " + version);
-        //                    _bufferContext.getBufferView().setNeedsRedraw();
-        //                }));
-        //                break;
-        //            }
-        //        }
+    public void invalidateAttributedStringCache() {
+        _attributedStringCacheVersion = -1;
+        _attributedStringCache = null;
     }
 
     public AttributedString getAttributedString() {
-        Decoration lastAttributedDecoration = null;
-        for (var decoration: _decorations) {
-            if (decoration._isDecorated) {
-                lastAttributedDecoration = decoration;
-            }
+        int version = _version;
+        AttributedString cached = _attributedStringCache;
+        if (cached != null && _attributedStringCacheVersion == version) {
+            return AttributedString.create(cached);
         }
-        if (lastAttributedDecoration != null) {
-            for (var decoration: _decorations) {
-                if (decoration == lastAttributedDecoration) {
-                    break;
-                } else {
-                    _decorations.remove(decoration);
-                }
-            }
-            AttributedString str = null;
-            for (var decoration: _decorations) {
-                if (decoration._isDecorated) {
-                    _log.debug("Found decorated string for version " + decoration._version);
-                    str = AttributedString.create(decoration._str);
-                } else if (str != null) {
-                    if (decoration._didInsert) {
-                        _log.debug("Inserting string for version " + decoration._version);
-                        str.insert(decoration._insertString, decoration._insertPosition, TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-                    }
-                    if (decoration._didRemove) {
-                        _log.debug("Removing string for version " + decoration._version);
-                        str.remove(decoration._removeStart, decoration._removeEnd);
-                    }
-                }
-            }
-            return str;
-        } else {
-            var str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
-            _languageMode.applyColouring(_bufferContext, str);
-            return str;
-        }
+        var str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        _languageMode.applyColouring(_bufferContext, str);
+        _attributedStringCache = AttributedString.create(str);
+        _attributedStringCacheVersion = version;
+        return str;
     }
 
     public TextDocumentItem getTextDocument() {

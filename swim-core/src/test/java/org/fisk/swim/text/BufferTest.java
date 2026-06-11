@@ -10,6 +10,9 @@ import java.nio.file.Path;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
+import org.eclipse.lsp4j.TextDocumentItem;
+import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
@@ -283,12 +286,58 @@ class BufferTest {
         assertEquals(1, result.endLine());
     }
 
+    @Test
+    void attributedStringReusesColouringForCurrentVersion() throws Exception {
+        var mode = new CountingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha beta", 80, "cachetest").getBuffer();
+
+            buffer.getAttributedString();
+            buffer.getAttributedString();
+
+            assertEquals(1, mode.colouringCount());
+        }
+    }
+
+    @Test
+    void attributedStringCacheInvalidatesAfterEdit() throws Exception {
+        var mode = new CountingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            buffer.getAttributedString();
+
+            buffer.insert(0, "z");
+            buffer.getAttributedString();
+            buffer.getAttributedString();
+
+            assertEquals(2, mode.colouringCount());
+        }
+    }
+
+    @Test
+    void attributedStringCacheCanBeInvalidatedForSemanticRefresh() throws Exception {
+        var mode = new CountingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            buffer.getAttributedString();
+
+            buffer.invalidateAttributedStringCache();
+            buffer.getAttributedString();
+
+            assertEquals(2, mode.colouringCount());
+        }
+    }
+
     private Buffer createBuffer(String text, int width) throws IOException {
         return createBufferContext(text, width).getBuffer();
     }
 
     private BufferContext createBufferContext(String text, int width) throws IOException {
-        Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".txt");
+        return createBufferContext(text, width, "txt");
+    }
+
+    private BufferContext createBufferContext(String text, int width, String extension) throws IOException {
+        Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + "." + extension);
         Files.writeString(path, text);
         return new BufferContext(Rect.create(0, 0, width, 20), path);
     }
@@ -303,5 +352,57 @@ class BufferTest {
         Path path = tempDir.resolve("buffer-" + width + "-" + text.hashCode() + ".cpp");
         Files.writeString(path, text);
         return new BufferContext(Rect.create(0, 0, width, 20), path);
+    }
+
+    private static final class CountingLanguageMode implements LanguageMode {
+        private int _colouringCount;
+
+        int colouringCount() {
+            return _colouringCount;
+        }
+
+        @Override
+        public void didInsert(BufferContext bufferContext, int position, String str) {
+        }
+
+        @Override
+        public void didRemove(BufferContext bufferContext, int startPosition, int endPosition) {
+        }
+
+        @Override
+        public void willSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didClose(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didOpen(BufferContext bufferContext) {
+        }
+
+        @Override
+        public int getIndentationLevel(BufferContext bufferContext) {
+            return 0;
+        }
+
+        @Override
+        public boolean isIndentationEnd(BufferContext bufferContext, String chracter) {
+            return false;
+        }
+
+        @Override
+        public TextDocumentItem getTextDocument(BufferContext bufferContext) {
+            return null;
+        }
+
+        @Override
+        public void applyColouring(BufferContext bufferContext, AttributedString str) {
+            _colouringCount++;
+        }
     }
 }

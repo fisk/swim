@@ -1478,6 +1478,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     private void requestSemanticRedraw(BufferContext bufferContext) {
         Runnable redraw = () -> {
+            bufferContext.getBuffer().invalidateAttributedStringCache();
             bufferContext.getBufferView().setNeedsRedraw();
             var window = Window.getInstance();
             if (window != null && window.getRootView() != null) {
