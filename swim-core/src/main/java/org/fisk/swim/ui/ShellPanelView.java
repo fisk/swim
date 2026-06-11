@@ -82,7 +82,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         shellView.setOnExit(() -> {
             var currentWindow = Window.getInstance();
             if (currentWindow != null) {
-                currentWindow.closeShellView(shellView);
+                currentWindow.closeExitedShellView(shellView);
             }
         });
         return shellView;
@@ -94,7 +94,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         shellView.setOnExit(() -> {
             var currentWindow = Window.getInstance();
             if (currentWindow != null) {
-                currentWindow.closeShellView(shellView);
+                currentWindow.closeExitedShellView(shellView);
             }
         });
         return shellView;

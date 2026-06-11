@@ -759,7 +759,7 @@ public class Window implements Drawable {
             try {
                 shellView = ShellPanelView.createDefault(this, Rect.create(0, 0, 0, 0));
                 ShellPanelView callbackShellView = shellView;
-                shellView.setOnExit(() -> closeShellView(callbackShellView));
+                shellView.setOnExit(() -> closeExitedShellView(callbackShellView));
                 _savedPanelShell = shellView;
             } catch (IOException e) {
                 if (_commandView != null) {
@@ -1835,6 +1835,56 @@ public class Window implements Drawable {
         }
         untrackWorkspace(target);
         closeWorkspaceViews(target);
+        return true;
+    }
+
+    boolean closeExitedShellView(ShellPanelView shellView) {
+        ensureLayoutState();
+        if (shellView == null) {
+            return false;
+        }
+        if (_panelView == shellView || _savedPanelShell == shellView) {
+            return closeShellView(shellView);
+        }
+        WorkspaceState target = findWorkspaceContainingShell(shellView);
+        if (target == null) {
+            return false;
+        }
+        if (target._workspaceView instanceof SplitView splitRoot && splitRoot.containsLeaf(shellView)) {
+            return closeShellLeafInWorkspace(target, splitRoot, shellView);
+        }
+        boolean lastTab = _workspaceOrder.size() <= 1 && _workspaceOrder.contains(target);
+        if (target == _currentWorkspace) {
+            if (!lastTab) {
+                return closeCurrentWorkspaceAndActivateFallback();
+            }
+            untrackWorkspace(target);
+            closeWorkspaceViews(target);
+            _currentWorkspace = null;
+            _workspaceView = null;
+            _activeView = null;
+            _activeBufferView = null;
+            _bufferContext = null;
+            if (_bufferContextsByView != null) {
+                _bufferContextsByView.clear();
+            }
+            if (_bufferViewCounts != null) {
+                _bufferViewCounts.clear();
+            }
+            if (_rootView != null) {
+                _rootView.setFirstResponder(null);
+                _rootView.setNeedsRedraw();
+            }
+            refreshChromeState();
+            SwimRuntime.exit();
+            return true;
+        }
+        untrackWorkspace(target);
+        closeWorkspaceViews(target);
+        refreshChromeState();
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
         return true;
     }
 
@@ -4481,6 +4531,77 @@ public class Window implements Drawable {
         return workspace;
     }
 
+    private WorkspaceState findWorkspaceContainingShell(ShellPanelView shellView) {
+        if (shellView == null) {
+            return null;
+        }
+        for (var workspace : _workspaceOrder) {
+            if (workspaceContainsShell(workspace, shellView)) {
+                return workspace;
+            }
+        }
+        for (var workspace : _workspaceHistory) {
+            if (workspaceContainsShell(workspace, shellView)) {
+                return workspace;
+            }
+        }
+        return null;
+    }
+
+    private static boolean workspaceContainsShell(WorkspaceState workspace, ShellPanelView shellView) {
+        if (workspace == null || shellView == null) {
+            return false;
+        }
+        if (workspace._workspaceView == shellView || workspace._shellView == shellView) {
+            return true;
+        }
+        return workspace._workspaceView instanceof SplitView splitRoot && splitRoot.containsLeaf(shellView);
+    }
+
+    private boolean closeShellLeafInWorkspace(WorkspaceState workspace, SplitView splitRoot, ShellPanelView shellView) {
+        if (workspace == null || splitRoot == null || shellView == null || !splitRoot.containsLeaf(shellView)) {
+            return false;
+        }
+        if (workspace == _currentWorkspace) {
+            return closeView(shellView);
+        }
+        View focusFallback = splitRoot.removeLeaf(shellView);
+        if (workspace._activeView == shellView) {
+            workspace._activeView = focusFallback != null ? focusFallback : findFocusableView(workspace._workspaceView);
+        }
+        if (workspace._shellView == shellView) {
+            workspace._shellView = firstShellView(workspace._workspaceView);
+        }
+        if (splitRoot.isSingleLeaf()) {
+            View remaining = splitRoot.detachSingleLeaf();
+            splitRoot.removeFromParent();
+            workspace._workspaceView = remaining;
+            if (workspace._activeView == null || workspace._activeView == splitRoot) {
+                workspace._activeView = remaining;
+            }
+            workspace._shellView = firstShellView(remaining);
+        }
+        refreshChromeState();
+        if (_rootView != null) {
+            _rootView.setNeedsRedraw();
+        }
+        return true;
+    }
+
+    private static ShellPanelView firstShellView(View view) {
+        if (view instanceof ShellPanelView shellView) {
+            return shellView;
+        }
+        if (view instanceof SplitView splitView) {
+            for (View leaf : splitView.leafViews()) {
+                if (leaf instanceof ShellPanelView shellView) {
+                    return shellView;
+                }
+            }
+        }
+        return null;
+    }
+
     private WorkspaceState createPluginWorkspace(String pluginId, SwimPanel panel) {
         var workspace = createViewWorkspace(new PluginPanelView(Rect.create(0, 0, 0, 0), pluginId, panel, true),
                 WorkspaceKind.PLUGIN);
@@ -4576,7 +4697,7 @@ public class Window implements Drawable {
     private boolean openShellWorkspace() {
         try {
             var shellView = ShellPanelView.createWorkspace(this);
-            shellView.setOnExit(() -> closeShellView(shellView));
+            shellView.setOnExit(() -> closeExitedShellView(shellView));
             WorkspaceState workspace = createViewWorkspace(shellView, WorkspaceKind.SHELL);
             trackWorkspace(workspace, true);
             return activateWorkspace(workspace);
@@ -4591,7 +4712,7 @@ public class Window implements Drawable {
     private boolean openShellSplit(SplitView.Orientation orientation) {
         try {
             var shellView = ShellPanelView.createWorkspace(this);
-            shellView.setOnExit(() -> closeShellView(shellView));
+            shellView.setOnExit(() -> closeExitedShellView(shellView));
             boolean opened = orientation == SplitView.Orientation.HORIZONTAL
                     ? splitActiveViewHorizontally(shellView)
                     : splitActiveViewVertically(shellView);

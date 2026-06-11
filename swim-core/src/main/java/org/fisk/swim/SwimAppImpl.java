@@ -259,6 +259,8 @@ public class SwimAppImpl implements SwimApp {
         // Keep the alternate screen active while the replacement app starts.
         if (!reloading) {
             _bindings.shutdownTerminalContext();
+        } else {
+            TerminalContext.prepareForReloadRestart();
         }
         if (ioThread != null && Thread.currentThread() != ioThread) {
             try {

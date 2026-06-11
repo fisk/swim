@@ -30,6 +30,7 @@ import org.fisk.swim.api.SwimPanel;
 public class Main implements SwimHost {
     private static final String CORE_MODULE = "org.fisk.swim.core";
     static final String RELOAD_SESSION_PROPERTY = "swim.session.restore_on_reload";
+    static final String FREEZE_TERMINAL_SIZE_PROPERTY = "swim.terminal.freeze_size";
     private static final Set<String> SHARED_LIB_PREFIXES = Set.of(
             "swim-launcher-",
             "swim-session-");
@@ -362,6 +363,20 @@ public class Main implements SwimHost {
         return _rebuilder.rebuild(_buildRoot);
     }
 
+    static String freezeTerminalSize() {
+        String previous = System.getProperty(FREEZE_TERMINAL_SIZE_PROPERTY);
+        System.setProperty(FREEZE_TERMINAL_SIZE_PROPERTY, "true");
+        return previous;
+    }
+
+    static void restoreTerminalSizeFreeze(String previous) {
+        if (previous == null) {
+            System.clearProperty(FREEZE_TERMINAL_SIZE_PROPERTY);
+        } else {
+            System.setProperty(FREEZE_TERMINAL_SIZE_PROPERTY, previous);
+        }
+    }
+
     private static void startThread(String name, boolean daemon, Runnable task) {
         var thread = new Thread(task, name);
         thread.setDaemon(daemon);
@@ -385,11 +400,18 @@ public class Main implements SwimHost {
     @Override
     public void requestRebuildAndReload(Path path) {
         _taskRunner.start("swim-rebuild", false, () -> {
+            String previousSizeFreeze = freezeTerminalSize();
             SwimApp loaded = _plugins.currentApp();
             if (loaded != null) {
                 loaded.showMessage("Rebuilding SWIM...");
             }
-            if (!rebuild()) {
+            boolean rebuilt;
+            try {
+                rebuilt = rebuild();
+            } finally {
+                restoreTerminalSizeFreeze(previousSizeFreeze);
+            }
+            if (!rebuilt) {
                 loaded = _plugins.currentApp();
                 if (loaded != null) {
                     loaded.showMessage("Build failed");

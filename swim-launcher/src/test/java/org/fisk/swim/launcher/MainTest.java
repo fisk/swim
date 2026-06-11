@@ -593,23 +593,33 @@ class MainTest {
 
     @Test
     void requestRebuildAndReloadReportsBuildFailureWithoutReloading() throws Exception {
+        String previousFreeze = System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY);
         FakeApp previous = new FakeApp();
         FakePluginController plugins = new FakePluginController();
         plugins.currentApp = previous;
         RecordingTaskRunner taskRunner = new RecordingTaskRunner();
         AtomicReference<Path> rebuildPath = new AtomicReference<>();
-        Main main = new Main(plugins, buildRoot -> {
-            rebuildPath.set(buildRoot);
-            return false;
-        }, taskRunner, () -> tempDir);
-        setBuildRoot(main, tempDir.resolve("build-root"));
+        AtomicReference<String> buildSizeFreeze = new AtomicReference<>();
+        try {
+            System.clearProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY);
+            Main main = new Main(plugins, buildRoot -> {
+                rebuildPath.set(buildRoot);
+                buildSizeFreeze.set(System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY));
+                return false;
+            }, taskRunner, () -> tempDir);
+            setBuildRoot(main, tempDir.resolve("build-root"));
 
-        main.requestRebuildAndReload(tempDir.resolve("project.txt"));
+            main.requestRebuildAndReload(tempDir.resolve("project.txt"));
 
-        assertEquals(tempDir.resolve("build-root"), rebuildPath.get());
-        assertEquals(List.of("Rebuilding SWIM...", "Build failed"), previous.messages);
-        assertFalse(previous.closed);
-        assertSame(previous, main.getLoadedApp());
+            assertEquals(tempDir.resolve("build-root"), rebuildPath.get());
+            assertEquals(List.of("Rebuilding SWIM...", "Build failed"), previous.messages);
+            assertFalse(previous.closed);
+            assertSame(previous, main.getLoadedApp());
+            assertEquals("true", buildSizeFreeze.get());
+            assertNull(System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY));
+        } finally {
+            restoreProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY, previousFreeze);
+        }
     }
 
     @Test
@@ -633,11 +643,15 @@ class MainTest {
 
     @Test
     void requestRebuildAndReloadReplacesRunningAppAfterSuccessfulBuild() throws Exception {
+        String previousFreeze = System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY);
         FakeApp previous = new FakeApp();
         FakeApp next = new FakeApp();
         FakePluginController plugins = new FakePluginController();
+        AtomicReference<String> buildSizeFreeze = new AtomicReference<>();
+        AtomicReference<String> reloadSizeFreeze = new AtomicReference<>();
         plugins.currentApp = previous;
         plugins.reloadAction = (buildRoot, path, host, parentLoader, beforeLoad) -> {
+            reloadSizeFreeze.set(System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY));
             previous.close();
             if (beforeLoad != null) {
                 beforeLoad.run();
@@ -646,18 +660,29 @@ class MainTest {
             next.refresh(true);
             return next;
         };
-        Main main = new Main(plugins, buildRoot -> true, (name, daemon, task) -> task.run(), () -> tempDir);
-        Path path = tempDir.resolve("project.txt");
+        try {
+            System.clearProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY);
+            Main main = new Main(plugins, buildRoot -> {
+                buildSizeFreeze.set(System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY));
+                return true;
+            }, (name, daemon, task) -> task.run(), () -> tempDir);
+            Path path = tempDir.resolve("project.txt");
 
-        main.requestRebuildAndReload(path);
+            main.requestRebuildAndReload(path);
 
-        assertEquals(List.of("Rebuilding SWIM..."), previous.messages);
-        assertTrue(previous.checkpointed);
-        assertTrue(previous.closed);
-        assertEquals(path, next.startedPath);
-        assertEquals(List.of(true), next.refreshCalls);
-        assertEquals(List.of("Rebuilt and reloaded SWIM"), next.messages);
-        assertSame(next, main.getLoadedApp());
+            assertEquals(List.of("Rebuilding SWIM..."), previous.messages);
+            assertTrue(previous.checkpointed);
+            assertTrue(previous.closed);
+            assertEquals(path, next.startedPath);
+            assertEquals(List.of(true), next.refreshCalls);
+            assertEquals(List.of("Rebuilt and reloaded SWIM"), next.messages);
+            assertSame(next, main.getLoadedApp());
+            assertEquals("true", buildSizeFreeze.get());
+            assertNull(reloadSizeFreeze.get());
+            assertNull(System.getProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY));
+        } finally {
+            restoreProperty(Main.FREEZE_TERMINAL_SIZE_PROPERTY, previousFreeze);
+        }
     }
 
     @Test
@@ -971,6 +996,14 @@ class MainTest {
         Field field = Main.class.getDeclaredField("_exitLatch");
         field.setAccessible(true);
         return (CountDownLatch) field.get(main);
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) {
+            System.clearProperty(name);
+        } else {
+            System.setProperty(name, value);
+        }
     }
 
     private static final class RecordingTaskRunner implements Main.TaskRunner {

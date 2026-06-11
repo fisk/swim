@@ -119,6 +119,93 @@ class TerminalContextTest {
     }
 
     @Test
+    void terminalSizeFallbackUsesLastRememberedSizeBeforeDelegateDefault() throws Exception {
+        String previousRows = System.getProperty(TerminalContext.LAST_ROWS_PROPERTY);
+        String previousColumns = System.getProperty(TerminalContext.LAST_COLS_PROPERTY);
+        try {
+            System.setProperty(TerminalContext.LAST_ROWS_PROPERTY, "41");
+            System.setProperty(TerminalContext.LAST_COLS_PROPERTY, "132");
+            Terminal delegate = fakeTerminalWithSize(80, 24);
+            Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> null, ignored -> {});
+
+            TerminalSize size = wrapped.getTerminalSize();
+
+            assertEquals(132, size.getColumns());
+            assertEquals(41, size.getRows());
+        } finally {
+            restoreProperty(TerminalContext.LAST_ROWS_PROPERTY, previousRows);
+            restoreProperty(TerminalContext.LAST_COLS_PROPERTY, previousColumns);
+        }
+    }
+
+    @Test
+    void suppliedTerminalSizeIsRememberedForReloadFallback() throws Exception {
+        String previousRows = System.getProperty(TerminalContext.LAST_ROWS_PROPERTY);
+        String previousColumns = System.getProperty(TerminalContext.LAST_COLS_PROPERTY);
+        try {
+            System.clearProperty(TerminalContext.LAST_ROWS_PROPERTY);
+            System.clearProperty(TerminalContext.LAST_COLS_PROPERTY);
+            Terminal delegate = fakeTerminalWithSize(80, 24);
+            Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> new TerminalSize(144, 37), ignored -> {});
+
+            assertEquals(144, wrapped.getTerminalSize().getColumns());
+            assertEquals("37", System.getProperty(TerminalContext.LAST_ROWS_PROPERTY));
+            assertEquals("144", System.getProperty(TerminalContext.LAST_COLS_PROPERTY));
+
+            Terminal reloaded = TerminalContext.wrapTerminal(delegate, () -> null, ignored -> {});
+            TerminalSize fallback = reloaded.getTerminalSize();
+
+            assertEquals(144, fallback.getColumns());
+            assertEquals(37, fallback.getRows());
+        } finally {
+            restoreProperty(TerminalContext.LAST_ROWS_PROPERTY, previousRows);
+            restoreProperty(TerminalContext.LAST_COLS_PROPERTY, previousColumns);
+        }
+    }
+
+    @Test
+    void frozenTerminalSizeUsesRememberedSizeInsteadOfLiveSupplier() throws Exception {
+        String previousRows = System.getProperty(TerminalContext.LAST_ROWS_PROPERTY);
+        String previousColumns = System.getProperty(TerminalContext.LAST_COLS_PROPERTY);
+        String previousFreeze = System.getProperty(TerminalContext.FREEZE_SIZE_PROPERTY);
+        try {
+            System.setProperty(TerminalContext.LAST_ROWS_PROPERTY, "41");
+            System.setProperty(TerminalContext.LAST_COLS_PROPERTY, "132");
+            System.setProperty(TerminalContext.FREEZE_SIZE_PROPERTY, "true");
+            AtomicInteger supplierCalls = new AtomicInteger();
+            Terminal delegate = fakeTerminalWithSize(80, 24);
+            Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> {
+                supplierCalls.incrementAndGet();
+                return new TerminalSize(80, 24);
+            }, ignored -> {});
+
+            TerminalSize size = wrapped.getTerminalSize();
+
+            assertEquals(132, size.getColumns());
+            assertEquals(41, size.getRows());
+            assertEquals(0, supplierCalls.get());
+        } finally {
+            restoreProperty(TerminalContext.LAST_ROWS_PROPERTY, previousRows);
+            restoreProperty(TerminalContext.LAST_COLS_PROPERTY, previousColumns);
+            restoreProperty(TerminalContext.FREEZE_SIZE_PROPERTY, previousFreeze);
+        }
+    }
+
+    @Test
+    void reloadStartupPreservesExistingAlternateScreenUntilFirstPaint() throws Exception {
+        var terminalCalls = new ArrayList<String>();
+        Terminal delegate = fakeTerminalWithSize(120, 30, terminalCalls);
+        Terminal wrapped = TerminalContext.wrapTerminal(delegate, () -> new TerminalSize(120, 30), ignored -> {}, true);
+
+        wrapped.enterPrivateMode();
+        wrapped.clearScreen();
+        wrapped.clearScreen();
+        wrapped.exitPrivateMode();
+
+        assertEquals(java.util.List.of("clearScreen", "exitPrivateMode"), terminalCalls);
+    }
+
+    @Test
     void serverStreamTerminalDecodesCarriageReturnAsEnter() throws Exception {
         assertServerStreamDecodesCommandEnter("\r");
     }
@@ -218,6 +305,28 @@ class TerminalContextTest {
             return proxy;
         }
         return null;
+    }
+
+    private static Terminal fakeTerminalWithSize(int columns, int rows) {
+        return fakeTerminalWithSize(columns, rows, new ArrayList<>());
+    }
+
+    private static Terminal fakeTerminalWithSize(int columns, int rows, ArrayList<String> calls) {
+        return (Terminal) Proxy.newProxyInstance(
+                Terminal.class.getClassLoader(),
+                new Class<?>[] { Terminal.class },
+                (proxy, method, args) -> {
+                    if ("getTerminalSize".equals(method.getName())) {
+                        return new TerminalSize(columns, rows);
+                    }
+                    if ("enterPrivateMode".equals(method.getName())
+                            || "clearScreen".equals(method.getName())
+                            || "exitPrivateMode".equals(method.getName())) {
+                        calls.add(method.getName());
+                        return null;
+                    }
+                    return defaultValue(proxy, method.getReturnType());
+                });
     }
 
     private static void restoreProperty(String name, String value) {

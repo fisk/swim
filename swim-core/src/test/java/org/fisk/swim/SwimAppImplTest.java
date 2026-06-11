@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SwimAppImplTest {
+    private static final String PRESERVE_SCREEN_ON_START_PROPERTY = "swim.terminal.preserve_screen_on_start";
+
     @TempDir
     java.nio.file.Path tempDir;
 
@@ -33,6 +35,7 @@ class SwimAppImplTest {
         TerminalContext.shutdownInstance();
         EventThread.shutdownInstance();
         SwimRuntime.clear();
+        System.clearProperty(PRESERVE_SCREEN_ON_START_PROPERTY);
     }
 
     @Test
@@ -171,6 +174,7 @@ class SwimAppImplTest {
         assertTrue(bindings.clearRuntimeCalled);
         assertTrue(bindings.ioThread.interrupted);
         assertFalse(bindings.shutdownTerminalContextCalled);
+        assertEquals("true", System.getProperty(PRESERVE_SCREEN_ON_START_PROPERTY));
     }
 
     @Test

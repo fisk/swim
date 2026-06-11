@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailClient;
@@ -931,6 +933,86 @@ class WindowTest {
     }
 
     @Test
+    void exitedShellSplitRemovesOnlyThatFrame() throws Exception {
+        Path file = writeFile("shell-exit-frame.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellSplitHorizontally());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+
+            assertTrue(window.closeExitedShellView(shell));
+
+            assertEquals(1, leafViews(window).size());
+            assertInstanceOf(BufferView.class, window.getActiveView());
+            assertEquals(file.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void exitedShellWorkspaceRemovesShellTabAndActivatesFallback() throws Exception {
+        Path file = writeFile("shell-exit-tab.txt", "abc");
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue(tabLabels(window).contains("Shell"));
+
+            assertTrue(window.closeExitedShellView(shell));
+
+            assertFalse(tabLabels(window).contains("Shell"));
+            assertEquals(file.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void exitedShellSplitInInactiveTabDoesNotStealFocus() throws Exception {
+        Path first = writeFile("shell-exit-inactive-first.txt", "one");
+        Path second = writeFile("shell-exit-inactive-second.txt", "two");
+
+        try (var harness = HeadlessWindowHarness.create(first, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellSplitHorizontally());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+
+            assertTrue(window.closeExitedShellView(shell));
+
+            assertEquals(second.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertTrue(window.switchToWorkspaceIndex(0));
+            assertEquals(1, leafViews(window).size());
+            assertEquals(first.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void exitedLastShellWorkspaceRequestsSwimExit() throws Exception {
+        Path file = writeFile("shell-exit-last-tab.txt", "abc");
+        RecordingHost host = new RecordingHost();
+
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            assertTrue(window.showShellWorkspace());
+            var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue(window.switchToWorkspaceIndex(0));
+            assertTrue(window.closeAnyCurrentWorkspace());
+            SwimRuntime.setHost(host);
+
+            assertTrue(window.closeExitedShellView(shell));
+
+            assertEquals(1, host.exitRequests);
+            assertTrue(tabLabels(window).isEmpty());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
     void shellPanelIsReusedAfterHide() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
@@ -1824,5 +1906,31 @@ class WindowTest {
             pending.clear();
         }
         return response;
+    }
+
+    private static final class RecordingHost implements SwimHost {
+        private int exitRequests;
+
+        @Override
+        public void requestReload(Path path) {
+        }
+
+        @Override
+        public void requestRebuildAndReload(Path path) {
+        }
+
+        @Override
+        public void requestLoadPlugin(String pluginId, Path path) {
+        }
+
+        @Override
+        public void requestExit() {
+            exitRequests++;
+        }
+
+        @Override
+        public Path getBuildRoot() {
+            return null;
+        }
     }
 }

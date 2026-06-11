@@ -38,6 +38,10 @@ public class TerminalContext {
     private static final String DISABLE_BRACKETED_PASTE = "\u001b[?2004l";
     private static final String ENABLE_SGR_MOUSE = "\u001b[?1006h";
     private static final String DISABLE_SGR_MOUSE = "\u001b[?1006l";
+    static final String LAST_ROWS_PROPERTY = "swim.terminal.last_rows";
+    static final String LAST_COLS_PROPERTY = "swim.terminal.last_cols";
+    static final String FREEZE_SIZE_PROPERTY = "swim.terminal.freeze_size";
+    static final String PRESERVE_SCREEN_ON_START_PROPERTY = "swim.terminal.preserve_screen_on_start";
 
     private record CreatedTerminal(Screen screen, Terminal terminal) {
     }
@@ -71,6 +75,17 @@ public class TerminalContext {
         }
         _instance = null;
         instance.shutdown();
+    }
+
+    public static void prepareForReloadRestart() {
+        TerminalContext instance = _instance;
+        if (instance != null) {
+            try {
+                rememberTerminalSize(instance.getTerminalSize());
+            } catch (RuntimeException e) {
+            }
+        }
+        System.setProperty(PRESERVE_SCREEN_ON_START_PROPERTY, "true");
     }
 
     private final Screen _screen;
@@ -116,12 +131,15 @@ public class TerminalContext {
     private static CreatedTerminal createTerminal() {
         try {
             Terminal terminal;
+            boolean preserveExistingScreen = consumePreserveScreenOnStartFlag();
             if (SwimServerSessions.isAvailable()) {
-                terminal = createServerStreamTerminal(System.in, System.out, TerminalContext::queryTerminalSizeFromTty);
+                terminal = createServerStreamTerminal(System.in, System.out, TerminalContext::queryTerminalSizeFromTty,
+                        preserveExistingScreen);
             } else {
                 terminal = new DefaultTerminalFactory().createTerminal();
                 configureTerminalInputDecoding(terminal);
-                terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty);
+                terminal = wrapTerminal(terminal, TerminalContext::queryTerminalSizeFromTty,
+                        standardOutputControlWriter(), preserveExistingScreen);
             }
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
@@ -149,9 +167,17 @@ public class TerminalContext {
             InputStream input,
             OutputStream output,
             Supplier<TerminalSize> terminalSizeSupplier) {
+        return createServerStreamTerminal(input, output, terminalSizeSupplier, false);
+    }
+
+    private static Terminal createServerStreamTerminal(
+            InputStream input,
+            OutputStream output,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            boolean preserveExistingScreen) {
         Terminal terminal = new ServerStreamTerminal(input, output, StandardCharsets.UTF_8);
         configureTerminalInputDecoding(terminal);
-        return wrapTerminal(terminal, terminalSizeSupplier, outputControlWriter(output));
+        return wrapTerminal(terminal, terminalSizeSupplier, outputControlWriter(output), preserveExistingScreen);
     }
 
     private static void configureTerminalInputDecoding(Terminal terminal) {
@@ -228,9 +254,9 @@ public class TerminalContext {
         } catch (RuntimeException e) {
         }
         if (size != null) {
-            return size;
+            return rememberTerminalSize(size);
         }
-        return _screen.getTerminalSize();
+        return rememberTerminalSize(_screen.getTerminalSize());
     }
 
     static TerminalSize parseSttySize(String output) {
@@ -257,31 +283,71 @@ public class TerminalContext {
         }
     }
 
-    private static TerminalSize queryTerminalSizeFromTty() {
+    static TerminalSize queryTerminalSizeFromTty() {
+        TerminalSize frozenSize = queryFrozenRememberedSize();
+        if (frozenSize != null) {
+            return frozenSize;
+        }
         try {
             TerminalSize serverSize = queryServerTerminalSize();
             if (serverSize != null) {
-                return serverSize;
+                return rememberTerminalSize(serverSize);
             }
             TerminalSize ttyPathSize = queryConfiguredTtySize();
             if (ttyPathSize != null) {
-                return ttyPathSize;
-            }
-            TerminalSize envSize = queryEnvironmentSize();
-            if (envSize != null) {
-                return envSize;
+                return rememberTerminalSize(ttyPathSize);
             }
             TerminalSize sttySize = querySttySize();
             if (sttySize != null) {
-                return sttySize;
+                return rememberTerminalSize(sttySize);
             }
-            return queryTputSize();
+            TerminalSize rememberedSize = queryRememberedSize();
+            if (rememberedSize != null) {
+                return rememberedSize;
+            }
+            TerminalSize envSize = queryEnvironmentSize();
+            if (envSize != null) {
+                return rememberTerminalSize(envSize);
+            }
+            return rememberTerminalSize(queryTputSize());
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
+            TerminalSize rememberedSize = queryRememberedSize();
+            if (rememberedSize != null) {
+                return rememberedSize;
+            }
+            return rememberTerminalSize(queryEnvironmentSize());
+        }
+    }
+
+    private static TerminalSize rememberTerminalSize(TerminalSize size) {
+        if (size == null || size.getRows() <= 0 || size.getColumns() <= 0) {
+            return size;
+        }
+        System.setProperty(LAST_ROWS_PROPERTY, Integer.toString(size.getRows()));
+        System.setProperty(LAST_COLS_PROPERTY, Integer.toString(size.getColumns()));
+        return size;
+    }
+
+    private static TerminalSize queryRememberedSize() {
+        Integer rows = parsePositiveInt(System.getProperty(LAST_ROWS_PROPERTY));
+        Integer cols = parsePositiveInt(System.getProperty(LAST_COLS_PROPERTY));
+        if (rows == null || cols == null) {
             return null;
         }
+        return new TerminalSize(cols, rows);
+    }
+
+    private static TerminalSize queryFrozenRememberedSize() {
+        return Boolean.getBoolean(FREEZE_SIZE_PROPERTY) ? queryRememberedSize() : null;
+    }
+
+    private static boolean consumePreserveScreenOnStartFlag() {
+        boolean preserve = Boolean.getBoolean(PRESERVE_SCREEN_ON_START_PROPERTY);
+        System.clearProperty(PRESERVE_SCREEN_ON_START_PROPERTY);
+        return preserve;
     }
 
     private static TerminalSize queryServerTerminalSize() {
@@ -458,10 +524,18 @@ public class TerminalContext {
             Terminal terminal,
             Supplier<TerminalSize> terminalSizeSupplier,
             TerminalControlWriter controlWriter) {
+        return wrapTerminal(terminal, terminalSizeSupplier, controlWriter, false);
+    }
+
+    static Terminal wrapTerminal(
+            Terminal terminal,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalControlWriter controlWriter,
+            boolean preserveExistingScreenOnStart) {
         if (terminal == null) {
             throw new IllegalArgumentException("terminal must not be null");
         }
-        return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter);
+        return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter, preserveExistingScreenOnStart);
     }
 
     private static final class ServerStreamTerminal extends ANSITerminal {
@@ -481,19 +555,28 @@ public class TerminalContext {
         private final Supplier<TerminalSize> _terminalSizeSupplier;
         private final TerminalControlWriter _controlWriter;
         private final Map<TerminalResizeListener, TerminalResizeListener> _resizeListeners = new IdentityHashMap<>();
+        private boolean _preserveExistingScreenOnStart;
+        private boolean _skipNextClearScreen;
 
         private SizeAwareTerminal(
                 Terminal delegate,
                 Supplier<TerminalSize> terminalSizeSupplier,
-                TerminalControlWriter controlWriter) {
+                TerminalControlWriter controlWriter,
+                boolean preserveExistingScreenOnStart) {
             _delegate = delegate;
             _terminalSizeSupplier = terminalSizeSupplier;
             _controlWriter = controlWriter != null ? controlWriter : standardOutputControlWriter();
+            _preserveExistingScreenOnStart = preserveExistingScreenOnStart;
         }
 
         @Override
         public void enterPrivateMode() throws IOException {
-            _delegate.enterPrivateMode();
+            if (_preserveExistingScreenOnStart) {
+                _preserveExistingScreenOnStart = false;
+                _skipNextClearScreen = true;
+            } else {
+                _delegate.enterPrivateMode();
+            }
             setBracketedPasteMode(true);
             setMouseCaptureMode(true);
         }
@@ -526,6 +609,10 @@ public class TerminalContext {
 
         @Override
         public void clearScreen() throws IOException {
+            if (_skipNextClearScreen) {
+                _skipNextClearScreen = false;
+                return;
+            }
             _delegate.clearScreen();
         }
 
@@ -622,16 +709,24 @@ public class TerminalContext {
         }
 
         private TerminalSize getTerminalSizeUnchecked(TerminalSize fallback) {
+            TerminalSize frozen = queryFrozenRememberedSize();
+            if (frozen != null) {
+                return frozen;
+            }
             if (_terminalSizeSupplier != null) {
                 try {
                     TerminalSize supplied = _terminalSizeSupplier.get();
                     if (supplied != null) {
-                        return supplied;
+                        return rememberTerminalSize(supplied);
                     }
                 } catch (RuntimeException e) {
                 }
             }
-            return fallback;
+            TerminalSize remembered = queryRememberedSize();
+            if (remembered != null) {
+                return remembered;
+            }
+            return rememberTerminalSize(fallback);
         }
 
         @Override
