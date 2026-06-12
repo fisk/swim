@@ -13,6 +13,7 @@ import java.util.List;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
@@ -38,6 +39,7 @@ class ClangdLspPluginSupportTest {
         }
         ClangdLspClient.shutdownInstalledInstance();
         SwimPluginPreloadRegistry.clearForTests();
+        SwimHelpRegistry.clearForTests();
         SwimPluginKeyBindingRegistry.clearForTests();
         SwimRuntime.clear();
         EventThread.shutdownInstance();
@@ -78,6 +80,22 @@ class ClangdLspPluginSupportTest {
                 "<SPACE> , m",
                 "<SPACE> , k",
                 "<SPACE> , C")));
+    }
+
+    @Test
+    void preloadRegistersSharedAndClangdSpecificHelp() {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+
+        var ids = SwimHelpRegistry.chapters().stream()
+                .map(chapter -> chapter.id())
+                .toList();
+
+        assertTrue(ids.contains("lsp"));
+        assertTrue(ids.contains("clangd-lsp"));
+        assertTrue(SwimHelpRegistry.chapters().stream()
+                .flatMap(chapter -> chapter.sections().stream())
+                .flatMap(section -> section.paragraphs().stream())
+                .anyMatch(paragraph -> paragraph.contains("compile_commands.json")));
     }
 
     @Test

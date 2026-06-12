@@ -10,6 +10,7 @@ import org.fisk.swim.api.SwimPluginPreloadContext;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
+import org.fisk.swim.lsp.shared.LspHelp;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -47,6 +48,8 @@ public final class JavaLspPluginSupport {
     }
 
     public static void preload(SwimPluginPreloadContext context) {
+        LspHelp.registerSharedChapter(context);
+        context.registerHelpChapter(JavaLspHelp.chapter());
         context.registerPreloadResource(LanguagePluginRegistry.register("java", PLUGIN_ID,
                 JavaLspPluginSupport::createLanguageMode));
         registerJavaKey(context, "g d", "go to definition", "lsp-definition", JavaLspPluginSupport::goToDefinition);

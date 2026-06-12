@@ -18,6 +18,7 @@ public final class EmailPlugin implements SwimPlugin {
 
     @Override
     public void preload(SwimPluginPreloadContext context) {
+        context.registerHelpChapter(EmailPluginHelp.chapter());
         context.registerKeyBinding(new SwimPluginKeyBinding("<SPACE> m", "Workspace", "mail", "mail", "mail"));
     }
 

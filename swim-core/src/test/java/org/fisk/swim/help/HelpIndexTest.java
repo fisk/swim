@@ -18,12 +18,11 @@ class HelpIndexTest {
         assertFalse(HelpDocument.chapters().isEmpty());
         assertNotNull(HelpDocument.findChapter("start"));
         assertNotNull(HelpDocument.findChapter("Movement"));
-        assertNotNull(HelpDocument.findChapter("lsp"));
 
         String index = HelpDocument.renderIndex();
         assertTrue(index.contains("SWIM Help Index"));
         assertTrue(index.contains("start - Start Here"));
-        assertTrue(index.contains("lsp - Language Server Features"));
+        assertTrue(index.contains("workspaces - Todo, Shell, Sessions, and Plugin Panels"));
         assertTrue(index.contains("nemo - Nemo Assistant"));
 
         String start = HelpDocument.renderForNemo("start");
@@ -40,14 +39,9 @@ class HelpIndexTest {
         assertTrue(diagnostics.contains("Diagnostics and Code Intelligence"));
         assertTrue(diagnostics.contains("g x opens diagnostics for the current line"));
 
-        String lsp = HelpDocument.renderForNemo("lsp");
-        assertTrue(lsp.contains("Language Server Features"));
-        assertTrue(lsp.contains("Most commands run asynchronously"));
-        assertTrue(lsp.contains("Space-comma-h to open hover documentation"));
-        assertTrue(lsp.contains("<SPACE> , R"));
-        assertTrue(lsp.contains("<SPACE> , C"));
-        assertTrue(HelpDocument.search("code lens").stream()
-                .anyMatch(chapter -> "lsp".equals(chapter.id())));
+        String workspaces = HelpDocument.renderForNemo("workspaces");
+        assertTrue(workspaces.contains("Plugin panels"));
+        assertTrue(workspaces.contains("plugin-specific topics in :help"));
     }
 
     @Test
@@ -62,8 +56,8 @@ class HelpIndexTest {
         assertTrue(rendered.contains("  Normal mode and Insert mode"));
         assertTrue(rendered.stream().anyMatch(line -> line.contains("SWIM starts in NORMAL mode")));
         assertTrue(rendered.contains("Files, Buffers, and Panes"));
-        assertTrue(rendered.contains("Language Server Features"));
-        assertTrue(rendered.stream().anyMatch(line -> line.contains("Space-comma-a opens code actions")));
+        assertTrue(rendered.contains("Todo, Shell, Sessions, and Plugin Panels"));
+        assertTrue(rendered.stream().anyMatch(line -> line.contains("Plugins can add full-screen workspaces")));
         assertTrue(rendered.contains("Nemo Assistant"));
         assertTrue(rendered.stream().anyMatch(line -> line.contains(":swim-help reads this editor help")));
     }

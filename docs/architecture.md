@@ -74,7 +74,7 @@ Core and plugin code are loaded through JPMS layers:
 5. Plugin `preload` runs first for all plugins.
 6. Plugins whose `loadOnStartup()` returns true are loaded immediately; others remain available for lazy loading.
 
-Preload is for lightweight metadata that must exist before the full plugin runtime is loaded, such as help chapters and key bindings. Full `load` is for runtime state, external clients, panels, background workers, and service registrations.
+Preload is for lightweight metadata that must exist before the full plugin runtime is loaded, such as help chapters and key bindings. Plugin documentation belongs here: core renders the help tree, but plugin-owned topics are registered by the plugin modules that implement those features. Full `load` is for runtime state, external clients, panels, background workers, and service registrations.
 
 Every plugin must clean up in `close()`. If a plugin starts threads, owns clients, registers tools, or registers editor resources, unload must terminate those resources. Shared registries unregister plugin-owned resources during unload, but plugin-owned threads and external handles are still the plugin's responsibility.
 
@@ -84,11 +84,11 @@ The compile-time dependency shape is:
 
 ```text
 feature plugins  --->  swim-lsp  --->  swim-core  --->  swim-launcher/api  --->  swim-session
-       |                                  ^
-       +----------------------------------+
+       |                  |               ^
+       +------------------+---------------+
 ```
 
-The arrow means "requires". Plugins depend on `swim-launcher` for the API and on `swim-core` when they need core extension points or UI model types. LSP plugins also depend on `swim-lsp`, which itself depends inward on core for editor/UI types. `swim-core` must not depend on `swim-lsp` or concrete plugin implementation packages. It may expose plugin-facing registries such as language, debugger, mail, Slack, Nemo-tool, help, and panel hooks.
+The arrow means "requires". Plugins depend on `swim-launcher` for the API and on `swim-core` when they need core extension points or UI model types. LSP plugins also depend on `swim-lsp`, which depends inward on core for editor/UI types and on the launcher API for shared plugin help registration. `swim-core` must not depend on `swim-lsp` or concrete plugin implementation packages. It may expose plugin-facing registries such as language, debugger, mail, Slack, Nemo-tool, help, and panel hooks.
 
 Plugins can integrate through these main APIs:
 

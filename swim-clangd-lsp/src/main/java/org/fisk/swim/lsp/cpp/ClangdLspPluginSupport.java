@@ -14,6 +14,7 @@ import org.fisk.swim.api.SwimPluginPreloadContext;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
+import org.fisk.swim.lsp.shared.LspHelp;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -67,6 +68,8 @@ public final class ClangdLspPluginSupport {
     }
 
     public static void preload(SwimPluginPreloadContext context) {
+        LspHelp.registerSharedChapter(context);
+        context.registerHelpChapter(ClangdLspHelp.chapter());
         for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
             context.registerPreloadResource(LanguagePluginRegistry.register(extension, PLUGIN_ID,
                     ClangdLspPluginSupport::createLanguageMode));

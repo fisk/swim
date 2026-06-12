@@ -18,6 +18,7 @@ public final class SlackPlugin implements SwimPlugin {
 
     @Override
     public void preload(SwimPluginPreloadContext context) {
+        context.registerHelpChapter(SlackPluginHelp.chapter());
         context.registerKeyBinding(new SwimPluginKeyBinding("<SPACE> s", "Workspace", "Slack", "slack", "slack"));
     }
 

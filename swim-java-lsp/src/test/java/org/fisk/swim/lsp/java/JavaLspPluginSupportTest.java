@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimHelpRegistry;
 import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.text.BufferContext;
@@ -29,6 +30,7 @@ class JavaLspPluginSupportTest {
         }
         JavaLSPClient.shutdownInstalledInstance();
         SwimPluginPreloadRegistry.clearForTests();
+        SwimHelpRegistry.clearForTests();
         SwimPluginKeyBindingRegistry.clearForTests();
         SwimRuntime.clear();
     }
@@ -68,6 +70,23 @@ class JavaLspPluginSupportTest {
                 "<SPACE> , k",
                 "<SPACE> , C",
                 "<SPACE> , o")));
+    }
+
+    @Test
+    void preloadRegistersSharedAndJavaSpecificHelp() {
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        var ids = SwimHelpRegistry.chapters().stream()
+                .map(chapter -> chapter.id())
+                .toList();
+
+        assertTrue(ids.contains("lsp"));
+        assertTrue(ids.contains("java-lsp"));
+        assertTrue(SwimHelpRegistry.chapters().stream()
+                .flatMap(chapter -> chapter.sections().stream())
+                .flatMap(section -> section.paragraphs().stream())
+                .anyMatch(paragraph -> paragraph.contains("Organize imports")
+                        || paragraph.contains("organize imports")));
     }
 
     @Test

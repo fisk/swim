@@ -20,6 +20,7 @@ public final class TreeViewPlugin implements SwimPlugin {
 
     @Override
     public void preload(SwimPluginPreloadContext context) {
+        context.registerHelpChapter(TreeViewPluginHelp.chapter());
         context.registerKeyBinding(new SwimPluginKeyBinding("<SPACE> T", "Workspace", "tree", "tree", "tree"));
     }
 
