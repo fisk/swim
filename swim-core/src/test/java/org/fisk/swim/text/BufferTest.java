@@ -106,6 +106,88 @@ class BufferTest {
     }
 
     @Test
+    void rawInsertUpdatesLayoutFromAffectedLineOnly() throws IOException {
+        var context = createBufferContext("one\ntwo\nthree", 80);
+        var buffer = context.getBuffer();
+        var textLayout = context.getTextLayout();
+        var firstPhysicalLine = textLayout.getPhysicalLineAt(0);
+        var firstLogicalLine = textLayout.getLogicalLineAt(0);
+        int position = buffer.getString().indexOf("two") + 1;
+
+        buffer.rawInsert(position, "X");
+
+        assertEquals("one\ntXwo\nthree", buffer.getString());
+        assertEquals(3, textLayout.getPhysicalLineCount());
+        assertEquals(3, textLayout.getLogicalLineCount());
+        assertSame(firstPhysicalLine, textLayout.getPhysicalLineAt(0));
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+
+        textLayout.calculate();
+        assertSame(firstPhysicalLine, textLayout.getPhysicalLineAt(0));
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+    }
+
+    @Test
+    void rawInsertNewlineUpdatesLayoutFromAffectedLineOnly() throws IOException {
+        var context = createBufferContext("one\ntwo\nthree", 80);
+        var buffer = context.getBuffer();
+        var textLayout = context.getTextLayout();
+        var firstPhysicalLine = textLayout.getPhysicalLineAt(0);
+        var firstLogicalLine = textLayout.getLogicalLineAt(0);
+        int position = buffer.getString().indexOf("two");
+
+        buffer.rawInsert(position, "new\n");
+
+        assertEquals("one\nnew\ntwo\nthree", buffer.getString());
+        assertEquals(4, textLayout.getPhysicalLineCount());
+        assertEquals(4, textLayout.getLogicalLineCount());
+        assertSame(firstPhysicalLine, textLayout.getPhysicalLineAt(0));
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+        assertEquals(3, textLayout.getPhysicalLineAt(buffer.getString().indexOf("three")).getY());
+    }
+
+    @Test
+    void rawRemoveUpdatesLayoutFromAffectedLineOnly() throws IOException {
+        var context = createBufferContext("one\ntwo\nthree", 80);
+        var buffer = context.getBuffer();
+        var textLayout = context.getTextLayout();
+        var firstPhysicalLine = textLayout.getPhysicalLineAt(0);
+        var firstLogicalLine = textLayout.getLogicalLineAt(0);
+        int start = buffer.getString().indexOf("\nthree");
+
+        buffer.rawRemove(start, start + 1);
+
+        assertEquals("one\ntwothree", buffer.getString());
+        assertEquals(2, textLayout.getPhysicalLineCount());
+        assertEquals(2, textLayout.getLogicalLineCount());
+        assertSame(firstPhysicalLine, textLayout.getPhysicalLineAt(0));
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+    }
+
+    @Test
+    void rawInsertReflowsWrappedLogicalSuffixOnly() throws IOException {
+        var context = createBufferContext("abcd\nef", 3);
+        var buffer = context.getBuffer();
+        var textLayout = context.getTextLayout();
+        var firstPhysicalLine = textLayout.getPhysicalLineAt(0);
+        var firstLogicalLine = textLayout.getLogicalLineAt(0);
+        var secondLogicalLine = textLayout.getLogicalLineAt(3);
+
+        buffer.rawInsert(buffer.getLength(), "ghi");
+
+        assertEquals("abcd\nefghi", buffer.getString());
+        assertEquals(2, textLayout.getPhysicalLineCount());
+        assertEquals(4, textLayout.getLogicalLineCount());
+        assertSame(firstPhysicalLine, textLayout.getPhysicalLineAt(0));
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+        assertSame(secondLogicalLine, textLayout.getLogicalLineAt(3));
+
+        textLayout.calculate();
+        assertSame(firstLogicalLine, textLayout.getLogicalLineAt(0));
+        assertSame(secondLogicalLine, textLayout.getLogicalLineAt(3));
+    }
+
+    @Test
     void newlineInsideElseBlockSplitsClosingBraceAndKeepsCursorOnIndentedLine() throws IOException {
         var context = createJavaBufferContext("""
                 class Demo {

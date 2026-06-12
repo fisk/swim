@@ -217,6 +217,7 @@ public class Buffer {
             invalidateAttributedStringCache();
         }
         mode.didInsert(_bufferContext, position, str);
+        _bufferContext.getTextLayout().didInsert(position, str);
     }
 
     public void rawRemove(int startPosition, int endPosition) {
@@ -224,6 +225,7 @@ public class Buffer {
             return;
         }
         var mode = languageMode();
+        String removedText = _string.substring(startPosition, endPosition);
         adjustFoldsForRemove(startPosition, endPosition);
         _string.delete(startPosition, endPosition);
         removeInvalidFolds();
@@ -232,6 +234,7 @@ public class Buffer {
             invalidateAttributedStringCache();
         }
         mode.didRemove(_bufferContext, startPosition, endPosition);
+        _bufferContext.getTextLayout().didRemove(startPosition, endPosition, removedText);
     }
 
     private boolean updateAttributedStringCacheForInsert(LanguageMode mode, int position, String str) {
@@ -1928,6 +1931,10 @@ public class Buffer {
 
     public VersionedTextDocumentIdentifier getVersionedTextDocumentID() {
         return new VersionedTextDocumentIdentifier(_uri.toString(), _version);
+    }
+
+    int getVersion() {
+        return _version;
     }
 
     public Path getPath() {

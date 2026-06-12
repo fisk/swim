@@ -133,6 +133,9 @@ public class TextLayout {
     private ArrayList<Line> _physicalLines;
     private TreeMap<Integer, Line> _physicalLineAtPosition;
     private BufferContext _bufferContext;
+    private int _layoutBufferVersion = -1;
+    private int _layoutWidth = -1;
+    private long _layoutFoldSignature = Long.MIN_VALUE;
 
     public TextLayout(BufferContext bufferContext) {
         _bufferContext = bufferContext;
@@ -252,8 +255,7 @@ public class TextLayout {
         }
     }
 
-    private void calculateLogicalLines() {
-        int width = _bufferContext.getBufferView().getTextWidth();
+    private void calculateLogicalLines(int width) {
         var string = _bufferContext.getBuffer().getString();
         _logicalLines = new ArrayList<>();
         _logicalLineAtPosition = new TreeMap<>();
@@ -321,8 +323,7 @@ public class TextLayout {
         }
     }
 
-    private void calculatePhysicalLines() {
-        int width = Math.max(1, _bufferContext.getBufferView().getTextWidth());
+    private void calculatePhysicalLines(int width) {
         var string = _bufferContext.getBuffer().getString();
         var iter = new LayoutIterator(string, width);
         while (iter.hasNext()) {
@@ -340,9 +341,189 @@ public class TextLayout {
     }
 
     public void calculate() {
-        calculatePhysicalLines();
-        calculateLogicalLines();
+        int version = _bufferContext.getBuffer().getVersion();
+        int width = currentWidth();
+        long foldSignature = collapsedFoldSignature();
+        if (isCurrent(version, width, foldSignature)) {
+            return;
+        }
+        calculatePhysicalLines(width);
+        calculateLogicalLines(width);
+        markCurrent(version, width, foldSignature);
         _bufferContext.getBufferView().setNeedsRedraw();
+    }
+
+    public void didInsert(int position, String text) {
+        if (text == null || text.isEmpty()) {
+            calculate();
+            return;
+        }
+        updateIncrementally(position);
+    }
+
+    public void didRemove(int startPosition, int endPosition, String removedText) {
+        if (removedText == null || removedText.isEmpty()) {
+            calculate();
+            return;
+        }
+        updateIncrementally(startPosition);
+    }
+
+    private void updateIncrementally(int editPosition) {
+        int version = _bufferContext.getBuffer().getVersion();
+        int width = currentWidth();
+        long foldSignature = collapsedFoldSignature();
+        if (!canUpdateIncrementally(version, width, foldSignature)) {
+            calculate();
+            return;
+        }
+
+        int oldPosition = Math.max(0, Math.min(editPosition, oldDocumentLength()));
+        Line physicalStartLine = getPhysicalLineAt(oldPosition);
+        Line logicalStartLine = getLogicalLineAt(oldPosition);
+
+        _physicalLines = rebuildPhysicalSuffix(physicalStartLine);
+        _physicalLineAtPosition = lineMap(_physicalLines);
+        _logicalLines = rebuildLogicalSuffix(logicalStartLine, width);
+        _logicalLineAtPosition = lineMap(_logicalLines);
+
+        markCurrent(version, width, foldSignature);
+        _bufferContext.getBufferView().setNeedsRedraw();
+    }
+
+    private boolean canUpdateIncrementally(int version, int width, long foldSignature) {
+        return _layoutBufferVersion == version - 1
+                && _layoutWidth == width
+                && _layoutFoldSignature == foldSignature
+                && !hasCollapsedFolds()
+                && _physicalLines != null
+                && !_physicalLines.isEmpty()
+                && _logicalLines != null
+                && !_logicalLines.isEmpty();
+    }
+
+    private ArrayList<Line> rebuildPhysicalSuffix(Line startLine) {
+        var result = new ArrayList<Line>(_physicalLines.subList(0, startLine.getY()));
+        Line previous = result.isEmpty() ? null : result.get(result.size() - 1);
+        result.addAll(buildPhysicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous));
+        return result;
+    }
+
+    private ArrayList<Line> buildPhysicalLinesFrom(int startPosition, int startY, Line previous) {
+        var string = _bufferContext.getBuffer().getString();
+        int position = Math.max(0, Math.min(startPosition, string.length()));
+        int y = startY;
+        int x = 0;
+        var result = new ArrayList<Line>();
+        Line line = new Line(y, position, previous, position > 0 && string.charAt(position - 1) == '\n');
+        if (previous != null) {
+            previous.setNext(line);
+        }
+        result.add(line);
+        while (position < string.length()) {
+            String character = string.substring(position, position + 1);
+            line.getGlyphs().add(new Glyph(x, y, position, character));
+            position++;
+            if (character.equals("\n")) {
+                x = 0;
+                Line next = new Line(++y, position, line, true);
+                line.setNext(next);
+                line = next;
+                result.add(line);
+            } else {
+                x++;
+            }
+        }
+        return result;
+    }
+
+    private ArrayList<Line> rebuildLogicalSuffix(Line startLine, int width) {
+        var result = new ArrayList<Line>(_logicalLines.subList(0, startLine.getY()));
+        Line previous = result.isEmpty() ? null : result.get(result.size() - 1);
+        result.addAll(buildLogicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous, width));
+        return result;
+    }
+
+    private ArrayList<Line> buildLogicalLinesFrom(int startPosition, int startY, Line previous, int width) {
+        var string = _bufferContext.getBuffer().getString();
+        int position = Math.max(0, Math.min(startPosition, string.length()));
+        int y = startY;
+        int x = 0;
+        var result = new ArrayList<Line>();
+        Line line = new Line(y, position, previous, position > 0 && string.charAt(position - 1) == '\n');
+        if (previous != null) {
+            previous.setNext(line);
+        }
+        result.add(line);
+        while (position < string.length()) {
+            String character = string.substring(position, position + 1);
+            if (character.equals("\n")) {
+                Line next = new Line(++y, position + 1, line, true);
+                line.setNext(next);
+                line = next;
+                result.add(line);
+                x = 0;
+                position++;
+                continue;
+            }
+            if (x == width) {
+                Line next = new Line(++y, position, line, false);
+                line.setNext(next);
+                line = next;
+                result.add(line);
+                x = 0;
+            }
+            line.getGlyphs().add(new Glyph(x++, y, position, character));
+            position++;
+        }
+        return result;
+    }
+
+    private TreeMap<Integer, Line> lineMap(ArrayList<Line> lines) {
+        var result = new TreeMap<Integer, Line>();
+        for (var line : lines) {
+            result.putIfAbsent(line.getStartPosition(), line);
+        }
+        return result;
+    }
+
+    private int currentWidth() {
+        return Math.max(1, _bufferContext.getBufferView().getTextWidth());
+    }
+
+    private boolean isCurrent(int version, int width, long foldSignature) {
+        return _layoutBufferVersion == version
+                && _layoutWidth == width
+                && _layoutFoldSignature == foldSignature;
+    }
+
+    private void markCurrent(int version, int width, long foldSignature) {
+        _layoutBufferVersion = version;
+        _layoutWidth = width;
+        _layoutFoldSignature = foldSignature;
+    }
+
+    private int oldDocumentLength() {
+        if (_physicalLines == null || _physicalLines.isEmpty()) {
+            return 0;
+        }
+        return getLastPhysicalLine().getEndPosition(true);
+    }
+
+    private boolean hasCollapsedFolds() {
+        return _bufferContext.getBuffer().getFolds().stream().anyMatch(Buffer.Fold::collapsed);
+    }
+
+    private long collapsedFoldSignature() {
+        long signature = 1125899906842597L;
+        for (var fold : _bufferContext.getBuffer().getFolds()) {
+            if (!fold.collapsed()) {
+                continue;
+            }
+            signature = 31 * signature + fold.start();
+            signature = 31 * signature + fold.end();
+        }
+        return signature;
     }
 
     public List<Line> getVisibleLogicalLines() {
