@@ -106,7 +106,21 @@ public final class InstalledSwimDriver {
             var process = new ProcessBuilder("tmux", "-V")
                     .redirectErrorStream(true)
                     .start();
-            return process.waitFor() == 0;
+            if (process.waitFor() != 0) {
+                return false;
+            }
+            String session = "swim-it-probe-" + safePathToken(Long.toUnsignedString(System.nanoTime(), 36));
+            var create = new ProcessBuilder("tmux", "new-session", "-d", "-s", session, "true")
+                    .redirectErrorStream(true)
+                    .start();
+            if (create.waitFor() != 0) {
+                return false;
+            }
+            var kill = new ProcessBuilder("tmux", "kill-session", "-t", session)
+                    .redirectErrorStream(true)
+                    .start();
+            kill.waitFor();
+            return true;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

@@ -313,8 +313,8 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         }
         if (_commandMode) {
             String overlay = ":" + _command;
-            AttributedString.create(overlay, com.googlecode.lanterna.TextColor.ANSI.BLACK,
-                    com.googlecode.lanterna.TextColor.ANSI.YELLOW)
+            AttributedString.create(overlay, UiTheme.VISUAL_SELECTION_FOREGROUND,
+                    UiTheme.VISUAL_SELECTION_BACKGROUND)
                     .drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + rect.getSize().getHeight() - 1),
                             graphics);
         }

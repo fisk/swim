@@ -1604,7 +1604,7 @@ public class CommandView extends View {
             TextColor promptTone = isSearch() ? UiTheme.COMMAND_SEARCH : UiTheme.COMMAND_PROMPT;
             String label = isSearch() ? " search " : " command ";
             line.append(label, UiTheme.TEXT_ON_ACCENT, promptTone);
-            line.append(" " + _prompt + _command, UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_BACKGROUND);
+            line.append(" " + _prompt + _command, UiTheme.COMMAND_FOREGROUND, UiTheme.COMMAND_BACKGROUND);
         } else {
             line.append(" normal ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
             line.append(" : commands  / search  ? reverse-search ", UiTheme.TEXT_MUTED,

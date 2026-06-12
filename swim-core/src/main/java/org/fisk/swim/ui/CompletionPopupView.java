@@ -19,7 +19,7 @@ public class CompletionPopupView extends View {
 
     public CompletionPopupView(Rect bounds) {
         super(bounds);
-        setBackgroundColour(TextColor.ANSI.BLACK);
+        setBackgroundColour(UiTheme.COMPLETION_BACKGROUND);
     }
 
     public void setSession(LspCompletionSession session) {
@@ -71,7 +71,7 @@ public class CompletionPopupView extends View {
             Rect rect,
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             LspCompletionSession session) {
-        graphics.setBackgroundColor(TextColor.ANSI.CYAN);
+        graphics.setBackgroundColor(UiTheme.COMPLETION_HEADER_BACKGROUND);
         graphics.drawRectangle(
                 new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
                 new TerminalSize(rect.getSize().getWidth(), 1),
@@ -82,8 +82,8 @@ public class CompletionPopupView extends View {
         drawLine(
                 Point.create(rect.getPoint().getX(), rect.getPoint().getY()),
                 clip(header, rect.getSize().getWidth()),
-                TextColor.ANSI.BLACK,
-                TextColor.ANSI.CYAN);
+                UiTheme.COMPLETION_HEADER_FOREGROUND,
+                UiTheme.COMPLETION_HEADER_BACKGROUND);
     }
 
     private void drawEntries(
@@ -98,8 +98,8 @@ public class CompletionPopupView extends View {
         for (int i = 0; i < visible.size(); ++i) {
             var entry = visible.get(i);
             boolean selected = globalIndex + i == session.getSelection();
-            TextColor background = selected ? TextColor.ANSI.WHITE : TextColor.ANSI.BLACK;
-            TextColor foreground = selected ? TextColor.ANSI.BLACK : TextColor.ANSI.WHITE;
+            TextColor background = selected ? UiTheme.COMPLETION_SELECTION_BACKGROUND : UiTheme.COMPLETION_BACKGROUND;
+            TextColor foreground = selected ? UiTheme.COMPLETION_SELECTION_FOREGROUND : UiTheme.COMPLETION_FOREGROUND;
             int y = startY + i;
 
             graphics.setBackgroundColor(background);
@@ -118,7 +118,8 @@ public class CompletionPopupView extends View {
             if (remaining > 0) {
                 if (!annotation.isBlank()) {
                     String paddedAnnotation = clip(" " + annotation, remaining);
-                    row.append(paddedAnnotation, selected ? TextColor.ANSI.BLUE : TextColor.ANSI.CYAN, background);
+                    row.append(paddedAnnotation, selected ? UiTheme.COMPLETION_KIND_FUNCTION : UiTheme.COMPLETION_ANNOTATION,
+                            background);
                     remaining -= paddedAnnotation.length();
                 }
                 if (remaining > 0) {
@@ -129,7 +130,7 @@ public class CompletionPopupView extends View {
             if (sourceWidth > 0) {
                 row.append(" ", foreground, background);
                 row.append(padLeft(clip(entry.getSource(), sourceWidth), sourceWidth),
-                        selected ? TextColor.ANSI.BLUE : TextColor.ANSI.GREEN,
+                        selected ? UiTheme.COMPLETION_KIND_FUNCTION : UiTheme.COMPLETION_SOURCE,
                         background);
             }
 
@@ -142,7 +143,7 @@ public class CompletionPopupView extends View {
             com.googlecode.lanterna.graphics.TextGraphics graphics,
             LspCompletionSession session) {
         int footerY = rect.getPoint().getY() + rect.getSize().getHeight() - 1;
-        graphics.setBackgroundColor(TextColor.ANSI.GREEN);
+        graphics.setBackgroundColor(UiTheme.COMPLETION_FOOTER_BACKGROUND);
         graphics.drawRectangle(
                 new TerminalPosition(rect.getPoint().getX(), footerY),
                 new TerminalSize(rect.getSize().getWidth(), 1),
@@ -156,8 +157,8 @@ public class CompletionPopupView extends View {
         drawLine(
                 Point.create(rect.getPoint().getX(), footerY),
                 " " + clip(footerText, Math.max(0, rect.getSize().getWidth() - 1)),
-                TextColor.ANSI.BLACK,
-                TextColor.ANSI.GREEN);
+                UiTheme.COMPLETION_FOOTER_FOREGROUND,
+                UiTheme.COMPLETION_FOOTER_BACKGROUND);
     }
 
     private Rect calculateBounds(Size parentSize) {
@@ -209,7 +210,7 @@ public class CompletionPopupView extends View {
     private void drawLine(Point point, AttributedString text, int width) {
         String clipped = clip(text.toString(), width);
         if (clipped.length() != text.length()) {
-            text = AttributedString.create(clipped, TextColor.ANSI.WHITE, _backgroundColour);
+            text = AttributedString.create(clipped, UiTheme.COMPLETION_FOREGROUND, _backgroundColour);
         }
         text.drawAt(point, TerminalContext.getInstance().getGraphics());
     }
@@ -267,15 +268,15 @@ public class CompletionPopupView extends View {
 
     private static TextColor kindColor(CompletionItemKind kind) {
         if (kind == null) {
-            return TextColor.ANSI.YELLOW;
+            return UiTheme.COMPLETION_KIND_FIELD;
         }
         return switch (kind) {
-        case Method, Function, Constructor -> TextColor.ANSI.BLUE;
-        case Class, Interface, Enum, Struct, Module -> TextColor.ANSI.GREEN;
-        case Field, Property, EnumMember -> TextColor.ANSI.YELLOW;
-        case Variable, Value, Constant, TypeParameter -> TextColor.ANSI.MAGENTA;
-        case Keyword, Operator -> TextColor.ANSI.RED;
-        default -> TextColor.ANSI.CYAN;
+        case Method, Function, Constructor -> UiTheme.COMPLETION_KIND_FUNCTION;
+        case Class, Interface, Enum, Struct, Module -> UiTheme.COMPLETION_KIND_TYPE;
+        case Field, Property, EnumMember -> UiTheme.COMPLETION_KIND_FIELD;
+        case Variable, Value, Constant, TypeParameter -> UiTheme.COMPLETION_KIND_VARIABLE;
+        case Keyword, Operator -> UiTheme.COMPLETION_KIND_KEYWORD;
+        default -> UiTheme.COMPLETION_KIND_DEFAULT;
         };
     }
 }

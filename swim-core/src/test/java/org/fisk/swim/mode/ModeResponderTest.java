@@ -16,6 +16,7 @@ import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.TodoWorkspaceView;
 import org.fisk.swim.ui.Window;
+import org.fisk.swim.ui.WindowLayoutTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -370,7 +371,8 @@ class Demo {
 
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
                     HeadlessWindowHarness.key('v'));
-            assertEquals("{12, 2, 12, 6}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
+            assertEquals(WindowLayoutTestSupport.absoluteRightSplitLeaf(24, 11).toString(),
+                    absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
 
             window.setBufferPath(second);
             var rightBuffer = window.getBufferContext().getBuffer();
@@ -390,7 +392,7 @@ class Demo {
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.ctrl('w'),
                     HeadlessWindowHarness.key('q'));
             assertSame(leftView, window.getActiveView());
-            assertEquals("{0, 2, 24, 7}", absoluteBounds(leftView).toString());
+            assertEquals(WindowLayoutTestSupport.workspace(24, 11).toString(), absoluteBounds(leftView).toString());
         }
     }
 
@@ -408,7 +410,8 @@ class Demo {
             assertTrue(window.isShowingTodoWorkspace());
             assertTrue(window.getActiveView() instanceof TodoWorkspaceView);
             assertFalse(window.isShowingPanel());
-            assertEquals("{0, 2, 24, 7}", absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
+            assertEquals(WindowLayoutTestSupport.workspace(24, 11).toString(),
+                    absoluteBounds((org.fisk.swim.ui.View) window.getActiveView()).toString());
 
             HeadlessWindowHarness.dispatch((TodoWorkspaceView) window.getActiveView(), HeadlessWindowHarness.key('q'));
             assertFalse(window.isShowingTodoWorkspace());

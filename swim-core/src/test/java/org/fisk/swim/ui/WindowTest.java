@@ -44,45 +44,19 @@ class WindowTest {
     Path tempDir;
 
     @Test
-    void noArgumentLaunchShowsReadOnlyWelcomeBuffer() throws Exception {
+    void noArgumentLaunchShowsEditableScratchBuffer() throws Exception {
         TerminalContextTestSupport.install(60, 16);
         try {
             Window.createInstance(List.of());
             var window = Window.getInstance();
 
-            assertTrue(window.getBufferContext().getBuffer().getString().contains(":help"));
-            assertTrue(window.getBufferContext().getBuffer().getString().contains("swim file.txt other.txt"));
-            assertTrue(window.getBufferContext().getBuffer().isReadOnly());
-            String before = window.getBufferContext().getBuffer().getString();
+            assertEquals("", window.getBufferContext().getBuffer().getString());
+            assertFalse(window.getBufferContext().getBuffer().isReadOnly());
+            assertEquals(List.of("*scratch*"), tabLabels(window));
 
             window.getBufferContext().getBuffer().insert("x");
 
-            assertEquals(before, window.getBufferContext().getBuffer().getString());
-        } finally {
-            if (Window.getInstance() != null) {
-                Window.getInstance().dispose();
-            }
-            EventThread.shutdownInstance();
-            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
-        }
-    }
-
-    @Test
-    void noArgumentLaunchRendersWelcomePageArt() throws Exception {
-        var terminal = TerminalContextTestSupport.install(80, 24);
-        try {
-            Window.createInstance(List.of());
-
-            Window.getInstance().update(true);
-
-            String rendered = String.join("\n", terminal.drawCalls().stream()
-                    .map(org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall::text)
-                    .toList());
-            assertTrue(rendered.contains("\\_/\\_/"));
-            assertTrue(rendered.contains(WelcomePage.HELP_TEXT));
-            assertTrue(rendered.contains("o     o     o"));
-            assertTrue(rendered.contains("<=<"));
-            assertEquals(List.of(WelcomePage.DISPLAY_NAME), tabLabels(Window.getInstance()));
+            assertEquals("x", window.getBufferContext().getBuffer().getString());
         } finally {
             if (Window.getInstance() != null) {
                 Window.getInstance().dispose();
@@ -187,26 +161,60 @@ class WindowTest {
 
             assertFalse(window.closeActiveView());
             assertSame(originalView, window.getActiveView());
-            assertEquals("{0, 2, 24, 7}", absoluteBounds(originalView).toString());
+            assertEquals(WindowLayoutTestSupport.workspace(24, 11).toString(), absoluteBounds(originalView).toString());
         }
     }
 
     @Test
-    void modeLineRendersAboveTabBar() throws Exception {
+    void bottomBarsRenderModeLineNoticeThenTabs() throws Exception {
         TerminalContextTestSupport.install(60, 16);
         try {
             Window.createInstance(writeFile("layout.txt", "abc"));
             var window = Window.getInstance();
+            var layout = WindowChromeLayout.compute(Size.create(60, 16),
+                    window.getKeyMenuView().preferredHeight(60, 16),
+                    WindowChromeLayout.standardFooterBars(true));
 
-            assertEquals(13, window.getModeLineView().getBounds().getPoint().getY());
-            assertEquals(14, window.getTabBarView().getBounds().getPoint().getY());
-            assertEquals(15, window.getCommandView().getBounds().getPoint().getY());
+            assertEquals(layout.modeLine().toString(), window.getModeLineView().getBounds().toString());
+            assertEquals(layout.commandLine().toString(), window.getCommandView().getBounds().toString());
+            assertEquals(layout.tabBar().toString(), window.getTabBarView().getBounds().toString());
 
             invoke(window, "applyLayout", new Class<?>[] { Size.class }, Size.create(60, 12));
+            layout = WindowChromeLayout.compute(Size.create(60, 12),
+                    window.getKeyMenuView().preferredHeight(60, 12),
+                    WindowChromeLayout.standardFooterBars(true));
 
-            assertEquals(9, window.getModeLineView().getBounds().getPoint().getY());
-            assertEquals(10, window.getTabBarView().getBounds().getPoint().getY());
-            assertEquals(11, window.getCommandView().getBounds().getPoint().getY());
+            assertEquals(layout.modeLine().toString(), window.getModeLineView().getBounds().toString());
+            assertEquals(layout.commandLine().toString(), window.getCommandView().getBounds().toString());
+            assertEquals(layout.tabBar().toString(), window.getTabBarView().getBounds().toString());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
+    void commandPopupStaysAboveRealFooterRows() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        try {
+            Window.createInstance(writeFile("command-popup-footer.txt", "abc"));
+            var window = Window.getInstance();
+            var commandView = window.getCommandView();
+
+            commandView.activate(":");
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('h'));
+
+            var commandMenu = window.getCommandMenuView();
+            int commandMenuBottom = commandMenu.getBounds().getPoint().getY()
+                    + commandMenu.getBounds().getSize().getHeight();
+            assertEquals(window.getModeLineView().getBounds().getPoint().getY(), commandMenuBottom);
+            assertEquals(window.getModeLineView().getBounds().getPoint().getY() + 1,
+                    window.getCommandView().getBounds().getPoint().getY());
+            assertEquals(window.getCommandView().getBounds().getPoint().getY() + 1,
+                    window.getTabBarView().getBounds().getPoint().getY());
         } finally {
             if (Window.getInstance() != null) {
                 Window.getInstance().dispose();
@@ -812,7 +820,11 @@ class WindowTest {
 
             window.getCommandView().activate(":");
 
-            assertEquals(9, window.getCommandMenuView().getBounds().getSize().getHeight());
+            var commandMenu = window.getCommandMenuView();
+            assertEquals(WindowLayoutTestSupport.chromeLayout(32, 11).modeLine().getPoint().getY(),
+                    commandMenu.getBounds().getSize().getHeight());
+            assertEquals(window.getModeLineView().getBounds().getPoint().getY(),
+                    commandMenu.getBounds().getPoint().getY() + commandMenu.getBounds().getSize().getHeight());
         }
     }
 
@@ -849,7 +861,7 @@ class WindowTest {
             assertEquals(leavesBefore, leafViews(window).size());
             assertSame(chat, window.getPanelView());
             assertSame(chat, window.getActiveView());
-            assertEquals("{0, 4, 32, 5}", chat.getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.overlayPanel(32, 11, 0.70).toString(), chat.getBounds().toString());
             assertTrue(rootSubviews(window).indexOf(chat) > rootSubviews(window).indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class)));
             assertTrue(rootSubviews(window).indexOf(chat) < rootSubviews(window).indexOf(window.getModeLineView()));
         }
@@ -917,7 +929,8 @@ class WindowTest {
             assertEquals(leavesBefore, leafViews(window).size());
             assertSame(shell, window.getPanelView());
             assertSame(shell, window.getActiveView());
-            assertEquals("{0, 6, 32, 3}", shell.getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.overlayPanel(32, 11, 1.0 / 3.0).toString(),
+                    shell.getBounds().toString());
             assertTrue(rootSubviews(window).indexOf(shell) > rootSubviews(window).indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class)));
             assertTrue(rootSubviews(window).indexOf(shell) < rootSubviews(window).indexOf(window.getModeLineView()));
             window.closePanelShellSession();
@@ -1007,7 +1020,8 @@ class WindowTest {
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
             assertTrue(tabLabels(window).contains("Shell"));
             assertEquals(32, shell.getBounds().getSize().getWidth());
-            assertEquals(7, shell.getBounds().getSize().getHeight());
+            assertEquals(WindowLayoutTestSupport.workspace(32, 11).getSize().getHeight(),
+                    shell.getBounds().getSize().getHeight());
         }
     }
 
@@ -1020,7 +1034,7 @@ class WindowTest {
                     HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('v'));
 
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            assertEquals("{16, 0, 16, 6}", shell.getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.rightSplitLeaf(32, 11).toString(), shell.getBounds().toString());
             assertEquals(2, leafViews(window).size());
         }
     }
@@ -1034,7 +1048,7 @@ class WindowTest {
                     HeadlessWindowHarness.key('c'), HeadlessWindowHarness.key('h'));
 
             var shell = assertInstanceOf(ShellPanelView.class, window.getActiveView());
-            assertEquals("{0, 4, 32, 2}", shell.getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.bottomSplitLeaf(32, 11).toString(), shell.getBounds().toString());
             assertEquals(2, leafViews(window).size());
         }
     }
@@ -1515,10 +1529,12 @@ class WindowTest {
             var window = harness.getWindow();
 
             var bottomView = window.splitActiveBufferVertically();
-            assertEquals("{0, 4, 24, 2}", absoluteBounds(bottomView).toString());
+            assertEquals(WindowLayoutTestSupport.bottomSplitLeaf(24, 11).toString(),
+                    absoluteBounds(bottomView).toString());
 
             var rightView = window.splitActiveBufferHorizontally();
-            assertEquals("{12, 4, 12, 2}", rightView.getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.rightLeafInsideBottomSplit(24, 11).toString(),
+                    rightView.getBounds().toString());
         }
     }
 
@@ -1563,15 +1579,16 @@ class WindowTest {
 
     @Test
     void ctrlWPlusAndMinusResizeHorizontalSplit() throws Exception {
-        try (var harness = HeadlessWindowHarness.create(writeFile("resize-height.txt", "abc"), 32, 11)) {
+        try (var harness = HeadlessWindowHarness.create(writeFile("resize-height.txt", "abc"), 32, 14)) {
             var window = harness.getWindow();
             var bottom = window.splitActiveBufferVertically();
 
             String initialBottom = bottom.getBounds().toString();
+            int initialHeight = bottom.getBounds().getSize().getHeight();
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('+'));
 
-            assertTrue(bottom.getBounds().getSize().getHeight() > 2);
+            assertTrue(bottom.getBounds().getSize().getHeight() > initialHeight);
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.ctrl('w'), HeadlessWindowHarness.key('-'));
 

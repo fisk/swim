@@ -61,23 +61,6 @@ import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
-    public static final String WELCOME_BUFFER_TEXT = """
-            SWIM
-
-            Type :help and press Enter to open the help pages.
-            Type :e path/to/file and press Enter to open a file.
-
-            First steps:
-              i       enter INSERT mode and type text
-              Esc     return to NORMAL mode
-              :w      write the current file
-              :q      quit
-
-            Start with files:
-              swim file.txt other.txt
-
-            This welcome buffer is read-only.
-            """;
 
     private enum WorkspaceKind {
         BUFFER,
@@ -224,10 +207,11 @@ public class Window implements Drawable {
         Path path = launchPaths.isEmpty() ? null : launchPaths.getFirst();
         _editorPaths = EditorPaths.fromUserHome();
         _editorConfig = EditorConfigStore.load(_editorPaths);
+        UiTheme.apply(_editorConfig.theme());
         _normalModeRemaps = compileRemaps(_editorConfig.normalModeRemaps());
         applyConfiguredOptions(_editorConfig);
         Path initialPath = restoreOnReload ? null : path != null && path.toFile().isDirectory() ? null : path;
-        setupViews(initialPath, !restoreOnReload && launchPaths.isEmpty() ? WELCOME_BUFFER_TEXT : null);
+        setupViews(initialPath);
         setupBindings();
         setupModes();
         initializeWorkspaceHistory();
@@ -2797,7 +2781,6 @@ public class Window implements Drawable {
             saveSessionForReload();
         }
         if (_bufferContextsByView != null) {
-            WelcomePage.stopAll(new HashSet<>(_bufferContextsByView.keySet()));
             for (var context : new HashSet<>(_bufferContextsByView.values())) {
                 context.getBuffer().close();
             }
@@ -3600,10 +3583,6 @@ public class Window implements Drawable {
     }
 
     private void setupViews(Path path) {
-        setupViews(path, null);
-    }
-
-    private void setupViews(Path path, String initialText) {
         ensureLayoutState();
         var terminalContext = TerminalContext.getInstance();
         var terminalSize = terminalContext.getTerminalSize();
@@ -3613,9 +3592,7 @@ public class Window implements Drawable {
         int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.getRows());
         Rect bufferBounds = Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
                 Math.max(0, terminalSize.getRows() - initialMenuHeight - 3));
-        _bufferContext = initialText == null
-                ? new BufferContext(bufferBounds, path)
-                : WelcomePage.createBufferContext(bufferBounds, initialText);
+        _bufferContext = new BufferContext(bufferBounds, path);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
         trackBufferContext(_bufferContext);
 
@@ -3638,13 +3615,13 @@ public class Window implements Drawable {
         _modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_modeLineView);
 
-        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
+        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 1), terminalSize.getColumns(),
                 terminalSize.getRows() >= 2 ? 1 : 0));
         _tabBarView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
                 | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_tabBarView);
 
-        _commandView = new CommandView(Rect.create(0, Math.max(0, terminalSize.getRows() - 1), terminalSize.getColumns(),
+        _commandView = new CommandView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
                 terminalSize.getRows() >= 1 ? 1 : 0));
         _commandView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_commandView);
@@ -4285,43 +4262,39 @@ public class Window implements Drawable {
         if (_rootView == null || size == null) {
             return;
         }
-        _rootView.setBounds(Rect.create(0, 0, size.getWidth(), size.getHeight()));
         int menuHeight = MIN_TOP_MENU_HEIGHT;
         if (_keyMenuView != null) {
             menuHeight = _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
         }
-        menuHeight = Math.min(menuHeight, size.getHeight());
-        int maxFooterRows = _tabBarView == null ? 2 : 3;
-        int footerRows = Math.min(maxFooterRows, Math.max(0, size.getHeight() - menuHeight));
-        int tabBarHeight = _tabBarView != null && footerRows == 3 ? 1 : 0;
-        int modeLineHeight = footerRows >= 2 ? 1 : 0;
-        int commandHeight = footerRows >= 1 ? 1 : 0;
-        int contentTop = menuHeight;
-        int contentHeight = Math.max(0, size.getHeight() - menuHeight - tabBarHeight - modeLineHeight - commandHeight);
+        WindowChromeLayout layout = WindowChromeLayout.compute(size, menuHeight,
+                WindowChromeLayout.standardFooterBars(_tabBarView != null));
+        _rootView.setBounds(layout.root());
         if (_keyMenuView != null) {
-            _keyMenuView.setBounds(Rect.create(0, 0, size.getWidth(), menuHeight));
+            _keyMenuView.setBounds(layout.topMenu());
         }
         if (_workspaceView != null) {
-            _workspaceView.setBounds(Rect.create(0, contentTop, size.getWidth(), contentHeight));
+            _workspaceView.setBounds(layout.workspace());
         }
         if (isOverlayPanel(_panelView) && _panelView != null && _panelView.getParent() == _rootView) {
+            Rect workspace = layout.workspace();
             double overlayRatio = _panelView instanceof ChatPanelView ? 0.70 : (1.0 / 3.0);
-            int overlayHeight = Math.max(1, (int) Math.ceil(contentHeight * overlayRatio));
-            _panelView.setBounds(Rect.create(0, contentTop + contentHeight - overlayHeight, size.getWidth(), overlayHeight));
+            int overlayHeight = Math.max(1, (int) Math.ceil(workspace.getSize().getHeight() * overlayRatio));
+            _panelView.setBounds(Rect.create(0,
+                    workspace.getPoint().getY() + workspace.getSize().getHeight() - overlayHeight,
+                    workspace.getSize().getWidth(),
+                    overlayHeight));
         }
         if (_modeLineView != null) {
-            _modeLineView.setBounds(Rect.create(0, contentTop + contentHeight, size.getWidth(),
-                    modeLineHeight));
-        }
-        if (_tabBarView != null) {
-            _tabBarView.setBounds(Rect.create(0, contentTop + contentHeight + modeLineHeight, size.getWidth(),
-                    tabBarHeight));
+            _modeLineView.setBounds(layout.modeLine());
         }
         if (_commandView != null) {
-            _commandView.setBounds(Rect.create(0, contentTop + contentHeight + tabBarHeight + modeLineHeight,
-                    size.getWidth(), commandHeight));
+            _commandView.setBounds(layout.commandLine());
+        }
+        if (_tabBarView != null) {
+            _tabBarView.setBounds(layout.tabBar());
         }
         if (_commandMenuView != null) {
+            _commandMenuView.setBottomInsetRows(layout.footerInsetRows());
             _commandMenuView.syncBounds();
         }
         if (_mailNotificationView != null) {
@@ -4357,7 +4330,6 @@ public class Window implements Drawable {
         if (bufferContext == null) {
             return;
         }
-        WelcomePage.stopIfWelcome(bufferView);
         Integer count = _bufferViewCounts.get(bufferContext);
         if (count == null || count <= 1) {
             _bufferViewCounts.remove(bufferContext);
@@ -5124,9 +5096,6 @@ public class Window implements Drawable {
     }
 
     private static String projectTabLabel(BufferContext context) {
-        if (WelcomePage.isWelcome(context)) {
-            return WelcomePage.DISPLAY_NAME;
-        }
         Path path = context == null || context.getBuffer() == null ? null : context.getBuffer().getPath();
         if (path == null) {
             return "*scratch*";
@@ -5155,9 +5124,6 @@ public class Window implements Drawable {
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {
-            if (WelcomePage.isWelcome(workspace._bufferContext)) {
-                yield WelcomePage.DISPLAY_NAME;
-            }
             Path path = workspace._bufferContext == null ? null : workspace._bufferContext.getBuffer().getPath();
             if (path == null) {
                 yield "*scratch*";

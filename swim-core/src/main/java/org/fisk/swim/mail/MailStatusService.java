@@ -197,16 +197,14 @@ public final class MailStatusService implements AutoCloseable {
     }
 
     private void requestUiRefresh() {
-        Window window = Window.getInstance();
-        if (window == null) {
+        if (Window.getInstance() == null) {
             return;
         }
-        Runnable refresh = window::refreshChromeState;
-        EventThread eventThread = EventThread.getInstance();
-        if (eventThread.isAlive() && Thread.currentThread() != eventThread) {
-            eventThread.enqueue(new RunnableEvent(refresh));
-        } else {
-            refresh.run();
-        }
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            Window window = Window.getInstance();
+            if (window != null) {
+                window.refreshChromeState();
+            }
+        }));
     }
 }

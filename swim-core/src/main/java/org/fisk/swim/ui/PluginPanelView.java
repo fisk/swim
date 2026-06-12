@@ -190,14 +190,7 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
     }
 
     private static TextColor color(String value, TextColor fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
-        }
-        try {
-            return TextColor.Factory.fromString(value);
-        } catch (IllegalArgumentException e) {
-            return fallback;
-        }
+        return UiTheme.resolve(value, fallback);
     }
 
     private void syncToCurrentPath() {

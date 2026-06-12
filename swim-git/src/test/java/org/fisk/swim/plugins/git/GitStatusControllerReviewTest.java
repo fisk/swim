@@ -16,6 +16,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class GitStatusControllerReviewTest {
+    private static final String TEXT_PRIMARY = "text.primary";
+    private static final String ACCENT_BLUE = "accent.blue";
+    private static final String ACCENT_GOLD = "accent.gold";
+    private static final String ACCENT_GREEN = "accent.green";
+    private static final String ACCENT_PURPLE = "accent.purple";
+    private static final String DIFF_ADDED_BACKGROUND = "diff.added.background";
+    private static final String DIFF_REMOVED_BACKGROUND = "diff.removed.background";
+    private static final String GIT_COMMIT_HASH = "git.commit.hash";
+    private static final String GIT_PULL_REQUEST_NUMBER = "git.pull.request.number";
+    private static final String GIT_LABEL_FOREGROUND = "git.label.foreground";
+    private static final String GIT_LABEL_BACKGROUND = "git.label.background";
+    private static final String GIT_FILTER_FIELD = "git.filter.field";
+
     @TempDir
     Path tempDir;
 
@@ -32,9 +45,9 @@ class GitStatusControllerReviewTest {
 
         List<SwimPanelLine> rich = controller.renderRich(110, 12);
         assertTrue(rich.stream().flatMap(line -> line.spans().stream())
-                .anyMatch(span -> span.text().contains("+new") && "#173d22".equals(span.background())));
+                .anyMatch(span -> span.text().contains("+new") && DIFF_ADDED_BACKGROUND.equals(span.background())));
         assertTrue(rich.stream().flatMap(line -> line.spans().stream())
-                .anyMatch(span -> span.text().contains("-old") && "#4a2020".equals(span.background())));
+                .anyMatch(span -> span.text().contains("-old") && DIFF_REMOVED_BACKGROUND.equals(span.background())));
     }
 
     @Test
@@ -77,21 +90,21 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(spans.stream().anyMatch(span -> span.text().contains("Repository has changes")
-                && "#ffb454".equals(span.foreground())));
+                && ACCENT_GOLD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().contains("Staged")
-                && "#7ee787".equals(span.foreground())));
+                && ACCENT_GREEN.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "A".equals(span.text())
-                && "#7ee787".equals(span.foreground())));
+                && ACCENT_GREEN.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().contains("Unstaged")
-                && "#ffb454".equals(span.foreground())));
+                && ACCENT_GOLD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "M".equals(span.text())
-                && "#ffb454".equals(span.foreground())));
+                && ACCENT_GOLD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().contains("Untracked")
-                && "#5ec4ff".equals(span.foreground())));
+                && ACCENT_BLUE.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "?".equals(span.text())
-                && "#5ec4ff".equals(span.foreground())));
+                && ACCENT_BLUE.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().matches("[0-9a-f]{7,8}")
-                && "#f7a94b".equals(span.foreground())));
+                && GIT_COMMIT_HASH.equals(span.foreground())));
     }
 
     @Test
@@ -107,7 +120,7 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(historySpans.stream().anyMatch(span -> "0123456".equals(span.text())
-                && "#f7a94b".equals(span.foreground())));
+                && GIT_COMMIT_HASH.equals(span.foreground())));
 
         set(controller, "_mode", enumValue("Mode", "REBASE"));
         set(controller, "_rebaseUpstreamLabel", "fedcba9 Upstream");
@@ -119,9 +132,9 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(rebaseSpans.stream().anyMatch(span -> "fedcba9".equals(span.text())
-                && "#f7a94b".equals(span.foreground())));
+                && GIT_COMMIT_HASH.equals(span.foreground())));
         assertTrue(rebaseSpans.stream().anyMatch(span -> "abcdef1".equals(span.text())
-                && "#f7a94b".equals(span.foreground())));
+                && GIT_COMMIT_HASH.equals(span.foreground())));
     }
 
     @Test
@@ -137,9 +150,9 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(listSpans.stream().anyMatch(span -> "#42".equals(span.text())
-                && "#3ddbd9".equals(span.foreground())));
+                && GIT_PULL_REQUEST_NUMBER.equals(span.foreground())));
         assertTrue(listSpans.stream().anyMatch(span -> " compiler ".equals(span.text())
-                && "#1b4f72".equals(span.background())));
+                && GIT_LABEL_BACKGROUND.equals(span.background())));
 
         List<String> listLines = controller.render(100, 8);
         int titleLine = indexOfLineContaining(listLines, "#42 Improve review");
@@ -157,7 +170,7 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(reviewSpans.stream().anyMatch(span -> "#17".equals(span.text())
-                && "#3ddbd9".equals(span.foreground())));
+                && GIT_PULL_REQUEST_NUMBER.equals(span.foreground())));
     }
 
     @Test
@@ -181,23 +194,23 @@ class GitStatusControllerReviewTest {
                 .toList();
 
         assertTrue(spans.stream().anyMatch(span -> span.text().equals("Filter Name: ")
-                && "#ffb454".equals(span.foreground())));
+                && GIT_FILTER_FIELD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "Improve review".equals(span.text())
-                && "#dce6ef".equals(span.foreground())));
+                && TEXT_PRIMARY.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().equals("Filter Labels: ")
-                && "#ffb454".equals(span.foreground())));
+                && GIT_FILTER_FIELD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "compiler review".equals(span.text())
-                && "#a6e3a1".equals(span.foreground())));
+                && GIT_LABEL_FOREGROUND.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().equals("Filter Author: ")
-                && "#ffb454".equals(span.foreground())));
+                && GIT_FILTER_FIELD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "@alice".equals(span.text())
-                && "#d2a8ff".equals(span.foreground())));
+                && ACCENT_PURPLE.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> " compiler ".equals(span.text())
-                && "#1b4f72".equals(span.background())));
+                && GIT_LABEL_BACKGROUND.equals(span.background())));
         assertTrue(spans.stream().anyMatch(span -> " review ".equals(span.text())
-                && "#1b4f72".equals(span.background())));
+                && GIT_LABEL_BACKGROUND.equals(span.background())));
         assertTrue(spans.stream().anyMatch(span -> "[mine@origin]".equals(span.text())
-                && "#5ec4ff".equals(span.foreground())));
+                && ACCENT_BLUE.equals(span.foreground())));
     }
 
     @Test

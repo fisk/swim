@@ -89,6 +89,12 @@ public final class TmuxSession implements AutoCloseable {
                 "Expected pane to contain [" + text + "] within " + timeout + ".\nPane:\n" + capturePane());
     }
 
+    public void waitForEscapedText(Iterable<String> alternatives, Duration timeout) throws Exception {
+        assertTrue(waitForPaneEscapedText(alternatives, timeout),
+                "Expected escaped pane to contain one of " + alternatives + " within " + timeout + ".\nPane:\n"
+                        + capturePaneWithEscapes());
+    }
+
     public void waitForExit(Duration timeout) throws Exception {
         assertTrue(waitForSessionExit(timeout),
                 "Expected editor session to exit within " + timeout + ".\nPane:\n" + capturePane());
@@ -125,6 +131,29 @@ public final class TmuxSession implements AutoCloseable {
             Thread.sleep(100);
         }
         return capturePane().contains(text);
+    }
+
+    private boolean waitForPaneEscapedText(Iterable<String> alternatives, Duration timeout) throws Exception {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (containsAny(capturePaneWithEscapes(), alternatives)) {
+                return true;
+            }
+            Thread.sleep(100);
+        }
+        return containsAny(capturePaneWithEscapes(), alternatives);
+    }
+
+    private static boolean containsAny(String text, Iterable<String> alternatives) {
+        if (text == null || alternatives == null) {
+            return false;
+        }
+        for (String alternative : alternatives) {
+            if (alternative != null && !alternative.isEmpty() && text.contains(alternative)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean waitForSessionExit(Duration timeout) throws Exception {

@@ -4,11 +4,11 @@ import org.fisk.swim.copy.Copy;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
 
 public class VisualLineMode extends VisualMode {
     public VisualLineMode(Window window) {
@@ -85,7 +85,7 @@ public class VisualLineMode extends VisualMode {
         int maxY = maxCursor.getYRelative();
         int maxX = minX + rect.getSize().getWidth();
         for (int line = minY; line <= maxY; ++line) {
-            graphics.setBackgroundColor(TextColor.ANSI.YELLOW);
+            graphics.setBackgroundColor(UiTheme.VISUAL_SELECTION_BACKGROUND);
             graphics.drawRectangle(new TerminalPosition(minX, line), new TerminalSize(maxX - minX, 1), ' ');
         }
     }

@@ -60,27 +60,27 @@ final class GitStatusController {
         }
     }
 
-    private static final String C_TEXT = "#dce6ef";
-    private static final String C_MUTED = "#8ca1b3";
-    private static final String C_SUBTLE = "#61788d";
-    private static final String C_PANEL = "#111a23";
-    private static final String C_ELEVATED = "#15202b";
-    private static final String C_ACCENT = "#5ec4ff";
-    private static final String C_GOLD = "#ffb454";
-    private static final String C_GREEN = "#7ee787";
-    private static final String C_RED = "#ff6b6b";
-    private static final String C_PURPLE = "#d2a8ff";
-    private static final String C_COMMIT_HASH = "#f7a94b";
-    private static final String C_PULL_REQUEST_NUMBER = "#3ddbd9";
-    private static final String C_LABEL = "#a6e3a1";
-    private static final String C_LABEL_BG = "#1b4f72";
-    private static final String C_FILTER_FIELD = "#ffb454";
-    private static final String C_FILTER_NEGATED = "#ff6b6b";
-    private static final String C_INSERT_BG = "#173d22";
-    private static final String C_INSERT_FG = "#d9ffe2";
-    private static final String C_DELETE_BG = "#4a2020";
-    private static final String C_DELETE_FG = "#ffd8d8";
-    private static final String C_SELECTION_BG = "#20405a";
+    private static final String C_TEXT = "text.primary";
+    private static final String C_MUTED = "text.muted";
+    private static final String C_SUBTLE = "text.subtle";
+    private static final String C_PANEL = "surface.background";
+    private static final String C_ELEVATED = "surface.elevated";
+    private static final String C_ACCENT = "accent.blue";
+    private static final String C_GOLD = "accent.gold";
+    private static final String C_GREEN = "accent.green";
+    private static final String C_RED = "accent.red";
+    private static final String C_PURPLE = "accent.purple";
+    private static final String C_COMMIT_HASH = "git.commit.hash";
+    private static final String C_PULL_REQUEST_NUMBER = "git.pull.request.number";
+    private static final String C_LABEL = "git.label.foreground";
+    private static final String C_LABEL_BG = "git.label.background";
+    private static final String C_FILTER_FIELD = "git.filter.field";
+    private static final String C_FILTER_NEGATED = "git.filter.negated";
+    private static final String C_INSERT_BG = "diff.added.background";
+    private static final String C_INSERT_FG = "diff.added.foreground";
+    private static final String C_DELETE_BG = "diff.removed.background";
+    private static final String C_DELETE_FG = "diff.removed.foreground";
+    private static final String C_SELECTION_BG = "panel.selection.background";
     private static final String REVIEW_SEPARATOR = "│";
 
     private record StatusRow(GitSection section, Object value) {

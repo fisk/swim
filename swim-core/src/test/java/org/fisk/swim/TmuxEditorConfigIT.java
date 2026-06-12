@@ -55,6 +55,52 @@ class TmuxEditorConfigIT {
     }
 
     @Test
+    @Timeout(45)
+    void installedLauncherBinaryAppliesThemeColorsFromConfig() throws Exception {
+        Path file = tempDir.resolve("theme.txt");
+        Files.writeString(file, "theme test\n");
+        var home = SwimHomeFixture.create(tempDir);
+        Files.writeString(home.swimHome().resolve("config.json"), """
+                {
+                  "theme": {
+                    "name": "tmux-theme-test",
+                    "colors": {
+                      "mode.normal": "#ff00ff",
+                      "text.primary": "#00ff11",
+                      "surface.background": "#010203"
+                    }
+                  }
+                }
+                """);
+
+        try (var session = InstalledSwimDriver.startWithHome(home.home(), tempDir, file.getFileName().toString())) {
+            session.waitForText("theme test", STARTUP_TIMEOUT);
+            session.waitForText("NORMAL", UI_TIMEOUT);
+            session.waitForEscapedText(List.of("48;2;255;0;255", "48;5;201", "#ff00ff"), UI_TIMEOUT);
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+    }
+
+    @Test
+    @Timeout(45)
+    void installedLauncherBinaryKeepsCommandPromptVisibleWhenCompletionMenuIsOpen() throws Exception {
+        Path file = tempDir.resolve("command-prompt.txt");
+        Files.writeString(file, "command prompt\n");
+        var home = SwimHomeFixture.create(tempDir);
+
+        try (var session = InstalledSwimDriver.startWithHome(home.home(), tempDir, file.getFileName().toString())) {
+            session.waitForText("command prompt", STARTUP_TIMEOUT);
+            session.sendLiteral(":");
+            session.sendLiteralKeyStrokes("help");
+            session.waitForText(" command  :help", UI_TIMEOUT);
+            session.sendEscape();
+            session.runCommand("q");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+    }
+
+    @Test
     @Timeout(60)
     void installedLauncherBinaryOpensRequestedFileInsteadOfRestoringLastSession() throws Exception {
         Path first = tempDir.resolve("session-first.txt");

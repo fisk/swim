@@ -69,6 +69,7 @@ public class BufferView extends View {
     public BufferView(Rect rect, BufferContext bufferContext) {
         super(rect);
         _bufferContext = bufferContext;
+        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
     public AttributedString getString() {
@@ -530,7 +531,7 @@ public class BufferView extends View {
     private TextColor lineNumberForeground(int physicalLine, int currentPhysicalLine) {
         var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, physicalLine);
         if (DiagnosticSeverity.Error.equals(severity)) {
-            return TextColor.ANSI.RED_BRIGHT;
+            return UiTheme.DIAGNOSTIC_ERROR_FOREGROUND;
         }
         if (DiagnosticSeverity.Warning.equals(severity)) {
             return UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;

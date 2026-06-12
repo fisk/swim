@@ -12,6 +12,7 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
@@ -39,10 +40,14 @@ import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.SlackPluginRegistry;
+import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.MailPanelView;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+
+import com.googlecode.lanterna.TextColor;
 
 class CommandViewTest {
     @TempDir
@@ -126,6 +131,38 @@ class CommandViewTest {
             assertEquals("v", state.prefix());
             assertEquals("v", state.selectedMatch().primaryName());
             assertEquals(3, state.matches().size());
+        }
+    }
+
+    @Test
+    void commandPromptUsesDedicatedForegroundRoleAndKeepsCursorOnTypedText() throws IOException {
+        UiTheme.applyColors(Map.of(
+                "text.primary", "#010203",
+                "command.background", "#010203",
+                "command.foreground", "#00ff11"));
+        var terminal = TerminalContextTestSupport.install(60, 8);
+        Path path = tempDir.resolve("command-theme.txt");
+        Files.writeString(path, "abc");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 8)) {
+            var commandView = harness.getWindow().getCommandView();
+            commandView.activate(":");
+            for (char character : "help".toCharArray()) {
+                HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key(character));
+            }
+
+            commandView.draw(commandView.getBounds());
+
+            var expectedForeground = TextColor.Factory.fromString("#00ff11");
+            var expectedBackground = TextColor.Factory.fromString("#010203");
+            assertTrue(terminal.drawCalls().stream().anyMatch(call -> call.text().contains(":help")
+                    && expectedForeground.equals(call.foreground())
+                    && expectedBackground.equals(call.background())));
+            assertEquals(15, commandView.getCursor().getXOnScreen());
+            assertEquals(commandView.getBounds().getPoint().getY(), commandView.getCursor().getYOnScreen());
+        } finally {
+            UiTheme.reset();
+            TerminalContext.shutdownInstance();
         }
     }
 
@@ -399,7 +436,7 @@ class CommandViewTest {
             invokeRunCommand(window.getCommandView(), "vsplit");
             var splitView = (View) window.getActiveView();
 
-            assertEquals("{15, 0, 15, 3}", absoluteBounds(splitView).toString());
+            assertEquals(WindowLayoutTestSupport.rightSplitLeaf(30, 8).toString(), absoluteBounds(splitView).toString());
 
             invokeRunCommand(window.getCommandView(), "focus left");
             assertSame(originalView, window.getActiveView());
@@ -421,7 +458,8 @@ class CommandViewTest {
             invokeRunCommand(window.getCommandView(), "vsplit");
 
             assertTrue(window.getActiveView() instanceof ShellPanelView);
-            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.rightSplitLeaf(32, 11).toString(),
+                    ((View) window.getActiveView()).getBounds().toString());
             assertEquals(2, leafViews(window).size());
             assertTrue(leafViews(window).stream().allMatch(view -> view instanceof ShellPanelView));
         }
@@ -437,12 +475,14 @@ class CommandViewTest {
 
             invokeRunCommand(window.getCommandView(), "vshell");
             assertTrue(window.getActiveView() instanceof ShellPanelView);
-            assertEquals("{16, 0, 16, 6}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.rightSplitLeaf(32, 11).toString(),
+                    ((View) window.getActiveView()).getBounds().toString());
 
             invokeRunCommand(window.getCommandView(), "close");
             invokeRunCommand(window.getCommandView(), "hshell");
             assertTrue(window.getActiveView() instanceof ShellPanelView);
-            assertEquals("{0, 4, 32, 2}", ((View) window.getActiveView()).getBounds().toString());
+            assertEquals(WindowLayoutTestSupport.bottomSplitLeaf(32, 11).toString(),
+                    ((View) window.getActiveView()).getBounds().toString());
         }
     }
 

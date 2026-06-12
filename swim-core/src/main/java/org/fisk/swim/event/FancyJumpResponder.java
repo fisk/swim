@@ -6,6 +6,7 @@ import java.util.List;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.TextLayout.Glyph;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
 import com.googlecode.lanterna.TextColor;
@@ -123,7 +124,7 @@ public class FancyJumpResponder implements EventResponder, KeyBindingHintProvide
             if (target.position() == glyph.getPosition()) {
                 int hintIndex = Math.min(_typedHint.length(), target.label().length() - 1);
                 return AttributedString.create(target.label().substring(hintIndex, hintIndex + 1),
-                        TextColor.ANSI.RED, TextColor.ANSI.DEFAULT);
+                        UiTheme.FANCY_JUMP_FOREGROUND, TextColor.ANSI.DEFAULT);
             }
         }
         return character;

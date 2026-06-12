@@ -80,22 +80,29 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         var window = allocate(Window.class);
         setStaticField(Window.class, "_instance", window);
 
-        var rootView = new View(Rect.create(0, 0, width, height));
+        var layout = WindowChromeLayout.compute(Size.create(width, height), 2,
+                WindowChromeLayout.standardFooterBars(true));
+        var rootView = new View(layout.root());
         rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
-        var bufferContext = new BufferContext(Rect.create(0, 2, width, height - 4), path);
-        var keyMenuView = new KeyMenuView(Rect.create(0, 0, width, 2));
+        var bufferContext = new BufferContext(layout.workspace(), path);
+        var keyMenuView = new KeyMenuView(layout.topMenu());
         keyMenuView.setResizeMask(View.RESIZE_MASK_TOP | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
-        var modeLineView = new ModeLineView(Rect.create(0, height - 2, width, 1));
+        var modeLineView = new ModeLineView(layout.modeLine());
         modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
-        var commandView = new CommandView(Rect.create(0, height - 1, width, 1));
+        var commandView = new CommandView(layout.commandLine());
         commandView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
+        var tabBarView = new TabBarView(layout.tabBar());
+        tabBarView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
+                | View.RESIZE_MASK_HEIGHT);
         var commandMenuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        commandMenuView.setBottomInsetRows(layout.footerInsetRows());
         var mailNotificationView = new MailNotificationView(Rect.create(0, 0, 0, 0));
 
         rootView.addSubview(keyMenuView);
+        rootView.addSubview(bufferContext.getBufferView());
         rootView.addSubview(modeLineView);
         rootView.addSubview(commandView);
-        rootView.addSubview(bufferContext.getBufferView());
+        rootView.addSubview(tabBarView);
         rootView.addSubview(commandMenuView);
         rootView.addSubview(mailNotificationView);
         rootView.setFirstResponder(bufferContext.getBufferView());
@@ -107,6 +114,7 @@ public final class HeadlessWindowHarness implements AutoCloseable {
         setField(window, "_activeBufferView", bufferContext.getBufferView());
         setField(window, "_modeLineView", modeLineView);
         setField(window, "_commandView", commandView);
+        setField(window, "_tabBarView", tabBarView);
         setField(window, "_commandMenuView", commandMenuView);
         setField(window, "_mailNotificationView", mailNotificationView);
         setField(window, "_size", Size.create(width, height));

@@ -37,7 +37,7 @@ export MANPATH="$HOME/.swim/share/man:${MANPATH:-}"
 
 Startup behavior:
 
-- `swim` opens the welcome screen.
+- `swim` opens an editable `*scratch*` buffer.
 - `swim <file> [file...]` opens the requested file set, creating missing files when possible.
 - `swim <directory>` opens the built-in directory browser for that directory.
 - Normal launches do not restore an old session. `:reload` and `:rebuild` preserve the current editor state while the runtime restarts.
@@ -103,7 +103,9 @@ The main plugin API lives under `swim-launcher/src/main/java/org/fisk/swim/api/`
 
 ## Configuration And State
 
-SWIM reads user configuration from `~/.swim/config.json`. That file is for editor options, normal-mode remaps, and startup commands.
+SWIM reads user configuration from `~/.swim/config.json`. That file is for editor options, normal-mode remaps, startup commands, and color themes.
+
+Theme colors live under `theme.colors`. Keys are lower-case role names such as `mode.normal`, `text.primary`, `surface.background`, `command.foreground`, `diagnostic.error.background`, `semantic.keyword`, `completion.kind.function`, `mail.unread.foreground`, and `git.commit.hash`. Values can be literal colors such as `#ff00ff` or another role name such as `accent.gold`. Plugins may also use custom role names; define the same role in `theme.colors` to theme that plugin without changing core.
 
 Runtime state is kept under the SWIM home directory:
 

@@ -63,4 +63,19 @@ class CommandMenuViewTest {
         assertEquals(28, menuView.getBounds().getSize().getWidth());
         assertEquals(4, menuView.getBounds().getSize().getHeight());
     }
+
+    @Test
+    void commandMenuStaysAboveReservedBottomRows() {
+        var menuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        var matches = List.of(
+                new CommandView.CommandSpec("help", List.of("h"), "", "open the built-in help"),
+                new CommandView.CommandSpec("history", List.of(), "", "show command history"));
+
+        menuView.setState(new CommandView.CommandMenuState(true, "h", matches, 0));
+        menuView.setBottomInsetRows(3);
+        menuView.resize(Size.create(40, 10));
+
+        assertTrue(menuView.getBounds().getSize().getHeight() <= 7);
+        assertEquals(7, menuView.getBounds().getPoint().getY() + menuView.getBounds().getSize().getHeight());
+    }
 }

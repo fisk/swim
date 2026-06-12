@@ -162,7 +162,7 @@ class NormalModeTest {
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.pageDown());
             int afterDown = view.getStartLine();
-            assertTrue(afterDown >= start + 5);
+            assertTrue(afterDown >= start + Math.max(1, view.getViewportHeight() - 1));
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.pageUp());
             assertTrue(view.getStartLine() < afterDown);

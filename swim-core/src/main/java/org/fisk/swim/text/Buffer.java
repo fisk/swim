@@ -21,6 +21,7 @@ import org.fisk.swim.lsp.LanguageModeProvider;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.undo.UndoLog;
 import org.fisk.swim.utils.LogFactory;
@@ -247,8 +248,8 @@ public class Buffer {
                 || position > _attributedStringCache.length()) {
             return false;
         }
-        TextColor foreground = TextColor.ANSI.DEFAULT;
-        TextColor background = TextColor.ANSI.DEFAULT;
+        TextColor foreground = UiTheme.TEXT_PRIMARY;
+        TextColor background = UiTheme.SURFACE_BACKGROUND;
         if (_attributedStringCache.length() > 0) {
             int sourcePosition = Math.max(0, Math.min(position, _attributedStringCache.length() - 1));
             var attributes = _attributedStringCache.attributesAt(sourcePosition);
@@ -1914,7 +1915,7 @@ public class Buffer {
         if (cached != null && _attributedStringCacheVersion == version) {
             return AttributedString.create(cached);
         }
-        var str = AttributedString.create(_string.toString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        var str = AttributedString.create(_string.toString(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_BACKGROUND);
         mode.applyColouring(_bufferContext, str);
         _attributedStringCache = AttributedString.create(str);
         _attributedStringCacheVersion = version;

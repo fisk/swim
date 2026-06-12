@@ -9,11 +9,11 @@ import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.BufferView;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
 
 public class VisualMode extends Mode {
     private FancyJumpResponder _fancyJump;
@@ -162,7 +162,7 @@ public class VisualMode extends Mode {
             if (toColumn <= fromColumn) {
                 continue;
             }
-            graphics.setBackgroundColor(TextColor.ANSI.YELLOW);
+            graphics.setBackgroundColor(UiTheme.VISUAL_SELECTION_BACKGROUND);
             graphics.drawRectangle(new TerminalPosition(fromColumn, rect.getPoint().getY() + row),
                     new TerminalSize(toColumn - fromColumn, 1), ' ');
         }
@@ -178,7 +178,8 @@ public class VisualMode extends Mode {
     @Override
     public AttributedString decorate(Glyph glyph, AttributedString character) {
         if (isSelected(glyph.getPosition())) {
-            character = AttributedString.create(glyph.getCharacter(), TextColor.ANSI.BLACK, TextColor.ANSI.YELLOW);
+            character = AttributedString.create(glyph.getCharacter(), UiTheme.VISUAL_SELECTION_FOREGROUND,
+                    UiTheme.VISUAL_SELECTION_BACKGROUND);
         }
         character = _fancyJump.decorate(glyph, character);
         return character;

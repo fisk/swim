@@ -262,8 +262,8 @@ class BufferViewTest {
 
             window.update(true);
 
-            assertEquals(TextColor.ANSI.YELLOW, backgroundAt(terminal.drawCalls(), textX + 2, textY));
-            assertEquals(TextColor.ANSI.YELLOW, backgroundAt(terminal.drawCalls(), textX, textY + 1));
+            assertEquals(UiTheme.VISUAL_SELECTION_BACKGROUND, backgroundAt(terminal.drawCalls(), textX + 2, textY));
+            assertEquals(UiTheme.VISUAL_SELECTION_BACKGROUND, backgroundAt(terminal.drawCalls(), textX, textY + 1));
         }
     }
 
@@ -385,7 +385,7 @@ class BufferViewTest {
                             diagnostic(1, 0, DiagnosticSeverity.Warning, "warn line")));
             window.update(true);
 
-            assertEquals(TextColor.ANSI.RED_BRIGHT, foregroundAt(terminal.drawCalls(), 0, 2));
+            assertEquals(UiTheme.DIAGNOSTIC_ERROR_FOREGROUND, foregroundAt(terminal.drawCalls(), 0, 2));
             assertEquals(UiTheme.DIAGNOSTIC_WARNING_FOREGROUND, foregroundAt(terminal.drawCalls(), 0, 3));
             assertEquals(UiTheme.TEXT_MUTED, foregroundAt(terminal.drawCalls(), 0, 4));
         }
@@ -403,7 +403,7 @@ class BufferViewTest {
                     List.of(diagnostic(0, 0, DiagnosticSeverity.Error, "wrapped error")));
             window.update(true);
 
-            assertEquals(TextColor.ANSI.RED_BRIGHT, foregroundAt(terminal.drawCalls(), 0, 2));
+            assertEquals(UiTheme.DIAGNOSTIC_ERROR_FOREGROUND, foregroundAt(terminal.drawCalls(), 0, 2));
             assertEquals(' ', renderCells(terminal.drawCalls(), 16, 10)[3][0]);
         }
     }

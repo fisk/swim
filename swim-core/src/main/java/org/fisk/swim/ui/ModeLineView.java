@@ -347,9 +347,6 @@ public class ModeLineView extends View {
 
     static String frameName(View view) {
         if (view instanceof BufferView bufferView) {
-            if (WelcomePage.isWelcome(bufferView)) {
-                return WelcomePage.DISPLAY_NAME;
-            }
             var path = bufferView.getBufferContext().getBuffer().getPath();
             if (path == null) {
                 return "*scratch*";

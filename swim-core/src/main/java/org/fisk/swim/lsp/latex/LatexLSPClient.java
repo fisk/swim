@@ -6,6 +6,7 @@ import org.eclipse.lsp4j.TextDocumentItem;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.ui.UiTheme;
 
 import com.googlecode.lanterna.TextColor;
 
@@ -63,8 +64,8 @@ public class LatexLSPClient implements LanguageMode {
     @Override
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         var string = str.toString();
-        formatToken(str, string, _latexKeywordPattern, TextColor.ANSI.RED);
-        formatToken(str, string, _bracketKeywordPattern, TextColor.ANSI.RED);
+        formatToken(str, string, _latexKeywordPattern, UiTheme.SEMANTIC_KEYWORD);
+        formatToken(str, string, _bracketKeywordPattern, UiTheme.SEMANTIC_KEYWORD);
     }
 
 }

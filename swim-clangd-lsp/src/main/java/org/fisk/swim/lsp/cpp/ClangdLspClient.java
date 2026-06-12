@@ -94,6 +94,7 @@ import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.CompletionPopupView;
 import org.fisk.swim.ui.LspLocationPopupView;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -104,17 +105,17 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     private static final Logger _log = LogFactory.createLog();
     private static final String DIAGNOSTIC_PROVIDER_ID = "clangd-lsp";
 
-    static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
-    static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
-    static final TextColor SEMANTIC_PARAMETER = TextColor.Factory.fromString("#ffb86c");
-    static final TextColor SEMANTIC_MEMBER = TextColor.Factory.fromString("#ffd166");
-    static final TextColor SEMANTIC_FUNCTION = TextColor.Factory.fromString("#7ab8ff");
-    static final TextColor SEMANTIC_COMMENT = TextColor.Factory.fromString("#7ecb7e");
-    static final TextColor SEMANTIC_STRING = TextColor.Factory.fromString("#7fe3ff");
-    static final TextColor SEMANTIC_NUMBER = TextColor.Factory.fromString("#f5a3ff");
-    static final TextColor SEMANTIC_KEYWORD = TextColor.Factory.fromString("#ff6b6b");
-    static final TextColor SEMANTIC_READONLY = TextColor.Factory.fromString("#ffcf66");
-    static final TextColor SEMANTIC_MACRO = TextColor.Factory.fromString("#f7a94b");
+    static final TextColor SEMANTIC_NAMESPACE = UiTheme.SEMANTIC_NAMESPACE;
+    static final TextColor SEMANTIC_TYPE = UiTheme.SEMANTIC_TYPE;
+    static final TextColor SEMANTIC_PARAMETER = UiTheme.SEMANTIC_PARAMETER;
+    static final TextColor SEMANTIC_MEMBER = UiTheme.SEMANTIC_MEMBER;
+    static final TextColor SEMANTIC_FUNCTION = UiTheme.SEMANTIC_FUNCTION;
+    static final TextColor SEMANTIC_COMMENT = UiTheme.SEMANTIC_COMMENT;
+    static final TextColor SEMANTIC_STRING = UiTheme.SEMANTIC_STRING;
+    static final TextColor SEMANTIC_NUMBER = UiTheme.SEMANTIC_NUMBER;
+    static final TextColor SEMANTIC_KEYWORD = UiTheme.SEMANTIC_KEYWORD;
+    static final TextColor SEMANTIC_READONLY = UiTheme.SEMANTIC_READONLY;
+    static final TextColor SEMANTIC_MACRO = UiTheme.SEMANTIC_MACRO;
 
     private static final Pattern CPP_KEYWORD_PATTERN = Pattern.compile(
             "\\b(alignas|alignof|asm|auto|bool|break|case|catch|char|char8_t|char16_t|char32_t|class|concept|const|consteval|constexpr|constinit|continue|co_await|co_return|co_yield|decltype|default|delete|do|double|else|enum|explicit|export|extern|false|final|float|for|friend|goto|if|inline|int|long|mutable|namespace|new|noexcept|nullptr|operator|override|private|protected|public|register|requires|return|short|signed|sizeof|static|struct|switch|template|this|thread_local|throw|true|try|typedef|typename|union|unsigned|using|virtual|void|volatile|while)\\b",
@@ -1151,7 +1152,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         String string = str.toString();
         formatCppPreprocessorLines(str, string);
-        formatToken(str, string, CPP_KEYWORD_PATTERN, SEMANTIC_KEYWORD);
+        formatToken(str, string, CPP_KEYWORD_PATTERN, UiTheme.SEMANTIC_KEYWORD);
         formatCppLexicalTokens(str, string);
         if (bufferContext != null) {
             for (var highlight : getSemanticHighlights(bufferContext)) {
@@ -1692,22 +1693,22 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     private static TextColor semanticTokenColor(String tokenType, int modifiersBitset, List<String> modifiers) {
         if (hasModifier(modifiersBitset, modifiers, "deprecated")) {
-            return SEMANTIC_KEYWORD;
+            return UiTheme.SEMANTIC_KEYWORD;
         }
         if (hasModifier(modifiersBitset, modifiers, "readonly")) {
-            return SEMANTIC_READONLY;
+            return UiTheme.SEMANTIC_READONLY;
         }
         return switch (tokenType) {
-        case "namespace", "decorator" -> SEMANTIC_NAMESPACE;
-        case "type", "class", "enum", "interface", "struct", "typeParameter" -> SEMANTIC_TYPE;
-        case "parameter" -> SEMANTIC_PARAMETER;
-        case "property", "enumMember", "event", "variable" -> SEMANTIC_MEMBER;
-        case "function", "method" -> SEMANTIC_FUNCTION;
-        case "macro" -> SEMANTIC_MACRO;
-        case "keyword", "modifier" -> SEMANTIC_KEYWORD;
-        case "comment" -> SEMANTIC_COMMENT;
-        case "string" -> SEMANTIC_STRING;
-        case "number", "regexp" -> SEMANTIC_NUMBER;
+        case "namespace", "decorator" -> UiTheme.SEMANTIC_NAMESPACE;
+        case "type", "class", "enum", "interface", "struct", "typeParameter" -> UiTheme.SEMANTIC_TYPE;
+        case "parameter" -> UiTheme.SEMANTIC_PARAMETER;
+        case "property", "enumMember", "event", "variable" -> UiTheme.SEMANTIC_MEMBER;
+        case "function", "method" -> UiTheme.SEMANTIC_FUNCTION;
+        case "macro" -> UiTheme.SEMANTIC_MACRO;
+        case "keyword", "modifier" -> UiTheme.SEMANTIC_KEYWORD;
+        case "comment" -> UiTheme.SEMANTIC_COMMENT;
+        case "string" -> UiTheme.SEMANTIC_STRING;
+        case "number", "regexp" -> UiTheme.SEMANTIC_NUMBER;
         case "operator" -> TextColor.ANSI.DEFAULT;
         default -> TextColor.ANSI.DEFAULT;
         };
@@ -1737,7 +1738,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                 index++;
             }
             if (index < lineEnd && string.charAt(index) == '#') {
-                str.format(lineStart, lineEnd, SEMANTIC_MACRO, TextColor.ANSI.DEFAULT);
+                str.format(lineStart, lineEnd, UiTheme.SEMANTIC_MACRO, TextColor.ANSI.DEFAULT);
             }
             lineStart = lineEnd + 1;
         }
@@ -1755,7 +1756,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                     while (index < string.length() && !isLineBreak(string.charAt(index))) {
                         index++;
                     }
-                    formatRange(str, start, index, SEMANTIC_COMMENT);
+                    formatRange(str, start, index, UiTheme.SEMANTIC_COMMENT);
                     continue;
                 }
                 if (next == '*') {
@@ -1766,7 +1767,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                         index++;
                     }
                     index = index + 1 < string.length() ? index + 2 : string.length();
-                    formatRange(str, start, index, SEMANTIC_COMMENT);
+                    formatRange(str, start, index, UiTheme.SEMANTIC_COMMENT);
                     continue;
                 }
             }
@@ -1796,7 +1797,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                     }
                     index++;
                 }
-                formatRange(str, start, index, SEMANTIC_STRING);
+                formatRange(str, start, index, UiTheme.SEMANTIC_STRING);
                 continue;
             }
             index++;

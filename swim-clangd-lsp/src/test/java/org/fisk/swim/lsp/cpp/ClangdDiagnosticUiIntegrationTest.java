@@ -42,7 +42,7 @@ import org.junit.jupiter.api.io.TempDir;
 import com.googlecode.lanterna.TextColor;
 
 class ClangdDiagnosticUiIntegrationTest {
-    private static final TextColor ERROR_COLOR = TextColor.ANSI.RED_BRIGHT;
+    private static final TextColor ERROR_COLOR = UiTheme.DIAGNOSTIC_ERROR_FOREGROUND;
     private static final TextColor WARNING_COLOR = UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;
     private static final TextColor ERROR_BACKGROUND = UiTheme.DIAGNOSTIC_ERROR_BACKGROUND;
     private static final TextColor WARNING_BACKGROUND = UiTheme.DIAGNOSTIC_WARNING_BACKGROUND;

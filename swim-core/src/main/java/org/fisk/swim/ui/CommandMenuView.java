@@ -11,6 +11,7 @@ public class CommandMenuView extends View {
     private static final int MIN_DETAIL_WIDTH = 16;
 
     private CommandView.CommandMenuState _state = CommandView.CommandMenuState.hidden();
+    private int _bottomInsetRows;
 
     public CommandMenuView(Rect bounds) {
         super(bounds);
@@ -32,6 +33,16 @@ public class CommandMenuView extends View {
         setBounds(calculateBounds(parentSize));
     }
 
+    void setBottomInsetRows(int bottomInsetRows) {
+        int next = Math.max(0, bottomInsetRows);
+        if (_bottomInsetRows == next) {
+            return;
+        }
+        _bottomInsetRows = next;
+        syncBounds();
+        setNeedsRedraw();
+    }
+
     @Override
     public void resize(Size newParentSize) {
         setBounds(calculateBounds(newParentSize));
@@ -44,6 +55,9 @@ public class CommandMenuView extends View {
         }
         syncBounds();
         rect = getBounds();
+        if (rect.getSize().getWidth() <= 0 || rect.getSize().getHeight() <= 0) {
+            return;
+        }
         super.draw(rect);
 
         var graphics = TerminalContext.getInstance().getGraphics();
@@ -154,12 +168,16 @@ public class CommandMenuView extends View {
         }
 
         int width = Math.max(MIN_WIDTH, parentSize.getWidth());
-        int maxBodyRows = Math.max(0, parentSize.getHeight() - 1);
+        int availableHeight = Math.max(0, parentSize.getHeight() - _bottomInsetRows);
+        if (availableHeight == 0) {
+            return Rect.create(0, 0, width, 0);
+        }
+        int maxBodyRows = Math.max(0, availableHeight - 1);
         int desiredBodyRows = preferredBodyRows(width, maxBodyRows);
         int contentRows = Math.min(desiredBodyRows, maxBodyRows);
-        int height = Math.min(parentSize.getHeight(), 1 + contentRows);
+        int height = Math.min(availableHeight, 1 + contentRows);
         int x = 0;
-        int y = Math.max(0, parentSize.getHeight() - 1 - height);
+        int y = Math.max(0, availableHeight - height);
         return Rect.create(x, y, width, height);
     }
 

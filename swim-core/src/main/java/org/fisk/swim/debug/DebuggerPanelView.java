@@ -9,9 +9,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.View;
-
-import com.googlecode.lanterna.TextColor;
 
 public final class DebuggerPanelView extends View {
     private sealed interface Row permits HeaderRow, ThreadRow, FrameRow, VariableRow, BreakpointRow {
@@ -38,7 +37,7 @@ public final class DebuggerPanelView extends View {
 
     public DebuggerPanelView(Rect bounds) {
         super(bounds);
-        setBackgroundColour(TextColor.ANSI.DEFAULT);
+        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     }
 
     @Override
@@ -88,7 +87,8 @@ public final class DebuggerPanelView extends View {
         super.draw(rect);
         var graphics = TerminalContext.getInstance().getGraphics();
         var snapshot = DebuggerManager.snapshot();
-        AttributedString.create(" " + snapshot.title(), TextColor.ANSI.WHITE, TextColor.ANSI.BLUE)
+        AttributedString.create(" " + snapshot.title(), UiTheme.DEBUGGER_HEADER_FOREGROUND,
+                UiTheme.DEBUGGER_HEADER_BACKGROUND)
                 .drawAt(rect.getPoint(), graphics);
 
         var rows = rows();
@@ -104,8 +104,8 @@ public final class DebuggerPanelView extends View {
             String line = renderRow(rows.get(index));
             boolean selected = index == _selection;
             AttributedString.create((selected ? "> " : "  ") + line,
-                    selected ? TextColor.ANSI.BLACK : TextColor.ANSI.WHITE,
-                    selected ? TextColor.ANSI.YELLOW : TextColor.ANSI.DEFAULT)
+                    selected ? UiTheme.DEBUGGER_SELECTION_FOREGROUND : UiTheme.DEBUGGER_FOREGROUND,
+                    selected ? UiTheme.DEBUGGER_SELECTION_BACKGROUND : UiTheme.SURFACE_BACKGROUND)
                     .drawAt(point, graphics);
         }
     }

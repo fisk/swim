@@ -111,6 +111,7 @@ import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.CompletionPopupView;
 import org.fisk.swim.ui.LspLocationPopupView;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
@@ -124,16 +125,16 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private static final String DIAGNOSTIC_PROVIDER_ID = "java-lsp";
     private static final String CODE_ACTION_SOURCE_ORGANIZE_IMPORTS = "source.organizeImports";
     private static final long DID_CHANGE_BATCH_DELAY_MILLIS = 15;
-    static final TextColor SEMANTIC_NAMESPACE = TextColor.Factory.fromString("#5ec4ff");
-    static final TextColor SEMANTIC_TYPE = TextColor.Factory.fromString("#86d96a");
-    static final TextColor SEMANTIC_PARAMETER = TextColor.Factory.fromString("#ffb86c");
-    static final TextColor SEMANTIC_MEMBER = TextColor.Factory.fromString("#ffd166");
-    static final TextColor SEMANTIC_FUNCTION = TextColor.Factory.fromString("#7ab8ff");
-    static final TextColor SEMANTIC_COMMENT = TextColor.Factory.fromString("#7ecb7e");
-    static final TextColor SEMANTIC_STRING = TextColor.Factory.fromString("#7fe3ff");
-    static final TextColor SEMANTIC_NUMBER = TextColor.Factory.fromString("#f5a3ff");
-    static final TextColor SEMANTIC_KEYWORD = TextColor.Factory.fromString("#ff6b6b");
-    static final TextColor SEMANTIC_READONLY = TextColor.Factory.fromString("#ffcf66");
+    static final TextColor SEMANTIC_NAMESPACE = UiTheme.SEMANTIC_NAMESPACE;
+    static final TextColor SEMANTIC_TYPE = UiTheme.SEMANTIC_TYPE;
+    static final TextColor SEMANTIC_PARAMETER = UiTheme.SEMANTIC_PARAMETER;
+    static final TextColor SEMANTIC_MEMBER = UiTheme.SEMANTIC_MEMBER;
+    static final TextColor SEMANTIC_FUNCTION = UiTheme.SEMANTIC_FUNCTION;
+    static final TextColor SEMANTIC_COMMENT = UiTheme.SEMANTIC_COMMENT;
+    static final TextColor SEMANTIC_STRING = UiTheme.SEMANTIC_STRING;
+    static final TextColor SEMANTIC_NUMBER = UiTheme.SEMANTIC_NUMBER;
+    static final TextColor SEMANTIC_KEYWORD = UiTheme.SEMANTIC_KEYWORD;
+    static final TextColor SEMANTIC_READONLY = UiTheme.SEMANTIC_READONLY;
 
     private final Object _lock = new Object();
     private boolean _started = false;
@@ -396,7 +397,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "invalid.deprecated.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.RED);
+        }), UiTheme.SEMANTIC_KEYWORD);
         _foregroundColours.put(String.join(":", new String[] {
                 "variable.other.autoboxing.java",
                 "meta.method.body.java",
@@ -404,7 +405,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_MEMBER);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.modifier.static.java",
                 "storage.modifier.final.java",
@@ -413,7 +414,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.YELLOW);
+        }), UiTheme.SEMANTIC_READONLY);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.modifier.static.java",
                 "variable.other.definition.java",
@@ -421,7 +422,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.YELLOW);
+        }), UiTheme.SEMANTIC_READONLY);
         _foregroundColours.put(String.join(":", new String[] {
                 "meta.function-call.java",
                 "meta.method.body.java",
@@ -429,13 +430,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "meta.definition.variable.java",
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.function.java",
                 "meta.method.identifier.java",
@@ -443,7 +444,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.modifier.static.java",
                 "entity.name.function.java",
@@ -453,7 +454,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.modifier.abstract.java",
                 "entity.name.function.java",
@@ -463,12 +464,12 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "constant.other.key.java",
                 "meta.declaration.annotation.java",
                 "source.java"
-        }), TextColor.ANSI.CYAN);
+        }), UiTheme.SEMANTIC_NAMESPACE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.function.java",
                 "meta.function-call.java",
@@ -477,7 +478,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "variable.parameter.java",
                 "meta.method.identifier.java",
@@ -485,7 +486,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.MAGENTA);
+        }), UiTheme.SEMANTIC_PARAMETER);
         _foregroundColours.put(String.join(":", new String[] {
                 "variable.other.definition.java",
                 "meta.definition.variable.java",
@@ -494,7 +495,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.MAGENTA);
+        }), UiTheme.SEMANTIC_PARAMETER);
         _foregroundColours.put(String.join(":", new String[] {
                 "meta.method.body.java",
                 "meta.method.java",
@@ -506,7 +507,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "storage.type.generic.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.function.java",
                 "meta.method.identifier.java",
@@ -515,42 +516,42 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.BLUE);
+        }), UiTheme.SEMANTIC_FUNCTION);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.type.generic.java",
                 "meta.definition.class.implemented.interfaces.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.MAGENTA);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.modifier.abstract.java",
                 "entity.name.type.class.java",
                 "meta.class.identifier.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.type.class.java",
                 "meta.class.identifier.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.type.enum.java",
                 "meta.enum.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "storage.type.annotation.java",
                 "meta.declaration.annotation.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "entity.name.type.interface.java",
                 "meta.class.identifier.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.GREEN);
+        }), UiTheme.SEMANTIC_TYPE);
         _foregroundColours.put(String.join(":", new String[] {
                 "constant.numeric.decimal.java",
                 "meta.definition.variable.java",
@@ -559,13 +560,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.MAGENTA);
+        }), UiTheme.SEMANTIC_NUMBER);
         _foregroundColours.put(String.join(":", new String[] {
                 "keyword.other.var.java",
                 "meta.class.body.java",
                 "meta.class.java",
                 "source.java"
-        }), TextColor.ANSI.RED);
+        }), UiTheme.SEMANTIC_KEYWORD);
     }
 
     private synchronized void clearSemanticTokensCache() {
@@ -2231,7 +2232,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     public TextColor foregroundColourForScope(int scope) {
-        return TextColor.ANSI.RED;
+        return UiTheme.SEMANTIC_KEYWORD;
     }
 
     private boolean supportsSemanticTokens() {
@@ -2243,21 +2244,21 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     private TextColor semanticTokenColor(String tokenType, int modifiersBitset, List<String> modifiers) {
         if (hasModifier(modifiersBitset, modifiers, "deprecated")) {
-            return SEMANTIC_KEYWORD;
+            return UiTheme.SEMANTIC_KEYWORD;
         }
         if (hasModifier(modifiersBitset, modifiers, "readonly")) {
-            return SEMANTIC_READONLY;
+            return UiTheme.SEMANTIC_READONLY;
         }
         return switch (tokenType) {
-        case "namespace", "decorator" -> SEMANTIC_NAMESPACE;
-        case "type", "class", "enum", "interface", "struct" -> SEMANTIC_TYPE;
-        case "typeParameter", "parameter" -> SEMANTIC_PARAMETER;
-        case "property", "enumMember", "event" -> SEMANTIC_MEMBER;
-        case "function", "method", "macro" -> SEMANTIC_FUNCTION;
-        case "keyword", "modifier" -> SEMANTIC_KEYWORD;
-        case "comment" -> SEMANTIC_COMMENT;
-        case "string" -> SEMANTIC_STRING;
-        case "number", "regexp" -> SEMANTIC_NUMBER;
+        case "namespace", "decorator" -> UiTheme.SEMANTIC_NAMESPACE;
+        case "type", "class", "enum", "interface", "struct" -> UiTheme.SEMANTIC_TYPE;
+        case "typeParameter", "parameter" -> UiTheme.SEMANTIC_PARAMETER;
+        case "property", "enumMember", "event" -> UiTheme.SEMANTIC_MEMBER;
+        case "function", "method", "macro" -> UiTheme.SEMANTIC_FUNCTION;
+        case "keyword", "modifier" -> UiTheme.SEMANTIC_KEYWORD;
+        case "comment" -> UiTheme.SEMANTIC_COMMENT;
+        case "string" -> UiTheme.SEMANTIC_STRING;
+        case "number", "regexp" -> UiTheme.SEMANTIC_NUMBER;
         case "operator" -> TextColor.ANSI.DEFAULT;
         default -> TextColor.ANSI.DEFAULT;
         };
@@ -2408,11 +2409,11 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         var string = str.toString();
         var ranges = new ArrayList<AttributedString.FormatRange>();
-        collectTokenRanges(ranges, string, _javaKeywordPattern, TextColor.ANSI.RED);
-        collectTokenRanges(ranges, string, _javaKeywordTokenPattern, TextColor.ANSI.CYAN);
-        collectTokenRanges(ranges, string, _javaCharacterPattern, TextColor.ANSI.CYAN);
-        collectTokenRanges(ranges, string, _javaCommentPattern, TextColor.ANSI.GREEN);
-        collectTokenRanges(ranges, string, _javaStringPattern, TextColor.ANSI.CYAN);
+        collectTokenRanges(ranges, string, _javaKeywordPattern, UiTheme.SEMANTIC_KEYWORD);
+        collectTokenRanges(ranges, string, _javaKeywordTokenPattern, UiTheme.SEMANTIC_NAMESPACE);
+        collectTokenRanges(ranges, string, _javaCharacterPattern, UiTheme.SEMANTIC_STRING);
+        collectTokenRanges(ranges, string, _javaCommentPattern, UiTheme.SEMANTIC_COMMENT);
+        collectTokenRanges(ranges, string, _javaStringPattern, UiTheme.SEMANTIC_STRING);
         if (bufferContext != null) {
             for (var highlight : getSemanticHighlights(bufferContext)) {
                 ranges.add(new AttributedString.FormatRange(
