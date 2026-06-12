@@ -326,6 +326,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     public void shutdown() {
         clearSemanticTokensCache();
+        _features.clearAllDocumentContexts();
         _lspRequestQueue.shutdown();
         _documentChangeBatcher.clear();
         DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER_ID);
@@ -374,6 +375,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
@@ -394,6 +396,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                 bufferContext.getBuffer().getVersionedTextDocumentID(),
                 List.of(change));
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
@@ -424,10 +427,12 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
             _server.getTextDocumentService().didSave(params);
         });
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        _features.clearDocumentContext(bufferContext);
         if (!_enabled || _server == null) {
             return;
         }
@@ -453,6 +458,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
         enqueueLspRequest("didOpen", () -> _server.getTextDocumentService().didOpen(params));
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     private void enqueueLspRequest(String description, Runnable action) {

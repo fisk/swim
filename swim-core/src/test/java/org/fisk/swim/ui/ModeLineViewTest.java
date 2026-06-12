@@ -24,6 +24,7 @@ import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.lsp.DiagnosticService;
+import org.fisk.swim.lsp.LspContextService;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 import org.junit.jupiter.api.Test;
@@ -68,6 +69,35 @@ class ModeLineViewTest {
             window.switchToMode(window.getInputMode());
 
             assertEquals(UiTheme.MODE_INPUT, invoke(window.getModeLineView(), "getModeColor", TextColor.class));
+        }
+    }
+
+    @Test
+    void statusStringIncludesLspContextWhenAvailable() throws Exception {
+        Path file = writeFile("mode-line-context.java", """
+                class Main {
+                  void run() {
+                    System.out.println();
+                  }
+                }
+                """);
+        try {
+            LspContextService.getInstance().publish(
+                    "mode-line-context-test",
+                    file.toUri().toString(),
+                    file,
+                    1,
+                    List.of(new LspContextService.Scope("Main.run", 1, 2, 3, 3)));
+            try (var harness = HeadlessWindowHarness.create(file, 80, 8)) {
+                var buffer = harness.getWindow().getBufferContext().getBuffer();
+                buffer.getCursor().setPosition(buffer.getPositionAtLineColumn(2, 4));
+
+                var rendered = invoke(harness.getWindow().getModeLineView(), "getString", AttributedString.class).toString();
+
+                assertTrue(rendered.contains("Main.run"));
+            }
+        } finally {
+            LspContextService.getInstance().clearProvider("mode-line-context-test");
         }
     }
 

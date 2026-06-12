@@ -20,6 +20,7 @@ import org.fisk.swim.mail.MailStatusService;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.DiagnosticCounts;
 import org.fisk.swim.lsp.DiagnosticService;
+import org.fisk.swim.lsp.LspContextService;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
@@ -211,6 +212,7 @@ public class ModeLineView extends View {
         var str = new AttributedString();
         String mode = frameModeName(view, active);
         String name = frameName(view);
+        String context = frameLspContext(view);
         String line = frameLine(view);
         DiagnosticCounts counts = frameDiagnosticCounts(view);
         if (mode != null && !mode.isBlank()) {
@@ -220,7 +222,12 @@ public class ModeLineView extends View {
         }
         if (name != null && !name.isBlank()) {
             UiTheme.appendSegment(str, name, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
-            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT, trailingBackground);
+            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT,
+                    context == null || context.isBlank() ? trailingBackground : UiTheme.SURFACE_ELEVATED);
+        }
+        if (context != null && !context.isBlank()) {
+            UiTheme.appendSegment(str, context, UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ELEVATED);
+            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ELEVATED, trailingBackground);
         }
         appendDiagnosticCounts(str, counts, trailingBackground);
         if (line != null && !line.isBlank()) {
@@ -307,6 +314,13 @@ public class ModeLineView extends View {
             return DiagnosticService.getInstance().countsForBuffer(bufferView.getBufferContext().getBuffer().getPath());
         }
         return DiagnosticCounts.EMPTY;
+    }
+
+    private static String frameLspContext(View view) {
+        if (view instanceof BufferView bufferView) {
+            return LspContextService.getInstance().contextFor(bufferView.getBufferContext());
+        }
+        return "";
     }
 
     private DiagnosticCounts projectDiagnosticCounts() {

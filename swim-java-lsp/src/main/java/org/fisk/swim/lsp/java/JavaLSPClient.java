@@ -899,6 +899,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     public synchronized void shutdown() {
+        _features.clearAllDocumentContexts();
         _lspRequestQueue.shutdown();
         _documentChangeBatcher.clear();
         if (_shutdownHook != null) {
@@ -2146,6 +2147,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             _server.getTextDocumentService().didSave(params);
         });
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
@@ -2159,11 +2161,13 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
         enqueueLspRequest("didOpen", () -> _server.getTextDocumentService().didOpen(params));
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
     public void didClose(BufferContext bufferContext) {
         cancelSnippet();
+        _features.clearDocumentContext(bufferContext);
         if (!_enabled || _server == null) {
             return;
         }
@@ -2197,6 +2201,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
         queueDocumentChanges(bufferContext, textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
@@ -2218,6 +2223,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         var textDocument = bufferContext.getBuffer().getVersionedTextDocumentID();
         queueDocumentChanges(bufferContext, textDocument, contentChanges);
         scheduleSemanticHighlightRefresh(bufferContext);
+        _features.refreshDocumentContext(bufferContext);
     }
 
     public ServerCapabilities getCapabilities() {

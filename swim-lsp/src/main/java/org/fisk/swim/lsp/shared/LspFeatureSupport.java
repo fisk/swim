@@ -184,9 +184,11 @@ public final class LspFeatureSupport {
     }
 
     private final Client _client;
+    private final LspSymbolContextTracker _symbolContextTracker;
 
     public LspFeatureSupport(Client client) {
         _client = Objects.requireNonNull(client, "client");
+        _symbolContextTracker = new LspSymbolContextTracker(_client);
     }
 
     public static void installClientCapabilities(
@@ -243,6 +245,18 @@ public final class LspFeatureSupport {
             completion.setContextSupport(true);
             textDocument.setCompletion(completion);
         }
+    }
+
+    public void refreshDocumentContext(BufferContext context) {
+        _symbolContextTracker.refresh(context);
+    }
+
+    public void clearDocumentContext(BufferContext context) {
+        _symbolContextTracker.clear(context);
+    }
+
+    public void clearAllDocumentContexts() {
+        _symbolContextTracker.clearAll();
     }
 
     public void showHover(BufferContext context) {
@@ -1516,7 +1530,7 @@ public final class LspFeatureSupport {
         return new FormattingOptions(tabSize, insertSpaces);
     }
 
-    private static boolean supported(Object provider) {
+    static boolean supported(Object provider) {
         if (provider == null) {
             return false;
         }
