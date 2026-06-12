@@ -37,13 +37,16 @@ public class KeyMenuView extends View {
 
     private final List<String> _path = new ArrayList<>();
     private MenuNode _rootNode = createRoot(List.of());
+    private MenuNode _globalRootNode = createRoot(List.of());
     private MenuNode _currentNode = _rootNode;
+    private boolean _globalChainActive;
     private String _modeName = "NORMAL";
     private boolean _bufferFocused = true;
     private FocusContext _focusContext = FocusContext.BUFFER;
     private String _contextLabel;
     private String _contextHint;
     private List<KeyBindingHint> _contextKeyHints = List.of();
+    private List<KeyBindingHint> _globalKeyHints = List.of();
     private String _commandPrompt;
     private String _commandText;
     private boolean _chatPending;
@@ -120,7 +123,19 @@ public class KeyMenuView extends View {
         }
         _contextHint = contextHint;
         _contextKeyHints = nextHints;
-        _rootNode = createRoot(_contextKeyHints);
+        _rootNode = createRoot(combinedKeyHints());
+        resetChain();
+        setNeedsRedraw();
+    }
+
+    public void setGlobalKeyHints(List<KeyBindingHint> keyHints) {
+        var nextHints = keyHints == null ? List.<KeyBindingHint>of() : List.copyOf(keyHints);
+        if (Objects.equals(_globalKeyHints, nextHints)) {
+            return;
+        }
+        _globalKeyHints = nextHints;
+        _rootNode = createRoot(combinedKeyHints());
+        _globalRootNode = createRoot(_globalKeyHints);
         resetChain();
         setNeedsRedraw();
     }
@@ -159,25 +174,33 @@ public class KeyMenuView extends View {
     public void resetChain() {
         _path.clear();
         _currentNode = _rootNode;
+        _globalChainActive = false;
     }
 
     void observe(KeyStroke keyStroke) {
-        if (!isDiscoverabilityActive()) {
-            if (!_path.isEmpty()) {
-                resetChain();
-                setNeedsRedraw();
-            }
-            return;
-        }
-
         String token = tokenFor(keyStroke);
         if (token == null) {
+            return;
+        }
+        if (!isDiscoverabilityActive() && !_globalChainActive) {
+            if (!_path.isEmpty()) {
+                resetChain();
+            }
+            if (!advanceGlobal(token)) {
+                setNeedsRedraw();
+                return;
+            }
+            setNeedsRedraw();
             return;
         }
 
         if (!advance(token)) {
             resetChain();
-            advance(token);
+            if (isDiscoverabilityActive()) {
+                advance(token);
+            } else {
+                advanceGlobal(token);
+            }
         }
         setNeedsRedraw();
     }
@@ -191,7 +214,7 @@ public class KeyMenuView extends View {
         UiTheme.appendSegment(line, "SWIM", UiTheme.MENU_BACKGROUND, UiTheme.MENU_ACCENT);
         colors.background(UiTheme.MENU_ACCENT);
         appendHeaderSegment(line, colors, _modeName, UiTheme.TEXT_ON_ACCENT, UiTheme.modeColor(_modeName));
-        if (isDiscoverabilityActive()) {
+        if (isChainDisplayActive()) {
             if (_path.isEmpty()) {
                 appendHeaderSegment(line, colors, "discover", UiTheme.TEXT_PRIMARY, UiTheme.MENU_SEGMENT_BACKGROUND);
             } else {
@@ -270,6 +293,21 @@ public class KeyMenuView extends View {
         return true;
     }
 
+    private boolean advanceGlobal(String token) {
+        MenuNode previous = _currentNode;
+        boolean previousGlobal = _globalChainActive;
+        if (_path.isEmpty()) {
+            _currentNode = _globalRootNode;
+            _globalChainActive = true;
+        }
+        boolean advanced = advance(token);
+        if (!advanced) {
+            _currentNode = previous;
+            _globalChainActive = previousGlobal;
+        }
+        return advanced;
+    }
+
     private String discoveryContentText() {
         var grouped = new LinkedHashMap<String, List<DiscoveryEntry>>();
         for (var entry : _currentNode.children().entrySet()) {
@@ -332,7 +370,7 @@ public class KeyMenuView extends View {
     }
 
     private String bodyContentText() {
-        if (isDiscoverabilityActive()) {
+        if (isChainDisplayActive()) {
             return discoveryContentText();
         }
         if (!_contextKeyHints.isEmpty()) {
@@ -361,6 +399,10 @@ public class KeyMenuView extends View {
 
     private boolean isDiscoverabilityActive() {
         return "NORMAL".equals(_modeName) && _bufferFocused && _focusContext == FocusContext.BUFFER;
+    }
+
+    private boolean isChainDisplayActive() {
+        return isDiscoverabilityActive() || _globalChainActive;
     }
 
     private String passiveHint() {
@@ -475,6 +517,18 @@ public class KeyMenuView extends View {
             root.register(new MenuDoc(hint.key(), hint.group(), hint.summary(), true));
         }
         return root;
+    }
+
+    private List<KeyBindingHint> combinedKeyHints() {
+        if (_globalKeyHints.isEmpty()) {
+            return _contextKeyHints;
+        }
+        if (_contextKeyHints.isEmpty()) {
+            return _globalKeyHints;
+        }
+        var combined = new ArrayList<KeyBindingHint>(_contextKeyHints);
+        combined.addAll(_globalKeyHints);
+        return List.copyOf(combined);
     }
 
     private record DiscoveryEntry(String key, String summary) {

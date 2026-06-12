@@ -134,6 +134,25 @@ class KeyMenuViewTest {
     }
 
     @Test
+    void tmuxPrefixDiscoveryWorksOutsideNormalMode() {
+        var view = new KeyMenuView(Rect.create(0, 0, 180, 2));
+        view.setModeName("INPUT");
+        view.setGlobalKeyHints(List.of(
+                KeyBindingHint.of("<CTRL>-b c", "Tabs", "new shell tab"),
+                KeyBindingHint.of("<CTRL>-b n", "Tabs", "next tab"),
+                KeyBindingHint.of("<CTRL>-b %", "Frames", "split right")));
+
+        assertTrue(view.bodyText().contains("type to insert"));
+
+        view.observe(HeadlessWindowHarness.ctrl('b'));
+
+        assertEquals("C-b", view.getBreadcrumb());
+        assertTrue(view.bodyText().contains("Tabs"));
+        assertTrue(view.bodyText().contains("c new shell tab"));
+        assertTrue(view.bodyText().contains("% split right"));
+    }
+
+    @Test
     void commandContextShowsCommandHints() {
         var view = new KeyMenuView(Rect.create(0, 0, 80, 2));
 

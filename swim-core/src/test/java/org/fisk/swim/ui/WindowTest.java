@@ -1840,6 +1840,68 @@ class WindowTest {
     }
 
     @Test
+    void tmuxPrefixCreatesShellTabFromInsertMode() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-insert-mode.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            var responder = EventThread.getInstance().getResponder();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder, HeadlessWindowHarness.key('i')));
+            assertSame(window.getInputMode(), window.getCurrentMode());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('c')));
+
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue(tabLabels(window).contains("Shell"));
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void tmuxPrefixCreatesShellTabFromHelpWorkspace() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-help-workspace.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            assertTrue(window.showHelpWorkspace());
+            assertInstanceOf(HelpWorkspaceView.class, window.getActiveView());
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatch(EventThread.getInstance().getResponder(),
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('c')));
+
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+            assertTrue(tabLabels(window).contains("Shell"));
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void rootDispatchRecognizesTmuxPrefixAboveShellInput() throws Exception {
+        TerminalContextTestSupport.install(60, 16);
+        Path file = writeFile("tmux-root-shell.txt", "abc");
+        try {
+            Window.createInstance(file);
+            var window = Window.getInstance();
+            assertTrue(window.showShellWorkspace());
+            int tabCount = tabLabels(window).size();
+
+            assertEquals(Response.YES, HeadlessWindowHarness.dispatchIncrementally(window.getRootView(),
+                    HeadlessWindowHarness.ctrl('b'), HeadlessWindowHarness.key('c')));
+
+            assertEquals(tabCount + 1, tabLabels(window).size());
+            assertInstanceOf(ShellPanelView.class, window.getActiveView());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
     void tmuxPrefixQuoteSelectsTabsBeyondNine() throws Exception {
         TerminalContextTestSupport.install(80, 16);
         Path first = writeFile("tmux-tab-0.txt", "zero");

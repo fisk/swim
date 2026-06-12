@@ -232,7 +232,19 @@ class SwimAppImplTest {
 
     private static void setField(Object target, String name, Object value) {
         try {
-            var field = target.getClass().getDeclaredField(name);
+            var type = target.getClass();
+            java.lang.reflect.Field field = null;
+            while (type != null) {
+                try {
+                    field = type.getDeclaredField(name);
+                    break;
+                } catch (NoSuchFieldException e) {
+                    type = type.getSuperclass();
+                }
+            }
+            if (field == null) {
+                throw new NoSuchFieldException(name);
+            }
             field.setAccessible(true);
             field.set(target, value);
         } catch (ReflectiveOperationException e) {

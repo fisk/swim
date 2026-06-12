@@ -195,6 +195,8 @@ public class Window implements Drawable {
     private final EditorPaths _editorPaths;
     private final EditorConfig _editorConfig;
     private final List<CompiledRemap> _normalModeRemaps;
+    private ListEventResponder _tmuxPrefixResponder;
+    private List<KeyBindingHint> _tmuxPrefixHints = List.of();
     private List<KeyBindingHint> _globalNormalModeHints = List.of();
     private boolean _replayingRemap;
     private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
@@ -3617,7 +3619,7 @@ public class Window implements Drawable {
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
         trackBufferContext(_bufferContext);
 
-        _rootView = new View(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
+        _rootView = new RootView(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
         _rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
 
         _keyMenuView = new KeyMenuView(Rect.create(0, 0, terminalSize.getColumns(), Math.min(MIN_TOP_MENU_HEIGHT,
@@ -3672,6 +3674,7 @@ public class Window implements Drawable {
         });
         var responders = eventThread.getResponder();
         var prefixLayer = responders.addLayer();
+        var tmuxLayer = responders.addLayer();
         var quickCaptureLayer = responders.addLayer();
         quickCaptureLayer.addEventResponder("<CTRL>-t", "Workspace", "quick todo", () -> {
             if (blockEditorDriveAction("Todo quick capture", "Todo is outside the editor-control sandbox")) {
@@ -3679,9 +3682,10 @@ public class Window implements Drawable {
             }
             TodoUiSupport.quickCapture(Window.this);
         });
-        installTmuxPrefixBindings(prefixLayer);
+        var tmuxResponder = tmuxPrefixResponder();
+        tmuxLayer.addEventResponder(tmuxResponder);
         var globalHints = new ArrayList<KeyBindingHint>(quickCaptureLayer.keyBindingHints());
-        globalHints.addAll(prefixLayer.keyBindingHints());
+        globalHints.addAll(_tmuxPrefixHints);
         _globalNormalModeHints = List.copyOf(globalHints);
         prefixLayer.addEventResponder(new EventResponder() {
             private CompiledRemap _matched;
@@ -3840,7 +3844,32 @@ public class Window implements Drawable {
         });
     }
 
-    private void installTmuxPrefixBindings(ListEventResponder.Layer layer) {
+    private ListEventResponder tmuxPrefixResponder() {
+        if (_tmuxPrefixResponder == null) {
+            _tmuxPrefixResponder = new ListEventResponder();
+            installTmuxPrefixBindings(_tmuxPrefixResponder);
+            _tmuxPrefixHints = _tmuxPrefixResponder.keyBindingHints();
+            if (_keyMenuView != null) {
+                _keyMenuView.setGlobalKeyHints(_tmuxPrefixHints);
+            }
+        }
+        return _tmuxPrefixResponder;
+    }
+
+    private Response processTmuxPrefixEvent(KeyStrokes events) {
+        if (_tmuxPrefixResponder == null) {
+            return Response.NO;
+        }
+        return _tmuxPrefixResponder.processEvent(events);
+    }
+
+    private void respondToTmuxPrefixEvent() {
+        if (_tmuxPrefixResponder != null) {
+            _tmuxPrefixResponder.respond();
+        }
+    }
+
+    private void installTmuxPrefixBindings(ListEventResponder layer) {
         addTmuxBinding(layer, "c", "Tabs", "new shell tab",
                 () -> reportIfFalse(showShellWorkspace(), "Unable to create shell tab"));
         addTmuxBinding(layer, "n", "Tabs", "next tab",
@@ -3901,17 +3930,17 @@ public class Window implements Drawable {
         addTmuxBinding(layer, "?", "Help", "tmux keys", this::showTmuxPrefixHelp);
     }
 
-    private void addTmuxBinding(ListEventResponder.Layer layer, String key, String group, String summary,
+    private void addTmuxBinding(ListEventResponder layer, String key, String group, String summary,
             Runnable action) {
         addTmuxBinding(layer, key, group, summary, action, "");
     }
 
-    private void addTmuxBinding(ListEventResponder.Layer layer, String key, String group, String summary,
+    private void addTmuxBinding(ListEventResponder layer, String key, String group, String summary,
             Runnable action, String commandName) {
         layer.addEventResponder("<CTRL>-b " + key, group, summary, commandName, action);
     }
 
-    private void addTmuxTabNumberBinding(ListEventResponder.Layer layer) {
+    private void addTmuxTabNumberBinding(ListEventResponder layer) {
         layer.addKeyBindingHint("<CTRL>-b '", "Tabs", "tab number");
         layer.addEventResponder(new EventResponder() {
             private Integer _tabIndex;
@@ -3974,6 +4003,38 @@ public class Window implements Drawable {
         Character character = stroke.getCharacter();
         return stroke.isCtrlDown() && character != null
                 && (Character.toLowerCase(character) == 'b' || character == 2);
+    }
+
+    private final class RootView extends View {
+        private boolean _tmuxPrefixPending;
+
+        private RootView(Rect bounds) {
+            super(bounds);
+        }
+
+        @Override
+        public Response processEvent(KeyStrokes events) {
+            _tmuxPrefixPending = false;
+            Response response = processTmuxPrefixEvent(events);
+            if (response == Response.YES) {
+                _tmuxPrefixPending = true;
+                return Response.YES;
+            }
+            if (response == Response.MAYBE) {
+                return Response.MAYBE;
+            }
+            return super.processEvent(events);
+        }
+
+        @Override
+        public void respond() {
+            if (_tmuxPrefixPending) {
+                respondToTmuxPrefixEvent();
+                _tmuxPrefixPending = false;
+                return;
+            }
+            super.respond();
+        }
     }
 
     private void reportIfFalse(boolean success, String message) {
@@ -4072,8 +4133,12 @@ public class Window implements Drawable {
     private boolean splitActiveContent(SplitView.Orientation orientation) {
         ensureLayoutState();
         if (getActiveView() instanceof ShellPanelView) {
+            if (blockEditorDriveAction("shell split", "opening shell input through drive_editor is not allowed")) {
+                return false;
+            }
             return openShellSplit(orientation);
         }
+        allowEditorDriveAction("split buffer");
         return splitActiveBuffer(orientation) != null;
     }
 

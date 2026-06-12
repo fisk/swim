@@ -10,10 +10,12 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.fisk.swim.EventThread;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -164,6 +166,43 @@ class HostGuestScreenControlTest {
     }
 
     @Test
+    void driveEditorInputAllowsTmuxBufferSplitAtActionLayer() throws Exception {
+        Path file = tempDir.resolve("tmux-buffer-split.txt");
+        Files.writeString(file, "alpha\n");
+        TerminalContextTestSupport.install(80, 24);
+        try {
+            Window.createInstance(file);
+            Window window = Window.getInstance();
+
+            Window.EditorDriveResult result = window.driveEditorInput("<CTRL-b>%", 10);
+
+            assertTrue(result.accepted(), result.message());
+            assertEquals(2, leafViewCount(window));
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void driveEditorInputBlocksTmuxShellTabAtActionLayer() throws Exception {
+        Path file = tempDir.resolve("tmux-shell-tab.txt");
+        Files.writeString(file, "alpha\n");
+        TerminalContextTestSupport.install(80, 24);
+        try {
+            Window.createInstance(file);
+            Window window = Window.getInstance();
+
+            Window.EditorDriveResult result = window.driveEditorInput("<CTRL-b>c", 10);
+
+            assertFalse(result.accepted());
+            assertTrue(result.message().contains("shell workspace"), result.message());
+            assertFalse(window.getActiveView() instanceof ShellPanelView);
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
     void driveEditorInputBlocksMailCommandAtActionLayer() throws Exception {
         Path file = tempDir.resolve("mail-key.txt");
         Files.writeString(file, "alpha\n");
@@ -247,5 +286,20 @@ class HostGuestScreenControlTest {
                 return tempDir.resolve(".swim/email");
             }
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static int leafViewCount(Window window) throws Exception {
+        var method = Window.class.getDeclaredMethod("getLeafViews");
+        method.setAccessible(true);
+        return ((List<View>) method.invoke(window)).size();
+    }
+
+    private static void shutdownRealWindow() {
+        if (Window.getInstance() != null) {
+            Window.getInstance().dispose();
+        }
+        EventThread.shutdownInstance();
+        org.fisk.swim.terminal.TerminalContext.shutdownInstance();
     }
 }
