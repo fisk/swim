@@ -68,6 +68,31 @@ class WindowTest {
     }
 
     @Test
+    void noArgumentLaunchRendersWelcomePageArt() throws Exception {
+        var terminal = TerminalContextTestSupport.install(80, 24);
+        try {
+            Window.createInstance(List.of());
+
+            Window.getInstance().update(true);
+
+            String rendered = String.join("\n", terminal.drawCalls().stream()
+                    .map(org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall::text)
+                    .toList());
+            assertTrue(rendered.contains("\\_/\\_/"));
+            assertTrue(rendered.contains(WelcomePage.HELP_TEXT));
+            assertTrue(rendered.contains("o     o     o"));
+            assertTrue(rendered.contains("<=<"));
+            assertEquals(List.of(WelcomePage.DISPLAY_NAME), tabLabels(Window.getInstance()));
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+        }
+    }
+
+    @Test
     void multiFileLaunchOpensFirstFileAndQueuesRemainingBuffers() throws Exception {
         TerminalContextTestSupport.install(60, 16);
         Path first = writeFile("launch-first.txt", "first");

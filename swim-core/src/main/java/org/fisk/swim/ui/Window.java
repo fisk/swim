@@ -55,7 +55,6 @@ import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen.RefreshType;
@@ -225,7 +224,6 @@ public class Window implements Drawable {
         _editorConfig = EditorConfigStore.load(_editorPaths);
         _normalModeRemaps = compileRemaps(_editorConfig.normalModeRemaps());
         applyConfiguredOptions(_editorConfig);
-        setupSplashScreen();
         Path initialPath = restoreOnReload ? null : path != null && path.toFile().isDirectory() ? null : path;
         setupViews(initialPath, !restoreOnReload && launchPaths.isEmpty() ? WELCOME_BUFFER_TEXT : null);
         setupBindings();
@@ -2797,6 +2795,7 @@ public class Window implements Drawable {
             saveSessionForReload();
         }
         if (_bufferContextsByView != null) {
+            WelcomePage.stopAll(new HashSet<>(_bufferContextsByView.keySet()));
             for (var context : new HashSet<>(_bufferContextsByView.values())) {
                 context.getBuffer().close();
             }
@@ -3546,22 +3545,6 @@ public class Window implements Drawable {
         hideCodeActionPopup();
     }
 
-    private void setupSplashScreen() {
-        var terminalContext = TerminalContext.getInstance();
-        var screen = terminalContext.getScreen();
-        var terminalSize = terminalContext.getTerminalSize();
-        var textGraphics = terminalContext.getGraphics();
-        _log.debug("Draw splash screen");
-        var attrString = new AttributedString();
-        var str = " swim is warming up ";
-        attrString.append(str, UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_BLUE);
-        attrString.drawAt(Point.create(terminalSize.getColumns() / 2 - str.length() / 2, terminalSize.getRows() / 2), textGraphics);
-        screen.setCursorPosition(new TerminalPosition(0, 0));
-        try {
-            screen.refresh(RefreshType.DELTA);
-        } catch (IOException e) {}
-    }
-
     private void setupViews(Path path) {
         setupViews(path, null);
     }
@@ -3578,7 +3561,7 @@ public class Window implements Drawable {
                 Math.max(0, terminalSize.getRows() - initialMenuHeight - 3));
         _bufferContext = initialText == null
                 ? new BufferContext(bufferBounds, path)
-                : new BufferContext(bufferBounds, initialText, true);
+                : WelcomePage.createBufferContext(bufferBounds, initialText);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
         trackBufferContext(_bufferContext);
 
@@ -4257,6 +4240,7 @@ public class Window implements Drawable {
         if (bufferContext == null) {
             return;
         }
+        WelcomePage.stopIfWelcome(bufferView);
         Integer count = _bufferViewCounts.get(bufferContext);
         if (count == null || count <= 1) {
             _bufferViewCounts.remove(bufferContext);
@@ -5023,6 +5007,9 @@ public class Window implements Drawable {
     }
 
     private static String projectTabLabel(BufferContext context) {
+        if (WelcomePage.isWelcome(context)) {
+            return WelcomePage.DISPLAY_NAME;
+        }
         Path path = context == null || context.getBuffer() == null ? null : context.getBuffer().getPath();
         if (path == null) {
             return "*scratch*";
@@ -5051,6 +5038,9 @@ public class Window implements Drawable {
         case PLUGIN -> workspace._workspaceView instanceof PluginPanelView pluginPanelView ? pluginPanelView.getTitle()
                 : workspace._pluginId == null ? "plugin" : workspace._pluginId;
         case BUFFER -> {
+            if (WelcomePage.isWelcome(workspace._bufferContext)) {
+                yield WelcomePage.DISPLAY_NAME;
+            }
             Path path = workspace._bufferContext == null ? null : workspace._bufferContext.getBuffer().getPath();
             if (path == null) {
                 yield "*scratch*";

@@ -1,6 +1,7 @@
 package org.fisk.swim.text;
 
 import java.nio.file.Path;
+import java.util.function.BiFunction;
 
 import org.fisk.swim.ui.BufferView;
 import org.fisk.swim.ui.Rect;
@@ -18,8 +19,13 @@ public class BufferContext {
     }
 
     public BufferContext(Rect rect, String initialText, boolean readOnly) {
+        this(rect, initialText, readOnly, BufferView::new);
+    }
+
+    public BufferContext(Rect rect, String initialText, boolean readOnly,
+            BiFunction<Rect, BufferContext, BufferView> bufferViewFactory) {
         _buffer = new Buffer(null, this, initialText, readOnly);
-        _bufferView = new BufferView(rect, this);
+        _bufferView = bufferViewFactory.apply(rect, this);
         _textLayout = new TextLayout(this);
         _buffer.open();
     }
