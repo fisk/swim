@@ -31,8 +31,8 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
         super(bounds);
         _chapters = HelpDocument.chapters();
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
-        _responders.addEventResponder("<ESC>", "Help", "return", this::hideWorkspace);
-        _responders.addEventResponder("q", "Help", "return", this::hideWorkspace);
+        _responders.addEventResponder("<ESC>", "Help", "close tab", this::closeWorkspace);
+        _responders.addEventResponder("q", "Help", "close tab", this::closeWorkspace);
         _responders.addEventResponder("<DOWN>", "Article", "scroll down", () -> scrollArticle(1));
         _responders.addEventResponder("j", "Article", "scroll down", () -> scrollArticle(1));
         _responders.addEventResponder("<UP>", "Article", "scroll up", () -> scrollArticle(-1));
@@ -123,10 +123,10 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
         return -1;
     }
 
-    private void hideWorkspace() {
+    private void closeWorkspace() {
         Window window = Window.getInstance();
         if (window != null) {
-            window.hideCurrentWorkspaceWindow();
+            window.closeCurrentWorkspaceWindow();
         }
     }
 

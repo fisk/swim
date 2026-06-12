@@ -158,6 +158,24 @@ class WindowTest {
 
             HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('q'));
             assertSame(originalView, window.getActiveView());
+            assertFalse(tabLabels(window).contains("help"));
+        }
+    }
+
+    @Test
+    void escapeClosesHelpWorkspaceTab() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("help-escape.txt", "abc"), 70, 16)) {
+            var window = harness.getWindow();
+            var originalView = window.getActiveView();
+
+            assertTrue(window.showHelpWorkspace());
+            assertTrue(tabLabels(window).contains("help"));
+            var help = assertInstanceOf(HelpWorkspaceView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.escape());
+
+            assertSame(originalView, window.getActiveView());
+            assertFalse(tabLabels(window).contains("help"));
         }
     }
 
