@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
@@ -64,6 +65,7 @@ public class Main implements SwimHost {
     private final Supplier<Path> _launcherLocationSupplier;
     private final PrintStream _out;
     private final CountDownLatch _exitLatch = new CountDownLatch(1);
+    private final AtomicBoolean _shutdownStarted = new AtomicBoolean();
     private final Map<String, SwimPanel> _panels = new ConcurrentHashMap<>();
     private volatile boolean _reloading;
     private Path _buildRoot;
@@ -108,12 +110,39 @@ public class Main implements SwimHost {
 
         _buildRoot = determineBuildRoot();
         reload(paths, "Loaded SWIM core");
+        Thread shutdownHook = appShutdownHook();
+        Runtime.getRuntime().addShutdownHook(shutdownHook);
         try {
             _exitLatch.await();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        } finally {
+            removeShutdownHook(shutdownHook);
         }
         System.exit(0);
+    }
+
+    private Thread appShutdownHook() {
+        return new Thread(this::shutdownAppAndCountDown, "swim-app-shutdown");
+    }
+
+    private void shutdownAppAndCountDown() {
+        if (!_shutdownStarted.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            _plugins.unloadAll();
+        } catch (RuntimeException | Error e) {
+        } finally {
+            _exitLatch.countDown();
+        }
+    }
+
+    private static void removeShutdownHook(Thread hook) {
+        try {
+            Runtime.getRuntime().removeShutdownHook(hook);
+        } catch (IllegalStateException e) {
+        }
     }
 
     private List<Path> checkArguments(String[] args) {
@@ -474,13 +503,7 @@ public class Main implements SwimHost {
     public void requestExit() {
         SwimApp loaded = _plugins.currentApp();
         if (loaded != null) {
-            _taskRunner.start("swim-close", true, () -> {
-                try {
-                    _plugins.unloadAll();
-                } finally {
-                    _exitLatch.countDown();
-                }
-            });
+            _taskRunner.start("swim-close", true, this::shutdownAppAndCountDown);
             return;
         }
         _exitLatch.countDown();

@@ -1,7 +1,9 @@
 package org.fisk.swim.plugins.treeview;
 
 import org.fisk.swim.api.SwimPlugin;
+import org.fisk.swim.api.SwimPluginKeyBinding;
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.api.SwimPluginPreloadContext;
 
 public final class TreeViewPlugin implements SwimPlugin {
     private org.fisk.swim.api.SwimHost _host;
@@ -14,6 +16,11 @@ public final class TreeViewPlugin implements SwimPlugin {
     @Override
     public boolean loadOnStartup() {
         return false;
+    }
+
+    @Override
+    public void preload(SwimPluginPreloadContext context) {
+        context.registerKeyBinding(new SwimPluginKeyBinding("<SPACE> T", "Workspace", "tree", "tree", "tree"));
     }
 
     @Override

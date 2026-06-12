@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.fisk.swim.session.SwimServerSessions;
 
@@ -49,26 +50,33 @@ final class SwimSessionClient {
             ensureServer();
             try (SocketChannel channel = connect()) {
                 var terminalSize = sendRequest(channel, request);
-                try (SwimTerminalMode ignored = SwimTerminalMode.enterRawMode()) {
-                    Thread resizeRelay = startResizeRelay(request, terminalSize);
-                    Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
+                var sessionGuard = new AttachedSessionGuard(_socketPath, request.sessionName());
+                boolean gracefulExit = false;
+                try {
+                    try (SwimTerminalMode ignored = SwimTerminalMode.enterRawMode()) {
+                        Thread resizeRelay = startResizeRelay(request, terminalSize);
+                        Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
+                            try {
+                                copy(System.in, Channels.newOutputStream(channel));
+                                channel.shutdownOutput();
+                            } catch (IOException e) {
+                            }
+                        });
                         try {
-                            copy(System.in, Channels.newOutputStream(channel));
-                            channel.shutdownOutput();
-                        } catch (IOException e) {
+                            copy(Channels.newInputStream(channel), System.out);
+                            gracefulExit = true;
+                        } finally {
+                            resizeRelay.interrupt();
                         }
-                    });
-                    try {
-                        copy(Channels.newInputStream(channel), System.out);
-                    } finally {
-                        resizeRelay.interrupt();
+                        try {
+                            inputRelay.join(Duration.ofSeconds(1));
+                            resizeRelay.join(Duration.ofSeconds(1));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
-                    try {
-                        inputRelay.join(Duration.ofSeconds(1));
-                        resizeRelay.join(Duration.ofSeconds(1));
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
+                } finally {
+                    sessionGuard.close(gracefulExit);
                 }
             }
             return 0;
@@ -225,6 +233,14 @@ final class SwimSessionClient {
     }
 
     static Path defaultSocketPath() {
+        String property = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        if (property != null && !property.isBlank()) {
+            return Path.of(property);
+        }
+        String environment = System.getenv(SwimServerSessions.ENV_SOCKET);
+        if (environment != null && !environment.isBlank()) {
+            return Path.of(environment);
+        }
         String user = System.getProperty("user.name", "unknown")
                 .replaceAll("[^A-Za-z0-9_.-]", "_");
         return Path.of("/tmp", "swim-" + user, "default.sock");
@@ -236,5 +252,51 @@ final class SwimSessionClient {
             return "default";
         }
         return SwimServerSessions.normalizeName(session);
+    }
+
+    private static final class AttachedSessionGuard {
+        private final Path _socketPath;
+        private final String _sessionName;
+        private final AtomicBoolean _armed = new AtomicBoolean(true);
+        private final Thread _shutdownHook;
+
+        private AttachedSessionGuard(Path socketPath, String sessionName) {
+            _socketPath = socketPath;
+            _sessionName = SwimServerSessions.normalizeName(sessionName);
+            _shutdownHook = new Thread(this::shutdownAbruptly, "swim-client-session-shutdown");
+            Runtime.getRuntime().addShutdownHook(_shutdownHook);
+        }
+
+        private void close(boolean gracefulExit) {
+            if (gracefulExit) {
+                disarm();
+            } else {
+                shutdownAbruptly();
+            }
+            removeShutdownHook();
+            SwimTerminalMode.restoreTerminal();
+        }
+
+        private void disarm() {
+            _armed.set(false);
+        }
+
+        private void shutdownAbruptly() {
+            SwimTerminalMode.restoreTerminal();
+            if (!_armed.getAndSet(false)) {
+                return;
+            }
+            try {
+                SwimServerSessions.kill(_socketPath, _sessionName);
+            } catch (IOException | RuntimeException e) {
+            }
+        }
+
+        private void removeShutdownHook() {
+            try {
+                Runtime.getRuntime().removeShutdownHook(_shutdownHook);
+            } catch (IllegalStateException e) {
+            }
+        }
     }
 }

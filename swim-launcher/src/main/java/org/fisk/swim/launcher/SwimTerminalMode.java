@@ -5,12 +5,19 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 final class SwimTerminalMode implements AutoCloseable {
+    private static final String RESTORE_TERMINAL = "\u001b[?1006l\u001b[?2004l\u001b[?25h\u001b[?1049l\u001b[0m\u001b[0 q";
+
     private final String _state;
+    private final AtomicBoolean _closed = new AtomicBoolean();
+    private final Thread _shutdownHook;
 
     private SwimTerminalMode(String state) {
         _state = state;
+        _shutdownHook = new Thread(this::restore, "swim-terminal-restore");
+        Runtime.getRuntime().addShutdownHook(_shutdownHook);
     }
 
     static SwimTerminalMode enterRawMode() {
@@ -24,8 +31,28 @@ final class SwimTerminalMode implements AutoCloseable {
 
     @Override
     public void close() {
+        restore();
+        try {
+            Runtime.getRuntime().removeShutdownHook(_shutdownHook);
+        } catch (IllegalStateException e) {
+        }
+    }
+
+    private void restore() {
+        if (!_closed.compareAndSet(false, true)) {
+            return;
+        }
+        restoreTerminal();
         if (_state != null && !_state.isBlank()) {
             runStty(_state);
+        }
+    }
+
+    static void restoreTerminal() {
+        try {
+            System.out.print(RESTORE_TERMINAL);
+            System.out.flush();
+        } catch (RuntimeException e) {
         }
     }
 

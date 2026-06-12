@@ -7,9 +7,15 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.fisk.swim.launcher.Main;
+import org.fisk.swim.session.SwimServerSessions;
 import org.junit.jupiter.api.Assumptions;
 
 public final class InstalledSwimDriver {
+    private static final Path TEST_SOCKET_PATH = Path.of("/tmp",
+            "swim-it-" + safePathToken(System.getProperty("user.name", "unknown"))
+                    + "-" + ProcessHandle.current().pid(),
+            "default.sock");
+
     private InstalledSwimDriver() {
     }
 
@@ -64,11 +70,16 @@ public final class InstalledSwimDriver {
         Files.createDirectories(home.resolve(".swim"));
         var environment = new LinkedHashMap<String, String>();
         environment.put("HOME", home.toString());
+        Path socketPath = TEST_SOCKET_PATH;
+        environment.put(SwimServerSessions.ENV_SOCKET, socketPath.toString());
+        environment.put(SwimServerSessions.ENV_SESSION, "it-" + Long.toUnsignedString(System.nanoTime(), 36));
         String currentPath = System.getenv("PATH");
         if (currentPath != null && !currentPath.isBlank()) {
             environment.put("PATH", currentPath);
         }
-        String javaToolOptions = "-Duser.home=" + home + " -Dswim.log.level=debug";
+        String javaToolOptions = "-Duser.home=" + home
+                + " -Dswim.log.level=debug"
+                + " -D" + SwimServerSessions.PROPERTY_SOCKET + "=" + socketPath;
         String existingJavaToolOptions = System.getenv("JAVA_TOOL_OPTIONS");
         if (existingJavaToolOptions != null && !existingJavaToolOptions.isBlank()) {
             javaToolOptions = existingJavaToolOptions + " " + javaToolOptions;
@@ -102,5 +113,10 @@ public final class InstalledSwimDriver {
             }
             return false;
         }
+    }
+
+    private static String safePathToken(String value) {
+        return (value == null || value.isBlank() ? "unknown" : value)
+                .replaceAll("[^A-Za-z0-9_.-]", "_");
     }
 }

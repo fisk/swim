@@ -46,7 +46,7 @@ public class TerminalContext {
     static final String FREEZE_SIZE_PROPERTY = "swim.terminal.freeze_size";
     static final String PRESERVE_SCREEN_ON_START_PROPERTY = "swim.terminal.preserve_screen_on_start";
 
-    private record CreatedTerminal(Screen screen, Terminal terminal) {
+    private record CreatedTerminal(Screen screen, Terminal terminal, boolean restoreTerminalOnShutdown) {
     }
 
     private record TerminalModeState(String ttyPath, String previousSettings) {
@@ -96,6 +96,7 @@ public class TerminalContext {
     private final TextGraphics _graphics;
     private final Supplier<TerminalSize> _terminalSizeSupplier;
     private final TerminalModeState _terminalModeState;
+    private final boolean _restoreTerminalOnShutdown;
     private TerminalCursorShape _cursorShape = TerminalCursorShape.BLOCK;
 
     public TerminalContext() {
@@ -116,11 +117,22 @@ public class TerminalContext {
             TextGraphics graphics,
             Supplier<TerminalSize> terminalSizeSupplier,
             TerminalModeState terminalModeState) {
+        this(screen, terminal, graphics, terminalSizeSupplier, terminalModeState, true);
+    }
+
+    TerminalContext(
+            Screen screen,
+            Terminal terminal,
+            TextGraphics graphics,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalModeState terminalModeState,
+            boolean restoreTerminalOnShutdown) {
         _screen = screen;
         _terminal = terminal;
         _graphics = graphics != null ? graphics : screen.newTextGraphics();
         _terminalSizeSupplier = terminalSizeSupplier != null ? terminalSizeSupplier : TerminalContext::queryTerminalSizeFromTty;
         _terminalModeState = terminalModeState;
+        _restoreTerminalOnShutdown = restoreTerminalOnShutdown;
     }
 
     private TerminalContext(
@@ -128,16 +140,19 @@ public class TerminalContext {
             TextGraphics graphics,
             Supplier<TerminalSize> terminalSizeSupplier,
             TerminalModeState terminalModeState) {
-        this(createdTerminal.screen(), createdTerminal.terminal(), graphics, terminalSizeSupplier, terminalModeState);
+        this(createdTerminal.screen(), createdTerminal.terminal(), graphics, terminalSizeSupplier, terminalModeState,
+                createdTerminal.restoreTerminalOnShutdown());
     }
 
     private static CreatedTerminal createTerminal() {
         try {
             Terminal terminal;
+            boolean restoreTerminalOnShutdown = true;
             boolean preserveExistingScreen = consumePreserveScreenOnStartFlag();
             if (SwimServerSessions.isAvailable()) {
                 terminal = createServerStreamTerminal(System.in, System.out, TerminalContext::queryTerminalSizeFromTty,
                         preserveExistingScreen);
+                restoreTerminalOnShutdown = false;
             } else {
                 terminal = new DefaultTerminalFactory().createTerminal();
                 configureTerminalInputDecoding(terminal);
@@ -146,7 +161,7 @@ public class TerminalContext {
             }
             Screen screen = new TerminalScreen(terminal);
             screen.startScreen();
-            return new CreatedTerminal(screen, terminal);
+            return new CreatedTerminal(screen, terminal, restoreTerminalOnShutdown);
         } catch (IOException e) {
             throw new RuntimeException("Can't create screen", e);
         }
@@ -180,7 +195,7 @@ public class TerminalContext {
             boolean preserveExistingScreen) {
         Terminal terminal = new ServerStreamTerminal(input, output, StandardCharsets.UTF_8);
         configureTerminalInputDecoding(terminal);
-        return wrapTerminal(terminal, terminalSizeSupplier, outputControlWriter(output), preserveExistingScreen);
+        return wrapTerminal(terminal, terminalSizeSupplier, outputControlWriter(output), preserveExistingScreen, false);
     }
 
     private static void configureTerminalInputDecoding(Terminal terminal) {
@@ -207,8 +222,10 @@ public class TerminalContext {
             _screen.stopScreen();
         } catch (IOException | IllegalStateException e) {
         }
-        restoreTerminalDisplayState();
-        setCursorShape(TerminalCursorShape.DEFAULT, true);
+        if (_restoreTerminalOnShutdown) {
+            restoreTerminalDisplayState();
+            setCursorShape(TerminalCursorShape.DEFAULT, true);
+        }
         try {
             restoreTerminalShortcuts(_terminalModeState);
         } catch (RuntimeException e) {
@@ -562,10 +579,20 @@ public class TerminalContext {
             Supplier<TerminalSize> terminalSizeSupplier,
             TerminalControlWriter controlWriter,
             boolean preserveExistingScreenOnStart) {
+        return wrapTerminal(terminal, terminalSizeSupplier, controlWriter, preserveExistingScreenOnStart, true);
+    }
+
+    private static Terminal wrapTerminal(
+            Terminal terminal,
+            Supplier<TerminalSize> terminalSizeSupplier,
+            TerminalControlWriter controlWriter,
+            boolean preserveExistingScreenOnStart,
+            boolean restoreDisplayOnExitPrivateMode) {
         if (terminal == null) {
             throw new IllegalArgumentException("terminal must not be null");
         }
-        return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter, preserveExistingScreenOnStart);
+        return new SizeAwareTerminal(terminal, terminalSizeSupplier, controlWriter, preserveExistingScreenOnStart,
+                restoreDisplayOnExitPrivateMode);
     }
 
     private static final class ServerStreamTerminal extends ANSITerminal {
@@ -585,6 +612,7 @@ public class TerminalContext {
         private final Supplier<TerminalSize> _terminalSizeSupplier;
         private final TerminalControlWriter _controlWriter;
         private final Map<TerminalResizeListener, TerminalResizeListener> _resizeListeners = new IdentityHashMap<>();
+        private final boolean _restoreDisplayOnExitPrivateMode;
         private boolean _preserveExistingScreenOnStart;
         private boolean _skipNextClearScreen;
 
@@ -592,11 +620,13 @@ public class TerminalContext {
                 Terminal delegate,
                 Supplier<TerminalSize> terminalSizeSupplier,
                 TerminalControlWriter controlWriter,
-                boolean preserveExistingScreenOnStart) {
+                boolean preserveExistingScreenOnStart,
+                boolean restoreDisplayOnExitPrivateMode) {
             _delegate = delegate;
             _terminalSizeSupplier = terminalSizeSupplier;
             _controlWriter = controlWriter != null ? controlWriter : standardOutputControlWriter();
             _preserveExistingScreenOnStart = preserveExistingScreenOnStart;
+            _restoreDisplayOnExitPrivateMode = restoreDisplayOnExitPrivateMode;
         }
 
         @Override
@@ -613,6 +643,9 @@ public class TerminalContext {
 
         @Override
         public void exitPrivateMode() throws IOException {
+            if (!_restoreDisplayOnExitPrivateMode) {
+                return;
+            }
             setMouseCaptureMode(false);
             setBracketedPasteMode(false);
             _delegate.exitPrivateMode();

@@ -1,6 +1,7 @@
 package org.fisk.swim.terminal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -214,6 +215,26 @@ class TerminalContextTest {
     @Test
     void serverStreamTerminalDecodesLineFeedAsEnter() throws Exception {
         assertServerStreamDecodesCommandEnter("\n");
+    }
+
+    @Test
+    void serverStreamTerminalLeavesPrivateModeRestoreToLauncherClient() throws Exception {
+        var output = new ByteArrayOutputStream();
+        Terminal terminal = TerminalContext.createServerStreamTerminal(
+                new ByteArrayInputStream(new byte[0]),
+                output,
+                () -> new TerminalSize(80, 24));
+
+        terminal.enterPrivateMode();
+        terminal.exitPrivateMode();
+
+        String writes = output.toString(StandardCharsets.UTF_8);
+        assertTrue(writes.contains("\u001b[?2004h"));
+        assertTrue(writes.contains("\u001b[?1006h"));
+        assertFalse(writes.contains("\u001b[?2004l"));
+        assertFalse(writes.contains("\u001b[?1006l"));
+        assertFalse(writes.contains("\u001b[?1049l"));
+        assertFalse(writes.contains("\u001b[0 q"));
     }
 
     @Test

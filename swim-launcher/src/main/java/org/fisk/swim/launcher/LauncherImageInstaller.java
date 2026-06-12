@@ -331,23 +331,30 @@ public final class LauncherImageInstaller {
                         ensureServer(socket, swimHome, java);
                         try (SocketChannel channel = connect(socket)) {
                             TerminalSize terminalSize = sendAttach(channel, java, request);
-                            try (TerminalMode ignored = TerminalMode.enterRawMode()) {
-                                Thread resizeRelay = Thread.ofVirtual().name("swim-client-resize")
-                                        .start(() -> relayResize(socket, request.sessionName(), terminalSize));
-                                Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
+                            SessionGuard sessionGuard = new SessionGuard(socket, request.sessionName());
+                            boolean gracefulExit = false;
+                            try {
+                                try (TerminalMode ignored = TerminalMode.enterRawMode()) {
+                                    Thread resizeRelay = Thread.ofVirtual().name("swim-client-resize")
+                                            .start(() -> relayResize(socket, request.sessionName(), terminalSize));
+                                    Thread inputRelay = Thread.ofVirtual().name("swim-client-input").start(() -> {
+                                        try {
+                                            copy(System.in, Channels.newOutputStream(channel));
+                                            channel.shutdownOutput();
+                                        } catch (IOException e) {
+                                        }
+                                    });
                                     try {
-                                        copy(System.in, Channels.newOutputStream(channel));
-                                        channel.shutdownOutput();
-                                    } catch (IOException e) {
+                                        copy(Channels.newInputStream(channel), System.out);
+                                        gracefulExit = true;
+                                    } finally {
+                                        resizeRelay.interrupt();
                                     }
-                                });
-                                try {
-                                    copy(Channels.newInputStream(channel), System.out);
-                                } finally {
-                                    resizeRelay.interrupt();
+                                    inputRelay.join(Duration.ofSeconds(1));
+                                    resizeRelay.join(Duration.ofSeconds(1));
                                 }
-                                inputRelay.join(Duration.ofSeconds(1));
-                                resizeRelay.join(Duration.ofSeconds(1));
+                            } finally {
+                                sessionGuard.close(gracefulExit);
                             }
                         }
                     }
@@ -433,6 +440,18 @@ public final class LauncherImageInstaller {
                     }
 
                     private static void killSession(Path socket, String target) throws IOException {
+                        String message = killSessionRequest(socket, target);
+                        System.out.println(message);
+                    }
+
+                    private static void killSessionQuietly(Path socket, String target) {
+                        try {
+                            killSessionRequest(socket, target);
+                        } catch (IOException | RuntimeException e) {
+                        }
+                    }
+
+                    private static String killSessionRequest(Path socket, String target) throws IOException {
                         try (SocketChannel channel = connect(socket)) {
                             DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
                             output.writeUTF(MAGIC);
@@ -442,8 +461,7 @@ public final class LauncherImageInstaller {
                             DataInputStream input = new DataInputStream(Channels.newInputStream(channel));
                             String response = input.readUTF();
                             if ("OK".equals(response)) {
-                                System.out.println(input.readUTF());
-                                return;
+                                return input.readUTF();
                             }
                             if ("ERR".equals(response)) {
                                 throw new IOException(input.readUTF());
@@ -623,6 +641,14 @@ public final class LauncherImageInstaller {
                     }
 
                     private static Path defaultSocketPath() {
+                        String property = System.getProperty("swim.server.socket");
+                        if (property != null && !property.isBlank()) {
+                            return Path.of(property);
+                        }
+                        String environment = System.getenv("SWIM_SERVER_SOCKET");
+                        if (environment != null && !environment.isBlank()) {
+                            return Path.of(environment);
+                        }
                         String user = System.getProperty("user.name", "unknown").replaceAll("[^A-Za-z0-9_.-]", "_");
                         return Path.of("/tmp", "swim-" + user, "default.sock");
                     }
@@ -641,11 +667,51 @@ public final class LauncherImageInstaller {
                     private record TerminalSize(int rows, int columns) {
                     }
 
+                    private static final class SessionGuard {
+                        private final Path socket;
+                        private final String session;
+                        private final java.util.concurrent.atomic.AtomicBoolean armed = new java.util.concurrent.atomic.AtomicBoolean(true);
+                        private final Thread shutdownHook;
+
+                        private SessionGuard(Path socket, String session) {
+                            this.socket = socket;
+                            this.session = normalizeName(session);
+                            shutdownHook = new Thread(this::shutdownAbruptly, "swim-client-session-shutdown");
+                            Runtime.getRuntime().addShutdownHook(shutdownHook);
+                        }
+
+                        private void close(boolean gracefulExit) {
+                            if (gracefulExit) {
+                                armed.set(false);
+                            } else {
+                                shutdownAbruptly();
+                            }
+                            try {
+                                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+                            } catch (IllegalStateException e) {
+                            }
+                            TerminalMode.restoreTerminal();
+                        }
+
+                        private void shutdownAbruptly() {
+                            TerminalMode.restoreTerminal();
+                            if (!armed.getAndSet(false)) {
+                                return;
+                            }
+                            killSessionQuietly(socket, session);
+                        }
+                    }
+
                     private static final class TerminalMode implements AutoCloseable {
+                        private static final String RESTORE_TERMINAL = "\\u001b[?1006l\\u001b[?2004l\\u001b[?25h\\u001b[?1049l\\u001b[0m\\u001b[0 q";
                         private final String state;
+                        private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
+                        private final Thread shutdownHook;
 
                         private TerminalMode(String state) {
                             this.state = state;
+                            shutdownHook = new Thread(this::restore, "swim-terminal-restore");
+                            Runtime.getRuntime().addShutdownHook(shutdownHook);
                         }
 
                         static TerminalMode enterRawMode() {
@@ -678,8 +744,28 @@ public final class LauncherImageInstaller {
 
                         @Override
                         public void close() {
+                            restore();
+                            try {
+                                Runtime.getRuntime().removeShutdownHook(shutdownHook);
+                            } catch (IllegalStateException e) {
+                            }
+                        }
+
+                        private void restore() {
+                            if (!closed.compareAndSet(false, true)) {
+                                return;
+                            }
+                            restoreTerminal();
                             if (state != null && !state.isBlank()) {
                                 runStty(state);
+                            }
+                        }
+
+                        private static void restoreTerminal() {
+                            try {
+                                System.out.print(RESTORE_TERMINAL);
+                                System.out.flush();
+                            } catch (RuntimeException e) {
                             }
                         }
 

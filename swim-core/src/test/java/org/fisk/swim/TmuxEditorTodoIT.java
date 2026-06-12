@@ -39,7 +39,7 @@ class TmuxEditorTodoIT {
             session.sendLiteral("Quick captured inbox");
             session.sendEnter();
 
-            session.sendLiteral("t");
+            session.sendLiteral(" t");
             session.waitForText("Todo", UI_TIMEOUT);
             session.waitForText("Quick captured inbox", UI_TIMEOUT);
             session.sendLiteral("n");
@@ -60,7 +60,7 @@ class TmuxEditorTodoIT {
             session.waitForText("#urgent", UI_TIMEOUT);
             session.waitForText("#ui", UI_TIMEOUT);
 
-            session.sendLiteral("q");
+            session.sendEscape();
             session.waitForText("todo fixture", UI_TIMEOUT);
             session.runCommand("q");
             session.waitForExit(Duration.ofSeconds(10));
@@ -96,7 +96,7 @@ class TmuxEditorTodoIT {
         try (var session = InstalledSwimDriver.startWithHome(home.home(), tempDir, file.getFileName().toString())) {
             session.waitForText("todo fixture", STARTUP_TIMEOUT);
 
-            session.sendLiteral("t");
+            session.sendLiteral(" t");
             session.waitForText("Todo", UI_TIMEOUT);
             session.waitForText("Quick captured inbox", UI_TIMEOUT);
             session.sendLiteral("a");

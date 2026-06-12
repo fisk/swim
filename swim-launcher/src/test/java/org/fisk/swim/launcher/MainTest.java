@@ -280,6 +280,14 @@ class MainTest {
         assertTrue(content.contains("clientEnvironment()"));
         assertTrue(content.contains("relayResize(socket, request.sessionName(), terminalSize)"));
         assertTrue(content.contains("output.writeUTF(\"resize\")"));
+        assertTrue(content.contains("new SessionGuard(socket, request.sessionName())"));
+        assertTrue(content.contains("Runtime.getRuntime().addShutdownHook(shutdownHook)"));
+        assertTrue(content.contains("killSessionQuietly(socket, session)"));
+        assertTrue(content.contains("RESTORE_TERMINAL"));
+        assertTrue(content.contains("\\u001b[?1049l"));
+        assertTrue(content.contains("swim-terminal-restore"));
+        assertTrue(content.contains("System.getProperty(\"swim.server.socket\")"));
+        assertTrue(content.contains("System.getenv(\"SWIM_SERVER_SOCKET\")"));
         assertTrue(content.contains("redirectInput(ProcessBuilder.Redirect.from(Path.of(\"/dev/null\").toFile()))"));
         assertFalse(content.contains("redirectInput(ProcessBuilder.Redirect.DISCARD)"));
         assertTrue(content.contains("\"--attach\""));
@@ -407,6 +415,39 @@ class MainTest {
         assertEquals(0, exit);
         assertEquals(List.of(SwimServerSessions.MAGIC, "kill", "review"), request.get());
         assertEquals("Killed SWIM session review." + System.lineSeparator(),
+                outputBuffer.toString(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    void swimSessionClientDefaultSocketHonorsSocketProperty() {
+        String previous = System.getProperty(SwimServerSessions.PROPERTY_SOCKET);
+        Path socket = tempDir.resolve("configured.sock");
+        try {
+            System.setProperty(SwimServerSessions.PROPERTY_SOCKET, socket.toString());
+
+            assertEquals(socket, SwimSessionClient.defaultSocketPath());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(SwimServerSessions.PROPERTY_SOCKET);
+            } else {
+                System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previous);
+            }
+        }
+    }
+
+    @Test
+    void swimTerminalModeRestoreTerminalLeavesFullScreenAndResetsCursorState() {
+        var outputBuffer = new ByteArrayOutputStream();
+        PrintStream previousOut = System.out;
+        try {
+            System.setOut(new PrintStream(outputBuffer, true, StandardCharsets.UTF_8));
+
+            SwimTerminalMode.restoreTerminal();
+        } finally {
+            System.setOut(previousOut);
+        }
+
+        assertEquals("\u001b[?1006l\u001b[?2004l\u001b[?25h\u001b[?1049l\u001b[0m\u001b[0 q",
                 outputBuffer.toString(StandardCharsets.UTF_8));
     }
 

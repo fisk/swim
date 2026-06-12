@@ -201,8 +201,8 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
                 KeyBindingHint.of("i", "Filters", "inbox"),
                 KeyBindingHint.of("a", "Filters", "all open"),
                 KeyBindingHint.of("r", "Workspace", "refresh"),
-                KeyBindingHint.of("q", "Workspace", "return"),
-                KeyBindingHint.of("<ESC>", "Workspace", "return"));
+                KeyBindingHint.of("q", "Workspace", "close tab"),
+                KeyBindingHint.of("<ESC>", "Workspace", "close tab"));
     }
 
     @Override
@@ -418,7 +418,7 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     private void closeWorkspace() {
         Window window = Window.getInstance();
         if (window != null) {
-            window.hideCurrentWorkspaceWindow();
+            window.closeCurrentTabOrExit();
         }
     }
 

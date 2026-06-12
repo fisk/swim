@@ -6,7 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Map;
 
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.testutil.InstalledSwimDriver;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -113,6 +115,31 @@ class TmuxEditorPanelsIT {
     }
 
     @Test
+    @Timeout(60)
+    void installedLauncherBinaryDetachLeavesServerSessionReattachable() throws Exception {
+        Path home = InstalledSwimDriver.createHome(tempDir);
+        Path file = tempDir.resolve("detach.txt");
+        Files.writeString(file, "detach buffer\n");
+        var environment = Map.of(SwimServerSessions.ENV_SESSION,
+                "detach-" + Long.toUnsignedString(System.nanoTime(), 36));
+
+        try (var session = InstalledSwimDriver.startWithHome(home, tempDir, environment, file.getFileName().toString())) {
+            session.waitForText("detach buffer", STARTUP_TIMEOUT);
+            session.sendLiteral("i");
+            session.sendLiteral("unsaved ");
+            session.sendEscape();
+            session.waitForText("unsaved detach buffer", UI_TIMEOUT);
+
+            session.runCommand("detach");
+            session.waitForExit(Duration.ofSeconds(10));
+        }
+
+        try (var session = InstalledSwimDriver.startWithHome(home, tempDir, environment, file.getFileName().toString())) {
+            session.waitForText("unsaved detach buffer", STARTUP_TIMEOUT);
+        }
+    }
+
+    @Test
     @Timeout(45)
     void installedLauncherBinaryShellPanelHandlesAnsiColourAndCarriageReturnOutput() throws Exception {
         Path file = tempDir.resolve("shell-ansi.txt");
@@ -182,7 +209,7 @@ class TmuxEditorPanelsIT {
 
     @Test
     @Timeout(45)
-    void installedLauncherBinaryCanNavigateTreeViewAndOpenAnotherFile() throws Exception {
+    void installedLauncherBinaryCanOpenTreeViewWithKeyBindingAndOpenAnotherFile() throws Exception {
         InstalledSwimDriver.assumePluginAvailable("swim-tree-view-0.0.1-SNAPSHOT.jar");
 
         Path project = tempDir.resolve("tree-project");
@@ -196,7 +223,7 @@ class TmuxEditorPanelsIT {
         try (var session = InstalledSwimDriver.start(tempDir, project, "src/aaa-current.txt")) {
             session.waitForText("current tree file", STARTUP_TIMEOUT);
 
-            session.runCommand("tree");
+            session.sendLiteral(" T");
             session.waitForText("Tree", UI_TIMEOUT);
             session.sendLiteral("j");
             session.sendEnter();

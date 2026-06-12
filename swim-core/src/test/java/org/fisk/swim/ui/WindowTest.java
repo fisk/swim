@@ -28,6 +28,8 @@ import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.todo.TodoSnapshot;
+import org.fisk.swim.todo.TodoStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -523,6 +525,54 @@ class WindowTest {
             assertFalse(tabLabels(window).contains("mail"));
             assertEquals(path.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
+    void todoWorkspaceQRemovesTodoTabWithoutExitingSwim() throws Exception {
+        Path path = tempDir.resolve("todo-q-close.txt");
+        Files.writeString(path, "abc");
+        RecordingHost host = new RecordingHost();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            SwimRuntime.setHost(host);
+            var window = harness.getWindow();
+            assertTrue(window.showTodoWorkspace(emptyTodoStore(tempDir.resolve(".swim/todo"))));
+            var todoView = assertInstanceOf(TodoWorkspaceView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(todoView, HeadlessWindowHarness.key('q'));
+
+            assertEquals(0, host.exitRequests);
+            assertFalse(window.isShowingTodoWorkspace());
+            assertFalse(tabLabels(window).contains("todo"));
+            assertEquals(path.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void todoWorkspaceEscapeRemovesTodoTabWithoutExitingSwim() throws Exception {
+        Path path = tempDir.resolve("todo-escape-close.txt");
+        Files.writeString(path, "abc");
+        RecordingHost host = new RecordingHost();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            SwimRuntime.setHost(host);
+            var window = harness.getWindow();
+            assertTrue(window.showTodoWorkspace(emptyTodoStore(tempDir.resolve(".swim/todo"))));
+            var todoView = assertInstanceOf(TodoWorkspaceView.class, window.getActiveView());
+
+            HeadlessWindowHarness.dispatch(todoView, HeadlessWindowHarness.escape());
+
+            assertEquals(0, host.exitRequests);
+            assertFalse(window.isShowingTodoWorkspace());
+            assertFalse(tabLabels(window).contains("todo"));
+            assertEquals(path.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        } finally {
+            SwimRuntime.clear();
         }
     }
 
@@ -2080,6 +2130,49 @@ class WindowTest {
         return ((List<TabBarView.Tab>) invoke(window, "tabEntries", new Class<?>[0])).stream()
                 .map(TabBarView.Tab::label)
                 .toList();
+    }
+
+    private static TodoStore emptyTodoStore(Path dataPath) {
+        return new TodoStore() {
+            @Override
+            public TodoSnapshot snapshot() {
+                return TodoSnapshot.empty();
+            }
+
+            @Override
+            public org.fisk.swim.todo.TodoItem createInboxItem(String title) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void assignProject(long itemId, String projectName) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void replaceTags(long itemId, List<String> tagNames) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void toggleCompleted(long itemId) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void deleteItem(long itemId) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public Path getDataPath() {
+                return dataPath;
+            }
+
+            @Override
+            public void close() {
+            }
+        };
     }
 
     private static Response processSequenceStep(org.fisk.swim.event.EventResponder responder,
