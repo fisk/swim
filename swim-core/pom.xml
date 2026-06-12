@@ -24,11 +24,6 @@
     </dependency>
     <dependency>
       <groupId>org.fisk</groupId>
-      <artifactId>swim-lsp</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.fisk</groupId>
       <artifactId>swim-launcher</artifactId>
       <version>${project.version}</version>
     </dependency>

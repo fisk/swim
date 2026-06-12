@@ -42,8 +42,9 @@ import org.eclipse.lsp4j.LocationLink;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.HeadlessWindowHarness;
-import org.fisk.swim.ui.LspLocationPopupView;
+import org.fisk.swim.ui.LspFeaturePopupView;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -638,6 +639,7 @@ class JavaLSPClientTest {
             var window = harness.getWindow();
 
             client.goToDefinition(window.getBufferContext());
+            waitForLocation(window, target, 1, 2);
 
             assertEquals(target.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
@@ -672,9 +674,10 @@ class JavaLSPClientTest {
 
             client.goToDefinition(window.getBufferContext());
 
-            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
-            assertEquals(2, popup.getSession().size());
-            assertTrue(popup.getSession().getEntries().get(0).label().contains("TargetOne.txt:1:1"));
+            var popup = waitForLspPopup(window);
+            assertEquals("Definitions", popup.getTitle());
+            assertEquals(2, popup.getEntries().size());
+            assertTrue(popup.getEntries().get(0).label().contains("TargetOne.txt:1:1"));
         }
     }
 
@@ -698,9 +701,10 @@ class JavaLSPClientTest {
             var window = harness.getWindow();
             client.goToDefinition(window.getBufferContext());
 
-            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
+            var popup = waitForLspPopup(window);
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
+            waitForLocation(window, targetTwo, 1, 2);
 
             assertEquals(targetTwo.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
@@ -731,10 +735,10 @@ class JavaLSPClientTest {
 
             client.findReferences(window.getBufferContext());
 
-            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
+            var popup = waitForLspPopup(window);
             assertEquals("References", popup.getTitle());
-            assertEquals(2, popup.getSession().size());
-            assertTrue(popup.getSession().getEntries().get(0).label().contains("RefOne.txt:1:1"));
+            assertEquals(2, popup.getEntries().size());
+            assertTrue(popup.getEntries().get(0).label().contains("RefOne.txt:1:1"));
         }
     }
 
@@ -758,9 +762,10 @@ class JavaLSPClientTest {
             var window = harness.getWindow();
             client.findReferences(window.getBufferContext());
 
-            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
+            var popup = waitForLspPopup(window);
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
+            waitForLocation(window, targetTwo, 1, 2);
 
             assertEquals(targetTwo.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
@@ -977,6 +982,34 @@ class JavaLSPClientTest {
             Thread.sleep(50);
         }
         throw new AssertionError("Timed out waiting for LSP document changes");
+    }
+
+    private static LspFeaturePopupView waitForLspPopup(Window window) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (window.getRootView().getFirstResponder() instanceof LspFeaturePopupView popup) {
+                return popup;
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Timed out waiting for LSP popup");
+    }
+
+    private static void waitForLocation(Window window, Path path, int line, int character) throws Exception {
+        Path expectedPath = path.toAbsolutePath().normalize();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            Path actualPath = window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize();
+            if (expectedPath.equals(actualPath)) {
+                int expectedCursor = window.getBufferContext().getTextLayout()
+                        .getIndexForPhysicalLineCharacter(line, character);
+                if (window.getBufferContext().getBuffer().getCursor().getPosition() == expectedCursor) {
+                    return;
+                }
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("Timed out waiting for location " + expectedPath + ":" + (line + 1) + ":" + (character + 1));
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

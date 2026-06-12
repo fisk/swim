@@ -104,6 +104,7 @@ import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
 import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
 import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
 import org.fisk.swim.lsp.shared.LspDocumentChangeBatcher;
+import org.fisk.swim.lsp.shared.LspFeatureSupport;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.Settings;
@@ -175,6 +176,62 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
     private final JavaLspProvider _provider;
     private volatile String _providerDescription = "";
+    private final LspFeatureSupport _features = new LspFeatureSupport(new LspFeatureSupport.Client() {
+        @Override
+        public String displayName() {
+            return "Java LSP";
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return _enabled && _server != null;
+        }
+
+        @Override
+        public LanguageServer server() {
+            return _server;
+        }
+
+        @Override
+        public ServerCapabilities capabilities() {
+            return _capabilities;
+        }
+
+        @Override
+        public AsyncLspRequestQueue requestQueue() {
+            return _lspRequestQueue;
+        }
+
+        @Override
+        public void flushPendingDocumentChanges(String uri) {
+            JavaLSPClient.this.flushPendingDocumentChanges(uri);
+        }
+
+        @Override
+        public void runOnEventThread(Runnable action) {
+            JavaLSPClient.this.runOnEventThread(action);
+        }
+
+        @Override
+        public void applyWorkspaceEdit(BufferContext context, WorkspaceEdit edit) {
+            JavaLSPClient.applyWorkspaceEdit(context, edit);
+        }
+
+        @Override
+        public void applyCommand(BufferContext context, Command command) {
+            JavaLSPClient.this.applyCommand(context, command);
+        }
+
+        @Override
+        public String displayPath(Path path) {
+            return JavaLSPClient.this.displayPath(path);
+        }
+
+        @Override
+        public Logger log() {
+            return _log;
+        }
+    });
 
     private final Map<String, TextColor> _foregroundColours = new HashMap<>();
     private final Map<String, StringBuilder> _outputBuffers = new HashMap<>();
@@ -779,6 +836,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         semanticTokens.setOverlappingTokenSupport(false);
         semanticTokens.setAugmentsSyntaxTokens(true);
         textDocument.setSemanticTokens(semanticTokens);
+        LspFeatureSupport.installClientCapabilities(workspace, textDocument);
 
         return new ClientCapabilities(workspace, textDocument, null);
     }
@@ -894,26 +952,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     public void codeLens(BufferContext bufferContext) {
-        if (!_enabled || _server == null) {
-            return;
-        }
-        try {
-            var params = new CodeLensParams();
-            params.setTextDocument(bufferContext.getBuffer().getTextDocumentID());
-            var result = _server.getTextDocumentService().codeLens(params).get();
-            for (var item : result) {
-                _log.debug("Code lens item: " + item);
-                var resolved = _server.getTextDocumentService().resolveCodeLens(item).get();
-                _log.debug("Resolved code lens item: " + resolved);
-                var execute = new ExecuteCommandParams();
-                execute.setCommand(resolved.getCommand().getCommand());
-                execute.setArguments(resolved.getCommand().getArguments());
-                var commandResult = _server.getWorkspaceService().executeCommand(execute).get();
-                _log.debug("Command result: " + commandResult);
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            _log.error("Code lens failed: ", e);
-        }
+        _features.showCodeLens(bufferContext);
     }
 
     private List<Either<Command, CodeAction>> requestCodeActions(
@@ -1304,48 +1343,99 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     public void goToDefinition(BufferContext bufferContext) {
         cancelDefinitionMenu();
-        if (!_enabled || _server == null) {
-            setStatusMessage("Java LSP unavailable");
-            return;
-        }
-        try {
-            var entries = requestDefinitionEntries(bufferContext);
-            if (entries.isEmpty()) {
-                setStatusMessage("No definition found");
-                return;
-            }
-            if (entries.size() == 1) {
-                jumpToDefinition(entries.get(0));
-                return;
-            }
-            showLocationMenu(bufferContext, entries, "Definitions");
-        } catch (Exception e) {
-            _log.debug("Definition lookup failed", e);
-            setStatusMessage("Definition lookup failed");
-        }
+        _features.goToDefinition(bufferContext);
     }
 
     public void findReferences(BufferContext bufferContext) {
         cancelDefinitionMenu();
-        if (!_enabled || _server == null) {
-            setStatusMessage("Java LSP unavailable");
-            return;
-        }
-        try {
-            var entries = requestReferenceEntries(bufferContext);
-            if (entries.isEmpty()) {
-                setStatusMessage("No references found");
-                return;
-            }
-            if (entries.size() == 1) {
-                jumpToDefinition(entries.get(0));
-                return;
-            }
-            showLocationMenu(bufferContext, entries, "References");
-        } catch (Exception e) {
-            _log.debug("Reference lookup failed", e);
-            setStatusMessage("Reference lookup failed");
-        }
+        _features.findReferences(bufferContext);
+    }
+
+    public void showHover(BufferContext bufferContext) {
+        _features.showHover(bufferContext);
+    }
+
+    public void showSignatureHelp(BufferContext bufferContext) {
+        _features.showSignatureHelp(bufferContext);
+    }
+
+    public void goToDeclaration(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToDeclaration(bufferContext);
+    }
+
+    public void goToTypeDefinition(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToTypeDefinition(bufferContext);
+    }
+
+    public void goToImplementation(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToImplementation(bufferContext);
+    }
+
+    public void showDocumentHighlights(BufferContext bufferContext) {
+        _features.showDocumentHighlights(bufferContext);
+    }
+
+    public void showDocumentSymbols(BufferContext bufferContext) {
+        _features.showDocumentSymbols(bufferContext);
+    }
+
+    public void promptWorkspaceSymbols(BufferContext bufferContext) {
+        _features.promptWorkspaceSymbols(bufferContext);
+    }
+
+    public void showCodeActions(BufferContext bufferContext) {
+        _features.showCodeActions(bufferContext);
+    }
+
+    public void formatDocument(BufferContext bufferContext) {
+        _features.formatDocument(bufferContext);
+    }
+
+    public void formatCurrentLine(BufferContext bufferContext) {
+        _features.formatCurrentLine(bufferContext);
+    }
+
+    public void formatOnType(BufferContext bufferContext) {
+        _features.formatOnType(bufferContext);
+    }
+
+    public void rename(BufferContext bufferContext) {
+        _features.promptRename(bufferContext);
+    }
+
+    public void showInlayHints(BufferContext bufferContext) {
+        _features.showInlayHints(bufferContext);
+    }
+
+    public void applyFoldingRanges(BufferContext bufferContext) {
+        _features.applyFoldingRanges(bufferContext);
+    }
+
+    public void showSelectionRanges(BufferContext bufferContext) {
+        _features.showSelectionRanges(bufferContext);
+    }
+
+    public void showCallHierarchy(BufferContext bufferContext) {
+        _features.showCallHierarchy(bufferContext);
+    }
+
+    public void showTypeHierarchy(BufferContext bufferContext) {
+        _features.showTypeHierarchy(bufferContext);
+    }
+
+    public void showDocumentLinks(BufferContext bufferContext) {
+        _features.showDocumentLinks(bufferContext);
+    }
+
+    public void showLinkedEditingRanges(BufferContext bufferContext) {
+        _features.showLinkedEditingRanges(bufferContext);
+    }
+
+    public void showColorPresentations(BufferContext bufferContext) {
+        _features.showColorPresentations(bufferContext);
     }
 
     public boolean cancelDefinitionMenu() {
@@ -1844,47 +1934,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     static void applyWorkspaceEdit(BufferContext context, WorkspaceEdit workspaceEdit) {
-        if (workspaceEdit == null) {
-            return;
-        }
-        var currentUri = context.getBuffer().getURI();
-        var edits = new ArrayList<IndexedEdit>();
-
-        if (workspaceEdit.getChanges() != null) {
-            for (var change : workspaceEdit.getChanges().entrySet()) {
-                if (!uriMatches(currentUri, change.getKey())) {
-                    continue;
-                }
-                for (var edit : change.getValue()) {
-                    edits.add(new IndexedEdit(
-                            getIndex(context, edit.getRange().getStart()),
-                            getIndex(context, edit.getRange().getEnd()),
-                            edit.getNewText()));
-                }
-            }
-        }
-
-        if (workspaceEdit.getDocumentChanges() != null) {
-            for (var change : workspaceEdit.getDocumentChanges()) {
-                if (!change.isLeft()) {
-                    continue;
-                }
-                TextDocumentEdit edit = change.getLeft();
-                if (!uriMatches(currentUri, edit.getTextDocument().getUri())) {
-                    continue;
-                }
-                for (var textEdit : edit.getEdits()) {
-                    edits.add(new IndexedEdit(
-                            getIndex(context, textEdit.getRange().getStart()),
-                            getIndex(context, textEdit.getRange().getEnd()),
-                            textEdit.getNewText()));
-                }
-            }
-        }
-
-        edits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
-                .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
-        applyIndexedEdits(context, edits);
+        LspFeatureSupport.applyWorkspaceEditToOpenBuffersAndFiles(context, workspaceEdit);
     }
 
     private void applyCommand(BufferContext bufferContext, Command command) {

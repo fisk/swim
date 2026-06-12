@@ -85,6 +85,7 @@ import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
 import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
 import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
 import org.fisk.swim.lsp.shared.LspDocumentChangeBatcher;
+import org.fisk.swim.lsp.shared.LspFeatureSupport;
 import org.fisk.swim.lsp.LspLocationMenuSession;
 import org.fisk.swim.lsp.LspCompletionSession;
 import org.fisk.swim.text.AttributedString;
@@ -168,6 +169,62 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     private final Object _definitionLock = new Object();
     private LspLocationMenuSession _definitionMenuSession;
     private LspLocationPopupView _definitionPopupView;
+    private final LspFeatureSupport _features = new LspFeatureSupport(new LspFeatureSupport.Client() {
+        @Override
+        public String displayName() {
+            return "clangd";
+        }
+
+        @Override
+        public boolean isAvailable() {
+            return _enabled && _server != null;
+        }
+
+        @Override
+        public LanguageServer server() {
+            return _server;
+        }
+
+        @Override
+        public ServerCapabilities capabilities() {
+            return _capabilities;
+        }
+
+        @Override
+        public AsyncLspRequestQueue requestQueue() {
+            return _lspRequestQueue;
+        }
+
+        @Override
+        public void flushPendingDocumentChanges(String uri) {
+            ClangdLspClient.this.flushPendingDocumentChanges(uri);
+        }
+
+        @Override
+        public void runOnEventThread(Runnable action) {
+            ClangdLspClient.this.runOnEventThread(action);
+        }
+
+        @Override
+        public void applyWorkspaceEdit(BufferContext context, WorkspaceEdit edit) {
+            ClangdLspClient.applyWorkspaceEdit(context, edit);
+        }
+
+        @Override
+        public void applyCommand(BufferContext context, Command command) {
+            ClangdLspClient.this.applyCommand(context, command);
+        }
+
+        @Override
+        public String displayPath(Path path) {
+            return ClangdLspClient.this.displayPath(path);
+        }
+
+        @Override
+        public Logger log() {
+            return _log;
+        }
+    });
 
     private static ClangdLspClient _instance;
 
@@ -574,42 +631,103 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     public void goToDefinition(BufferContext bufferContext) {
         cancelDefinitionMenu();
-        if (!_enabled || _server == null) {
-            return;
-        }
-        try {
-            var entries = requestDefinitionEntries(bufferContext);
-            if (entries.isEmpty()) {
-                return;
-            }
-            if (entries.size() == 1) {
-                jumpToLocation(entries.get(0));
-                return;
-            }
-            showLocationMenu(bufferContext, entries, "Definitions");
-        } catch (Exception e) {
-            _log.debug("clangd definition lookup failed", e);
-        }
+        _features.goToDefinition(bufferContext);
     }
 
     public void findReferences(BufferContext bufferContext) {
         cancelDefinitionMenu();
-        if (!_enabled || _server == null) {
-            return;
-        }
-        try {
-            var entries = requestReferenceEntries(bufferContext);
-            if (entries.isEmpty()) {
-                return;
-            }
-            if (entries.size() == 1) {
-                jumpToLocation(entries.get(0));
-                return;
-            }
-            showLocationMenu(bufferContext, entries, "References");
-        } catch (Exception e) {
-            _log.debug("clangd reference lookup failed", e);
-        }
+        _features.findReferences(bufferContext);
+    }
+
+    public void showHover(BufferContext bufferContext) {
+        _features.showHover(bufferContext);
+    }
+
+    public void showSignatureHelp(BufferContext bufferContext) {
+        _features.showSignatureHelp(bufferContext);
+    }
+
+    public void goToDeclaration(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToDeclaration(bufferContext);
+    }
+
+    public void goToTypeDefinition(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToTypeDefinition(bufferContext);
+    }
+
+    public void goToImplementation(BufferContext bufferContext) {
+        cancelDefinitionMenu();
+        _features.goToImplementation(bufferContext);
+    }
+
+    public void showDocumentHighlights(BufferContext bufferContext) {
+        _features.showDocumentHighlights(bufferContext);
+    }
+
+    public void showDocumentSymbols(BufferContext bufferContext) {
+        _features.showDocumentSymbols(bufferContext);
+    }
+
+    public void promptWorkspaceSymbols(BufferContext bufferContext) {
+        _features.promptWorkspaceSymbols(bufferContext);
+    }
+
+    public void showCodeActions(BufferContext bufferContext) {
+        _features.showCodeActions(bufferContext);
+    }
+
+    public void showCodeLens(BufferContext bufferContext) {
+        _features.showCodeLens(bufferContext);
+    }
+
+    public void formatDocument(BufferContext bufferContext) {
+        _features.formatDocument(bufferContext);
+    }
+
+    public void formatCurrentLine(BufferContext bufferContext) {
+        _features.formatCurrentLine(bufferContext);
+    }
+
+    public void formatOnType(BufferContext bufferContext) {
+        _features.formatOnType(bufferContext);
+    }
+
+    public void rename(BufferContext bufferContext) {
+        _features.promptRename(bufferContext);
+    }
+
+    public void showInlayHints(BufferContext bufferContext) {
+        _features.showInlayHints(bufferContext);
+    }
+
+    public void applyFoldingRanges(BufferContext bufferContext) {
+        _features.applyFoldingRanges(bufferContext);
+    }
+
+    public void showSelectionRanges(BufferContext bufferContext) {
+        _features.showSelectionRanges(bufferContext);
+    }
+
+    public void showCallHierarchy(BufferContext bufferContext) {
+        _features.showCallHierarchy(bufferContext);
+    }
+
+    public void showTypeHierarchy(BufferContext bufferContext) {
+        _features.showTypeHierarchy(bufferContext);
+    }
+
+    public void showDocumentLinks(BufferContext bufferContext) {
+        _features.showDocumentLinks(bufferContext);
+    }
+
+    public void showLinkedEditingRanges(BufferContext bufferContext) {
+        _features.showLinkedEditingRanges(bufferContext);
+    }
+
+    public void showColorPresentations(BufferContext bufferContext) {
+        _features.showColorPresentations(bufferContext);
     }
 
     private List<Either<Command, CodeAction>> requestCodeActions(
@@ -952,44 +1070,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     private static void applyWorkspaceEdit(BufferContext context, WorkspaceEdit workspaceEdit) {
-        if (context == null || workspaceEdit == null) {
-            return;
-        }
-        var edits = new ArrayList<IndexedEdit>();
-        var currentUri = context.getBuffer().getURI();
-        if (workspaceEdit.getChanges() != null) {
-            for (var change : workspaceEdit.getChanges().entrySet()) {
-                if (!uriMatches(currentUri, change.getKey())) {
-                    continue;
-                }
-                for (var edit : change.getValue()) {
-                    edits.add(new IndexedEdit(
-                            getIndex(context, edit.getRange().getStart()),
-                            getIndex(context, edit.getRange().getEnd()),
-                            edit.getNewText()));
-                }
-            }
-        }
-        if (workspaceEdit.getDocumentChanges() != null) {
-            for (var change : workspaceEdit.getDocumentChanges()) {
-                if (!change.isLeft()) {
-                    continue;
-                }
-                TextDocumentEdit documentEdit = change.getLeft();
-                if (!uriMatches(currentUri, documentEdit.getTextDocument().getUri())) {
-                    continue;
-                }
-                for (var edit : documentEdit.getEdits()) {
-                    edits.add(new IndexedEdit(
-                            getIndex(context, edit.getRange().getStart()),
-                            getIndex(context, edit.getRange().getEnd()),
-                            edit.getNewText()));
-                }
-            }
-        }
-        edits.sort(Comparator.comparingInt((IndexedEdit edit) -> edit._start).reversed()
-                .thenComparing(Comparator.comparingInt((IndexedEdit edit) -> edit._end).reversed()));
-        applyIndexedEdits(context, edits);
+        LspFeatureSupport.applyWorkspaceEditToOpenBuffersAndFiles(context, workspaceEdit);
     }
 
     private void applyCommand(BufferContext bufferContext, Command command) {
@@ -1001,7 +1082,12 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
                 var params = new ExecuteCommandParams();
                 params.setCommand(command.getCommand());
                 params.setArguments(command.getArguments());
-                _server.getWorkspaceService().executeCommand(params).join();
+                Object result = _server.getWorkspaceService().executeCommand(params).join();
+                if (result instanceof WorkspaceEdit workspaceEdit) {
+                    applyWorkspaceEdit(bufferContext, workspaceEdit);
+                } else if (result instanceof ApplyWorkspaceEditParams applyParams) {
+                    applyWorkspaceEdit(bufferContext, applyParams.getEdit());
+                }
             }
         } catch (Exception e) {
             _log.debug("Executing clangd code-action command failed", e);
@@ -1434,7 +1520,17 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
             @Override
             public CompletableFuture<ApplyWorkspaceEditResponse> applyEdit(ApplyWorkspaceEditParams params) {
-                return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                var window = Window.getInstance();
+                if (window == null || window.getBufferContext() == null) {
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                }
+                try {
+                    applyWorkspaceEdit(window.getBufferContext(), params == null ? null : params.getEdit());
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(true));
+                } catch (RuntimeException e) {
+                    _log.debug("Applying clangd workspace edit failed", e);
+                    return CompletableFuture.completedFuture(new ApplyWorkspaceEditResponse(false));
+                }
             }
 
             @Override
@@ -1461,7 +1557,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
 
     private ClientCapabilities getClientCapabilities() {
         var workspace = new WorkspaceClientCapabilities();
-        workspace.setApplyEdit(false);
+        workspace.setApplyEdit(true);
         workspace.setConfiguration(true);
 
         var textDocument = new TextDocumentClientCapabilities();
@@ -1482,6 +1578,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         semanticTokens.setOverlappingTokenSupport(false);
         semanticTokens.setAugmentsSyntaxTokens(true);
         textDocument.setSemanticTokens(semanticTokens);
+        LspFeatureSupport.installClientCapabilities(workspace, textDocument);
         return new ClientCapabilities(workspace, textDocument, null);
     }
 

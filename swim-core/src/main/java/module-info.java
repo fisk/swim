@@ -17,7 +17,6 @@ module org.fisk.swim.core {
     requires org.eclipse.jgit;
     requires org.eclipse.lsp4j;
     requires org.eclipse.lsp4j.jsonrpc;
-    requires org.fisk.swim.lsp;
     requires org.fisk.swim.launcher;
     requires org.fisk.swim.session;
     requires org.slf4j;

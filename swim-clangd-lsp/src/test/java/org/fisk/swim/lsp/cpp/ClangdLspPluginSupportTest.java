@@ -9,9 +9,11 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.LanguageModeProvider;
@@ -36,9 +38,46 @@ class ClangdLspPluginSupportTest {
         }
         ClangdLspClient.shutdownInstalledInstance();
         SwimPluginPreloadRegistry.clearForTests();
+        SwimPluginKeyBindingRegistry.clearForTests();
         SwimRuntime.clear();
         EventThread.shutdownInstance();
         TerminalContext.shutdownInstance();
+    }
+
+    @Test
+    void preloadRegistersStandardLeaderCommaLspBindings() {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+
+        var keys = SwimPluginKeyBindingRegistry.listBindings().stream()
+                .filter(binding -> ClangdLspPluginSupport.PLUGIN_ID.equals(binding.pluginId()))
+                .map(binding -> binding.key())
+                .toList();
+
+        assertTrue(keys.containsAll(List.of(
+                "<SPACE> , h",
+                "<SPACE> , p",
+                "<SPACE> , d",
+                "<SPACE> , D",
+                "<SPACE> , y",
+                "<SPACE> , i",
+                "<SPACE> , u",
+                "<SPACE> , H",
+                "<SPACE> , s",
+                "<SPACE> , S",
+                "<SPACE> , a",
+                "<SPACE> , l",
+                "<SPACE> , f",
+                "<SPACE> , F",
+                "<SPACE> , t",
+                "<SPACE> , R",
+                "<SPACE> , n",
+                "<SPACE> , z",
+                "<SPACE> , v",
+                "<SPACE> , c",
+                "<SPACE> , T",
+                "<SPACE> , m",
+                "<SPACE> , k",
+                "<SPACE> , C")));
     }
 
     @Test
@@ -132,6 +171,25 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
+    void normalModeLeaderCommaHShowsHoverForCppBuffers() throws Exception {
+        Path file = Files.writeString(tempDir.resolve("hover.cpp"), "int main() { return 0; }\n");
+        var client = new RecordingClangdLspClient();
+        ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+
+        try (var harness = HeadlessWindowHarness.create(file, 60, 12)) {
+            Window window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key(','),
+                    HeadlessWindowHarness.key('h'));
+
+            assertEquals(1, client.hoverCalls);
+        }
+    }
+
+    @Test
     void createWindowStartsClangdForCppFileWhenProjectHasCompilationDatabase() throws Exception {
         Path project = tempDir.resolve("demo");
         Files.createDirectories(project.resolve("build"));
@@ -185,6 +243,7 @@ class ClangdLspPluginSupportTest {
 
     private static final class RecordingClangdLspClient extends ClangdLspClient {
         private int startCalls;
+        private int hoverCalls;
         private Path startedPath;
         private boolean started;
 
@@ -206,6 +265,11 @@ class ClangdLspPluginSupportTest {
 
         @Override
         public void ensureInit() {
+        }
+
+        @Override
+        public void showHover(BufferContext bufferContext) {
+            hoverCalls++;
         }
     }
 }

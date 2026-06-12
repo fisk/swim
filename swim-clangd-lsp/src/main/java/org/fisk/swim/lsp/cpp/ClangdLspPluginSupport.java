@@ -75,6 +75,53 @@ public final class ClangdLspPluginSupport {
                 ClangdLspPluginSupport::goToDefinition);
         registerCppKey(context, "g r", "LSP", "find references", "lsp-references",
                 ClangdLspPluginSupport::findReferences);
+        registerCppKey(context, "<SPACE> , h", "LSP", "hover", "lsp-hover", ClangdLspPluginSupport::showHover);
+        registerCppKey(context, "<SPACE> , p", "LSP", "signature help", "lsp-signature-help",
+                ClangdLspPluginSupport::showSignatureHelp);
+        registerCppKey(context, "<SPACE> , d", "LSP", "go to definition", "lsp-definition",
+                ClangdLspPluginSupport::goToDefinition);
+        registerCppKey(context, "<SPACE> , D", "LSP", "go to declaration", "lsp-declaration",
+                ClangdLspPluginSupport::goToDeclaration);
+        registerCppKey(context, "<SPACE> , y", "LSP", "go to type definition", "lsp-type-definition",
+                ClangdLspPluginSupport::goToTypeDefinition);
+        registerCppKey(context, "<SPACE> , i", "LSP", "go to implementation", "lsp-implementation",
+                ClangdLspPluginSupport::goToImplementation);
+        registerCppKey(context, "<SPACE> , u", "LSP", "find references", "lsp-references",
+                ClangdLspPluginSupport::findReferences);
+        registerCppKey(context, "<SPACE> , H", "LSP", "document highlights", "lsp-document-highlights",
+                ClangdLspPluginSupport::showDocumentHighlights);
+        registerCppKey(context, "<SPACE> , s", "LSP", "document symbols", "lsp-document-symbols",
+                ClangdLspPluginSupport::showDocumentSymbols);
+        registerCppKey(context, "<SPACE> , S", "LSP", "workspace symbols", "lsp-workspace-symbols",
+                ClangdLspPluginSupport::promptWorkspaceSymbols);
+        registerCppKey(context, "<SPACE> , a", "LSP", "code actions", "lsp-code-actions",
+                ClangdLspPluginSupport::showCodeActions);
+        registerCppKey(context, "<SPACE> , l", "LSP", "code lens", "lsp-code-lens",
+                ClangdLspPluginSupport::showCodeLens);
+        registerCppKey(context, "<SPACE> , f", "LSP", "format document", "lsp-format-document",
+                ClangdLspPluginSupport::formatDocument);
+        registerCppKey(context, "<SPACE> , F", "LSP", "format line", "lsp-format-line",
+                ClangdLspPluginSupport::formatCurrentLine);
+        registerCppKey(context, "<SPACE> , t", "LSP", "format on type", "lsp-format-on-type",
+                ClangdLspPluginSupport::formatOnType);
+        registerCppKey(context, "<SPACE> , R", "LSP", "rename symbol", "lsp-rename",
+                ClangdLspPluginSupport::rename);
+        registerCppKey(context, "<SPACE> , n", "LSP", "inlay hints", "lsp-inlay-hints",
+                ClangdLspPluginSupport::showInlayHints);
+        registerCppKey(context, "<SPACE> , z", "LSP", "folding ranges", "lsp-folding-ranges",
+                ClangdLspPluginSupport::applyFoldingRanges);
+        registerCppKey(context, "<SPACE> , v", "LSP", "selection ranges", "lsp-selection-ranges",
+                ClangdLspPluginSupport::showSelectionRanges);
+        registerCppKey(context, "<SPACE> , c", "LSP", "call hierarchy", "lsp-call-hierarchy",
+                ClangdLspPluginSupport::showCallHierarchy);
+        registerCppKey(context, "<SPACE> , T", "LSP", "type hierarchy", "lsp-type-hierarchy",
+                ClangdLspPluginSupport::showTypeHierarchy);
+        registerCppKey(context, "<SPACE> , m", "LSP", "document links", "lsp-document-links",
+                ClangdLspPluginSupport::showDocumentLinks);
+        registerCppKey(context, "<SPACE> , k", "LSP", "linked editing ranges", "lsp-linked-editing",
+                ClangdLspPluginSupport::showLinkedEditingRanges);
+        registerCppKey(context, "<SPACE> , C", "LSP", "color presentations", "lsp-color-presentations",
+                ClangdLspPluginSupport::showColorPresentations);
         registerCppKey(context, "g m", "C/C++", "switch header/implementation", "cpp-counterpart",
                 ClangdLspPluginSupport::switchHeaderImplementation);
     }
@@ -103,6 +150,110 @@ public final class ClangdLspPluginSupport {
 
     public static void findReferences() {
         withActiveCppWindow("lsp references", client -> client.findReferences(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showHover() {
+        withActiveCppWindow("lsp hover", client -> client.showHover(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showSignatureHelp() {
+        withActiveCppWindow("lsp signature help",
+                client -> client.showSignatureHelp(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToDeclaration() {
+        withActiveCppWindow("lsp declaration", client -> client.goToDeclaration(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToTypeDefinition() {
+        withActiveCppWindow("lsp type definition",
+                client -> client.goToTypeDefinition(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToImplementation() {
+        withActiveCppWindow("lsp implementation",
+                client -> client.goToImplementation(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentHighlights() {
+        withActiveCppWindow("lsp document highlights",
+                client -> client.showDocumentHighlights(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentSymbols() {
+        withActiveCppWindow("lsp document symbols",
+                client -> client.showDocumentSymbols(Window.getInstance().getBufferContext()));
+    }
+
+    public static void promptWorkspaceSymbols() {
+        withActiveCppWindow("lsp workspace symbols",
+                client -> client.promptWorkspaceSymbols(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showCodeActions() {
+        withActiveCppWindow("lsp code actions", client -> client.showCodeActions(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showCodeLens() {
+        withActiveCppWindow("lsp code lens", client -> client.showCodeLens(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatDocument() {
+        withActiveCppWindow("lsp format document",
+                client -> client.formatDocument(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatCurrentLine() {
+        withActiveCppWindow("lsp format line",
+                client -> client.formatCurrentLine(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatOnType() {
+        withActiveCppWindow("lsp format on type",
+                client -> client.formatOnType(Window.getInstance().getBufferContext()));
+    }
+
+    public static void rename() {
+        withActiveCppWindow("lsp rename", client -> client.rename(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showInlayHints() {
+        withActiveCppWindow("lsp inlay hints", client -> client.showInlayHints(Window.getInstance().getBufferContext()));
+    }
+
+    public static void applyFoldingRanges() {
+        withActiveCppWindow("lsp folding ranges",
+                client -> client.applyFoldingRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showSelectionRanges() {
+        withActiveCppWindow("lsp selection ranges",
+                client -> client.showSelectionRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showCallHierarchy() {
+        withActiveCppWindow("lsp call hierarchy",
+                client -> client.showCallHierarchy(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showTypeHierarchy() {
+        withActiveCppWindow("lsp type hierarchy",
+                client -> client.showTypeHierarchy(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentLinks() {
+        withActiveCppWindow("lsp document links",
+                client -> client.showDocumentLinks(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showLinkedEditingRanges() {
+        withActiveCppWindow("lsp linked editing",
+                client -> client.showLinkedEditingRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showColorPresentations() {
+        withActiveCppWindow("lsp color presentations",
+                client -> client.showColorPresentations(Window.getInstance().getBufferContext()));
     }
 
     public static void switchHeaderImplementation() {

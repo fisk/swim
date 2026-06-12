@@ -2363,7 +2363,7 @@ public class Window implements Drawable {
         return false;
     }
 
-    private List<BufferContext> openBufferContextsSnapshot() {
+    public List<BufferContext> openBufferContextsSnapshot() {
         var seen = new IdentityHashMap<BufferContext, Boolean>();
         var contexts = new ArrayList<BufferContext>();
         addBufferContextSnapshot(contexts, seen, _bufferContext);
@@ -3308,6 +3308,58 @@ public class Window implements Drawable {
 
     public void showTextPanel(String title, String text) {
         showPanel(new TextPanelView(Rect.create(0, 0, 0, 0), title, text));
+    }
+
+    public void showLspFeaturePopup(String title, List<LspFeaturePopupView.Entry> entries, Point anchor) {
+        if (_rootView == null || entries == null || entries.isEmpty()) {
+            return;
+        }
+        hideTransientDiagnostics();
+        var popup = new LspFeaturePopupView(Rect.create(0, 0, 0, 0));
+        popup.setOnClose(() -> {
+            popup.removeFromParent();
+            focusActiveBuffer();
+            if (_rootView != null) {
+                _rootView.setNeedsRedraw();
+            }
+            refreshChromeState();
+        });
+        popup.configure(title, entries, anchor);
+        _rootView.addSubview(popup);
+        _rootView.setFirstResponder(popup);
+        refreshChromeState();
+        _rootView.setNeedsRedraw();
+    }
+
+    public void showInputPrompt(String title, String label, String initialValue, Consumer<String> onSubmit) {
+        if (_rootView == null) {
+            return;
+        }
+        var prompt = new InputPromptPopupView(Rect.create(0, 0, 0, 0), title, label, initialValue);
+        Runnable close = () -> {
+            prompt.removeFromParent();
+            focusActiveBuffer();
+            if (_rootView != null) {
+                _rootView.setNeedsRedraw();
+            }
+            refreshChromeState();
+        };
+        prompt.setOnSubmit(value -> {
+            close.run();
+            if (onSubmit != null) {
+                onSubmit.accept(value);
+            }
+        });
+        prompt.setOnCancel(close);
+        _rootView.addSubview(prompt);
+        prompt.syncBounds();
+        _rootView.setFirstResponder(prompt);
+        refreshChromeState();
+        _rootView.setNeedsRedraw();
+    }
+
+    public boolean openExternalUrl(String url) {
+        return ExternalResourceSupport.openUrl(url);
     }
 
     public void hideList() {

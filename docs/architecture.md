@@ -83,12 +83,12 @@ Every plugin must clean up in `close()`. If a plugin starts threads, owns client
 The compile-time dependency shape is:
 
 ```text
-feature plugins  --->  swim-core  --->  swim-launcher/api  --->  swim-session
-       |                  |
-       +------------------+---->  swim-lsp
+feature plugins  --->  swim-lsp  --->  swim-core  --->  swim-launcher/api  --->  swim-session
+       |                                  ^
+       +----------------------------------+
 ```
 
-The arrow means "requires". Plugins depend on `swim-launcher` for the API and on `swim-core` only when they need core extension points or UI model types. LSP plugins also depend on `swim-lsp`. `swim-core` may expose plugin-facing registries such as language, debugger, mail, Slack, Nemo-tool, help, and panel hooks, but it should not import concrete plugin implementation packages.
+The arrow means "requires". Plugins depend on `swim-launcher` for the API and on `swim-core` when they need core extension points or UI model types. LSP plugins also depend on `swim-lsp`, which itself depends inward on core for editor/UI types. `swim-core` must not depend on `swim-lsp` or concrete plugin implementation packages. It may expose plugin-facing registries such as language, debugger, mail, Slack, Nemo-tool, help, and panel hooks.
 
 Plugins can integrate through these main APIs:
 
@@ -152,8 +152,9 @@ Language support is plugin-backed. Core owns the editor-facing `LanguageMode` co
 - `LspDocumentChangeBatcher`: batches and flushes document changes to the language server.
 - `AsyncSemanticTokenHighlighter`: snapshots document text, records local insert/delete mutations while a semantic-token request is running, applies the mutation log to returned highlights, and schedules a fresh snapshot when needed.
 - `AsyncCompletionCoordinator`: snapshots completion requests, cancels stale generations, and applies completion results back on the editor thread.
+- `LspFeatureSupport`: shared client-capability advertisement, async LSP feature requests, stale-result rejection, workspace edits, and colored popup/prompt UI integration for standard LSP actions.
 
-Language-specific plugins should focus on starting and adapting their language server, mapping server capabilities to `LanguageMode`, and registering language-specific commands. Shared editor behavior such as async coloring, async completion, diagnostics patching, and popup UI belongs in core or `swim-lsp`.
+Language-specific plugins should focus on starting and adapting their language server, mapping server capabilities to `LanguageMode`, and registering language-specific commands. Shared editor behavior such as async coloring, async completion, diagnostics patching, workspace edit application, and standard LSP popup UI belongs in `swim-lsp`.
 
 ## Nemo
 

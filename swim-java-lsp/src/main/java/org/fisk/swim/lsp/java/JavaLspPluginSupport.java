@@ -51,6 +51,51 @@ public final class JavaLspPluginSupport {
                 JavaLspPluginSupport::createLanguageMode));
         registerJavaKey(context, "g d", "go to definition", "lsp-definition", JavaLspPluginSupport::goToDefinition);
         registerJavaKey(context, "g r", "find references", "lsp-references", JavaLspPluginSupport::findReferences);
+        registerJavaKey(context, "<SPACE> , h", "hover", "lsp-hover", JavaLspPluginSupport::showHover);
+        registerJavaKey(context, "<SPACE> , p", "signature help", "lsp-signature-help",
+                JavaLspPluginSupport::showSignatureHelp);
+        registerJavaKey(context, "<SPACE> , d", "go to definition", "lsp-definition",
+                JavaLspPluginSupport::goToDefinition);
+        registerJavaKey(context, "<SPACE> , D", "go to declaration", "lsp-declaration",
+                JavaLspPluginSupport::goToDeclaration);
+        registerJavaKey(context, "<SPACE> , y", "go to type definition", "lsp-type-definition",
+                JavaLspPluginSupport::goToTypeDefinition);
+        registerJavaKey(context, "<SPACE> , i", "go to implementation", "lsp-implementation",
+                JavaLspPluginSupport::goToImplementation);
+        registerJavaKey(context, "<SPACE> , u", "find references", "lsp-references",
+                JavaLspPluginSupport::findReferences);
+        registerJavaKey(context, "<SPACE> , H", "document highlights", "lsp-document-highlights",
+                JavaLspPluginSupport::showDocumentHighlights);
+        registerJavaKey(context, "<SPACE> , s", "document symbols", "lsp-document-symbols",
+                JavaLspPluginSupport::showDocumentSymbols);
+        registerJavaKey(context, "<SPACE> , S", "workspace symbols", "lsp-workspace-symbols",
+                JavaLspPluginSupport::promptWorkspaceSymbols);
+        registerJavaKey(context, "<SPACE> , a", "code actions", "lsp-code-actions",
+                JavaLspPluginSupport::showCodeActions);
+        registerJavaKey(context, "<SPACE> , l", "code lens", "lsp-code-lens", JavaLspPluginSupport::codeLens);
+        registerJavaKey(context, "<SPACE> , f", "format document", "lsp-format-document",
+                JavaLspPluginSupport::formatDocument);
+        registerJavaKey(context, "<SPACE> , F", "format line", "lsp-format-line",
+                JavaLspPluginSupport::formatCurrentLine);
+        registerJavaKey(context, "<SPACE> , t", "format on type", "lsp-format-on-type",
+                JavaLspPluginSupport::formatOnType);
+        registerJavaKey(context, "<SPACE> , R", "rename symbol", "lsp-rename", JavaLspPluginSupport::rename);
+        registerJavaKey(context, "<SPACE> , n", "inlay hints", "lsp-inlay-hints",
+                JavaLspPluginSupport::showInlayHints);
+        registerJavaKey(context, "<SPACE> , z", "folding ranges", "lsp-folding-ranges",
+                JavaLspPluginSupport::applyFoldingRanges);
+        registerJavaKey(context, "<SPACE> , v", "selection ranges", "lsp-selection-ranges",
+                JavaLspPluginSupport::showSelectionRanges);
+        registerJavaKey(context, "<SPACE> , c", "call hierarchy", "lsp-call-hierarchy",
+                JavaLspPluginSupport::showCallHierarchy);
+        registerJavaKey(context, "<SPACE> , T", "type hierarchy", "lsp-type-hierarchy",
+                JavaLspPluginSupport::showTypeHierarchy);
+        registerJavaKey(context, "<SPACE> , m", "document links", "lsp-document-links",
+                JavaLspPluginSupport::showDocumentLinks);
+        registerJavaKey(context, "<SPACE> , k", "linked editing ranges", "lsp-linked-editing",
+                JavaLspPluginSupport::showLinkedEditingRanges);
+        registerJavaKey(context, "<SPACE> , C", "color presentations", "lsp-color-presentations",
+                JavaLspPluginSupport::showColorPresentations);
         registerJavaKey(context, "<SPACE> , o", "organize imports", "lsp-organize-imports",
                 JavaLspPluginSupport::organizeImports);
         registerJavaKey(context, "<SPACE> e f", "make field final", "lsp-make-final",
@@ -92,6 +137,106 @@ public final class JavaLspPluginSupport {
 
     public static void findReferences() {
         withActiveJavaWindow("lsp references", client -> client.findReferences(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showHover() {
+        withActiveJavaWindow("lsp hover", client -> client.showHover(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showSignatureHelp() {
+        withActiveJavaWindow("lsp signature help",
+                client -> client.showSignatureHelp(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToDeclaration() {
+        withActiveJavaWindow("lsp declaration", client -> client.goToDeclaration(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToTypeDefinition() {
+        withActiveJavaWindow("lsp type definition",
+                client -> client.goToTypeDefinition(Window.getInstance().getBufferContext()));
+    }
+
+    public static void goToImplementation() {
+        withActiveJavaWindow("lsp implementation",
+                client -> client.goToImplementation(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentHighlights() {
+        withActiveJavaWindow("lsp document highlights",
+                client -> client.showDocumentHighlights(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentSymbols() {
+        withActiveJavaWindow("lsp document symbols",
+                client -> client.showDocumentSymbols(Window.getInstance().getBufferContext()));
+    }
+
+    public static void promptWorkspaceSymbols() {
+        withActiveJavaWindow("lsp workspace symbols",
+                client -> client.promptWorkspaceSymbols(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showCodeActions() {
+        withActiveJavaWindow("lsp code actions", client -> client.showCodeActions(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatDocument() {
+        withActiveJavaWindow("lsp format document",
+                client -> client.formatDocument(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatCurrentLine() {
+        withActiveJavaWindow("lsp format line",
+                client -> client.formatCurrentLine(Window.getInstance().getBufferContext()));
+    }
+
+    public static void formatOnType() {
+        withActiveJavaWindow("lsp format on type",
+                client -> client.formatOnType(Window.getInstance().getBufferContext()));
+    }
+
+    public static void rename() {
+        withActiveJavaWindow("lsp rename", client -> client.rename(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showInlayHints() {
+        withActiveJavaWindow("lsp inlay hints", client -> client.showInlayHints(Window.getInstance().getBufferContext()));
+    }
+
+    public static void applyFoldingRanges() {
+        withActiveJavaWindow("lsp folding ranges",
+                client -> client.applyFoldingRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showSelectionRanges() {
+        withActiveJavaWindow("lsp selection ranges",
+                client -> client.showSelectionRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showCallHierarchy() {
+        withActiveJavaWindow("lsp call hierarchy",
+                client -> client.showCallHierarchy(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showTypeHierarchy() {
+        withActiveJavaWindow("lsp type hierarchy",
+                client -> client.showTypeHierarchy(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showDocumentLinks() {
+        withActiveJavaWindow("lsp document links",
+                client -> client.showDocumentLinks(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showLinkedEditingRanges() {
+        withActiveJavaWindow("lsp linked editing",
+                client -> client.showLinkedEditingRanges(Window.getInstance().getBufferContext()));
+    }
+
+    public static void showColorPresentations() {
+        withActiveJavaWindow("lsp color presentations",
+                client -> client.showColorPresentations(Window.getInstance().getBufferContext()));
     }
 
     public static void organizeImports() {

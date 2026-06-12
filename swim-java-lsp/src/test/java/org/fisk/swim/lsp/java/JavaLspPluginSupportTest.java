@@ -2,11 +2,14 @@ package org.fisk.swim.lsp.java;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimPluginKeyBindingRegistry;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
@@ -26,7 +29,45 @@ class JavaLspPluginSupportTest {
         }
         JavaLSPClient.shutdownInstalledInstance();
         SwimPluginPreloadRegistry.clearForTests();
+        SwimPluginKeyBindingRegistry.clearForTests();
         SwimRuntime.clear();
+    }
+
+    @Test
+    void preloadRegistersStandardLeaderCommaLspBindings() {
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+
+        var keys = SwimPluginKeyBindingRegistry.listBindings().stream()
+                .filter(binding -> JavaLspPluginSupport.PLUGIN_ID.equals(binding.pluginId()))
+                .map(binding -> binding.key())
+                .toList();
+
+        assertTrue(keys.containsAll(List.of(
+                "<SPACE> , h",
+                "<SPACE> , p",
+                "<SPACE> , d",
+                "<SPACE> , D",
+                "<SPACE> , y",
+                "<SPACE> , i",
+                "<SPACE> , u",
+                "<SPACE> , H",
+                "<SPACE> , s",
+                "<SPACE> , S",
+                "<SPACE> , a",
+                "<SPACE> , l",
+                "<SPACE> , f",
+                "<SPACE> , F",
+                "<SPACE> , t",
+                "<SPACE> , R",
+                "<SPACE> , n",
+                "<SPACE> , z",
+                "<SPACE> , v",
+                "<SPACE> , c",
+                "<SPACE> , T",
+                "<SPACE> , m",
+                "<SPACE> , k",
+                "<SPACE> , C",
+                "<SPACE> , o")));
     }
 
     @Test
@@ -62,6 +103,24 @@ class JavaLspPluginSupportTest {
 
             assertEquals(1, client.organizeImportsCalls);
             assertEquals("class Demo {}\n", buffer.getString());
+            assertSame(window.getNormalMode(), window.getCurrentMode());
+        }
+    }
+
+    @Test
+    void normalModeLeaderCommaHShowsHoverForJavaBuffers() throws IOException {
+        var client = new RecordingJavaLspClient();
+        JavaLSPClient.installInstance(client);
+        JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
+        try (var harness = HeadlessWindowHarness.create(writeFile("Demo.java", "class Demo {}\n"), 40, 12)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatchIncrementally(window.getCurrentMode(),
+                    HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key(','),
+                    HeadlessWindowHarness.key('h'));
+
+            assertEquals(1, client.hoverCalls);
             assertSame(window.getNormalMode(), window.getCurrentMode());
         }
     }
@@ -123,6 +182,7 @@ class JavaLspPluginSupportTest {
     private static final class RecordingJavaLspClient extends JavaLSPClient {
         private int organizeImportsCalls;
         private int goToDefinitionCalls;
+        private int hoverCalls;
 
         private RecordingJavaLspClient() {
             super(new JavaLspProvider() {
@@ -152,6 +212,11 @@ class JavaLspPluginSupportTest {
         @Override
         public void goToDefinition(BufferContext bufferContext) {
             goToDefinitionCalls++;
+        }
+
+        @Override
+        public void showHover(BufferContext bufferContext) {
+            hoverCalls++;
         }
     }
 }
