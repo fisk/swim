@@ -37,7 +37,7 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
     private static final Object NETBEANS_STDIO_LOCK = new Object();
     private static final String EMBEDDED_LAUNCH_HINT =
             "Embedded Oracle Java LSP requires launching Swim with the NetBeans JVM compatibility flags. "
-                    + "Use ~/.swim/image/bin/swim or an equivalent launcher.";
+                    + "Use ~/.swim/bin/swim or an equivalent launcher.";
     private final Path _extensionPath;
 
     EmbeddedOracleModuleLayerLspProvider(Path extensionPath) {

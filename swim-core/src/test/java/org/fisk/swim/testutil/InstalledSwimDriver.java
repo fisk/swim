@@ -26,7 +26,7 @@ public final class InstalledSwimDriver {
     }
 
     public static Path launcherBinary() {
-        Path launcherBinary = buildRoot().resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot().resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         return launcherBinary;
     }

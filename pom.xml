@@ -182,10 +182,16 @@
         <configuration>
           <filesets>
             <fileset>
+              <directory>${project.basedir}/bin</directory>
+            </fileset>
+            <fileset>
               <directory>${project.basedir}/image</directory>
             </fileset>
             <fileset>
               <directory>${project.basedir}/plugins</directory>
+            </fileset>
+            <fileset>
+              <directory>${project.basedir}/share</directory>
             </fileset>
           </filesets>
         </configuration>

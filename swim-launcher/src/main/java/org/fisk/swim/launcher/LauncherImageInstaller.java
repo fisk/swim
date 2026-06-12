@@ -22,6 +22,7 @@ public final class LauncherImageInstaller {
     private static final Pattern DEFAULT_OPTIONS_PATTERN =
             Pattern.compile("(?m)^default_options=\"(.*)\"$");
     private static final String APP_NAME = "swim";
+    private static final Path PUBLIC_LAUNCHER_TARGET = Path.of("bin", APP_NAME);
     private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
     private static final List<String> CLIENT_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
@@ -70,7 +71,9 @@ public final class LauncherImageInstaller {
         deleteRecursively(imageRoot);
         runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), imageRoot);
         installJavaLauncher(imageRoot);
-        installSourceLauncher(imageRoot.resolve("bin").resolve(APP_NAME), resolveNetBeansJvmArgs(swimHome));
+        installSourceLauncher(swimHome.resolve(PUBLIC_LAUNCHER_TARGET),
+                imageRoot.resolve("bin").resolve(javaExecutableName()), resolveNetBeansJvmArgs(swimHome));
+        Files.deleteIfExists(imageRoot.resolve("bin").resolve(APP_NAME));
     }
 
     static Path findLauncherJar(Path launcherTarget) throws IOException {
@@ -252,28 +255,32 @@ public final class LauncherImageInstaller {
     }
 
     static void installJavaLauncher(Path imageRoot) throws IOException {
-        String osName = System.getProperty("os.name").toLowerCase();
-        String executable = osName.contains("win") ? "java.exe" : "java";
-        Path source = javaHomeBin().resolve(executable);
-        Path target = imageRoot.resolve("bin").resolve(executable);
+        Path source = javaHomeBin().resolve(javaExecutableName());
+        Path target = imageRoot.resolve("bin").resolve(javaExecutableName());
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
         target.toFile().setExecutable(true, false);
     }
 
     static void installSourceLauncher(Path launcher, List<String> launcherOptions) throws IOException {
-        if (!Files.isRegularFile(launcher)) {
-            return;
-        }
+        installSourceLauncher(launcher, launcher.getParent().resolve(javaExecutableName()), launcherOptions);
+    }
+
+    static void installSourceLauncher(Path launcher, Path embeddedJava, List<String> launcherOptions) throws IOException {
         var appOptions = new ArrayList<String>();
         appOptions.addAll(APP_JVM_OPTIONS);
         appOptions.addAll(launcherOptions);
         var clientOptions = new ArrayList<String>();
         clientOptions.addAll(CLIENT_JVM_OPTIONS);
-        Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
+        Files.createDirectories(launcher.getParent());
+        embeddedJava = embeddedJava.toAbsolutePath().normalize();
         Files.writeString(launcher, sourceLauncher(embeddedJava, javaShebangOptions(clientOptions),
                 javaListLiteral(appOptions), javaListLiteral(SERVER_JVM_OPTIONS),
                 javaStringLiteral(FINAL_FIELD_MUTATION_OPTION)), StandardCharsets.UTF_8);
         launcher.toFile().setExecutable(true, false);
+    }
+
+    private static String javaExecutableName() {
+        return System.getProperty("os.name").toLowerCase().contains("win") ? "java.exe" : "java";
     }
 
     private static String javaShebangOptions(List<String> values) {
@@ -312,6 +319,7 @@ public final class LauncherImageInstaller {
                     private static final String FINAL_FIELD_MUTATION_OPTION = %s;
                     private static final List<String> APP_JVM_OPTIONS = %s;
                     private static final List<String> SERVER_JVM_OPTIONS = %s;
+                    private static final Path EMBEDDED_JAVA = Path.of(%s);
                     private static final Duration SERVER_START_TIMEOUT = Duration.ofSeconds(5);
 
                     public static void main(String[] args) throws Exception {
@@ -326,7 +334,7 @@ public final class LauncherImageInstaller {
                         }
                         LaunchRequest request = LaunchRequest.parse(args);
                         Path launcher = launcherPath();
-                        Path java = launcher.getParent().resolve("java");
+                        Path java = EMBEDDED_JAVA;
                         Path swimHome = swimHome(launcher);
                         ensureServer(socket, swimHome, java);
                         try (SocketChannel channel = connect(socket)) {
@@ -397,14 +405,22 @@ public final class LauncherImageInstaller {
                     }
 
                     private static Path swimHome(Path launcher) {
-                        Path image = launcher.getParent().getParent();
-                        Path home = image == null ? null : image.getParent();
-                        if (home != null && Files.isRegularFile(home.resolve("pom.xml"))
-                                && Files.isDirectory(home.resolve("swim-core"))) {
-                            return home.toAbsolutePath().normalize();
+                        Path parent = launcher == null ? null : launcher.getParent();
+                        Path candidate = parent == null ? null : parent.getParent();
+                        while (candidate != null) {
+                            if (isSwimHome(candidate)) {
+                                return candidate.toAbsolutePath().normalize();
+                            }
+                            candidate = candidate.getParent();
                         }
                         Path cwdRoot = findBuildRoot(Path.of(System.getProperty("user.dir")));
                         return cwdRoot == null ? Path.of(System.getProperty("user.dir")).toAbsolutePath().normalize() : cwdRoot;
+                    }
+
+                    private static boolean isSwimHome(Path path) {
+                        return path != null
+                                && ((Files.isRegularFile(path.resolve("pom.xml")) && Files.isDirectory(path.resolve("swim-core")))
+                                        || (Files.isDirectory(path.resolve("image")) && Files.isDirectory(path.resolve("plugins"))));
                     }
 
                     private static Path findBuildRoot(Path start) {
@@ -812,7 +828,8 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """, embeddedJava, clientOptions, finalFieldMutationOption, appOptions, serverOptions);
+                """, embeddedJava, clientOptions, finalFieldMutationOption, appOptions, serverOptions,
+                javaStringLiteral(embeddedJava.toString()));
     }
 
     private static void runTool(String name, List<String> args) throws IOException {

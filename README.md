@@ -15,13 +15,24 @@ cd ~/.swim
 # 3. Build the editor and runtime image.
 mvn package
 
-# 4. Launch SWIM.
-"$HOME/.swim/image/bin/swim"
+# 4. Put the public launcher on PATH.
+export PATH="$HOME/.swim/bin:$PATH"
+
+# 5. Launch SWIM.
+swim
 
 # Open one file, several files, or a directory.
-"$HOME/.swim/image/bin/swim" README.md
-"$HOME/.swim/image/bin/swim" README.md pom.xml
-"$HOME/.swim/image/bin/swim" .
+swim README.md
+swim README.md pom.xml
+swim .
+```
+
+The installed man page is generated from the in-editor `:help` document and paired with that `bin` directory at `~/.swim/share/man/man1/swim.1`.
+On macOS and most Linux systems, adding `~/.swim/bin` to `PATH` also lets `man swim` find it.
+If `manpath` does not list `~/.swim/share/man`, add:
+
+```bash
+export MANPATH="$HOME/.swim/share/man:${MANPATH:-}"
 ```
 
 Startup behavior:
@@ -34,11 +45,13 @@ Startup behavior:
 
 `mvn package` installs runtime artifacts into:
 
+- `~/.swim/bin`
 - `~/.swim/image`
 - `~/.swim/plugins`
+- `~/.swim/share/man`
 - `~/.swim/deps/oracle.oracle-java`
 
-The launcher in `image/bin/swim` is a single-source Java entry point generated into the custom `jlink` image. Its shebang points at the image's embedded `bin/java`, not whatever `java` happens to be on `PATH`. Runtime code is loaded from `plugins/`, so SWIM can rebuild and reload itself without running directly from `target/`.
+The launcher in `bin/swim` is a single-source Java entry point. Its shebang points at the image's embedded `bin/java`, not whatever `java` happens to be on `PATH`. Runtime code is loaded from `plugins/`, so SWIM can rebuild and reload itself without running directly from `target/`.
 
 ## Getting Help
 
@@ -109,7 +122,7 @@ Useful commands while working on SWIM:
 ```bash
 mvn test
 mvn package
-"$HOME/.swim/image/bin/swim" .
+PATH="$HOME/.swim/bin:$PATH" swim .
 ```
 
 Inside a running editor:

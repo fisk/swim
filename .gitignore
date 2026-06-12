@@ -8,6 +8,7 @@
 session.json
 build
 /target/
+/bin/
 /swim-session/target/
 /swim-lsp/target/
 /swim-core/target/
@@ -21,6 +22,7 @@ build
 /swim-git/target/
 /swim-slack/target/
 /image/
+/share/
 /plugins/
 /workspace/
 /email/

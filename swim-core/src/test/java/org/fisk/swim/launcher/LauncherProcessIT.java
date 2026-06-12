@@ -158,7 +158,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Path file = tempDir.resolve("script-launch.txt");
         Files.writeString(file, "abc");
@@ -200,7 +200,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
 
         Path file = buildRoot.resolve("README.md");
@@ -242,7 +242,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Set<Path> existingLogs = listLogFiles();
 
@@ -312,7 +312,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Path javaFile = buildRoot.resolve("swim-java-lsp").resolve("src").resolve("main").resolve("java")
                 .resolve("org").resolve("fisk").resolve("swim").resolve("lsp").resolve("java").resolve("JavaLSPClient.java");
@@ -353,7 +353,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
                 buildRoot,
@@ -418,7 +418,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Set<Path> existingLogs = listLogFiles();
 
@@ -472,7 +472,7 @@ class LauncherProcessIT {
         Path buildRoot = Main.findBuildRoot(Path.of(System.getProperty("user.dir")));
         Assumptions.assumeTrue(buildRoot != null, "Unable to locate build root for launcher process test");
 
-        Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
+        Path launcherBinary = buildRoot.resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
         Set<Path> existingLogs = listLogFiles();
         String session = "swimrebuild-" + System.nanoTime();

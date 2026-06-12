@@ -10,7 +10,7 @@ Normal startup goes through three layers:
 terminal
   |
   v
-image/bin/swim
+bin/swim
   |
   v
 swim-launcher client JVM
@@ -22,7 +22,7 @@ swim-session server JVM
 per-session SWIM app JVM
 ```
 
-`image/bin/swim` is generated into the custom runtime image and uses the image's embedded Java. The public entry point is `org.fisk.swim.launcher.Main`.
+`bin/swim` is generated next to the custom runtime image and uses the image's embedded Java. The public entry point is `org.fisk.swim.launcher.Main`.
 
 When `Main` is run normally, it starts `SwimSessionClient`. The client ensures a background `swim-session` server is running, connects over a Unix-domain socket, enters raw terminal mode, and relays terminal input/output to the attached app session. It also relays resize events explicitly.
 
@@ -54,9 +54,11 @@ The Maven reactor is the architectural map:
 
 Installed runtime artifacts are copied to:
 
-- `image/`: the generated runtime image and `bin/swim` launcher.
+- `bin/`: the public `swim` launcher intended for `PATH`.
+- `image/`: the generated runtime image and embedded Java.
 - `plugins/`: core and plugin jars.
 - `plugins/runtime-libs/`: runtime dependencies used by the app/plugin layers.
+- `share/man/`: the generated `swim(1)` man page paired with `bin/`; its editor-help section is rendered from the same `HelpDocument` used by `:help`.
 - `deps/oracle.oracle-java/`: bundled Java language-server payload.
 
 ## Launch And Plugin Loading
@@ -168,4 +170,4 @@ There are two important test layers:
 - `mvn test` runs the normal unit and non-Failsafe test suites.
 - `mvn verify` runs Failsafe integration tests, including tmux-driven installed-launcher tests.
 
-Startup and reload issues often only appear after `mvn package` regenerates `image/` and `plugins/`. For launcher, plugin loading, terminal mode, or runtime-image changes, use tmux integration coverage that starts `image/bin/swim` with a fresh home. A classpath-only unit test is not enough to catch JPMS layer, plugin jar, generated launcher, or terminal startup regressions.
+Startup and reload issues often only appear after `mvn package` regenerates `bin/`, `image/`, and `plugins/`. For launcher, plugin loading, terminal mode, or runtime-image changes, use tmux integration coverage that starts `bin/swim` with a fresh home. A classpath-only unit test is not enough to catch JPMS layer, plugin jar, generated launcher, or terminal startup regressions.

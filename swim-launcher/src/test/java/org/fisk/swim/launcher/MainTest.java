@@ -258,21 +258,22 @@ class MainTest {
     @Test
     void launcherImageInstallerInstallsSourceLauncher() throws Exception {
         Path launcher = tempDir.resolve("bin").resolve("swim");
-        Files.createDirectories(launcher.getParent());
-        Files.writeString(launcher, "#!/bin/sh\nJLINK_VM_OPTIONS=\nDIR=`dirname $0`\n$DIR/java $JLINK_VM_OPTIONS -m org.fisk.swim.launcher/org.fisk.swim.launcher.Main \"$@\"\n");
+        Path embeddedJava = tempDir.resolve("image").resolve("bin").resolve("java");
 
-        LauncherImageInstaller.installSourceLauncher(launcher, List.of(
+        LauncherImageInstaller.installSourceLauncher(launcher, embeddedJava, List.of(
                 "--add-opens=java.base/java.net=ALL-UNNAMED",
                 "-Djava.awt.headless=true"));
 
         String content = Files.readString(launcher);
-        Path embeddedJava = launcher.getParent().resolve("java").toAbsolutePath().normalize();
+        embeddedJava = embeddedJava.toAbsolutePath().normalize();
         assertTrue(content.startsWith("#!" + embeddedJava + " -XX:+UseZGC -Xmx128M --source 25"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
         assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("private static final Path EMBEDDED_JAVA = Path.of(\"" + embeddedJava + "\")"));
+        assertFalse(content.contains("launcher.getParent().resolve(\"java\")"));
         assertTrue(content.contains("Runtime.version().feature() >= 26"));
         assertTrue(content.contains("options.add(FINAL_FIELD_MUTATION_OPTION)"));
         assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
@@ -298,12 +299,11 @@ class MainTest {
     @Test
     void sourceLauncherSelfTestCompiles() throws Exception {
         Path launcher = tempDir.resolve("bin").resolve("swim");
-        Files.createDirectories(launcher.getParent());
-        Files.writeString(launcher, "placeholder");
-        LauncherImageInstaller.installSourceLauncher(launcher, List.of());
+        Path java = Path.of(System.getProperty("java.home")).resolve("bin").resolve("java")
+                .toAbsolutePath().normalize();
+        LauncherImageInstaller.installSourceLauncher(launcher, java, List.of());
 
-        String java = Path.of(System.getProperty("java.home")).resolve("bin").resolve("java").toString();
-        Process process = new ProcessBuilder(java, "--source", "25", launcher.toString(),
+        Process process = new ProcessBuilder(java.toString(), "--source", "25", launcher.toString(),
                 "--swim-source-client-self-test")
                 .redirectErrorStream(true)
                 .start();
@@ -317,9 +317,9 @@ class MainTest {
     void sourceLauncherRunsThroughEmbeddedJavaShebang() throws Exception {
         assumeTrue(!System.getProperty("os.name").toLowerCase().contains("win"),
                 "source launcher shebang is Unix-only");
-        Path launcher = tempDir.resolve("embedded").resolve("bin").resolve("swim");
-        Files.createDirectories(launcher.getParent());
-        Path embeddedJava = launcher.getParent().resolve("java");
+        Path launcher = tempDir.resolve("swim-home").resolve("bin").resolve("swim");
+        Path embeddedJava = tempDir.resolve("swim-home").resolve("image").resolve("bin").resolve("java");
+        Files.createDirectories(embeddedJava.getParent());
         Path currentJava = Path.of(System.getProperty("java.home")).resolve("bin").resolve("java")
                 .toAbsolutePath().normalize();
         try {
@@ -328,8 +328,7 @@ class MainTest {
             assumeTrue(false, "symbolic links are unavailable: " + e.getMessage());
         }
         try {
-            Files.writeString(launcher, "placeholder");
-            LauncherImageInstaller.installSourceLauncher(launcher, List.of());
+            LauncherImageInstaller.installSourceLauncher(launcher, embeddedJava, List.of());
 
             Process process = new ProcessBuilder(launcher.toString(), "--swim-source-client-self-test")
                     .redirectErrorStream(true)
