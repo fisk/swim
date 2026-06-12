@@ -35,6 +35,25 @@ class EventThreadTest {
     }
 
     @Test
+    void runnableEventExecutesOnVirtualThread() throws Exception {
+        var thread = new EventThread();
+        var eventRan = new CountDownLatch(1);
+        var virtualThread = new AtomicReference<Boolean>();
+        thread.start();
+
+        thread.enqueue(new RunnableEvent(() -> {
+            virtualThread.set(Thread.currentThread().isVirtual());
+            eventRan.countDown();
+        }));
+
+        assertTrue(eventRan.await(2, TimeUnit.SECONDS));
+        assertEquals(Boolean.TRUE, virtualThread.get());
+
+        thread.shutdown();
+        thread.join(2000);
+    }
+
+    @Test
     void postEventHookErrorDoesNotStopEventThread() throws Exception {
         var thread = new EventThread();
         var firstEventRan = new CountDownLatch(1);

@@ -57,11 +57,8 @@ public class EventThread extends Thread {
         super("swim-event-thread");
         setDaemon(true);
         _responder = new ListEventResponder();
-        _eventExecutor = Executors.newSingleThreadExecutor(runnable -> {
-            var thread = new Thread(runnable, "event-thread-worker");
-            thread.setDaemon(true);
-            return thread;
-        });
+        _eventExecutor = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("swim-event-worker-", 0).factory());
     }
 
     public static void shutdownInstance() {
