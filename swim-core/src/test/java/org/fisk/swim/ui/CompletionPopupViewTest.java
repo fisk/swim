@@ -9,7 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import org.eclipse.lsp4j.CompletionItem;
-import org.fisk.swim.lsp.java.JavaCompletionSession;
+import org.fisk.swim.lsp.LspCompletionSession;
 import org.fisk.swim.text.BufferContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -54,8 +54,8 @@ class CompletionPopupViewTest {
         return new BufferContext(Rect.create(0, 0, width, height), path);
     }
 
-    private JavaCompletionSession session(BufferContext context) {
-        return JavaCompletionSession.create(
+    private LspCompletionSession session(BufferContext context) {
+        return LspCompletionSession.create(
                 context,
                 "pri",
                 0,

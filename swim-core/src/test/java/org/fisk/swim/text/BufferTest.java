@@ -16,7 +16,6 @@ import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
-import org.fisk.swim.lsp.cpp.ClangdLspPluginSupport;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
@@ -134,26 +133,6 @@ class BufferTest {
                 }
                 """, buffer.getString());
         assertEquals(buffer.getString().indexOf("value();") + "value();".length(), buffer.getCursor().getPosition());
-    }
-
-    @Test
-    void newlineInsideCppBlockUsesTwoSpaceIndentation() throws IOException {
-        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
-        var context = createCppBufferContext("""
-                int main() {}
-                """, 120);
-        var buffer = context.getBuffer();
-        int insertPosition = buffer.getString().indexOf('{') + 1;
-        buffer.getCursor().setPosition(insertPosition);
-
-        buffer.insert("\n");
-        buffer.insert("return 0;");
-
-        assertEquals("""
-                int main() {
-                  return 0;
-                }
-                """, buffer.getString());
     }
 
     @Test

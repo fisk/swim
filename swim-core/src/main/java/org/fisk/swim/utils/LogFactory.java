@@ -4,19 +4,18 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class LogFactory {
+    private static final StackWalker WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+
     public static String getCallerClassName() {
-        StackTraceElement[] elements = Thread.currentThread().getStackTrace();
-        StackTraceElement element = elements[4];
-        return element.getClassName();
+        return getCallerClass().getName();
     }
 
     public static Class<?> getCallerClass() {
-        try {
-            return Class.forName(getCallerClassName());
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
-        }
-        return null;
+        return WALKER.walk(frames -> frames
+                .map(StackWalker.StackFrame::getDeclaringClass)
+                .filter(clazz -> clazz != LogFactory.class)
+                .findFirst()
+                .orElse(LogFactory.class));
     }
 
     public static Logger createLog() {

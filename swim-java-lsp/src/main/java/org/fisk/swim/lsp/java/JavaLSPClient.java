@@ -98,6 +98,8 @@ import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.LspCompletionSession;
+import org.fisk.swim.lsp.LspLocationMenuSession;
 import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
 import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
 import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
@@ -106,7 +108,7 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.CompletionPopupView;
-import org.fisk.swim.ui.JavaDefinitionPopupView;
+import org.fisk.swim.ui.LspLocationPopupView;
 import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
@@ -163,7 +165,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             this::fetchSemanticHighlights,
             250,
             20);
-    private final AsyncCompletionCoordinator<CompletionRequestSnapshot, JavaCompletionSession> _completionRequests =
+    private final AsyncCompletionCoordinator<CompletionRequestSnapshot, LspCompletionSession> _completionRequests =
             new AsyncCompletionCoordinator<>(_lspRequestQueue, this::runOnEventThread);
     private Thread _shutdownHook;
     private AutoCloseable _providerConnection;
@@ -182,10 +184,10 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private final Object _definitionLock = new Object();
     private final Object _snippetLock = new Object();
 
-    private JavaCompletionSession _completionSession;
+    private LspCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
-    private JavaDefinitionMenuSession _definitionMenuSession;
-    private JavaDefinitionPopupView _definitionPopupView;
+    private LspLocationMenuSession _definitionMenuSession;
+    private LspLocationPopupView _definitionPopupView;
     private JavaSnippetSession _snippetSession;
 
     static record SemanticHighlight(int start, int end, TextColor foregroundColor) {
@@ -1061,7 +1063,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                 generation);
     }
 
-    private JavaCompletionSession requestCompletionSession(CompletionRequestSnapshot snapshot) {
+    private LspCompletionSession requestCompletionSession(CompletionRequestSnapshot snapshot) {
         if (!supportsCompletion() || !_completionRequests.isCurrent(snapshot)) {
             return null;
         }
@@ -1087,7 +1089,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             if (items == null || items.isEmpty()) {
                 return null;
             }
-            return JavaCompletionSession.create(
+            return LspCompletionSession.create(
                     snapshot.bufferContext(),
                     snapshot.prefix(),
                     snapshot.replacementStart(),
@@ -1100,7 +1102,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
-    private void showCompletionSession(JavaCompletionSession session) {
+    private void showCompletionSession(LspCompletionSession session) {
         synchronized (_completionLock) {
             _completionSession = session;
         }
@@ -1234,7 +1236,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             if (_completionSession == null) {
                 return false;
             }
-            _completionSession.pageSelection(1, JavaCompletionSession.DEFAULT_VISIBLE_ROWS);
+            _completionSession.pageSelection(1, LspCompletionSession.DEFAULT_VISIBLE_ROWS);
             if (_completionPopupView != null) {
                 _completionPopupView.setNeedsRedraw();
             }
@@ -1248,7 +1250,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             if (_completionSession == null) {
                 return false;
             }
-            _completionSession.pageSelection(-1, JavaCompletionSession.DEFAULT_VISIBLE_ROWS);
+            _completionSession.pageSelection(-1, LspCompletionSession.DEFAULT_VISIBLE_ROWS);
             if (_completionPopupView != null) {
                 _completionPopupView.setNeedsRedraw();
             }
@@ -1347,7 +1349,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     public boolean cancelDefinitionMenu() {
-        JavaDefinitionPopupView popupView;
+        LspLocationPopupView popupView;
         synchronized (_definitionLock) {
             if (_definitionMenuSession == null && _definitionPopupView == null) {
                 return false;
@@ -1450,7 +1452,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
-    private TextEdit primaryCompletionEdit(BufferContext bufferContext, JavaCompletionSession session, CompletionItem item) {
+    private TextEdit primaryCompletionEdit(BufferContext bufferContext, LspCompletionSession session, CompletionItem item) {
         if (item.getTextEdit() != null) {
             if (item.getTextEdit().isLeft()) {
                 return item.getTextEdit().getLeft();
@@ -1511,7 +1513,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
-    private void applyCompletionItem(BufferContext bufferContext, JavaCompletionSession session, CompletionItem item) {
+    private void applyCompletionItem(BufferContext bufferContext, LspCompletionSession session, CompletionItem item) {
         if (item == null) {
             return;
         }
@@ -1553,7 +1555,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     @Override
     public boolean acceptCompletion(BufferContext bufferContext) {
-        JavaCompletionSession session;
+        LspCompletionSession session;
         synchronized (_completionLock) {
             session = _completionSession;
         }
@@ -1586,7 +1588,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return _gson.fromJson(_gson.toJsonTree(rawEdit), WorkspaceEdit.class);
     }
 
-    private List<JavaDefinitionMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext) throws Exception {
+    private List<LspLocationMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext) throws Exception {
         int cursor = bufferContext.getBuffer().getCursor().getPosition();
         var params = new DefinitionParams(bufferContext.getBuffer().getTextDocumentID(), getPosition(bufferContext, cursor));
         var response = _server.getTextDocumentService().definition(params).get(2, TimeUnit.SECONDS);
@@ -1601,7 +1603,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             return List.of();
         }
 
-        var deduped = new LinkedHashMap<String, JavaDefinitionMenuSession.Entry>();
+        var deduped = new LinkedHashMap<String, LspLocationMenuSession.Entry>();
         for (var entry : entries) {
             String key = entry.path().toAbsolutePath().normalize() + ":" + entry.position().getLine() + ":" + entry.position().getCharacter();
             deduped.putIfAbsent(key, entry);
@@ -1609,7 +1611,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return List.copyOf(deduped.values());
     }
 
-    private List<JavaDefinitionMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
+    private List<LspLocationMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
         int cursor = bufferContext.getBuffer().getCursor().getPosition();
         var params = new ReferenceParams(
                 bufferContext.getBuffer().getTextDocumentID(),
@@ -1619,7 +1621,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         if (response == null || response.isEmpty()) {
             return List.of();
         }
-        var deduped = new LinkedHashMap<String, JavaDefinitionMenuSession.Entry>();
+        var deduped = new LinkedHashMap<String, LspLocationMenuSession.Entry>();
         for (var location : response) {
             var entry = definitionEntry(location);
             if (entry == null) {
@@ -1631,10 +1633,10 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return List.copyOf(deduped.values());
     }
 
-    private List<JavaDefinitionMenuSession.Entry> definitionEntries(
+    private List<LspLocationMenuSession.Entry> definitionEntries(
             List<? extends Location> locations,
             List<? extends LocationLink> links) {
-        var entries = new ArrayList<JavaDefinitionMenuSession.Entry>();
+        var entries = new ArrayList<LspLocationMenuSession.Entry>();
         if (locations != null) {
             for (var location : locations) {
                 var entry = definitionEntry(location);
@@ -1654,14 +1656,14 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return entries;
     }
 
-    private JavaDefinitionMenuSession.Entry definitionEntry(Location location) {
+    private LspLocationMenuSession.Entry definitionEntry(Location location) {
         if (location == null || location.getRange() == null) {
             return null;
         }
         return definitionEntry(location.getUri(), location.getRange().getStart());
     }
 
-    private JavaDefinitionMenuSession.Entry definitionEntry(LocationLink locationLink) {
+    private LspLocationMenuSession.Entry definitionEntry(LocationLink locationLink) {
         if (locationLink == null) {
             return null;
         }
@@ -1674,7 +1676,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return definitionEntry(locationLink.getTargetUri(), targetRange.getStart());
     }
 
-    private JavaDefinitionMenuSession.Entry definitionEntry(String uri, Position position) {
+    private LspLocationMenuSession.Entry definitionEntry(String uri, Position position) {
         if (uri == null || position == null) {
             return null;
         }
@@ -1689,7 +1691,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         String location = displayPath(path) + ":" + (position.getLine() + 1) + ":" + (position.getCharacter() + 1);
         String preview = previewText(path, position.getLine());
         String label = preview.isBlank() ? location : location + "  " + preview;
-        return new JavaDefinitionMenuSession.Entry(label, path.toString(), path, position);
+        return new LspLocationMenuSession.Entry(label, path.toString(), path, position);
     }
 
     private String displayPath(Path path) {
@@ -1717,17 +1719,17 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }
     }
 
-    private void showLocationMenu(BufferContext bufferContext, List<JavaDefinitionMenuSession.Entry> entries, String title) {
+    private void showLocationMenu(BufferContext bufferContext, List<LspLocationMenuSession.Entry> entries, String title) {
         var window = Window.getInstance();
         if (window == null || window.getRootView() == null) {
             return;
         }
 
-        var session = new JavaDefinitionMenuSession(bufferContext, entries, title);
+        var session = new LspLocationMenuSession(bufferContext, entries, title);
         synchronized (_definitionLock) {
             _definitionMenuSession = session;
             if (_definitionPopupView == null || _definitionPopupView.getParent() == null) {
-                _definitionPopupView = new JavaDefinitionPopupView(Rect.create(0, 0, 0, 0));
+                _definitionPopupView = new LspLocationPopupView(Rect.create(0, 0, 0, 0));
                 _definitionPopupView.setOnAccept(this::acceptDefinitionSelection);
                 _definitionPopupView.setOnCancel(this::cancelDefinitionMenu);
                 window.getRootView().addSubview(_definitionPopupView);
@@ -1740,7 +1742,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private void acceptDefinitionSelection() {
-        JavaDefinitionMenuSession.Entry entry;
+        LspLocationMenuSession.Entry entry;
         synchronized (_definitionLock) {
             entry = _definitionMenuSession == null ? null : _definitionMenuSession.getSelectedEntry();
         }
@@ -1752,7 +1754,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         cancelDefinitionMenu();
     }
 
-    private void jumpToDefinition(JavaDefinitionMenuSession.Entry entry) {
+    private void jumpToDefinition(LspLocationMenuSession.Entry entry) {
         var window = Window.getInstance();
         if (window == null) {
             return;
@@ -1837,7 +1839,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             buffer.insert(edit._start, newText);
         }
         if (!edits.isEmpty()) {
-            buffer.getUndoLog().commit();
+            buffer.commitUndo();
         }
     }
 

@@ -1,4 +1,4 @@
-package org.fisk.swim.lsp.java;
+package org.fisk.swim.lsp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -14,7 +14,7 @@ import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-class JavaCompletionSessionTest {
+class LspCompletionSessionTest {
     @TempDir
     Path tempDir;
 
@@ -26,10 +26,10 @@ class JavaCompletionSessionTest {
         var beta = item("beta", "010", false, "", "Demo");
         var gamma = item("gamma", "999", true, "", "Demo");
 
-        var session = JavaCompletionSession.create(context, "prin", 0, 4, List.of(beta, gamma, alpha), true);
+        var session = LspCompletionSession.create(context, "prin", 0, 4, List.of(beta, gamma, alpha), true);
 
         assertEquals(List.of("gamma", "alpha", "beta"),
-                session.getEntries().stream().map(JavaCompletionSession.Entry::getLabel).toList());
+                session.getEntries().stream().map(LspCompletionSession.Entry::getLabel).toList());
         assertEquals(0, session.getSelection());
         assertEquals("gamma", session.getSelectedEntry().getLabel());
 

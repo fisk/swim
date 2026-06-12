@@ -7,24 +7,24 @@ import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
-import org.fisk.swim.lsp.java.JavaDefinitionMenuSession;
+import org.fisk.swim.lsp.LspLocationMenuSession;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-public class JavaDefinitionPopupView extends View implements KeyBindingHintProvider {
+public class LspLocationPopupView extends View implements KeyBindingHintProvider {
     private static final int MIN_WIDTH = 28;
     private static final int MAX_WIDTH = 88;
 
     private final ListEventResponder _responders = new ListEventResponder();
 
-    private JavaDefinitionMenuSession _session;
+    private LspLocationMenuSession _session;
     private String _title = "Definitions";
     private Runnable _onAccept = () -> {
     };
     private Runnable _onCancel = () -> {
     };
 
-    public JavaDefinitionPopupView(Rect bounds) {
+    public LspLocationPopupView(Rect bounds) {
         super(bounds);
         setBackgroundColour(UiTheme.SURFACE_ELEVATED);
         _responders.addEventResponder("j", "Definitions", "move down", () -> moveSelection(1));
@@ -49,14 +49,14 @@ public class JavaDefinitionPopupView extends View implements KeyBindingHintProvi
         return _session == null || _session.isEmpty() ? List.of() : _responders.keyBindingHints();
     }
 
-    public void setSession(JavaDefinitionMenuSession session) {
+    public void setSession(LspLocationMenuSession session) {
         _session = session;
         _title = session == null ? "Definitions" : session.getTitle();
         syncBounds();
         setNeedsRedraw();
     }
 
-    public JavaDefinitionMenuSession getSession() {
+    public LspLocationMenuSession getSession() {
         return _session;
     }
 
@@ -103,9 +103,9 @@ public class JavaDefinitionPopupView extends View implements KeyBindingHintProvi
         super.draw(rect);
 
         var session = _session;
-        int visibleRows = Math.min(JavaDefinitionMenuSession.DEFAULT_VISIBLE_ROWS, session.size());
+        int visibleRows = Math.min(LspLocationMenuSession.DEFAULT_VISIBLE_ROWS, session.size());
         session.ensureSelectionVisible(visibleRows);
-        List<JavaDefinitionMenuSession.Entry> visible = session.visibleEntries(visibleRows);
+        List<LspLocationMenuSession.Entry> visible = session.visibleEntries(visibleRows);
 
         var graphics = TerminalContext.getInstance().getGraphics();
         int width = rect.getSize().getWidth();
@@ -158,7 +158,7 @@ public class JavaDefinitionPopupView extends View implements KeyBindingHintProvi
         }
 
         int width = Math.min(parentSize.getWidth(), preferredWidth());
-        int visibleRows = Math.min(JavaDefinitionMenuSession.DEFAULT_VISIBLE_ROWS, _session.size());
+        int visibleRows = Math.min(LspLocationMenuSession.DEFAULT_VISIBLE_ROWS, _session.size());
         int height = Math.min(parentSize.getHeight(), visibleRows + 2);
 
         var cursor = _session.getBufferContext().getBuffer().getCursor();

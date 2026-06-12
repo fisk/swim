@@ -9,6 +9,7 @@ module org.fisk.swim.core {
     requires java.management;
     requires java.net.http;
     requires java.sql;
+    requires java.xml;
     requires static jdk.httpserver;
     requires org.apache.logging.log4j;
     requires org.apache.logging.log4j.core;
@@ -21,13 +22,17 @@ module org.fisk.swim.core {
     requires org.fisk.swim.session;
     requires org.slf4j;
 
+    exports org.fisk.swim;
+    exports org.fisk.swim.event;
+    exports org.fisk.swim.fileindex;
+    exports org.fisk.swim.lsp;
     exports org.fisk.swim.mail;
     exports org.fisk.swim.slack;
     exports org.fisk.swim.debug;
-    exports org.fisk.swim.lsp.cpp;
-    exports org.fisk.swim.lsp.java;
+    exports org.fisk.swim.text;
+    exports org.fisk.swim.ui;
+    exports org.fisk.swim.utils;
     opens org.fisk.swim.config to com.google.gson;
-    opens org.fisk.swim.lsp.java to org.eclipse.lsp4j.jsonrpc;
 
     provides org.fisk.swim.api.SwimApp with org.fisk.swim.SwimAppImpl;
 }

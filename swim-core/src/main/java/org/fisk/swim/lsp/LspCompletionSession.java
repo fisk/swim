@@ -1,4 +1,4 @@
-package org.fisk.swim.lsp.java;
+package org.fisk.swim.lsp;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -9,7 +9,7 @@ import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.CompletionItemLabelDetails;
 import org.fisk.swim.text.BufferContext;
 
-public final class JavaCompletionSession {
+public final class LspCompletionSession {
     public static final int DEFAULT_VISIBLE_ROWS = 8;
 
     public static final class Entry {
@@ -80,7 +80,7 @@ public final class JavaCompletionSession {
     private int _selection;
     private int _scrollOffset;
 
-    private JavaCompletionSession(
+    private LspCompletionSession(
             BufferContext bufferContext,
             List<Entry> entries,
             String prefix,
@@ -99,7 +99,7 @@ public final class JavaCompletionSession {
         ensureSelectionVisible(DEFAULT_VISIBLE_ROWS);
     }
 
-    public static JavaCompletionSession create(
+    public static LspCompletionSession create(
             BufferContext bufferContext,
             String prefix,
             int replacementStart,
@@ -125,7 +125,7 @@ public final class JavaCompletionSession {
             }
         }
 
-        return new JavaCompletionSession(
+        return new LspCompletionSession(
                 bufferContext,
                 List.copyOf(entries),
                 prefix,

@@ -42,7 +42,7 @@ import org.eclipse.lsp4j.LocationLink;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.HeadlessWindowHarness;
-import org.fisk.swim.ui.JavaDefinitionPopupView;
+import org.fisk.swim.ui.LspLocationPopupView;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -672,7 +672,7 @@ class JavaLSPClientTest {
 
             client.goToDefinition(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             assertEquals(2, popup.getSession().size());
             assertTrue(popup.getSession().getEntries().get(0).label().contains("TargetOne.txt:1:1"));
         }
@@ -698,7 +698,7 @@ class JavaLSPClientTest {
             var window = harness.getWindow();
             client.goToDefinition(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
 
@@ -731,7 +731,7 @@ class JavaLSPClientTest {
 
             client.findReferences(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             assertEquals("References", popup.getTitle());
             assertEquals(2, popup.getSession().size());
             assertTrue(popup.getSession().getEntries().get(0).label().contains("RefOne.txt:1:1"));
@@ -758,7 +758,7 @@ class JavaLSPClientTest {
             var window = harness.getWindow();
             client.findReferences(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());
 

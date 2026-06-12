@@ -3,7 +3,7 @@ package org.fisk.swim.ui;
 import java.util.List;
 
 import org.eclipse.lsp4j.CompletionItemKind;
-import org.fisk.swim.lsp.java.JavaCompletionSession;
+import org.fisk.swim.lsp.LspCompletionSession;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
@@ -15,20 +15,20 @@ public class CompletionPopupView extends View {
     private static final int MIN_WIDTH = 24;
     private static final int MAX_WIDTH = 72;
 
-    private JavaCompletionSession _session;
+    private LspCompletionSession _session;
 
     public CompletionPopupView(Rect bounds) {
         super(bounds);
         setBackgroundColour(TextColor.ANSI.BLACK);
     }
 
-    public void setSession(JavaCompletionSession session) {
+    public void setSession(LspCompletionSession session) {
         _session = session;
         syncBounds();
         setNeedsRedraw();
     }
 
-    public JavaCompletionSession getSession() {
+    public LspCompletionSession getSession() {
         return _session;
     }
 
@@ -57,7 +57,7 @@ public class CompletionPopupView extends View {
         super.draw(rect);
 
         var session = _session;
-        int visibleRows = Math.min(JavaCompletionSession.DEFAULT_VISIBLE_ROWS, session.size());
+        int visibleRows = Math.min(LspCompletionSession.DEFAULT_VISIBLE_ROWS, session.size());
         session.ensureSelectionVisible(visibleRows);
         var visible = session.visibleEntries(visibleRows);
 
@@ -70,7 +70,7 @@ public class CompletionPopupView extends View {
     private void drawHeader(
             Rect rect,
             com.googlecode.lanterna.graphics.TextGraphics graphics,
-            JavaCompletionSession session) {
+            LspCompletionSession session) {
         graphics.setBackgroundColor(TextColor.ANSI.CYAN);
         graphics.drawRectangle(
                 new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
@@ -89,8 +89,8 @@ public class CompletionPopupView extends View {
     private void drawEntries(
             Rect rect,
             com.googlecode.lanterna.graphics.TextGraphics graphics,
-            JavaCompletionSession session,
-            List<JavaCompletionSession.Entry> visible) {
+            LspCompletionSession session,
+            List<LspCompletionSession.Entry> visible) {
         int width = rect.getSize().getWidth();
         int startY = rect.getPoint().getY() + 1;
         int globalIndex = session.getScrollOffset();
@@ -140,7 +140,7 @@ public class CompletionPopupView extends View {
     private void drawFooter(
             Rect rect,
             com.googlecode.lanterna.graphics.TextGraphics graphics,
-            JavaCompletionSession session) {
+            LspCompletionSession session) {
         int footerY = rect.getPoint().getY() + rect.getSize().getHeight() - 1;
         graphics.setBackgroundColor(TextColor.ANSI.GREEN);
         graphics.drawRectangle(
@@ -166,7 +166,7 @@ public class CompletionPopupView extends View {
         }
 
         int width = Math.min(parentSize.getWidth(), preferredWidth());
-        int visibleRows = Math.min(JavaCompletionSession.DEFAULT_VISIBLE_ROWS, _session.size());
+        int visibleRows = Math.min(LspCompletionSession.DEFAULT_VISIBLE_ROWS, _session.size());
         int height = Math.min(parentSize.getHeight(), visibleRows + 2);
 
         var bufferView = _session.getBufferContext().getBufferView();

@@ -1,4 +1,4 @@
-package org.fisk.swim.lsp.java;
+package org.fisk.swim.lsp;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -6,7 +6,7 @@ import java.util.List;
 import org.eclipse.lsp4j.Position;
 import org.fisk.swim.text.BufferContext;
 
-public final class JavaDefinitionMenuSession {
+public final class LspLocationMenuSession {
     public static final int DEFAULT_VISIBLE_ROWS = 8;
 
     public record Entry(String label, String detail, Path path, Position position) {
@@ -18,11 +18,11 @@ public final class JavaDefinitionMenuSession {
     private int _selection;
     private int _scrollOffset;
 
-    public JavaDefinitionMenuSession(BufferContext bufferContext, List<Entry> entries) {
+    public LspLocationMenuSession(BufferContext bufferContext, List<Entry> entries) {
         this(bufferContext, entries, "Definitions");
     }
 
-    public JavaDefinitionMenuSession(BufferContext bufferContext, List<Entry> entries, String title) {
+    public LspLocationMenuSession(BufferContext bufferContext, List<Entry> entries, String title) {
         _bufferContext = bufferContext;
         _entries = List.copyOf(entries);
         _title = title == null || title.isBlank() ? "Definitions" : title;

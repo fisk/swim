@@ -3007,7 +3007,7 @@ public class Window implements Drawable {
         if (responder instanceof ListView) {
             return KeyMenuView.FocusContext.LIST_PANEL;
         }
-        if (responder instanceof JavaDefinitionPopupView) {
+        if (responder instanceof LspLocationPopupView) {
             return KeyMenuView.FocusContext.LIST_PANEL;
         }
         if (responder instanceof DiagnosticPopupView) {
@@ -3062,7 +3062,7 @@ public class Window implements Drawable {
         if (responder instanceof ListView listView) {
             return listView.getTitle();
         }
-        if (responder instanceof JavaDefinitionPopupView popupView) {
+        if (responder instanceof LspLocationPopupView popupView) {
             return popupView.getTitle();
         }
         if (responder instanceof DiagnosticPopupView popupView) {

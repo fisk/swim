@@ -22,7 +22,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.fisk.swim.ui.HeadlessWindowHarness;
-import org.fisk.swim.ui.JavaDefinitionPopupView;
+import org.fisk.swim.ui.LspLocationPopupView;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -64,7 +64,7 @@ class ClangdLspNavigationTest {
 
             client.goToDefinition(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             assertEquals("Definitions", popup.getTitle());
             assertEquals(2, popup.getSession().size());
             assertTrue(popup.getSession().getEntries().get(0).label().contains("target-one.cpp:1:1"));
@@ -91,7 +91,7 @@ class ClangdLspNavigationTest {
             var window = harness.getWindow();
             client.findReferences(window.getBufferContext());
 
-            var popup = assertInstanceOf(JavaDefinitionPopupView.class, window.getRootView().getFirstResponder());
+            var popup = assertInstanceOf(LspLocationPopupView.class, window.getRootView().getFirstResponder());
             assertEquals("References", popup.getTitle());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.down());
             HeadlessWindowHarness.dispatch(popup, HeadlessWindowHarness.enter());

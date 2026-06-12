@@ -15,9 +15,11 @@ import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.LanguageModeProvider;
+import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.HeadlessWindowHarness;
+import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.Window;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +61,28 @@ class ClangdLspPluginSupportTest {
             assertNotNull(mode);
             assertInstanceOf(ClangdLspClient.class, mode);
         }
+    }
+
+    @Test
+    void newlineInsideCppBlockUsesTwoSpaceIndentation() throws Exception {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        Path file = tempDir.resolve("indent.cpp");
+        Files.writeString(file, """
+                int main() {}
+                """);
+        var context = new BufferContext(Rect.create(0, 0, 120, 20), file);
+        var buffer = context.getBuffer();
+        int insertPosition = buffer.getString().indexOf('{') + 1;
+        buffer.getCursor().setPosition(insertPosition);
+
+        buffer.insert("\n");
+        buffer.insert("return 0;");
+
+        assertEquals("""
+                int main() {
+                  return 0;
+                }
+                """, buffer.getString());
     }
 
     @Test

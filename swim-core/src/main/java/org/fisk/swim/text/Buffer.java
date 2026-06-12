@@ -201,6 +201,10 @@ public class Buffer {
         return _undoLog;
     }
 
+    public void commitUndo() {
+        _undoLog.commit();
+    }
+
     public void rawInsert(int position, String str) {
         if (_readOnly) {
             return;

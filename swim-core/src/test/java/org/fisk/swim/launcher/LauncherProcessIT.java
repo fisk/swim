@@ -314,7 +314,7 @@ class LauncherProcessIT {
 
         Path launcherBinary = buildRoot.resolve("image").resolve("bin").resolve("swim");
         Assumptions.assumeTrue(Files.isExecutable(launcherBinary), "Installed launcher binary missing");
-        Path javaFile = buildRoot.resolve("swim-core").resolve("src").resolve("main").resolve("java")
+        Path javaFile = buildRoot.resolve("swim-java-lsp").resolve("src").resolve("main").resolve("java")
                 .resolve("org").resolve("fisk").resolve("swim").resolve("lsp").resolve("java").resolve("JavaLSPClient.java");
         Assumptions.assumeTrue(Files.isRegularFile(javaFile), "Repository Java file missing");
         Assumptions.assumeTrue(scriptCanKeepCommandStdinOpen(
