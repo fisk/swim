@@ -301,9 +301,17 @@ public class TerminalContext {
         } catch (RuntimeException e) {
         }
         if (size != null) {
-            return rememberTerminalSize(size);
+            return rememberAndPublishTerminalSize(size);
         }
-        return rememberTerminalSize(_screen.getTerminalSize());
+        return rememberAndPublishTerminalSize(_screen.getTerminalSize());
+    }
+
+    private TerminalSize rememberAndPublishTerminalSize(TerminalSize size) {
+        TerminalSize remembered = rememberTerminalSize(size);
+        if (_terminal instanceof SizeAwareTerminal sizeAwareTerminal) {
+            sizeAwareTerminal.recordSuppliedSize(remembered);
+        }
+        return remembered;
     }
 
     static TerminalSize parseSttySize(String output) {
@@ -615,6 +623,7 @@ public class TerminalContext {
         private final boolean _restoreDisplayOnExitPrivateMode;
         private boolean _preserveExistingScreenOnStart;
         private boolean _skipNextClearScreen;
+        private TerminalSize _lastSuppliedSize;
 
         private SizeAwareTerminal(
                 Terminal delegate,
@@ -752,6 +761,16 @@ public class TerminalContext {
             };
             _resizeListeners.put(listener, wrapped);
             _delegate.addResizeListener(wrapped);
+        }
+
+        private synchronized void recordSuppliedSize(TerminalSize size) {
+            if (size == null || size.equals(_lastSuppliedSize)) {
+                return;
+            }
+            _lastSuppliedSize = size;
+            for (TerminalResizeListener listener : List.copyOf(_resizeListeners.keySet())) {
+                listener.onResized(this, size);
+            }
         }
 
         @Override

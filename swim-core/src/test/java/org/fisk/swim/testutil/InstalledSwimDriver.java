@@ -65,6 +65,11 @@ public final class InstalledSwimDriver {
 
     public static TmuxSession startWithHome(Path home, Path workdir, Map<String, String> extraEnvironment, String... arguments)
             throws Exception {
+        return startWithHome(home, workdir, 187, 51, extraEnvironment, arguments);
+    }
+
+    public static TmuxSession startWithHome(Path home, Path workdir, int columns, int rows,
+            Map<String, String> extraEnvironment, String... arguments) throws Exception {
         assumeTmuxAvailable();
         Path launcherBinary = launcherBinary();
         Files.createDirectories(home.resolve(".swim"));
@@ -98,7 +103,7 @@ public final class InstalledSwimDriver {
         String[] command = new String[arguments.length + 1];
         command[0] = launcherBinary.toString();
         System.arraycopy(arguments, 0, command, 1, arguments.length);
-        return TmuxSession.start(workdir, environment, command);
+        return TmuxSession.start(workdir, environment, columns, rows, command);
     }
 
     private static boolean tmuxAvailable() {

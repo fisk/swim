@@ -7,12 +7,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import org.fisk.swim.config.EditorConfigStore;
 import org.fisk.swim.config.EditorPaths;
 import org.fisk.swim.config.EditorSession;
 import org.fisk.swim.config.SessionLayoutNode;
 import org.fisk.swim.config.SessionWorkspace;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.testutil.InstalledSwimDriver;
 import org.fisk.swim.testutil.SwimHomeFixture;
 import org.junit.jupiter.api.Test;
@@ -97,6 +99,30 @@ class TmuxEditorConfigIT {
             session.sendEscape();
             session.runCommand("q");
             session.waitForExit(Duration.ofSeconds(10));
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    void installedLauncherBinaryResizesDetachedSessionWhenReattachedFromLargerPane() throws Exception {
+        Path file = tempDir.resolve("resize-attach.txt");
+        Files.writeString(file, "attach resize\n");
+        var home = SwimHomeFixture.create(tempDir);
+        var environment = Map.of(SwimServerSessions.ENV_SESSION, "resize-" + Long.toUnsignedString(System.nanoTime(), 36));
+
+        try (var small = InstalledSwimDriver.startWithHome(home.home(), tempDir, 80, 24, environment,
+                file.getFileName().toString())) {
+            small.waitForText("attach resize", STARTUP_TIMEOUT);
+            small.runCommand("detach");
+            small.waitForExit(Duration.ofSeconds(10));
+        }
+
+        try (var large = InstalledSwimDriver.startWithHome(home.home(), tempDir, 187, 51, environment)) {
+            large.waitForText("attach resize", STARTUP_TIMEOUT);
+            large.waitForText("0:resize-attach.txt", UI_TIMEOUT);
+            org.junit.jupiter.api.Assertions.assertTrue(large.captureVisiblePane().contains("0:resize-attach.txt"));
+            large.runCommand("q");
+            large.waitForExit(Duration.ofSeconds(10));
         }
     }
 

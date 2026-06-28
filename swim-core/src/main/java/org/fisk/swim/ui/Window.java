@@ -3174,8 +3174,9 @@ public class Window implements Drawable {
         var screen = TerminalContext.getInstance().getScreen();
         var terminalContext = TerminalContext.getInstance();
         var terminalSize = terminalContext.getTerminalSize();
-        if (terminalSize == null) {
-            terminalSize = screen.doResizeIfNecessary();
+        var resizedSize = screen.doResizeIfNecessary();
+        if (resizedSize != null) {
+            terminalSize = resizedSize;
         }
         if (terminalSize == null) {
             terminalSize = new TerminalSize(_rootView.getBounds().getSize().getWidth(),

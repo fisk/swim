@@ -17,6 +17,11 @@ public final class TmuxSession implements AutoCloseable {
     }
 
     public static TmuxSession start(Path workdir, Map<String, String> environment, String... command) throws Exception {
+        return start(workdir, environment, 187, 51, command);
+    }
+
+    public static TmuxSession start(Path workdir, Map<String, String> environment, int columns, int rows,
+            String... command) throws Exception {
         String session = "swim-it-" + System.nanoTime();
         var tmuxCommand = new ArrayList<String>();
         tmuxCommand.add("tmux");
@@ -25,9 +30,9 @@ public final class TmuxSession implements AutoCloseable {
         tmuxCommand.add("-s");
         tmuxCommand.add(session);
         tmuxCommand.add("-x");
-        tmuxCommand.add("187");
+        tmuxCommand.add(Integer.toString(columns));
         tmuxCommand.add("-y");
-        tmuxCommand.add("51");
+        tmuxCommand.add(Integer.toString(rows));
         tmuxCommand.add("cd " + shellQuote(workdir.toString()) + " && " + environmentPrefix(environment)
                 + joinShellCommand(command));
         var process = new ProcessBuilder(tmuxCommand)
@@ -102,6 +107,17 @@ public final class TmuxSession implements AutoCloseable {
 
     public String capturePane() throws Exception {
         var process = new ProcessBuilder("tmux", "capture-pane", "-pt", _session, "-S", "-200")
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        if (process.waitFor() != 0) {
+            return "";
+        }
+        return output;
+    }
+
+    public String captureVisiblePane() throws Exception {
+        var process = new ProcessBuilder("tmux", "capture-pane", "-pt", _session)
                 .redirectErrorStream(true)
                 .start();
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

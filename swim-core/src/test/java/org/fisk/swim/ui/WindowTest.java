@@ -280,6 +280,8 @@ class WindowTest {
             terminalSize.set(new TerminalSize(66, 18));
             window.update(false);
 
+            assertEquals(1, installed.resizeCalls().get());
+            assertEquals(new TerminalSize(66, 18), installed.screenSize().get());
             assertEquals(66, window.getRootView().getBounds().getSize().getWidth());
             assertEquals(18, window.getRootView().getBounds().getSize().getHeight());
             assertEquals(2, window.getBufferContext().getBufferView().getBounds().getPoint().getY());

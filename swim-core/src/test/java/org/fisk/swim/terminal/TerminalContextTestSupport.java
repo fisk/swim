@@ -34,12 +34,14 @@ public final class TerminalContextTestSupport {
         var stopCalls = new AtomicInteger();
         var closeCalls = new AtomicInteger();
         var clearCalls = new AtomicInteger();
+        var resizeCalls = new AtomicInteger();
         var drawCalls = new CopyOnWriteArrayList<DrawCall>();
         var refreshCalls = new CopyOnWriteArrayList<RefreshType>();
         var terminalWrites = new CopyOnWriteArrayList<String>();
         var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
         var cursorPosition = new AtomicReference<TerminalPosition>(new TerminalPosition(0, 0));
+        var screenSize = new AtomicReference<TerminalSize>(new TerminalSize(columns, rows));
         var graphics = (TextGraphics) Proxy.newProxyInstance(
                 TextGraphics.class.getClassLoader(),
                 new Class<?>[] { TextGraphics.class },
@@ -97,10 +99,16 @@ public final class TerminalContextTestSupport {
                 (proxy, method, args) -> {
                     switch (method.getName()) {
                     case "getTerminalSize":
-                        return new TerminalSize(columns, rows);
+                        return screenSize.get();
                     case "newTextGraphics":
                         return graphics;
                     case "doResizeIfNecessary":
+                        TerminalSize supplied = terminalSizeSupplier == null ? null : terminalSizeSupplier.get();
+                        if (supplied != null && !supplied.equals(screenSize.get())) {
+                            screenSize.set(supplied);
+                            resizeCalls.incrementAndGet();
+                            return supplied;
+                        }
                         return null;
                     case "clear":
                         clearCalls.incrementAndGet();
@@ -136,7 +144,8 @@ public final class TerminalContextTestSupport {
                 });
         var context = new TerminalContext(screen, terminal, graphics, terminalSizeSupplier);
         setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls, closeCalls, clearCalls, drawCalls, refreshCalls, cursorPosition, terminalWrites);
+        return new InstalledTerminalContext(context, stopCalls, closeCalls, clearCalls, resizeCalls, screenSize,
+                drawCalls, refreshCalls, cursorPosition, terminalWrites);
     }
 
     private static void setInstance(TerminalContext context) {
@@ -182,6 +191,8 @@ public final class TerminalContextTestSupport {
             AtomicInteger stopCalls,
             AtomicInteger closeCalls,
             AtomicInteger clearCalls,
+            AtomicInteger resizeCalls,
+            AtomicReference<TerminalSize> screenSize,
             List<DrawCall> drawCalls,
             List<RefreshType> refreshCalls,
             AtomicReference<TerminalPosition> cursorPosition,
