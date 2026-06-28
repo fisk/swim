@@ -2,6 +2,7 @@ package org.fisk.swim.nemo;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
@@ -9,8 +10,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
@@ -25,6 +28,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -62,6 +66,7 @@ public class NemoClient {
     private static final Gson _gson = new Gson();
     private static final String _defaultModel = "gpt-4.1";
     private static final String _defaultBaseUrl = "https://api.openai.com/v1";
+    private static final String _zaiDefaultBaseUrl = "https://open.bigmodel.cn/";
     private static final String _defaultProvider = "openai";
     private static final String _defaultSystemPrompt = String.join("\n",
             "You are Nemo, an AI assistant inside the SWIM text editor.",
@@ -82,6 +87,8 @@ public class NemoClient {
     private static final int _defaultMaxRetries = 2;
     private static final int _defaultSkillsMaxFiles = 8;
     private static final int _defaultSkillsMaxChars = 12_000;
+    private static final long _temporaryShellCommandApprovalMillis = Duration.ofMinutes(10).toMillis();
+    private static final int _asyncShellMaxBufferedChars = 256_000;
     private static final boolean _defaultToolWebSearch = true;
     private static final boolean _defaultToolDelegateTask = true;
     private static final boolean _defaultToolScreenSnapshot = true;
@@ -113,7 +120,9 @@ public class NemoClient {
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
+    private final Map<String, AsyncShell> _asyncShells = new LinkedHashMap<>();
     private final List<ApprovalRule> _approvalRules = new ArrayList<>();
+    private final List<ApprovedShellLine> _approvedShellLines = new ArrayList<>();
     private EditorControlLease _editorControlLease;
     private boolean _sessionsLoaded;
     private boolean _approvalsLoaded;
@@ -121,6 +130,8 @@ public class NemoClient {
     private long _nextSessionNumber = 1;
     private long _nextApprovalNumber = 1;
     private long _nextApprovalRuleNumber = 1;
+    private long _nextAsyncShellNumber = 1;
+    private long _temporaryShellCommandApprovalExpiresAtMillis;
 
     private NemoClient() {
     }
@@ -138,7 +149,10 @@ public class NemoClient {
         _conversations.clear();
         _workspaceSessionIds.clear();
         _pendingApprovals.clear();
+        stopAsyncShellsForTests();
+        _asyncShells.clear();
         _approvalRules.clear();
+        _approvedShellLines.clear();
         _editorControlLease = null;
         _sessionsLoaded = false;
         _approvalsLoaded = false;
@@ -146,6 +160,8 @@ public class NemoClient {
         _nextSessionNumber = 1;
         _nextApprovalNumber = 1;
         _nextApprovalRuleNumber = 1;
+        _nextAsyncShellNumber = 1;
+        _temporaryShellCommandApprovalExpiresAtMillis = 0;
     }
 
     record ChatTurn(String speaker, String text, boolean includeInPrompt) {
@@ -206,6 +222,9 @@ public class NemoClient {
     private record ApprovalRule(String id, String workspaceRoot, String toolName, String signature, long createdAtMillis) {
     }
 
+    private record ApprovedShellLine(String workspaceRoot, String name, String cwd, String command, long createdAtMillis) {
+    }
+
     private record EditorControlLease(String ownerId, String ownerTitle, String workspaceRoot, long startedAtMillis) {
     }
 
@@ -233,6 +252,78 @@ public class NemoClient {
             _persist = persist;
             _latch.countDown();
         }
+    }
+
+    private static final class AsyncShell {
+        private final String _id;
+        private final Path _workspaceRoot;
+        private final Path _cwd;
+        private final String _command;
+        private final boolean _sandboxed;
+        private final Process _process;
+        private final long _startedAtMillis = System.currentTimeMillis();
+        private final StringBuilder _stdout = new StringBuilder();
+        private final StringBuilder _stderr = new StringBuilder();
+        private boolean _stdoutTruncated;
+        private boolean _stderrTruncated;
+        private boolean _finished;
+        private Integer _exitCode;
+        private long _finishedAtMillis;
+
+        private AsyncShell(String id, Path workspaceRoot, Path cwd, String command, boolean sandboxed, Process process) {
+            _id = id;
+            _workspaceRoot = workspaceRoot;
+            _cwd = cwd;
+            _command = command;
+            _sandboxed = sandboxed;
+            _process = process;
+        }
+
+        private synchronized void appendStdout(String text) {
+            _stdoutTruncated = appendBounded(_stdout, text) || _stdoutTruncated;
+        }
+
+        private synchronized void appendStderr(String text) {
+            _stderrTruncated = appendBounded(_stderr, text) || _stderrTruncated;
+        }
+
+        private boolean appendBounded(StringBuilder builder, String text) {
+            builder.append(text);
+            int overflow = builder.length() - _asyncShellMaxBufferedChars;
+            if (overflow > 0) {
+                builder.delete(0, overflow);
+                return true;
+            }
+            return false;
+        }
+
+        private synchronized void finish(int exitCode) {
+            _exitCode = exitCode;
+            _finished = true;
+            _finishedAtMillis = System.currentTimeMillis();
+        }
+
+        private synchronized ShellSnapshot snapshot(int maxOutputChars) {
+            return new ShellSnapshot(
+                    _id,
+                    _workspaceRoot,
+                    _cwd,
+                    _command,
+                    _sandboxed,
+                    _finished,
+                    _exitCode,
+                    _startedAtMillis,
+                    _finishedAtMillis,
+                    truncateText(_stdout.toString(), maxOutputChars),
+                    truncateText(_stderr.toString(), maxOutputChars),
+                    _stdoutTruncated,
+                    _stderrTruncated);
+        }
+    }
+
+    private record ShellSnapshot(String id, Path workspaceRoot, Path cwd, String command, boolean sandboxed,
+            boolean finished, Integer exitCode, long startedAtMillis, long finishedAtMillis, String stdout,
+            String stderr, boolean stdoutTruncated, boolean stderrTruncated) {
     }
 
     private static final class Conversation {
@@ -313,6 +404,7 @@ public class NemoClient {
         private final String _apiKey;
         private final String _model;
         private final String _baseUrl;
+        private final boolean _baseUrlExplicit;
         private final String _organization;
         private final String _project;
         private final Map<String, String> _headers;
@@ -408,6 +500,7 @@ public class NemoClient {
             _apiKey = builder._apiKey;
             _model = builder._model;
             _baseUrl = builder._baseUrl;
+            _baseUrlExplicit = builder._baseUrlExplicit;
             _organization = builder._organization;
             _project = builder._project;
             _headers = Map.copyOf(builder._headers);
@@ -472,6 +565,12 @@ public class NemoClient {
                     .build();
         }
 
+        Configuration withToolCommandPolicy(String toolCommandPolicy) {
+            return new Builder(this)
+                    .toolCommandPolicy(toolCommandPolicy)
+                    .build();
+        }
+
         Configuration forSubAgent() {
             return new Builder(this)
                     .toolDelegateTask(false)
@@ -483,6 +582,7 @@ public class NemoClient {
             private String _apiKey = "";
             private String _model = _defaultModel;
             private String _baseUrl = _defaultBaseUrl;
+            private boolean _baseUrlExplicit;
             private String _organization = "";
             private String _project = "";
             private Map<String, String> _headers = new LinkedHashMap<>();
@@ -538,6 +638,7 @@ public class NemoClient {
                 _apiKey = source._apiKey;
                 _model = source._model;
                 _baseUrl = source._baseUrl;
+                _baseUrlExplicit = source._baseUrlExplicit;
                 _organization = source._organization;
                 _project = source._project;
                 _headers = new LinkedHashMap<>(source._headers);
@@ -587,7 +688,7 @@ public class NemoClient {
             }
 
             Builder provider(String provider) {
-                _provider = provider == null || provider.isBlank() ? _defaultProvider : provider.trim().toLowerCase();
+                _provider = normalizeProvider(provider);
                 return this;
             }
 
@@ -606,6 +707,7 @@ public class NemoClient {
             Builder baseUrl(String baseUrl) {
                 if (baseUrl != null && !baseUrl.isBlank()) {
                     _baseUrl = baseUrl.trim();
+                    _baseUrlExplicit = true;
                 }
                 return this;
             }
@@ -848,6 +950,9 @@ public class NemoClient {
             }
 
             Configuration build() {
+                if (!_baseUrlExplicit) {
+                    _baseUrl = defaultBaseUrlForProvider(_provider);
+                }
                 return new Configuration(this);
             }
         }
@@ -856,6 +961,7 @@ public class NemoClient {
         String apiKey() { return _apiKey; }
         String model() { return _model; }
         String baseUrl() { return _baseUrl; }
+        boolean isZaiProvider() { return "zai".equals(_provider); }
         String organization() { return _organization; }
         String project() { return _project; }
         Map<String, String> headers() { return _headers; }
@@ -904,6 +1010,7 @@ public class NemoClient {
         int toolCommandTimeoutSeconds() { return _toolCommandTimeoutSeconds; }
         boolean requiresApiKey() {
             return "openai".equals(_provider)
+                    || "zai".equals(_provider)
                     || "chatgpt".equals(_provider)
                     || "responses".equals(_provider)
                     || "openai-responses".equals(_provider);
@@ -946,6 +1053,22 @@ public class NemoClient {
             case "never", "on_request", "on_escalation" -> normalized;
             default -> _defaultApprovalPolicy;
             };
+        }
+
+        private static String normalizeProvider(String provider) {
+            if (provider == null || provider.isBlank()) {
+                return _defaultProvider;
+            }
+            String normalized = provider.trim().toLowerCase().replace('_', '-');
+            return switch (normalized) {
+            case "z.ai", "z-ai", "zai", "zipuai", "zipu-ai", "zhipuai", "zhipu-ai", "zhipu", "bigmodel",
+                    "bigmodel.cn" -> "zai";
+            default -> normalized;
+            };
+        }
+
+        private static String defaultBaseUrlForProvider(String provider) {
+            return "zai".equals(provider) ? _zaiDefaultBaseUrl : _defaultBaseUrl;
         }
 
         private static String responsesBaseToChatBase(URI responsesUri) {
@@ -1656,11 +1779,20 @@ public class NemoClient {
         case "drive_editor" -> withOutputStatus(argumentSummary(call.arguments(), "input", "max_events"), output);
         case "finish_editor_control" -> firstOutputLine(output);
         case "current_editor_context" -> firstOutputLine(output);
-        case "list_files" -> argumentSummary(call.arguments(), "path", "max_results");
+        case "list_files" -> argumentSummary(call.arguments(), "path", "directory", "max_results");
+        case "find" -> argumentSummary(call.arguments(), "query", "directory", "max_results");
         case "read_file" -> argumentSummary(call.arguments(), "path", "start_line", "end_line");
-        case "search_files" -> argumentSummary(call.arguments(), "query", "path", "max_results");
+        case "search_files" -> argumentSummary(call.arguments(), "query", "path", "directory", "max_results");
         case "run_command" -> withOutputStatus(argumentSummary(call.arguments(), "command", "cwd"), output);
+        case "shell_start" -> withOutputStatus(argumentSummary(call.arguments(), "command", "cwd"), output);
+        case "shell_poll" -> argumentSummary(call.arguments(), "shell_id", "max_output_chars", "forget_if_finished");
+        case "shell_stop" -> withOutputStatus(argumentSummary(call.arguments(), "shell_id"), output);
+        case "shell_save" -> withOutputStatus(argumentSummary(call.arguments(), "name", "command", "cwd"), output);
+        case "shell_list" -> firstOutputLine(output);
+        case "shell_run" -> withOutputStatus(argumentSummary(call.arguments(), "name", "async"), output);
+        case "mvn" -> withOutputStatus(mvnSummary(call.arguments()), output);
         case "write_file" -> writeFileSummary(call.arguments());
+        case "search_replace" -> searchReplaceSummary(call.arguments());
         case "apply_patch" -> "patch=" + stringArgument(call.arguments(), "patch", "").length() + " chars";
         case "git_status", "git_diff" -> argumentSummary(call.arguments(), "path");
         case "git_add" -> gitAddSummary(call.arguments());
@@ -1697,6 +1829,33 @@ public class NemoClient {
         return joinSummary(List.of(
                 path.isBlank() ? "" : "path=" + path,
                 "content=" + chars + " chars"));
+    }
+
+    private static String searchReplaceSummary(JsonObject arguments) {
+        return joinSummary(List.of(
+                argumentSummary(arguments, "directory", "path"),
+                "search=" + compactArgumentValue(arguments.get("search")),
+                "replace=" + compactArgumentValue(arguments.get("replace")),
+                arguments.has("regex") ? "regex=" + arguments.get("regex").getAsBoolean() : "",
+                arguments.has("replace_all") ? "replace_all=" + arguments.get("replace_all").getAsBoolean() : ""));
+    }
+
+    private static String searchReplaceDisplayPath(JsonObject arguments) {
+        String directory = stringArgument(arguments, "directory", "");
+        String path = stringArgument(arguments, "path", "");
+        if (directory.isBlank()) {
+            return path;
+        }
+        if (path.isBlank()) {
+            return directory;
+        }
+        return directory + "/" + path;
+    }
+
+    private static String mvnSummary(JsonObject arguments) {
+        return joinSummary(List.of(
+                argumentSummary(arguments, "directory"),
+                "arguments=" + String.join(" ", mavenArguments(arguments))));
     }
 
     private static String delegateTaskSummary(JsonObject arguments) {
@@ -1869,10 +2028,19 @@ public class NemoClient {
         case "swim_help" -> new ToolExecutionResult(HelpDocument.renderForNemo(stringArgument(call.arguments(), "topic", "")));
         case "current_editor_context" -> new ToolExecutionResult(currentEditorContext(configuration, context));
         case "list_files" -> new ToolExecutionResult(listFiles(configuration, context, call.arguments()));
+        case "find" -> new ToolExecutionResult(findFiles(configuration, context, call.arguments()));
         case "read_file" -> new ToolExecutionResult(readFile(configuration, context, call.arguments()));
         case "search_files" -> new ToolExecutionResult(searchFiles(configuration, context, call.arguments()));
         case "run_command" -> new ToolExecutionResult(runCommand(configuration, context, call.arguments(), executionSession));
+        case "shell_start" -> new ToolExecutionResult(shellStart(configuration, context, call.arguments(), executionSession));
+        case "shell_poll" -> new ToolExecutionResult(_instance.shellPoll(configuration, call.arguments()));
+        case "shell_stop" -> new ToolExecutionResult(_instance.shellStop(call.arguments()));
+        case "shell_save" -> new ToolExecutionResult(_instance.shellSave(configuration, context, call.arguments(), executionSession));
+        case "shell_list" -> new ToolExecutionResult(_instance.shellList(configuration, context));
+        case "shell_run" -> new ToolExecutionResult(_instance.shellRun(configuration, context, call.arguments()));
+        case "mvn" -> new ToolExecutionResult(mvn(configuration, context, call.arguments(), executionSession));
         case "write_file" -> writeFileDetailed(configuration, context, call.arguments());
+        case "search_replace" -> searchReplaceDetailed(configuration, context, call.arguments());
         case "apply_patch" -> applyPatchDetailed(configuration, context, call.arguments(), executionSession);
         case "git_status" -> new ToolExecutionResult(gitStatus(configuration, context, call.arguments()));
         case "git_diff" -> new ToolExecutionResult(gitDiff(configuration, context, call.arguments()));
@@ -1885,6 +2053,9 @@ public class NemoClient {
     private static String requestActionApprovalIfNeeded(Configuration configuration, BufferContext context, ToolCall call,
             ToolExecutionSession executionSession) throws InterruptedException {
         if (!"on_request".equals(configuration.toolApprovalPolicy()) || !requiresActionApproval(call.name())) {
+            return null;
+        }
+        if (isTemporaryShellCommandApprovalTool(call.name()) && _instance.hasTemporaryShellCommandApproval()) {
             return null;
         }
         if (executionSession == null) {
@@ -1904,14 +2075,21 @@ public class NemoClient {
     }
 
     private static boolean requiresActionApproval(String toolName) {
-        return List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit").contains(toolName);
+        return List.of("run_command", "shell_start", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit")
+                .contains(toolName);
     }
 
     private static String actionApprovalSummary(ToolCall call) {
         return switch (call.name()) {
         case "run_command" -> "run command: " + stringArgument(call.arguments(), "command", "");
+        case "shell_start" -> "start async shell command: " + stringArgument(call.arguments(), "command", "");
+        case "mvn" -> "run Maven in " + stringArgument(call.arguments(), "directory", ".")
+                + ": mvn " + String.join(" ", mavenArguments(call.arguments()));
         case "write_file" -> "write " + stringArgument(call.arguments(), "content", "").length()
                 + " chars to " + stringArgument(call.arguments(), "path", "");
+        case "search_replace" -> "replace " + compactArgumentValue(call.arguments().get("search"))
+                + " with " + compactArgumentValue(call.arguments().get("replace"))
+                + " in " + searchReplaceDisplayPath(call.arguments());
         case "apply_patch" -> "apply patch (" + stringArgument(call.arguments(), "patch", "").length() + " chars)";
         case "git_add" -> "stage changes: " + gitAddSummary(call.arguments());
         case "git_commit" -> "commit changes: " + stringArgument(call.arguments(), "message", "");
@@ -1943,7 +2121,8 @@ public class NemoClient {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow plugin tools "
                     + "unless the plugin marks them read-only. Use :permissions workspace-write to allow plugin tools.";
         }
-        if (List.of("run_command", "write_file", "apply_patch", "git_add", "git_commit", "drive_editor").contains(toolName)) {
+        if (List.of("run_command", "shell_start", "shell_poll", "shell_stop", "shell_save", "shell_list", "shell_run", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit", "drive_editor")
+                .contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
         }
@@ -2689,6 +2868,24 @@ public class NemoClient {
         return path;
     }
 
+    private static Path resolvePathInsideWorkspace(Path workspaceRoot, String rawDirectory, String rawPath) throws IOException {
+        if (rawDirectory == null || rawDirectory.isBlank()) {
+            return resolvePathInsideWorkspace(workspaceRoot, rawPath);
+        }
+        Path base = requireDirectory(resolvePathInsideWorkspace(workspaceRoot, rawDirectory), rawDirectory);
+        if (rawPath == null || rawPath.isBlank()) {
+            return base;
+        }
+        Path requested = Path.of(rawPath);
+        Path path = requested.isAbsolute()
+                ? requested.normalize()
+                : base.resolve(requested).normalize();
+        if (!path.startsWith(workspaceRoot)) {
+            throw new IOException("Path escapes workspace root: " + rawPath);
+        }
+        return path;
+    }
+
     private static Path maybeStripWorkspaceRootPrefix(Path workspaceRoot, Path requested, Path resolvedPath) {
         if (requested.isAbsolute() || Files.exists(resolvedPath)) {
             return null;
@@ -2721,7 +2918,9 @@ public class NemoClient {
 
     private static String listFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
         Path root = resolveWorkspaceRoot(configuration, context);
-        Path start = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        String rawDirectory = stringArgument(arguments, "directory", "");
+        String rawPath = rawDirectory.isBlank() ? stringArgument(arguments, "path", "") : rawDirectory;
+        Path start = resolvePathInsideWorkspace(root, rawPath);
         int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
         var files = new ArrayList<String>();
         try (Stream<Path> stream = Files.walk(start)) {
@@ -2735,6 +2934,70 @@ public class NemoClient {
             return "(no files)";
         }
         return truncateOutput(configuration, String.join("\n", files));
+    }
+
+    private static String findFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawDirectory = stringArgument(arguments, "directory", "");
+        Path start = requireDirectory(resolvePathInsideWorkspace(root, rawDirectory), rawDirectory);
+        String query = stringArgument(arguments, "query", "").trim();
+        if (query.isBlank()) {
+            return "Find failed: query is blank.";
+        }
+        int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
+        var matches = new ArrayList<String>();
+        PathMatcher globMatcher = findGlobMatcher(query);
+        String normalizedQuery = normalizeFindText(query);
+        try (Stream<Path> stream = Files.walk(start)) {
+            var iterator = stream.filter(Files::isRegularFile)
+                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
+                    .sorted()
+                    .iterator();
+            while (iterator.hasNext() && matches.size() < maxResults) {
+                Path path = iterator.next();
+                String relative = root.relativize(path).toString();
+                String fileName = path.getFileName() == null ? relative : path.getFileName().toString();
+                if (findFileMatches(relative, fileName, normalizedQuery, globMatcher)) {
+                    matches.add(relative);
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return "(no files found)";
+        }
+        return truncateOutput(configuration, String.join("\n", matches));
+    }
+
+    private static PathMatcher findGlobMatcher(String query) throws IOException {
+        if (!isGlobQuery(query)) {
+            return null;
+        }
+        try {
+            return FileSystems.getDefault().getPathMatcher("glob:" + normalizeFindText(query));
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid find glob: " + e.getMessage(), e);
+        }
+    }
+
+    private static boolean isGlobQuery(String query) {
+        return query.indexOf('*') >= 0
+                || query.indexOf('?') >= 0
+                || query.indexOf('[') >= 0
+                || query.indexOf('{') >= 0;
+    }
+
+    private static boolean findFileMatches(String relativePath, String fileName, String normalizedQuery,
+            PathMatcher globMatcher) {
+        String relative = normalizeFindText(relativePath);
+        String name = normalizeFindText(fileName);
+        if (globMatcher != null) {
+            return globMatcher.matches(Path.of(relative)) || globMatcher.matches(Path.of(name));
+        }
+        return relative.contains(normalizedQuery) || name.contains(normalizedQuery);
+    }
+
+    private static String normalizeFindText(String value) {
+        return value == null ? "" : value.replace(File.separatorChar, '/').toLowerCase(java.util.Locale.ROOT);
     }
 
     private static String readFile(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
@@ -2758,7 +3021,9 @@ public class NemoClient {
 
     private static String searchFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
         Path root = resolveWorkspaceRoot(configuration, context);
-        Path start = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        String rawDirectory = stringArgument(arguments, "directory", "");
+        String rawPath = rawDirectory.isBlank() ? stringArgument(arguments, "path", "") : rawDirectory;
+        Path start = resolvePathInsideWorkspace(root, rawPath);
         String query = stringArgument(arguments, "query", "");
         int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
         var matches = new ArrayList<String>();
@@ -2819,9 +3084,337 @@ public class NemoClient {
         return runShellCommand(configuration, root, cwd, command, executionSession);
     }
 
+    private static String shellStart(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawCwd = stringArgument(arguments, "cwd", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
+        String command = stringArgument(arguments, "command", "");
+        String policyBlock = commandPolicyBlock(configuration, command);
+        if (policyBlock != null) {
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    root,
+                    new ToolApprovalRequest(
+                            "shell_start",
+                            "command policy escalation",
+                            "start blocked async shell command: " + command + "\nReason: " + policyBlock,
+                            "policy:shell_start:" + cwd.toAbsolutePath().normalize() + ":" + command + ":" + policyBlock,
+                            true),
+                    "Tool shell_start blocked by Nemo policy: " + policyBlock);
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
+        }
+        String mavenHint = mavenAlsoMakeHint(command);
+        if (mavenHint != null) {
+            return mavenHint;
+        }
+
+        return startAsyncShellProcess(configuration, root, cwd, command, executionSession);
+    }
+
+    private static String startAsyncShellProcess(Configuration configuration, Path root, Path cwd, String command,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        String sandboxBlock = osSandboxBlock(configuration, root, command, executionSession);
+        if (sandboxBlock != null) {
+            return sandboxBlock;
+        }
+
+        ShellInvocation invocation = shellInvocation(configuration, root, cwd, command);
+        var processBuilder = new ProcessBuilder(invocation.command())
+                .directory(cwd.toFile())
+                .redirectErrorStream(false);
+        var process = processBuilder.start();
+        AsyncShell shell = _instance.registerAsyncShell(root, cwd, command, invocation.sandboxed(), process);
+        return formatShellStarted(shell.snapshot(configuration.toolMaxOutputChars()));
+    }
+
+    private synchronized AsyncShell registerAsyncShell(Path workspaceRoot, Path cwd, String command, boolean sandboxed,
+            Process process) {
+        String id = "shell-" + _nextAsyncShellNumber++;
+        var shell = new AsyncShell(id, workspaceRoot.toAbsolutePath().normalize(), cwd.toAbsolutePath().normalize(),
+                command, sandboxed, process);
+        _asyncShells.put(id, shell);
+        startAsyncShellThreads(shell);
+        return shell;
+    }
+
+    private static void startAsyncShellThreads(AsyncShell shell) {
+        Thread stdout = new Thread(() -> readAsyncShellStream(shell._process.getInputStream(), shell::appendStdout),
+                "swim-nemo-" + shell._id + "-stdout");
+        Thread stderr = new Thread(() -> readAsyncShellStream(shell._process.getErrorStream(), shell::appendStderr),
+                "swim-nemo-" + shell._id + "-stderr");
+        Thread waiter = new Thread(() -> {
+            try {
+                shell.finish(shell._process.waitFor());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "swim-nemo-" + shell._id);
+        stdout.setDaemon(true);
+        stderr.setDaemon(true);
+        waiter.setDaemon(true);
+        stdout.start();
+        stderr.start();
+        waiter.start();
+    }
+
+    private static void readAsyncShellStream(InputStream input, java.util.function.Consumer<String> append) {
+        byte[] buffer = new byte[4096];
+        try (input) {
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) {
+                    append.accept(new String(buffer, 0, read, StandardCharsets.UTF_8));
+                }
+            }
+        } catch (IOException e) {
+            // Process stream readers are best-effort; shell_poll still reports process status.
+        }
+    }
+
+    private String shellPoll(Configuration configuration, JsonObject arguments) {
+        String id = stringArgument(arguments, "shell_id", "").trim();
+        if (id.isBlank()) {
+            return "shell_poll failed: shell_id is required.";
+        }
+        AsyncShell shell;
+        synchronized (this) {
+            shell = _asyncShells.get(id);
+        }
+        if (shell == null) {
+            return "Unknown shell: " + id;
+        }
+        int maxOutputChars = Math.max(0, intArgument(arguments, "max_output_chars", configuration.toolMaxOutputChars()));
+        ShellSnapshot snapshot = shell.snapshot(maxOutputChars);
+        if (snapshot.finished() && booleanArgument(arguments, "forget_if_finished", false)) {
+            synchronized (this) {
+                _asyncShells.remove(id);
+            }
+        }
+        return truncateOutput(configuration, formatShellSnapshot(snapshot));
+    }
+
+    private String shellStop(JsonObject arguments) {
+        String id = stringArgument(arguments, "shell_id", "").trim();
+        if (id.isBlank()) {
+            return "shell_stop failed: shell_id is required.";
+        }
+        AsyncShell shell;
+        synchronized (this) {
+            shell = _asyncShells.get(id);
+        }
+        if (shell == null) {
+            return "Unknown shell: " + id;
+        }
+        if (!shell.snapshot(0).finished()) {
+            shell._process.destroy();
+            try {
+                if (!shell._process.waitFor(2, TimeUnit.SECONDS)) {
+                    shell._process.destroyForcibly();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                shell._process.destroyForcibly();
+            }
+        }
+        return formatShellSnapshot(shell.snapshot(_defaultMaxOutputChars));
+    }
+
+    private String shellSave(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String name = normalizeShellLineName(stringArgument(arguments, "name", ""));
+        String command = stringArgument(arguments, "command", "").trim();
+        if (command.isBlank()) {
+            return "shell_save failed: command is required.";
+        }
+        String rawCwd = stringArgument(arguments, "cwd", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
+        String cwdRelative = root.equals(cwd) ? "" : root.relativize(cwd).toString();
+
+        if (!"full_access".equals(configuration.toolPermissionMode())) {
+            String approvalBlock = requestEscalationApprovalIfNeeded(
+                    configuration,
+                    executionSession,
+                    root,
+                    new ToolApprovalRequest(
+                            "shell_save",
+                            "approved shell line",
+                            "save approved shell line '" + name + "'"
+                                    + "\nCwd: " + (cwdRelative.isBlank() ? "." : cwdRelative)
+                                    + "\nCommand: " + command,
+                            "shell-save:" + root + ":" + name + ":" + cwdRelative + ":" + command,
+                            false),
+                    "Tool shell_save blocked by Nemo approval: saving an approved shell line requires user approval.");
+            if (approvalBlock != null) {
+                return approvalBlock;
+            }
+        }
+
+        synchronized (this) {
+            ensureApprovalsLoaded();
+            String normalizedRoot = root.toString();
+            _approvedShellLines.removeIf(line -> line.workspaceRoot().equals(normalizedRoot)
+                    && line.name().equals(name));
+            _approvedShellLines.add(new ApprovedShellLine(normalizedRoot, name, cwdRelative, command,
+                    System.currentTimeMillis()));
+            persistApprovals();
+        }
+        return "saved shell line " + name + " in " + (cwdRelative.isBlank() ? "." : cwdRelative)
+                + ": " + command;
+    }
+
+    private String shellList(Configuration configuration, BufferContext context) {
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        List<ApprovedShellLine> lines;
+        synchronized (this) {
+            ensureApprovalsLoaded();
+            lines = _approvedShellLines.stream()
+                    .filter(line -> line.workspaceRoot().equals(root.toString()))
+                    .sorted(Comparator.comparing(ApprovedShellLine::name))
+                    .toList();
+        }
+        if (lines.isEmpty()) {
+            return "(no saved shell lines)";
+        }
+        return lines.stream()
+                .map(line -> line.name() + " | cwd=" + (line.cwd().isBlank() ? "." : line.cwd())
+                        + " | " + line.command())
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String shellRun(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String name = normalizeShellLineName(stringArgument(arguments, "name", ""));
+        ApprovedShellLine shellLine = approvedShellLine(root, name);
+        if (shellLine == null) {
+            return "Unknown shell line: " + name;
+        }
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, shellLine.cwd()), shellLine.cwd());
+        Configuration trustedConfiguration = configuration.withToolCommandPolicy("trusted");
+        if (booleanArgument(arguments, "async", false)) {
+            return startAsyncShellProcess(trustedConfiguration, root, cwd, shellLine.command(), null);
+        }
+        return runShellCommand(trustedConfiguration, root, cwd, shellLine.command(), null);
+    }
+
+    private synchronized ApprovedShellLine approvedShellLine(Path workspaceRoot, String name) {
+        ensureApprovalsLoaded();
+        String normalizedRoot = workspaceRoot.toAbsolutePath().normalize().toString();
+        for (ApprovedShellLine line : _approvedShellLines) {
+            if (line.workspaceRoot().equals(normalizedRoot) && line.name().equals(name)) {
+                return line;
+            }
+        }
+        return null;
+    }
+
+    private static String normalizeShellLineName(String rawName) throws IOException {
+        String name = rawName == null ? "" : rawName.trim();
+        if (!name.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")) {
+            throw new IOException("Invalid shell line name: use 1-64 letters, numbers, dots, underscores, or hyphens, starting with a letter or number.");
+        }
+        return name;
+    }
+
+    private synchronized void stopAsyncShellsForTests() {
+        for (AsyncShell shell : _asyncShells.values()) {
+            if (!shell.snapshot(0).finished()) {
+                shell._process.destroyForcibly();
+            }
+        }
+    }
+
+    private static String formatShellStarted(ShellSnapshot snapshot) {
+        return String.join("\n",
+                "shell_id: " + snapshot.id(),
+                "status: running",
+                "cwd: " + snapshot.cwd(),
+                "sandboxed: " + snapshot.sandboxed(),
+                "command: " + snapshot.command());
+    }
+
+    private static String formatShellSnapshot(ShellSnapshot snapshot) {
+        long end = snapshot.finished() ? snapshot.finishedAtMillis() : System.currentTimeMillis();
+        long elapsedSeconds = Math.max(0, (end - snapshot.startedAtMillis()) / 1000);
+        var lines = new ArrayList<String>();
+        lines.add("shell_id: " + snapshot.id());
+        lines.add("status: " + (snapshot.finished() ? "done" : "running"));
+        lines.add("exit_code: " + (snapshot.exitCode() == null ? "running" : snapshot.exitCode()));
+        lines.add("elapsed_seconds: " + elapsedSeconds);
+        lines.add("cwd: " + snapshot.cwd());
+        lines.add("sandboxed: " + snapshot.sandboxed());
+        lines.add("stdout" + (snapshot.stdoutTruncated() ? " (truncated)" : "") + ":");
+        lines.add(snapshot.stdout());
+        lines.add("stderr" + (snapshot.stderrTruncated() ? " (truncated)" : "") + ":");
+        lines.add(snapshot.stderr());
+        return String.join("\n", lines);
+    }
+
+    private static String mvn(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawDirectory = stringArgument(arguments, "directory", stringArgument(arguments, "cwd", ""));
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawDirectory), rawDirectory);
+        List<String> args = mavenArguments(arguments);
+        for (String arg : args) {
+            if (arg.indexOf('\0') >= 0) {
+                throw new IOException("Maven argument contains NUL byte");
+            }
+        }
+        String executable = mavenExecutable(root, cwd);
+        String command = Stream.concat(Stream.of(executable), args.stream())
+                .map(NemoClient::shellQuote)
+                .collect(Collectors.joining(" "));
+        String mavenHint = mavenAlsoMakeHint("mvn " + String.join(" ", args));
+        if (mavenHint != null) {
+            return mavenHint;
+        }
+        return runShellCommand(configuration, root, cwd, command, executionSession);
+    }
+
+    private static List<String> mavenArguments(JsonObject arguments) {
+        var values = new ArrayList<String>();
+        if (arguments.has("arguments") && arguments.get("arguments").isJsonArray()) {
+            values.addAll(stringArrayArgument(arguments, "arguments"));
+        } else if (arguments.has("args") && arguments.get("args").isJsonArray()) {
+            values.addAll(stringArrayArgument(arguments, "args"));
+        } else if (arguments.has("arguments") && arguments.get("arguments").isJsonPrimitive()) {
+            String text = arguments.get("arguments").getAsString().trim();
+            if (!text.isBlank()) {
+                values.addAll(List.of(text.split("\\s+")));
+            }
+        } else if (arguments.has("args") && arguments.get("args").isJsonPrimitive()) {
+            String text = arguments.get("args").getAsString().trim();
+            if (!text.isBlank()) {
+                values.addAll(List.of(text.split("\\s+")));
+            }
+        }
+        return values;
+    }
+
+    private static String mavenExecutable(Path root, Path cwd) {
+        Path cwdWrapper = cwd.resolve("mvnw");
+        if (Files.isRegularFile(cwdWrapper) && Files.isExecutable(cwdWrapper)) {
+            return cwdWrapper.toAbsolutePath().normalize().toString();
+        }
+        Path rootWrapper = root.resolve("mvnw");
+        if (Files.isRegularFile(rootWrapper) && Files.isExecutable(rootWrapper)) {
+            return rootWrapper.toAbsolutePath().normalize().toString();
+        }
+        return "mvn";
+    }
+
     private static String requestEscalationApprovalIfNeeded(Configuration configuration,
             ToolExecutionSession executionSession, Path workspaceRoot, ToolApprovalRequest request, String deniedMessage)
             throws InterruptedException {
+        if (isTemporaryShellCommandApprovalTool(request.toolName()) && _instance.hasTemporaryShellCommandApproval()) {
+            return null;
+        }
         if (!approvalPolicyAllowsEscalationPrompt(configuration)) {
             return deniedMessage;
         }
@@ -2957,6 +3550,70 @@ public class NemoClient {
 
         String output = truncateOutput(configuration, "wrote " + content.length() + " chars to " + root.relativize(path));
         String displayPatch = unifiedDiff(root.relativize(path), before, content, existed, true);
+        return new ToolExecutionResult(output, truncateOutput(configuration, displayPatch));
+    }
+
+    private static ToolExecutionResult searchReplaceDetailed(Configuration configuration, BufferContext context,
+            JsonObject arguments) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawDirectory = stringArgument(arguments, "directory", "");
+        String rawPath = stringArgument(arguments, "path", "");
+        if (rawPath.isBlank()) {
+            throw new IOException("path is required");
+        }
+        Path path = resolvePathInsideWorkspace(root, rawDirectory, rawPath);
+        if (!Files.isRegularFile(path)) {
+            throw new IOException("Not a file: " + path);
+        }
+
+        String search = stringArgument(arguments, "search", "");
+        if (search.isEmpty()) {
+            throw new IOException("search is required");
+        }
+        String replace = stringArgument(arguments, "replace", "");
+        boolean regex = booleanArgument(arguments, "regex", false);
+        boolean replaceAll = booleanArgument(arguments, "replace_all", true);
+        Pattern pattern;
+        try {
+            pattern = regex ? Pattern.compile(search) : Pattern.compile(Pattern.quote(search));
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid search pattern: " + e.getMessage(), e);
+        }
+
+        String before = readFileForDisplayDiff(context, path);
+        Matcher countMatcher = pattern.matcher(before);
+        int matches = 0;
+        while (countMatcher.find()) {
+            matches++;
+        }
+        Path relativePath = root.relativize(path);
+        if (matches == 0) {
+            return new ToolExecutionResult("no matches in " + relativePath);
+        }
+
+        String replacement = regex ? replace : Matcher.quoteReplacement(replace);
+        String after;
+        try {
+            Matcher replaceMatcher = pattern.matcher(before);
+            after = replaceAll ? replaceMatcher.replaceAll(replacement) : replaceMatcher.replaceFirst(replacement);
+        } catch (RuntimeException e) {
+            throw new IOException("Invalid replacement: " + e.getMessage(), e);
+        }
+        if (before.equals(after)) {
+            return new ToolExecutionResult("matched " + matches + " in " + relativePath + " but replacement made no changes");
+        }
+
+        Files.writeString(path, after, StandardCharsets.UTF_8);
+        boolean refreshedOpenBuffer = refreshOpenBuffersForPath(path, after);
+        if (!refreshedOpenBuffer && isCurrentBufferPath(context, path)) {
+            writeOpenBuffer(context, after);
+        }
+
+        int replaced = replaceAll ? matches : 1;
+        String count = replaceAll ? String.valueOf(replaced) : replaced + " of " + matches;
+        String noun = replaceAll && replaced == 1 ? "match" : "matches";
+        String output = truncateOutput(configuration, "replaced " + count + " " + noun + " in " + relativePath);
+        String displayPatch = unifiedDiff(relativePath, before, after, true, true);
         return new ToolExecutionResult(output, truncateOutput(configuration, displayPatch));
     }
 
@@ -3539,6 +4196,10 @@ public class NemoClient {
         return arguments.has(name) ? arguments.get(name).getAsInt() : fallback;
     }
 
+    private static boolean booleanArgument(JsonObject arguments, String name, boolean fallback) {
+        return arguments.has(name) ? arguments.get(name).getAsBoolean() : fallback;
+    }
+
     private static List<String> stringArrayArgument(JsonObject arguments, String name) {
         if (!arguments.has(name) || !arguments.get(name).isJsonArray()) {
             return List.of();
@@ -3738,6 +4399,7 @@ public class NemoClient {
         }
         _approvalsLoaded = true;
         _approvalRules.clear();
+        _approvedShellLines.clear();
         _nextApprovalRuleNumber = 1;
 
         Path approvalsPath = getApprovalsPath();
@@ -3768,9 +4430,24 @@ public class NemoClient {
                 }
             }
             _nextApprovalRuleNumber = Math.max(_nextApprovalRuleNumber, highestRuleNumber + 1);
+            JsonArray shellLines = root.getAsJsonArray("shell_lines");
+            if (shellLines != null) {
+                for (JsonElement element : shellLines) {
+                    JsonObject shellLine = element.getAsJsonObject();
+                    _approvedShellLines.add(new ApprovedShellLine(
+                            shellLine.get("workspace_root").getAsString(),
+                            shellLine.get("name").getAsString(),
+                            shellLine.has("cwd") ? shellLine.get("cwd").getAsString() : "",
+                            shellLine.get("command").getAsString(),
+                            shellLine.has("created_at_millis")
+                                    ? shellLine.get("created_at_millis").getAsLong()
+                                    : System.currentTimeMillis()));
+                }
+            }
         } catch (Exception e) {
             _log.error("Unable to load Nemo approvals from {}", approvalsPath, e);
             _approvalRules.clear();
+            _approvedShellLines.clear();
             _nextApprovalRuleNumber = 1;
         }
     }
@@ -3789,6 +4466,17 @@ public class NemoClient {
             rules.add(object);
         }
         root.add("rules", rules);
+        var shellLines = new JsonArray();
+        for (ApprovedShellLine shellLine : _approvedShellLines) {
+            var object = new JsonObject();
+            object.addProperty("workspace_root", shellLine.workspaceRoot());
+            object.addProperty("name", shellLine.name());
+            object.addProperty("cwd", shellLine.cwd());
+            object.addProperty("command", shellLine.command());
+            object.addProperty("created_at_millis", shellLine.createdAtMillis());
+            shellLines.add(object);
+        }
+        root.add("shell_lines", shellLines);
 
         Path approvalsPath = getApprovalsPath();
         try {
@@ -3823,6 +4511,9 @@ public class NemoClient {
         PendingApproval pending;
         synchronized (this) {
             ensureApprovalsLoaded();
+            if (isTemporaryShellCommandApprovalTool(request.toolName()) && hasTemporaryShellCommandApprovalLocked()) {
+                return new ApprovalResult(true, false);
+            }
             if (hasApprovalRuleLocked(normalizedRoot, request)) {
                 return new ApprovalResult(true, true);
             }
@@ -3853,6 +4544,43 @@ public class NemoClient {
             addApprovalRule(normalizedRoot, request);
         }
         return new ApprovalResult(pending._approved, pending._persist);
+    }
+
+    private static boolean isTemporaryShellCommandApprovalTool(String toolName) {
+        return "run_command".equals(toolName) || "shell_start".equals(toolName) || "mvn".equals(toolName);
+    }
+
+    private synchronized boolean hasTemporaryShellCommandApproval() {
+        return hasTemporaryShellCommandApprovalLocked();
+    }
+
+    private boolean hasTemporaryShellCommandApprovalLocked() {
+        return temporaryShellCommandApprovalRemainingMillisLocked() > 0;
+    }
+
+    private long temporaryShellCommandApprovalRemainingMillisLocked() {
+        long remaining = _temporaryShellCommandApprovalExpiresAtMillis - System.currentTimeMillis();
+        if (remaining <= 0) {
+            _temporaryShellCommandApprovalExpiresAtMillis = 0;
+            return 0;
+        }
+        return remaining;
+    }
+
+    private synchronized List<PendingApproval> grantTemporaryShellCommandApproval() {
+        _temporaryShellCommandApprovalExpiresAtMillis = System.currentTimeMillis() + _temporaryShellCommandApprovalMillis;
+        var approved = new ArrayList<PendingApproval>();
+        var iterator = _pendingApprovals.entrySet().iterator();
+        while (iterator.hasNext()) {
+            PendingApproval pending = iterator.next().getValue();
+            if (!isTemporaryShellCommandApprovalTool(pending._request.toolName()) || pending._request.hostOnly()) {
+                continue;
+            }
+            pending.resolve(true, false);
+            approved.add(pending);
+            iterator.remove();
+        }
+        return approved;
     }
 
     private synchronized boolean hasApprovalRuleLocked(String workspaceRoot, ToolApprovalRequest request) {
@@ -3994,7 +4722,15 @@ public class NemoClient {
         lines.add("tool: " + pending._request.toolName());
         lines.add("workspace: " + pending._workspaceRoot);
         lines.add(pending._request.summary());
-        String options = pending._request.persistable() ? "approve once, approve always, or deny" : "approve once or deny";
+        boolean commandApproval = isTemporaryShellCommandApprovalTool(pending._request.toolName());
+        String options;
+        if (commandApproval && pending._request.persistable()) {
+            options = "approve once, approve shell commands for 10 minutes, approve always, or deny";
+        } else if (commandApproval) {
+            options = "approve once, approve shell commands for 10 minutes, or deny";
+        } else {
+            options = pending._request.persistable() ? "approve once, approve always, or deny" : "approve once or deny";
+        }
         lines.add("Approval options open in the menu. Use arrows and Enter to choose " + options + ".");
         return String.join("\n", lines);
     }
@@ -4281,7 +5017,7 @@ public class NemoClient {
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
             new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<conversation-id> <message>", "send a message to a worker without switching"),
-            new CommandSpec("approve", List.of(), "<approval-id> [always]", "approve a pending Nemo tool request"),
+            new CommandSpec("approve", List.of(), "<approval-id> [always|shell-10m]", "approve a pending Nemo tool request"),
             new CommandSpec("deny", List.of(), "<approval-id>", "deny a pending Nemo tool request"),
             new CommandSpec("approvals", List.of(), "", "list pending and saved Nemo approvals"),
             new CommandSpec("unapprove", List.of(), "<rule-id|all>", "remove saved Nemo approval rules"),
@@ -4292,7 +5028,7 @@ public class NemoClient {
     private CommandMenuState nemoCommandMenuState(Conversation conversation, String text) {
         var approvalSpecs = pendingApprovalCommandSpecs(conversation);
         if (!approvalSpecs.isEmpty()) {
-            return CommandMenuState.forCommandText(text, 0, approvalSpecs, "approval options");
+            return CommandMenuState.forCommandText(text, 0, approvalSpecs, pendingApprovalMenuTitle(conversation));
         }
         return CommandMenuState.forCommandText(text, 0, NEMO_COMMAND_SPECS);
     }
@@ -4310,6 +5046,13 @@ public class NemoClient {
             specs.add(new CommandSpec("approve", List.of(), pending._id,
                     approvalMenuDetail("Allow this request once", pending), approveOnce, true,
                     multiple ? "Approve once " + ownerLabel : "Approve once"));
+            if (isTemporaryShellCommandApprovalTool(pending._request.toolName())) {
+                String approveShell = approveOnce + " shell-10m";
+                specs.add(new CommandSpec("approve", List.of(), pending._id + " shell-10m",
+                        approvalMenuDetail("Approve all shell commands for 10 minutes", pending),
+                        approveShell, true,
+                        multiple ? "Approve shell 10m " + ownerLabel : "Approve shell 10m"));
+            }
             if (pending._request.persistable()) {
                 String approveAlways = approveOnce + " always";
                 specs.add(new CommandSpec("approve", List.of(), pending._id + " always",
@@ -4325,9 +5068,28 @@ public class NemoClient {
     }
 
     private static String approvalMenuDetail(String action, PendingApproval pending) {
-        String summary = oneLine(pending._request.summary());
-        String detail = action + ": " + pending._request.toolName();
-        return summary.isBlank() ? detail : detail + " - " + summary;
+        return action;
+    }
+
+    private synchronized String pendingApprovalMenuTitle(Conversation conversation) {
+        var pendingApprovals = pendingApprovalsForWorkspace(conversation._workspaceRoot).stream()
+                .filter(pending -> !pending._request.hostOnly())
+                .toList();
+        var lines = new ArrayList<String>();
+        lines.add("approval options");
+        for (PendingApproval pending : pendingApprovals) {
+            Conversation owner = _conversations.get(pending._conversationId);
+            String session = owner == null ? pending._conversationId : owner._id + " | " + owner._title;
+            lines.add(pending._id + " | " + pending._request.toolName() + " | " + pending._request.reason());
+            lines.add("session: " + session);
+            lines.add("workspace: " + pending._workspaceRoot);
+            for (String summaryLine : pending._request.summary().split("\\R", -1)) {
+                if (!summaryLine.isBlank()) {
+                    lines.add(summaryLine);
+                }
+            }
+        }
+        return String.join("\n", lines);
     }
 
     private synchronized List<PendingApproval> pendingApprovalsForWorkspace(Path workspaceRoot) {
@@ -4488,7 +5250,7 @@ public class NemoClient {
         int availablePluginTools = pluginToolDescriptors(configuration).size();
         lines.add("- plugin tools: " + availablePluginTools
                 + (registeredPluginTools == availablePluginTools ? "" : " available of " + registeredPluginTools + " registered"));
-        lines.add("- read-only blocks: run_command, write_file, apply_patch, git_add, git_commit, drive_editor");
+        lines.add("- read-only blocks: run_command, shell_start, shell_poll, shell_stop, mvn, write_file, search_replace, apply_patch, git_add, git_commit, drive_editor");
         return String.join("\n", lines);
     }
 
@@ -4517,17 +5279,35 @@ public class NemoClient {
     private void handleApproveCommand(Conversation conversation, String argument) {
         String[] parts = argument.split("\\s+");
         String approvalId = parts.length == 0 ? "" : parts[0].trim();
-        boolean persist = parts.length > 1 && "always".equalsIgnoreCase(parts[1]);
+        boolean persist = false;
+        boolean temporaryShellCommands = false;
+        for (int i = 1; i < parts.length; i++) {
+            String option = parts[i].trim().toLowerCase();
+            if ("always".equals(option)) {
+                persist = true;
+            } else if ("shell-10m".equals(option) || "shell10m".equals(option)
+                    || "shell_10m".equals(option) || "10m".equals(option)) {
+                temporaryShellCommands = true;
+            }
+        }
         if (approvalId.isBlank()) {
             approvalId = singlePendingApprovalId(conversation);
         }
         if (approvalId.isBlank()) {
-            appendAssistantNote(conversation, "Usage: :approve <approval-id> [always]");
+            appendAssistantNote(conversation, "Usage: :approve <approval-id> [always|shell-10m]");
             return;
         }
-        PendingApproval pending = resolveApproval(conversation, approvalId, true, persist);
+        PendingApproval pending = resolveApproval(conversation, approvalId, true,
+                persist && !temporaryShellCommands);
         if (pending == null) {
             appendAssistantNote(conversation, "Unknown approval: " + approvalId);
+            return;
+        }
+        if (temporaryShellCommands && isTemporaryShellCommandApprovalTool(pending._request.toolName())) {
+            List<PendingApproval> additionallyApproved = grantTemporaryShellCommandApproval();
+            appendApprovalResolution(conversation, pending,
+                    "Approved " + pending._id + " and shell commands for 10 minutes.");
+            appendTemporaryApprovalResolutions(conversation, pending, additionallyApproved);
             return;
         }
         appendApprovalResolution(conversation, pending,
@@ -4588,6 +5368,22 @@ public class NemoClient {
         }
     }
 
+    private void appendTemporaryApprovalResolutions(Conversation conversation, PendingApproval current,
+            List<PendingApproval> additionallyApproved) {
+        for (PendingApproval pending : additionallyApproved) {
+            if (pending == current) {
+                continue;
+            }
+            Conversation owner = ownerConversation(pending);
+            String text = "Approved " + pending._id + " by 10-minute shell command approval.";
+            if (owner == null || owner == conversation) {
+                appendTurn(conversation, new ChatTurn("approval", text, false));
+            } else {
+                appendTurn(owner, new ChatTurn("approval", text, false));
+            }
+        }
+    }
+
     private static String appendSentenceSuffix(String text, String suffix) {
         String stripped = text.endsWith(".") ? text.substring(0, text.length() - 1) : text;
         return stripped + suffix + ".";
@@ -4602,6 +5398,12 @@ public class NemoClient {
         String workspaceRoot = conversation._workspaceRoot.toAbsolutePath().normalize().toString();
         var lines = new ArrayList<String>();
         lines.add("Approvals:");
+        long temporaryRemainingMillis = temporaryShellCommandApprovalRemainingMillisLocked();
+        if (temporaryRemainingMillis > 0) {
+            lines.add("Temporary:");
+            lines.add("- run_command,shell_start,mvn | all sessions | expires in "
+                    + formatDuration(temporaryRemainingMillis));
+        }
         boolean anyPending = false;
         for (PendingApproval pending : pendingApprovalsForWorkspace(conversation._workspaceRoot)) {
             if (!anyPending) {
@@ -4624,10 +5426,20 @@ public class NemoClient {
             }
             lines.add("- " + rule.id() + " | " + rule.toolName());
         }
-        if (!anyPending && !anySaved) {
+        if (temporaryRemainingMillis <= 0 && !anyPending && !anySaved) {
             lines.add("(none)");
         }
         return String.join("\n", lines);
+    }
+
+    private static String formatDuration(long millis) {
+        long seconds = Math.max(1, (millis + 999) / 1000);
+        long minutes = seconds / 60;
+        long remainingSeconds = seconds % 60;
+        if (minutes <= 0) {
+            return seconds + "s";
+        }
+        return remainingSeconds == 0 ? minutes + "m" : minutes + "m " + remainingSeconds + "s";
     }
 
     private void handleUnapproveCommand(Conversation conversation, String argument) {

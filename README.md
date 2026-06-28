@@ -79,7 +79,7 @@ Each live editor session is a separate app process. When a client attaches, it s
 
 Detaching a client, such as with `:detach` or the tmux-style `Ctrl-b d` binding, leaves the server-side session running. `:q` follows Vim window semantics: it closes the current frame first, then the current tab, and only exits the app process when the last tab is gone. The tmux-style `Ctrl-b &` binding closes the current tab directly. App process exit removes the session from the server.
 
-The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal. The client and session-server JVMs use `-XX:+UseZGC` with `-Xmx128M`; editor app JVMs use the larger app policy, including `-Xmx4G`, `-XX:SoftMaxHeapSize=1G`, `--sun-misc-unsafe-memory-access=allow`, and, on Java 26+, `--enable-final-field-mutation=ALL-UNNAMED`.
+The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal. The client and session-server JVMs use `-XX:+UseZGC` with `-Xmx128M`; editor app JVMs use the larger app policy, including `-Xmx4G`, `-XX:SoftMaxHeapSize=1G`, `--sun-misc-unsafe-memory-access=allow`, and, on Java 26+, `--enable-final-field-mutation=ALL-UNNAMED --illegal-final-field-mutation=allow`.
 
 ## Runtime Layout
 

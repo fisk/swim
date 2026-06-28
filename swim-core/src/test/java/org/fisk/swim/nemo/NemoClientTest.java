@@ -165,6 +165,20 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .systemPrompt("System prompt")
                 .contextWindowTokens(900)
+                .toolWebSearch(false)
+                .toolDelegateTask(false)
+                .toolScreenSnapshot(false)
+                .toolDriveEditor(false)
+                .toolListFiles(false)
+                .toolReadFile(false)
+                .toolSearchFiles(false)
+                .toolRunCommand(false)
+                .toolWriteFile(false)
+                .toolApplyPatch(false)
+                .toolGitStatus(false)
+                .toolGitDiff(false)
+                .toolGitAdd(false)
+                .toolGitCommit(false)
                 .build();
 
         String prompt = NemoPromptBuilder.buildInput(context, List.of(
@@ -193,6 +207,20 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .systemPrompt("System prompt")
                 .contextWindowTokens(contextWindowTokens)
+                .toolWebSearch(false)
+                .toolDelegateTask(false)
+                .toolScreenSnapshot(false)
+                .toolDriveEditor(false)
+                .toolListFiles(false)
+                .toolReadFile(false)
+                .toolSearchFiles(false)
+                .toolRunCommand(false)
+                .toolWriteFile(false)
+                .toolApplyPatch(false)
+                .toolGitStatus(false)
+                .toolGitDiff(false)
+                .toolGitAdd(false)
+                .toolGitCommit(false)
                 .build();
 
         String prompt = NemoPromptBuilder.buildInput(context,
@@ -281,6 +309,35 @@ class NemoClientTest {
         assertTrue(!configuration.toolWriteFile());
         assertTrue(!configuration.toolGitAdd());
         assertTrue(!configuration.toolGitCommit());
+    }
+
+    @Test
+    void normalizesZaiProviderAliasesAndDefaultsToZhipuRootUrl() throws IOException {
+        Path config = tempDir.resolve("nemo.conf");
+        Files.writeString(config, String.join("\n",
+                "provider=z.ai",
+                "api_key=token.secret",
+                "model=glm-5",
+                "reasoning_effort=xhigh"));
+
+        var configuration = NemoClient.loadConfiguration(config);
+
+        assertEquals("zai", configuration.provider());
+        assertTrue(configuration.isZaiProvider());
+        assertTrue(configuration.requiresApiKey());
+        assertEquals("https://open.bigmodel.cn/", configuration.baseUrl());
+        assertEquals("xhigh", configuration.reasoningEffort());
+    }
+
+    @Test
+    void acceptsLegacyZipuAndZhipuProviderSpellingsAsZai() throws IOException {
+        Path zipuConfig = tempDir.resolve("zipu.conf");
+        Files.writeString(zipuConfig, "provider=zipuai\n");
+        Path zhipuConfig = tempDir.resolve("zhipu.conf");
+        Files.writeString(zhipuConfig, "provider=zhipuai\n");
+
+        assertEquals("zai", NemoClient.loadConfiguration(zipuConfig).provider());
+        assertEquals("zai", NemoClient.loadConfiguration(zhipuConfig).provider());
     }
 
     @Test
@@ -765,7 +822,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(22, tools.size());
+        assertEquals(31, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -800,11 +857,20 @@ class NemoClientTest {
         assertTrue(names.contains("finish_editor_control"));
         assertTrue(names.contains("current_editor_context"));
         assertTrue(names.contains("read_file"));
+        assertTrue(names.contains("find"));
         assertTrue(names.contains("search_files"));
         assertTrue(names.contains("git_status"));
         assertTrue(names.contains("git_diff"));
         assertFalse(names.contains("run_command"));
+        assertFalse(names.contains("shell_start"));
+        assertFalse(names.contains("shell_poll"));
+        assertFalse(names.contains("shell_stop"));
+        assertFalse(names.contains("shell_save"));
+        assertFalse(names.contains("shell_list"));
+        assertFalse(names.contains("shell_run"));
+        assertFalse(names.contains("mvn"));
         assertFalse(names.contains("write_file"));
+        assertFalse(names.contains("search_replace"));
         assertFalse(names.contains("apply_patch"));
         assertFalse(names.contains("git_add"));
         assertFalse(names.contains("git_commit"));
@@ -1187,6 +1253,9 @@ class NemoClientTest {
         Path file = project.resolve("src/Main.txt");
         Files.createDirectories(file.getParent());
         Files.writeString(file, "alpha\nbeta\nalpha\n");
+        Path otherFile = project.resolve("other/Main.txt");
+        Files.createDirectories(otherFile.getParent());
+        Files.writeString(otherFile, "alpha\n");
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
         var configuration = new NemoClient.Configuration(
                 "token",
@@ -1215,11 +1284,32 @@ class NemoClientTest {
                 new NemoClient.ToolCall("2", "read_file", json(Map.of("path", "src/Main.txt", "start_line", 2, "end_line", 3))));
         String searched = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("3", "search_files", json(Map.of("query", "alpha"))));
+        String scopedList = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("4", "list_files", json(Map.of("directory", "src"))));
+        String scopedSearch = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("5", "search_files", json(Map.of(
+                        "query", "alpha",
+                        "directory", "src"))));
+        String found = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("6", "find", json(Map.of(
+                        "query", "main",
+                        "directory", "src"))));
+        String foundGlob = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("7", "find", json(Map.of(
+                        "query", "*.txt",
+                        "directory", "src"))));
 
         assertTrue(listed.contains("src/Main.txt"));
         assertTrue(read.contains("2: beta"));
         assertTrue(read.contains("3: alpha"));
         assertTrue(searched.contains("src/Main.txt:1: alpha"));
+        assertTrue(scopedList.contains("src/Main.txt"));
+        assertTrue(scopedSearch.contains("src/Main.txt:1: alpha"));
+        assertFalse(scopedSearch.contains("other/Main.txt"));
+        assertTrue(found.contains("src/Main.txt"));
+        assertFalse(found.contains("other/Main.txt"));
+        assertTrue(foundGlob.contains("src/Main.txt"));
+        assertFalse(foundGlob.contains("other/Main.txt"));
     }
 
     @Test
@@ -1366,6 +1456,90 @@ class NemoClientTest {
     }
 
     @Test
+    void asyncShellCanBeStartedAndPolledById() throws Exception {
+        Path project = tempDir.resolve("async-shell-workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("trusted")
+                .toolOsSandbox("disabled")
+                .build();
+
+        String started = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-start", "shell_start", json(Map.of(
+                        "command", "printf start; sleep 0.1; printf done"))));
+
+        String shellId = shellIdFromOutput(started);
+        assertTrue(shellId.startsWith("shell-"));
+        assertTrue(started.contains("status: running"));
+
+        String poll = "";
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            poll = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-poll", "shell_poll", json(Map.of(
+                            "shell_id", shellId,
+                            "max_output_chars", 100))));
+            if (poll.contains("status: done")) {
+                break;
+            }
+            Thread.sleep(25);
+        }
+
+        assertTrue(poll.contains("status: done"));
+        assertTrue(poll.contains("exit_code: 0"));
+        assertTrue(poll.contains("startdone"));
+
+        String forgotten = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-forget", "shell_poll", json(Map.of(
+                        "shell_id", shellId,
+                        "forget_if_finished", true))));
+        assertTrue(forgotten.contains("status: done"));
+
+        String missing = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-missing", "shell_poll", json(Map.of("shell_id", shellId))));
+        assertTrue(missing.contains("Unknown shell: " + shellId));
+    }
+
+    @Test
+    void approvedShellLineCanBeSavedAndReusedWithoutCommandPolicyApproval() throws Exception {
+        Path project = tempDir.resolve("saved-shell-workspace");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("restricted")
+                .toolOsSandbox("disabled")
+                .build();
+        var approvalSession = new RecordingToolSession();
+
+        String saved = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-save", "shell_save", json(Map.of(
+                        "name", "compile",
+                        "command", "printf ok; touch compiled.txt"))),
+                approvalSession);
+
+        assertEquals(1, approvalSession.approvals.get());
+        assertEquals("shell_save", approvalSession.request.get().toolName());
+        assertTrue(saved.contains("saved shell line compile"));
+
+        String listed = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-list", "shell_list", json(Map.of())));
+        assertTrue(listed.contains("compile | cwd=. | printf ok; touch compiled.txt"));
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-run", "shell_run", json(Map.of("name", "compile"))));
+
+        assertTrue(output.contains("exit_code: 0"));
+        assertTrue(Files.exists(project.resolve("compiled.txt")));
+    }
+
+    @Test
     void readOnlyPermissionBlocksMutatingTools() throws Exception {
         Path project = tempDir.resolve("workspace-read-only");
         Files.createDirectories(project);
@@ -1380,13 +1554,25 @@ class NemoClientTest {
 
         String shellOutput = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("blocked-shell", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
+        String asyncShellOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-async-shell", "shell_start", json(Map.of("command", "printf ok"))));
+        String mvnOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-mvn", "mvn", json(Map.of("arguments", List.of("-q", "test")))));
         String writeOutput = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("blocked-write", "write_file", json(Map.of(
                         "path", "note.txt",
                         "content", "changed\n"))));
+        String replaceOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-replace", "search_replace", json(Map.of(
+                        "path", "note.txt",
+                        "search", "hello",
+                        "replace", "changed"))));
 
         assertTrue(shellOutput.contains("blocked by Nemo permissions"));
+        assertTrue(asyncShellOutput.contains("blocked by Nemo permissions"));
+        assertTrue(mvnOutput.contains("blocked by Nemo permissions"));
         assertTrue(writeOutput.contains("blocked by Nemo permissions"));
+        assertTrue(replaceOutput.contains("blocked by Nemo permissions"));
         assertEquals("hello\n", Files.readString(file));
         assertFalse(Files.exists(owned));
     }
@@ -1757,6 +1943,68 @@ class NemoClientTest {
         assertTrue(trace.displayText().contains("+new"));
     }
 
+    @Test
+    void searchReplaceEditsScopedFileAndReturnsDisplayPatch() throws Exception {
+        Path project = tempDir.resolve("replace-workspace");
+        Path file = project.resolve("src/note.txt");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "alpha beta alpha\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        var call = new NemoClient.ToolCall("replace", "search_replace", json(Map.of(
+                "directory", "src",
+                "path", "note.txt",
+                "search", "alpha",
+                "replace", "omega")));
+
+        NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(configuration, context, call, null);
+        NemoClient.ToolTrace trace = NemoClient.toolTrace(call, result);
+
+        assertTrue(result.output().contains("replaced 2 matches in src/note.txt"));
+        assertEquals("omega beta omega\n", Files.readString(file));
+        assertTrue(result.displayPatch().contains("-alpha beta alpha"));
+        assertTrue(result.displayPatch().contains("+omega beta omega"));
+        assertFalse(trace.text().contains("-alpha"));
+        assertTrue(trace.displayText().contains("+omega beta omega"));
+    }
+
+    @Test
+    void mvnToolRunsWrapperFromRequestedSubdirectoryWithArguments() throws Exception {
+        Path project = tempDir.resolve("mvn-workspace");
+        Path module = project.resolve("module");
+        Files.createDirectories(module);
+        Path wrapper = project.resolve("mvnw");
+        Files.writeString(wrapper, """
+                #!/bin/sh
+                pwd > mvn.out
+                for arg in "$@"; do
+                  printf '%s\\n' "$arg" >> mvn.out
+                done
+                """);
+        assertTrue(wrapper.toFile().setExecutable(true));
+        Path file = module.resolve("note.txt");
+        Files.writeString(file, "hello\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolOsSandbox("disabled")
+                .build();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("mvn", "mvn", json(Map.of(
+                        "directory", "module",
+                        "arguments", List.of("-q", "test", "-DskipTests")))));
+
+        assertTrue(output.contains("exit_code: 0"));
+        String invocation = Files.readString(module.resolve("mvn.out"));
+        assertTrue(invocation.contains(module.toString()));
+        assertTrue(invocation.contains("-q\n"));
+        assertTrue(invocation.contains("test\n"));
+        assertTrue(invocation.contains("-DskipTests\n"));
+    }
+
     private static int promptBudgetChars(int contextWindowTokens) {
         int reserve = Math.max(32, contextWindowTokens / 10);
         return (contextWindowTokens - reserve) * 3;
@@ -1770,6 +2018,15 @@ class NemoClientTest {
 
     private static com.google.gson.JsonObject json(Map<String, ?> values) {
         return com.google.gson.JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
+    }
+
+    private static String shellIdFromOutput(String output) {
+        for (String line : output.split("\\R")) {
+            if (line.startsWith("shell_id: ")) {
+                return line.substring("shell_id: ".length()).trim();
+            }
+        }
+        return "";
     }
 
     private static AutoCloseable registerPluginTool(String pluginId, String name, String description,

@@ -426,6 +426,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     public boolean openCommandInputIfEmpty() {
         if (_input.length() > 0) {
+            if (isCommandInputActive()) {
+                refreshChrome();
+            }
             return false;
         }
         _input.append(':');

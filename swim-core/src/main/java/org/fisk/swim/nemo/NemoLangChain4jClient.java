@@ -17,6 +17,8 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.community.model.zhipu.ZhipuAiChatModel;
+import dev.langchain4j.community.model.zhipu.chat.Thinking;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.json.JsonArraySchema;
@@ -78,6 +80,13 @@ final class NemoLangChain4jClient {
     }
 
     private ChatModel createModel(NemoClient.Configuration configuration) {
+        if (configuration.isZaiProvider()) {
+            return createZaiModel(configuration);
+        }
+        return createOpenAiCompatibleModel(configuration);
+    }
+
+    private ChatModel createOpenAiCompatibleModel(NemoClient.Configuration configuration) {
         var builder = OpenAiChatModel.builder()
                 .modelName(configuration.model())
                 .timeout(Duration.ofSeconds(configuration.timeoutSeconds()))
@@ -131,6 +140,104 @@ final class NemoLangChain4jClient {
             builder.sendThinking(true, configuration.thinkingFieldName());
         }
         return builder.build();
+    }
+
+    private ChatModel createZaiModel(NemoClient.Configuration configuration) {
+        var builder = ZhipuAiChatModel.builder()
+                .baseUrl(zaiBaseUrl(configuration.baseUrl()))
+                .model(configuration.model())
+                .apiKey(configuration.apiKey())
+                .callTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                .connectTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                .readTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                .writeTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                .maxRetries(configuration.maxRetries())
+                .logRequests(configuration.logRequests())
+                .logResponses(configuration.logResponses());
+        if (configuration.temperature() != null) {
+            builder.temperature(configuration.temperature());
+        }
+        if (configuration.topP() != null) {
+            builder.topP(configuration.topP());
+        }
+        if (configuration.maxOutputTokens() != null) {
+            builder.maxToken(configuration.maxOutputTokens());
+        }
+        if (!applyZaiReasoningEffort(builder, configuration.reasoningEffort())) {
+            Thinking thinking = zaiThinking(configuration.reasoningEffort());
+            if (thinking != null) {
+                builder.thinking(thinking);
+            }
+        }
+        return builder.build();
+    }
+
+    private static boolean applyZaiReasoningEffort(
+            ZhipuAiChatModel.ZhipuAiChatModelBuilder builder,
+            String reasoningEffort) {
+        if (reasoningEffort == null || reasoningEffort.isBlank()) {
+            return false;
+        }
+        for (String enumClassName : List.of(
+                "dev.langchain4j.community.model.zhipu.ZhipuAiReasoningEffort",
+                "dev.langchain4j.community.model.zhipu.chat.ZhipuAiReasoningEffort",
+                "dev.langchain4j.model.zhipu.ZhipuAiReasoningEffort")) {
+            try {
+                Class<?> enumClass = Class.forName(enumClassName);
+                if (!Enum.class.isAssignableFrom(enumClass)) {
+                    continue;
+                }
+                Object enumValue = zaiReasoningEffortValue(enumClass, reasoningEffort);
+                builder.getClass().getMethod("reasoningEffort", enumClass).invoke(builder, enumValue);
+                return true;
+            } catch (ReflectiveOperationException | IllegalArgumentException e) {
+                // The published Zhipu module currently exposes Thinking instead. Use that below.
+            }
+        }
+        return false;
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static Object zaiReasoningEffortValue(Class<?> enumClass, String reasoningEffort) {
+        String normalized = reasoningEffort.trim().toUpperCase().replace('-', '_');
+        normalized = switch (normalized) {
+        case "XHIGH", "X_HIGH", "VERY_HIGH", "MAX" -> "HIGH";
+        case "OFF", "FALSE", "DISABLED" -> "NONE";
+        default -> normalized;
+        };
+        try {
+            return Enum.valueOf((Class<? extends Enum>) enumClass.asSubclass(Enum.class), normalized);
+        } catch (IllegalArgumentException e) {
+            return Enum.valueOf((Class<? extends Enum>) enumClass.asSubclass(Enum.class), "HIGH");
+        }
+    }
+
+    private static Thinking zaiThinking(String reasoningEffort) {
+        if (reasoningEffort == null || reasoningEffort.isBlank()) {
+            return null;
+        }
+        String normalized = reasoningEffort.trim().toLowerCase();
+        String type = switch (normalized) {
+        case "none", "off", "false", "disabled" -> "disabled";
+        default -> "enabled";
+        };
+        return Thinking.builder()
+                .type(type)
+                .build();
+    }
+
+    private static String zaiBaseUrl(String baseUrl) {
+        String normalized = baseUrl == null || baseUrl.isBlank() ? "https://open.bigmodel.cn/" : baseUrl.trim();
+        normalized = stripSuffix(normalized, "/chat/completions");
+        normalized = stripSuffix(normalized, "/api/paas/v4");
+        return normalized.endsWith("/") ? normalized : normalized + "/";
+    }
+
+    private static String stripSuffix(String value, String suffix) {
+        if (value.endsWith(suffix)) {
+            return value.substring(0, value.length() - suffix.length());
+        }
+        return value;
     }
 
     private static java.util.Map<String, String> customHeaders(NemoClient.Configuration configuration) {
@@ -276,10 +383,20 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolListFiles()) {
             tools.add(tool("list_files",
-                    "List files in the workspace. Use this to inspect project structure.",
+                    "List files in the workspace or a subdirectory. Use this to inspect project structure.",
                     JsonObjectSchema.builder()
                             .addStringProperty("path", "Path relative to the workspace root.")
+                            .addStringProperty("directory", "Optional directory relative to the workspace root. Overrides path when supplied.")
                             .addIntegerProperty("max_results", "Maximum number of files to return.")
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("find",
+                    "Find files by name or workspace-relative path. Use directory to start from a workspace subdirectory. Query is a case-insensitive substring by default; queries containing glob characters such as * or ? are matched as globs.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("query", "Filename/path substring or glob, for example Window.java, nemo, or *.java.")
+                            .addStringProperty("directory", "Optional directory relative to the workspace root where the file search should start.")
+                            .addIntegerProperty("max_results", "Maximum number of matching file paths to return.")
+                            .required(List.of("query"))
                             .additionalProperties(false)
                             .build()));
         }
@@ -296,10 +413,11 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolSearchFiles()) {
             tools.add(tool("search_files",
-                    "Search text across workspace files and return matching lines.",
+                    "Search text across workspace files or a subdirectory and return matching lines.",
                     JsonObjectSchema.builder()
                             .addStringProperty("query", "Text to search for.")
                             .addStringProperty("path", "Optional path relative to the workspace root.")
+                            .addStringProperty("directory", "Optional search directory relative to the workspace root. Overrides path when supplied.")
                             .addIntegerProperty("max_results", "Maximum number of matches to return.")
                             .required(List.of("query"))
                             .additionalProperties(false)
@@ -314,6 +432,62 @@ final class NemoLangChain4jClient {
                             .required(List.of("command"))
                             .additionalProperties(false)
                             .build()));
+            tools.add(tool("shell_start",
+                    "Start a workspace shell command asynchronously and return a shell_id immediately. Use shell_poll with that id to read accumulated output and completion status while continuing other work.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("command", "Shell command to execute asynchronously.")
+                            .addStringProperty("cwd", "Optional working directory relative to the workspace root.")
+                            .required(List.of("command"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_poll",
+                    "Poll an asynchronous shell by shell_id and return current status plus accumulated stdout and stderr.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("shell_id", "Identifier returned by shell_start.")
+                            .addIntegerProperty("max_output_chars", "Maximum stdout and stderr characters to return each.")
+                            .addBooleanProperty("forget_if_finished", "Set true to remove the shell record after returning a finished result.")
+                            .required(List.of("shell_id"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_stop",
+                    "Stop a running asynchronous shell by shell_id.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("shell_id", "Identifier returned by shell_start.")
+                            .required(List.of("shell_id"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_save",
+                    "Save or replace a named approved shell command line for this workspace after user approval. Later shell_run calls can execute the saved name without asking for command-policy approval again.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("name", "Short name for the approved shell line, for example compile or test-core.")
+                            .addStringProperty("command", "Shell command line to approve and save.")
+                            .addStringProperty("cwd", "Optional working directory relative to the workspace root.")
+                            .required(List.of("name", "command"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_list",
+                    "List named approved shell command lines saved for this workspace.",
+                    JsonObjectSchema.builder()
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_run",
+                    "Run a named approved shell command line saved with shell_save. Set async true to start it as an asynchronous shell and poll with shell_poll.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("name", "Name of the saved shell line to run.")
+                            .addBooleanProperty("async", "Set true to start asynchronously and return a shell_id.")
+                            .required(List.of("name"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("mvn",
+                    "Run Maven from a workspace subdirectory and return exit code, stdout, and stderr. Pass Maven arguments as an array so they are forwarded as arguments rather than raw shell text. Nemo applies the same approval and OS filesystem-write sandbox handling as command execution.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("directory", "Optional working directory relative to the workspace root.")
+                            .addProperty("arguments", JsonArraySchema.builder()
+                                    .description("Maven arguments to pass, for example [\"-q\", \"test\"] or [\"-pl\", \"swim-core\", \"-am\", \"test\"].")
+                                    .items(JsonStringSchema.builder().description("One Maven command-line argument.").build())
+                                    .build())
+                            .additionalProperties(false)
+                            .build()));
         }
         if (configuration.toolWriteFile() && NemoClient.isToolAllowedByPermission(configuration, "write_file")) {
             tools.add(tool("write_file",
@@ -322,6 +496,18 @@ final class NemoLangChain4jClient {
                             .addStringProperty("path", "Path relative to the workspace root.")
                             .addStringProperty("content", "Full file contents to write.")
                             .required(List.of("path", "content"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("search_replace",
+                    "Perform a sed-like search and replace in one workspace file. Literal matching is used by default; regex mode supports Java regular expressions and replacement groups. Successful replacements are saved to disk and return a diff for the user-visible trace.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("path", "File path relative to directory, or relative to the workspace root when directory is omitted.")
+                            .addStringProperty("directory", "Optional base directory relative to the workspace root.")
+                            .addStringProperty("search", "Search text or Java regular expression.")
+                            .addStringProperty("replace", "Replacement text. In regex mode, Java regex replacement groups are supported.")
+                            .addBooleanProperty("regex", "Set true to treat search as a Java regular expression.")
+                            .addBooleanProperty("replace_all", "Set false to replace only the first match. Defaults to true.")
+                            .required(List.of("path", "search", "replace"))
                             .additionalProperties(false)
                             .build()));
         }
@@ -429,5 +615,4 @@ final class NemoLangChain4jClient {
 
     private record PathInfo(java.nio.file.Path workspaceRoot) {
     }
-
 }

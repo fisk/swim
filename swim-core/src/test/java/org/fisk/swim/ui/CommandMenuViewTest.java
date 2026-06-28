@@ -65,6 +65,22 @@ class CommandMenuViewTest {
     }
 
     @Test
+    void commandMenuAccountsForMultilineHeader() {
+        var menuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
+        var matches = List.of(
+                new CommandView.CommandSpec("approve", List.of(), "approval-1", "Allow once"),
+                new CommandView.CommandSpec("deny", List.of(), "approval-1", "Deny"));
+
+        menuView.setState(new CommandView.CommandMenuState(true, "", matches, 0,
+                "approval options\nrun blocked command: printf ok; touch approved.txt"));
+        menuView.resize(Size.create(40, 8));
+
+        assertEquals(40, menuView.getBounds().getSize().getWidth());
+        assertTrue(menuView.getBounds().getSize().getHeight() >= 4);
+        assertTrue(menuView.getBounds().getSize().getHeight() <= 8);
+    }
+
+    @Test
     void commandMenuStaysAboveReservedBottomRows() {
         var menuView = new CommandMenuView(Rect.create(0, 0, 0, 0));
         var matches = List.of(

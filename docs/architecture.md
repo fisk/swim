@@ -34,7 +34,7 @@ JVM sizing is intentionally split:
 
 - Launcher client and session server JVMs use `-XX:+UseZGC -Xmx128M`.
 - App JVMs use `-XX:+UseZGC -Xmx4G -XX:SoftMaxHeapSize=1G --sun-misc-unsafe-memory-access=allow`.
-- On Java 26+, app JVMs also add `--enable-final-field-mutation=ALL-UNNAMED`.
+- On Java 26+, app JVMs also add `--enable-final-field-mutation=ALL-UNNAMED --illegal-final-field-mutation=allow`.
 
 ## Module Map
 

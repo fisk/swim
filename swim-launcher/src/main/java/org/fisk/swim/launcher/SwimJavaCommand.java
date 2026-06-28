@@ -11,6 +11,7 @@ final class SwimJavaCommand {
             "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
     private static final String NATIVE_ACCESS_OPTION = "--enable-native-access=org.fisk.swim.session";
     private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
+    private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx4G",
@@ -78,6 +79,7 @@ final class SwimJavaCommand {
         options.addAll(APP_JVM_OPTIONS);
         if (javaFeatureVersion >= 26) {
             options.add(FINAL_FIELD_MUTATION_OPTION);
+            options.add(ILLEGAL_FINAL_FIELD_MUTATION_OPTION);
         }
         return List.copyOf(options);
     }

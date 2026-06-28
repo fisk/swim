@@ -147,7 +147,7 @@ class NemoChatIT {
                 waitForLine(panel, "nemo> Parent saw delegated start.");
                 waitForLine(panel, "Approval required: command policy escalation");
                 waitForLine(panel, "session: session-2 | Build");
-                assertEquals("approval options", panel.getCommandMenuState().title());
+                assertTrue(panel.getCommandMenuState().title().startsWith("approval options\n"));
                 assertEquals("Approve once", panel.getCommandMenuState().selectedMatch().displayLabel());
 
                 dispatch(panel, new KeyStroke(KeyType.Enter));
@@ -230,7 +230,7 @@ class NemoChatIT {
                 NemoClient.getInstance().run(window.getBufferContext(), "Use the MCP echo tool");
                 var panel = waitForPanel(window);
                 waitForLine(panel, "Approval required: MCP tool call");
-                assertEquals("approval options", panel.getCommandMenuState().title());
+                assertTrue(panel.getCommandMenuState().title().startsWith("approval options\n"));
                 assertEquals("Approve once", panel.getCommandMenuState().selectedMatch().displayLabel());
 
                 dispatch(panel, new KeyStroke(KeyType.Enter));
@@ -328,8 +328,11 @@ class NemoChatIT {
                 var panel = waitForPanel(window);
                 waitForLine(panel, "Approval required:");
                 waitForLine(panel, "Approval options open in the menu.");
-                assertEquals("approval options", panel.getCommandMenuState().title());
-                assertEquals(List.of("Approve once", "Approve always", "Deny"),
+                assertTrue(panel.getCommandMenuState().title().startsWith("approval options\n"));
+                assertTrue(panel.getCommandMenuState().title().contains("run blocked command: printf ok; touch approved.txt"));
+                assertTrue(panel.getCommandMenuState().matches().stream()
+                        .noneMatch(spec -> spec.description().contains("printf ok; touch approved.txt")));
+                assertEquals(List.of("Approve once", "Approve shell 10m", "Approve always", "Deny"),
                         panel.getCommandMenuState().matches().stream()
                                 .map(org.fisk.swim.ui.CommandView.CommandSpec::displayLabel)
                                 .toList());
@@ -341,6 +344,7 @@ class NemoChatIT {
                         .anyMatch(spec -> spec.primaryName().equals("approve")
                                 && spec.arguments().equals("approval-1 always")
                                 && spec.replacementText().equals("approve approval-1 always")));
+                dispatch(panel, new KeyStroke(KeyType.ArrowDown));
                 dispatch(panel, new KeyStroke(KeyType.ArrowDown));
                 assertEquals("approval-1 always", panel.getCommandMenuState().selectedMatch().arguments());
                 dispatch(panel, new KeyStroke(KeyType.Enter));
@@ -355,6 +359,55 @@ class NemoChatIT {
                         .count();
                 assertEquals(1, approvalPrompts);
                 assertTrue(Files.readString(tempDir.resolve(".swim/nemo/approvals.json")).contains("run_command"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void shellCommandApprovalForTenMinutesAppliesAcrossNemoSessions() throws Exception {
+        var requestCount = new AtomicInteger();
+        String firstArguments = "{\"command\":\"printf first; touch first-approved.txt\"}";
+        String secondArguments = "{\"command\":\"printf second; touch second-approved.txt\"}";
+        var server = startServer(requestCount, List.of(
+                toolCallResponse("call_1", "run_command", firstArguments),
+                textResponse("First approved"),
+                toolCallResponse("call_2", "run_command", secondArguments),
+                textResponse("Second approved")));
+        try {
+            writeApprovalConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Run a restricted command");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "Approval required:");
+                assertTrue(panel.getCommandMenuState().title().startsWith("approval options\n"));
+                assertEquals(List.of("Approve once", "Approve shell 10m", "Approve always", "Deny"),
+                        panel.getCommandMenuState().matches().stream()
+                                .map(org.fisk.swim.ui.CommandView.CommandSpec::displayLabel)
+                                .toList());
+                dispatch(panel, new KeyStroke(KeyType.ArrowDown));
+                assertEquals("approval-1 shell-10m", panel.getCommandMenuState().selectedMatch().arguments());
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                waitForLine(panel, "Approved approval-1 and shell commands for 10 minutes.");
+                waitForLine(panel, "nemo> First approved");
+                assertTrue(Files.exists(tempDir.resolve("first-approved.txt")));
+
+                submit(panel, ":new Other");
+                panel = waitForPanel(window);
+                waitForLine(panel, "Created session-2 (Other).");
+                submit(panel, "Run another restricted command");
+                waitForLine(panel, "nemo> Second approved");
+                assertTrue(Files.exists(tempDir.resolve("second-approved.txt")));
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Approval required:")));
+                assertFalse(Files.exists(tempDir.resolve(".swim/nemo/approvals.json")));
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -446,6 +499,41 @@ class NemoChatIT {
                 String body = requestBody.get();
                 assertFalse(body.contains("parallel_tool_calls"));
                 assertFalse(body.contains("strict_tools"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void zaiProviderUsesDedicatedZhipuLangChainBackend() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<String>("");
+        var server = startZaiServer(requestCount, requestBody, List.of(textResponse("Z.ai answer")));
+        try {
+            writeZaiConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Hi");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Z.ai answer");
+
+                JsonObject requestJson = JsonParser.parseString(requestBody.get()).getAsJsonObject();
+                assertEquals("glm-5", requestJson.get("model").getAsString());
+                assertTrue(requestJson.has("messages"));
+                assertTrue(requestJson.has("tools"));
+                assertTrue(requestJson.has("thinking"));
+                assertEquals("enabled", requestJson.getAsJsonObject("thinking").get("type").getAsString());
+                assertFalse(requestJson.has("instructions"));
+                assertFalse(requestJson.has("store"));
+                assertFalse(requestJson.get("stream").getAsBoolean());
+                assertEquals(1, requestCount.get());
             } finally {
                 System.setProperty("user.home", originalUserHome);
             }
@@ -994,6 +1082,16 @@ class NemoChatIT {
         return server;
     }
 
+    private HttpServer startZaiServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<JsonObject> responses) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.createContext("/api/paas/v4/chat/completions",
+                exchange -> handleResponse(exchange, requestCount, requestBody, 0, responses));
+        server.start();
+        return server;
+    }
+
     private HttpServer startResponsesServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
             List<JsonObject> responses) throws IOException {
         return startResponsesServer("/responses", requestCount, requestBody, responses);
@@ -1313,6 +1411,23 @@ class NemoChatIT {
                 "api_key=test-token",
                 "model=gpt-5.4",
                 "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "tool.list_files=true",
+                "tool.read_file=true",
+                "tool.search_files=true",
+                "tool.run_command=false",
+                "tool.write_file=true",
+                "tool.web_search=false"));
+    }
+
+    private void writeZaiConfig(HttpServer server) throws IOException {
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+                "provider=zai",
+                "api_key=test-id.12345678901234567890123456789012",
+                "model=glm-5",
+                "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
+                "reasoning_effort=xhigh",
                 "tool.list_files=true",
                 "tool.read_file=true",
                 "tool.search_files=true",

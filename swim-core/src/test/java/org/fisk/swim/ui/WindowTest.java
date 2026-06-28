@@ -851,6 +851,32 @@ class WindowTest {
     }
 
     @Test
+    void chatApprovalMenuRefreshesWhenCommandPromptIsAlreadyOpen() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
+            var window = harness.getWindow();
+            var approvals = new ArrayList<CommandView.CommandSpec>();
+            approvals.add(new CommandView.CommandSpec("approve", List.of(), "approval-1",
+                    "approve first", "approve approval-1", true, "Approve once"));
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {}, ignored -> {}, ignored -> {},
+                    text -> CommandView.CommandMenuState.forCommandText(text, 0, approvals, "approval options"));
+
+            window.showPanel(chat);
+            assertTrue(chat.openCommandInputIfEmpty());
+            assertEquals(1, window.getCommandMenuView().getState().matches().size());
+
+            approvals.add(new CommandView.CommandSpec("deny", List.of(), "approval-2",
+                    "deny second", "deny approval-2", true, "Deny"));
+
+            assertFalse(chat.openCommandInputIfEmpty());
+
+            var state = window.getCommandMenuView().getState();
+            assertEquals("approval options", state.title());
+            assertEquals(2, state.matches().size());
+            assertEquals("approval-2", state.matches().get(1).arguments());
+        }
+    }
+
+    @Test
     void chatPanelOverlaysWorkspaceInsteadOfJoiningSplitTree() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();

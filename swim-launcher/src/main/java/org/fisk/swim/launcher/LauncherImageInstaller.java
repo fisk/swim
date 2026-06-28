@@ -24,6 +24,7 @@ public final class LauncherImageInstaller {
     private static final String APP_NAME = "swim";
     private static final Path PUBLIC_LAUNCHER_TARGET = Path.of("bin", APP_NAME);
     private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
+    private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
     private static final List<String> CLIENT_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-Xmx128M");
@@ -275,7 +276,8 @@ public final class LauncherImageInstaller {
         embeddedJava = embeddedJava.toAbsolutePath().normalize();
         Files.writeString(launcher, sourceLauncher(embeddedJava, javaShebangOptions(clientOptions),
                 javaListLiteral(appOptions), javaListLiteral(SERVER_JVM_OPTIONS),
-                javaStringLiteral(FINAL_FIELD_MUTATION_OPTION)), StandardCharsets.UTF_8);
+                javaStringLiteral(FINAL_FIELD_MUTATION_OPTION),
+                javaStringLiteral(ILLEGAL_FINAL_FIELD_MUTATION_OPTION)), StandardCharsets.UTF_8);
         launcher.toFile().setExecutable(true, false);
     }
 
@@ -302,7 +304,8 @@ public final class LauncherImageInstaller {
             String clientOptions,
             String appOptions,
             String serverOptions,
-            String finalFieldMutationOption) {
+            String finalFieldMutationOption,
+            String illegalFinalFieldMutationOption) {
         return String.format("""
                 #!%s %s --source 25
                 import java.io.*;
@@ -317,6 +320,7 @@ public final class LauncherImageInstaller {
                     private static final String APP_MODULE = "org.fisk.swim.launcher/org.fisk.swim.launcher.Main";
                     private static final String SERVER_MODULE = "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
                     private static final String FINAL_FIELD_MUTATION_OPTION = %s;
+                    private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = %s;
                     private static final List<String> APP_JVM_OPTIONS = %s;
                     private static final List<String> SERVER_JVM_OPTIONS = %s;
                     private static final Path EMBEDDED_JAVA = Path.of(%s);
@@ -620,6 +624,7 @@ public final class LauncherImageInstaller {
                         options.addAll(APP_JVM_OPTIONS);
                         if (Runtime.version().feature() >= 26) {
                             options.add(FINAL_FIELD_MUTATION_OPTION);
+                            options.add(ILLEGAL_FINAL_FIELD_MUTATION_OPTION);
                         }
                         return List.copyOf(options);
                     }
@@ -828,7 +833,8 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """, embeddedJava, clientOptions, finalFieldMutationOption, appOptions, serverOptions,
+                """, embeddedJava, clientOptions, finalFieldMutationOption, illegalFinalFieldMutationOption,
+                appOptions, serverOptions,
                 javaStringLiteral(embeddedJava.toString()));
     }
 

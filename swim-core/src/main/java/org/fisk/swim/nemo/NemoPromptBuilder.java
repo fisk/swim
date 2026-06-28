@@ -119,6 +119,7 @@ final class NemoPromptBuilder {
             var writeTools = new ArrayList<String>();
             if (configuration.toolWriteFile()) {
                 writeTools.add("write_file");
+                writeTools.add("search_replace");
             }
             if (configuration.toolApplyPatch()) {
                 writeTools.add("apply_patch");
@@ -129,6 +130,16 @@ final class NemoPromptBuilder {
                 lines.add("- " + String.join(" and ", writeTools)
                         + " make real workspace file edits; successful edits are saved to disk and persist across Nemo/editor runs.");
             }
+        }
+        if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "mvn")) {
+            lines.add("- mvn runs Maven from an optional workspace subdirectory with arguments supplied as an array, using the same approval and OS sandbox handling as command execution.");
+        }
+        if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "shell_start")) {
+            lines.add("- shell_start starts long-running shell commands asynchronously; use shell_poll with the returned shell_id to collect output while continuing other work, and shell_stop to terminate one.");
+            lines.add("- shell_save can create a named approved shell line after user approval; shell_run executes the saved name later without repeating command-policy approval.");
+        }
+        if (configuration.toolListFiles()) {
+            lines.add("- find locates files by filename or workspace-relative path and can start from an optional workspace subdirectory.");
         }
         lines.add("- approval policy: " + configuration.toolApprovalPolicy().replace('_', '-')
                 + "; approval prompts pause tool execution but do not remove tool capability.");

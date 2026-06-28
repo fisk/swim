@@ -1,5 +1,6 @@
 package org.fisk.swim.ui;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.fisk.swim.terminal.TerminalContext;
@@ -61,16 +62,24 @@ public class CommandMenuView extends View {
         super.draw(rect);
 
         var graphics = TerminalContext.getInstance().getGraphics();
-        UiTheme.drawLine(graphics, rect.getPoint(), rect.getSize().getWidth(), headerLine(),
-                UiTheme.TEXT_MUTED, UiTheme.COMMAND_PROMPT);
-        if (rect.getSize().getHeight() <= 1) {
+        List<AttributedString> headerLines = headerLines(rect.getSize().getWidth());
+        for (int i = 0; i < headerLines.size() && i < rect.getSize().getHeight(); i++) {
+            UiTheme.drawLine(graphics,
+                    Point.create(rect.getPoint().getX(), rect.getPoint().getY() + i),
+                    rect.getSize().getWidth(),
+                    headerLines.get(i),
+                    UiTheme.TEXT_MUTED,
+                    UiTheme.COMMAND_PROMPT);
+        }
+        int bodyStart = headerLines.size();
+        if (rect.getSize().getHeight() <= bodyStart) {
             return;
         }
 
         List<CommandView.CommandSpec> visibleMatches = visibleMatches();
         if (visibleMatches.isEmpty()) {
             UiTheme.drawLine(graphics,
-                    Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1),
+                    Point.create(rect.getPoint().getX(), rect.getPoint().getY() + bodyStart),
                     rect.getSize().getWidth(),
                     AttributedString.create(" no matching commands", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ELEVATED),
                     UiTheme.TEXT_MUTED,
@@ -84,20 +93,49 @@ public class CommandMenuView extends View {
         int shortcutWidth = preferredShortcutWidth(visibleMatches);
         for (int i = 0; i < visibleMatches.size(); ++i) {
             boolean selected = startIndex + i == _state.selection();
-            drawMatchRow(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i),
+            drawMatchRow(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + bodyStart + i),
                     contentWidth, labelWidth, shortcutWidth, visibleMatches.get(i), selected);
         }
     }
 
-    private AttributedString headerLine() {
+    private List<AttributedString> headerLines(int width) {
+        var lines = new ArrayList<AttributedString>();
+        for (String line : headerTextLines(width)) {
+            lines.add(AttributedString.create(line, UiTheme.TEXT_ON_ACCENT, UiTheme.COMMAND_PROMPT));
+        }
+        return lines;
+    }
+
+    private List<String> headerTextLines(int width) {
         String menuTitle = _state.title() == null || _state.title().isBlank() ? "command matches" : _state.title();
+        String[] titleLines = menuTitle.split("\\R", -1);
+        String firstTitle = titleLines.length == 0 || titleLines[0].isBlank() ? "command matches" : titleLines[0];
         String title = _state.matches().isEmpty()
-                ? " " + menuTitle + " 0"
-                : " " + menuTitle + " " + (_state.selection() + 1) + "/" + _state.matches().size();
+                ? " " + firstTitle + " 0"
+                : " " + firstTitle + " " + (_state.selection() + 1) + "/" + _state.matches().size();
         if (!_state.prefix().isBlank()) {
             title += "  for " + _state.prefix();
         }
-        return AttributedString.create(title, UiTheme.TEXT_ON_ACCENT, UiTheme.COMMAND_PROMPT);
+        var lines = new ArrayList<String>();
+        addWrappedHeaderLine(lines, title, width);
+        for (int i = 1; i < titleLines.length; i++) {
+            addWrappedHeaderLine(lines, " " + titleLines[i], width);
+        }
+        return lines.isEmpty() ? List.of(" command matches") : lines;
+    }
+
+    private static void addWrappedHeaderLine(List<String> lines, String line, int width) {
+        int maxWidth = Math.max(1, width);
+        String remaining = line == null ? "" : line;
+        while (remaining.length() > maxWidth) {
+            int split = remaining.lastIndexOf(' ', maxWidth);
+            if (split <= 0) {
+                split = maxWidth;
+            }
+            lines.add(remaining.substring(0, split));
+            remaining = " " + remaining.substring(Math.min(split + 1, remaining.length())).stripLeading();
+        }
+        lines.add(remaining);
     }
 
     private void drawMatchRow(
@@ -143,7 +181,8 @@ public class CommandMenuView extends View {
     }
 
     private List<CommandView.CommandSpec> visibleMatches() {
-        int availableRows = Math.max(0, getBounds().getSize().getHeight() - 1);
+        int availableRows = Math.max(0, getBounds().getSize().getHeight()
+                - headerTextLines(getBounds().getSize().getWidth()).size());
         if (availableRows <= 0 || _state.matches().isEmpty()) {
             return List.of();
         }
@@ -156,7 +195,8 @@ public class CommandMenuView extends View {
         if (_state.matches().isEmpty()) {
             return 0;
         }
-        int availableRows = Math.max(1, getBounds().getSize().getHeight() - 1);
+        int availableRows = Math.max(1, getBounds().getSize().getHeight()
+                - headerTextLines(getBounds().getSize().getWidth()).size());
         int selection = Math.max(0, Math.min(_state.selection(), _state.matches().size() - 1));
         int maxStart = Math.max(0, _state.matches().size() - availableRows);
         return Math.max(0, Math.min(selection - availableRows + 1, maxStart));
@@ -172,10 +212,11 @@ public class CommandMenuView extends View {
         if (availableHeight == 0) {
             return Rect.create(0, 0, width, 0);
         }
-        int maxBodyRows = Math.max(0, availableHeight - 1);
+        int headerRows = headerTextLines(width).size();
+        int maxBodyRows = Math.max(0, availableHeight - headerRows);
         int desiredBodyRows = preferredBodyRows(width, maxBodyRows);
         int contentRows = Math.min(desiredBodyRows, maxBodyRows);
-        int height = Math.min(availableHeight, 1 + contentRows);
+        int height = Math.min(availableHeight, headerRows + contentRows);
         int x = 0;
         int y = Math.max(0, availableHeight - height);
         return Rect.create(x, y, width, height);
