@@ -1399,7 +1399,7 @@ class NemoClientTest {
     }
 
     @Test
-    void runCommandBlocksShellControlOperatorsByDefault() throws Exception {
+    void runCommandBlocksShellControlOperatorsWhenOsSandboxDisabled() throws Exception {
         Path project = tempDir.resolve("workspace");
         Files.createDirectories(project);
         Path file = project.resolve("note.txt");
@@ -1408,6 +1408,7 @@ class NemoClientTest {
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
         var configuration = NemoClient.Configuration.builder()
                 .workspaceRoot(project)
+                .toolOsSandbox("disabled")
                 .build();
 
         String output = NemoClient.executeTool(configuration, context,
@@ -1418,7 +1419,7 @@ class NemoClientTest {
     }
 
     @Test
-    void runCommandBlocksDangerousExecutablesByDefault() throws Exception {
+    void runCommandBlocksDangerousExecutablesWhenOsSandboxDisabled() throws Exception {
         Path project = tempDir.resolve("workspace");
         Files.createDirectories(project);
         Path file = project.resolve("note.txt");
@@ -1426,6 +1427,7 @@ class NemoClientTest {
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
         var configuration = NemoClient.Configuration.builder()
                 .workspaceRoot(project)
+                .toolOsSandbox("disabled")
                 .build();
 
         String output = NemoClient.executeTool(configuration, context,
@@ -1446,11 +1448,39 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .workspaceRoot(project)
                 .toolCommandPolicy("trusted")
+                .toolOsSandbox("disabled")
                 .build();
 
         String output = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("trusted", "run_command", json(Map.of("command", "printf ok; touch owned.txt"))));
 
+        assertTrue(output.contains("exit_code: 0"));
+        assertTrue(Files.exists(owned));
+    }
+
+    @Test
+    void sandboxedRunCommandSkipsCommandPolicyAndOnRequestApprovalWhenAvailable() throws Exception {
+        Assumptions.assumeTrue(NemoClient.isMacOsSandboxAvailable(), "macOS sandbox-exec unavailable");
+        Path project = tempDir.resolve("workspace-sandbox-shell-policy");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Path owned = project.resolve("owned.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("restricted")
+                .toolOsSandbox("required")
+                .toolApprovalPolicy("on-request")
+                .build();
+        var approvalSession = new RecordingToolSession();
+
+        String output = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("sandbox-policy", "run_command", json(Map.of(
+                        "command", "printf ok; touch owned.txt"))),
+                approvalSession);
+
+        assertEquals(0, approvalSession.approvals.get());
         assertTrue(output.contains("exit_code: 0"));
         assertTrue(Files.exists(owned));
     }
@@ -1506,37 +1536,85 @@ class NemoClientTest {
 
     @Test
     void approvedShellLineCanBeSavedAndReusedWithoutCommandPolicyApproval() throws Exception {
-        Path project = tempDir.resolve("saved-shell-workspace");
-        Files.createDirectories(project);
-        Path file = project.resolve("note.txt");
-        Files.writeString(file, "hello");
-        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
-        var configuration = NemoClient.Configuration.builder()
-                .workspaceRoot(project)
-                .toolCommandPolicy("restricted")
-                .toolOsSandbox("disabled")
-                .build();
-        var approvalSession = new RecordingToolSession();
+        String originalUserHome = switchToTempUserHome();
+        try {
+            Path project = tempDir.resolve("saved-shell-workspace");
+            Files.createDirectories(project);
+            Path file = project.resolve("note.txt");
+            Files.writeString(file, "hello");
+            var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+            var configuration = NemoClient.Configuration.builder()
+                    .workspaceRoot(project)
+                    .toolCommandPolicy("restricted")
+                    .toolOsSandbox("disabled")
+                    .build();
+            var approvalSession = new RecordingToolSession();
 
-        String saved = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("shell-save", "shell_save", json(Map.of(
-                        "name", "compile",
-                        "command", "printf ok; touch compiled.txt"))),
-                approvalSession);
+            String saved = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-save", "shell_save", json(Map.of(
+                            "name", "compile",
+                            "command", "printf ok; touch compiled.txt"))),
+                    approvalSession);
 
-        assertEquals(1, approvalSession.approvals.get());
-        assertEquals("shell_save", approvalSession.request.get().toolName());
-        assertTrue(saved.contains("saved shell line compile"));
+            assertEquals(1, approvalSession.approvals.get());
+            assertEquals("shell_save", approvalSession.request.get().toolName());
+            assertTrue(saved.contains("saved shell line compile"));
 
-        String listed = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("shell-list", "shell_list", json(Map.of())));
-        assertTrue(listed.contains("compile | cwd=. | printf ok; touch compiled.txt"));
+            String listed = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-list", "shell_list", json(Map.of())));
+            assertTrue(listed.contains("compile | cwd=. | printf ok; touch compiled.txt"));
 
-        String output = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("shell-run", "shell_run", json(Map.of("name", "compile"))));
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-run", "shell_run", json(Map.of("name", "compile"))));
 
-        assertTrue(output.contains("exit_code: 0"));
-        assertTrue(Files.exists(project.resolve("compiled.txt")));
+            assertTrue(output.contains("exit_code: 0"));
+            assertTrue(Files.exists(project.resolve("compiled.txt")));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+            NemoClient.getInstance().resetForTests();
+        }
+    }
+
+    @Test
+    void savedShellLineUsesSandboxWithoutSaveApprovalAndCanEscalateAfterSandboxDenial() throws Exception {
+        Assumptions.assumeTrue(NemoClient.isMacOsSandboxAvailable(), "macOS sandbox-exec unavailable");
+        String originalUserHome = switchToTempUserHome();
+        try {
+            Path project = tempDir.resolve("saved-shell-sandbox-workspace");
+            Files.createDirectories(project);
+            Path file = project.resolve("note.txt");
+            Path outside = tempDir.resolve("saved-shell-outside.txt");
+            Files.writeString(file, "hello");
+            var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+            var configuration = NemoClient.Configuration.builder()
+                    .workspaceRoot(project)
+                    .toolCommandPolicy("restricted")
+                    .toolOsSandbox("auto")
+                    .toolApprovalPolicy("on-escalation")
+                    .build();
+            var approvalSession = new RecordingToolSession();
+
+            String saved = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-save", "shell_save", json(Map.of(
+                            "name", "outside",
+                            "command", "touch " + shellQuoteForTest(outside)))),
+                    approvalSession);
+
+            assertEquals(0, approvalSession.approvals.get());
+            assertTrue(saved.contains("saved shell line outside"));
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("shell-run", "shell_run", json(Map.of("name", "outside"))),
+                    approvalSession);
+
+            assertEquals(1, approvalSession.approvals.get());
+            assertEquals("OS sandbox blocked filesystem write", approvalSession.request.get().reason());
+            assertTrue(Files.exists(outside));
+            assertTrue(output.contains("exit_code: 0"));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+            NemoClient.getInstance().resetForTests();
+        }
     }
 
     @Test
@@ -1629,6 +1707,39 @@ class NemoClientTest {
     }
 
     @Test
+    void autoOsSandboxWithoutBackendDoesNotRunUnsandboxedWithoutApprovalSession() throws Exception {
+        String originalOverride = System.getProperty("swim.nemo.os_sandbox_available");
+        System.setProperty("swim.nemo.os_sandbox_available", "false");
+        NemoClient.resetMacOsSandboxAvailabilityForTests();
+        try {
+            Path project = tempDir.resolve("workspace-auto-sandbox-unavailable");
+            Files.createDirectories(project);
+            Path file = project.resolve("note.txt");
+            Path owned = project.resolve("owned.txt");
+            Files.writeString(file, "hello\n");
+            var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+            var configuration = NemoClient.Configuration.builder()
+                    .workspaceRoot(project)
+                    .toolCommandPolicy("trusted")
+                    .toolOsSandbox("auto")
+                    .build();
+
+            String output = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("sandbox-auto", "run_command", json(Map.of("command", "touch owned.txt"))));
+
+            assertTrue(output.contains("exit_code: sandbox_unavailable"));
+            assertFalse(Files.exists(owned));
+        } finally {
+            if (originalOverride == null) {
+                System.clearProperty("swim.nemo.os_sandbox_available");
+            } else {
+                System.setProperty("swim.nemo.os_sandbox_available", originalOverride);
+            }
+            NemoClient.resetMacOsSandboxAvailabilityForTests();
+        }
+    }
+
+    @Test
     void workspaceWriteOsSandboxDeniesWritesOutsideWorkspaceWhenAvailable() throws Exception {
         Assumptions.assumeTrue(NemoClient.isMacOsSandboxAvailable(), "macOS sandbox-exec unavailable");
         Path project = tempDir.resolve("workspace-sandbox");
@@ -1697,6 +1808,7 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder()
                 .workspaceRoot(project)
                 .toolApprovalPolicy("on-escalation")
+                .toolOsSandbox("disabled")
                 .build();
         var approvalCount = new AtomicInteger();
         NemoClient.ToolExecutionSession approvalSession = (workspaceRoot, request) -> {
@@ -2241,6 +2353,15 @@ class NemoClientTest {
 
     private static String shellQuoteForTest(Path path) {
         return "'" + path.toString().replace("'", "'\"'\"'") + "'";
+    }
+
+    private String switchToTempUserHome() throws IOException {
+        String originalUserHome = System.getProperty("user.home");
+        Path home = tempDir.resolve("home");
+        Files.createDirectories(home);
+        System.setProperty("user.home", home.toString());
+        NemoClient.getInstance().resetForTests();
+        return originalUserHome;
     }
 
     private MailClient secretMailClient() {

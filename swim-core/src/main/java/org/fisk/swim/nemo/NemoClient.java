@@ -2037,7 +2037,7 @@ public class NemoClient {
         case "shell_stop" -> new ToolExecutionResult(_instance.shellStop(call.arguments()));
         case "shell_save" -> new ToolExecutionResult(_instance.shellSave(configuration, context, call.arguments(), executionSession));
         case "shell_list" -> new ToolExecutionResult(_instance.shellList(configuration, context));
-        case "shell_run" -> new ToolExecutionResult(_instance.shellRun(configuration, context, call.arguments()));
+        case "shell_run" -> new ToolExecutionResult(_instance.shellRun(configuration, context, call.arguments(), executionSession));
         case "mvn" -> new ToolExecutionResult(mvn(configuration, context, call.arguments(), executionSession));
         case "write_file" -> writeFileDetailed(configuration, context, call.arguments());
         case "search_replace" -> searchReplaceDetailed(configuration, context, call.arguments());
@@ -2053,6 +2053,9 @@ public class NemoClient {
     private static String requestActionApprovalIfNeeded(Configuration configuration, BufferContext context, ToolCall call,
             ToolExecutionSession executionSession) throws InterruptedException {
         if (!"on_request".equals(configuration.toolApprovalPolicy()) || !requiresActionApproval(call.name())) {
+            return null;
+        }
+        if (isShellExecutionTool(call.name()) && !shellCommandPreapprovalRequired(configuration)) {
             return null;
         }
         if (isTemporaryShellCommandApprovalTool(call.name()) && _instance.hasTemporaryShellCommandApproval()) {
@@ -2077,6 +2080,15 @@ public class NemoClient {
     private static boolean requiresActionApproval(String toolName) {
         return List.of("run_command", "shell_start", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit")
                 .contains(toolName);
+    }
+
+    private static boolean isShellExecutionTool(String toolName) {
+        return List.of("run_command", "shell_start", "shell_run", "mvn").contains(toolName);
+    }
+
+    private static boolean shellCommandPreapprovalRequired(Configuration configuration) {
+        return !"full_access".equals(configuration.toolPermissionMode())
+                && "disabled".equals(configuration.toolOsSandbox());
     }
 
     private static String actionApprovalSummary(ToolCall call) {
@@ -3059,7 +3071,9 @@ public class NemoClient {
         String rawCwd = stringArgument(arguments, "cwd", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
-        String policyBlock = commandPolicyBlock(configuration, command);
+        String policyBlock = shellCommandPreapprovalRequired(configuration)
+                ? commandPolicyBlock(configuration, command)
+                : null;
         if (policyBlock != null) {
             String approvalBlock = requestEscalationApprovalIfNeeded(
                     configuration,
@@ -3090,7 +3104,9 @@ public class NemoClient {
         String rawCwd = stringArgument(arguments, "cwd", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String command = stringArgument(arguments, "command", "");
-        String policyBlock = commandPolicyBlock(configuration, command);
+        String policyBlock = shellCommandPreapprovalRequired(configuration)
+                ? commandPolicyBlock(configuration, command)
+                : null;
         if (policyBlock != null) {
             String approvalBlock = requestEscalationApprovalIfNeeded(
                     configuration,
@@ -3235,7 +3251,7 @@ public class NemoClient {
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawCwd), rawCwd);
         String cwdRelative = root.equals(cwd) ? "" : root.relativize(cwd).toString();
 
-        if (!"full_access".equals(configuration.toolPermissionMode())) {
+        if (shellCommandPreapprovalRequired(configuration)) {
             String approvalBlock = requestEscalationApprovalIfNeeded(
                     configuration,
                     executionSession,
@@ -3286,7 +3302,8 @@ public class NemoClient {
                 .collect(Collectors.joining("\n"));
     }
 
-    private String shellRun(Configuration configuration, BufferContext context, JsonObject arguments)
+    private String shellRun(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession)
             throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
         String name = normalizeShellLineName(stringArgument(arguments, "name", ""));
@@ -3297,9 +3314,9 @@ public class NemoClient {
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, shellLine.cwd()), shellLine.cwd());
         Configuration trustedConfiguration = configuration.withToolCommandPolicy("trusted");
         if (booleanArgument(arguments, "async", false)) {
-            return startAsyncShellProcess(trustedConfiguration, root, cwd, shellLine.command(), null);
+            return startAsyncShellProcess(trustedConfiguration, root, cwd, shellLine.command(), executionSession);
         }
-        return runShellCommand(trustedConfiguration, root, cwd, shellLine.command(), null);
+        return runShellCommand(trustedConfiguration, root, cwd, shellLine.command(), executionSession);
     }
 
     private synchronized ApprovedShellLine approvedShellLine(Path workspaceRoot, String name) {
@@ -3918,7 +3935,16 @@ public class NemoClient {
                     "stderr:",
                     "Nemo OS sandbox is required, but no supported OS sandbox backend is available or usable.");
         }
-        if ("auto".equals(configuration.toolOsSandbox()) && backend == OsSandboxBackend.NONE && executionSession != null) {
+        if ("auto".equals(configuration.toolOsSandbox()) && backend == OsSandboxBackend.NONE) {
+            String unavailableMessage = String.join("\n",
+                    "exit_code: sandbox_unavailable",
+                    "stdout:",
+                    "",
+                    "stderr:",
+                    "Nemo OS sandbox is unavailable and the unsandboxed command was not approved.");
+            if (executionSession == null) {
+                return unavailableMessage;
+            }
             String approvalBlock = requestEscalationApprovalIfNeeded(
                     configuration,
                     executionSession,
@@ -3929,12 +3955,7 @@ public class NemoClient {
                             "run without an OS filesystem sandbox: " + command,
                             "sandbox-unavailable:" + workspaceRoot.toAbsolutePath().normalize() + ":" + command,
                             true),
-                    String.join("\n",
-                            "exit_code: sandbox_unavailable",
-                            "stdout:",
-                            "",
-                            "stderr:",
-                            "Nemo OS sandbox is unavailable and the unsandboxed command was not approved."));
+                    unavailableMessage);
             if (approvalBlock != null) {
                 return approvalBlock;
             }
