@@ -84,6 +84,33 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void showsToolProgressBeforeFinalAnswerArrives() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startServer(requestCount, List.of(0L, 1500L), List.of(
+                toolCallResponse("call_1", "list_files", "{\"path\":\".\",\"max_results\":5}"),
+                textResponse("Delayed answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Which files are here?");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "tool> list_files: path=., max_results=5 ...");
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("nemo> Delayed answer")));
+                waitForLine(panel, "nemo> Delayed answer");
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void delegateTaskRunsSubAgentAndReturnsResultToParent() throws Exception {
         var requestCount = new AtomicInteger();
         var server = startDelegationServer(requestCount);
@@ -1158,8 +1185,18 @@ class NemoChatIT {
         return startServer(requestCount, new AtomicReference<>(""), responseDelayMillis, responses);
     }
 
+    private HttpServer startServer(AtomicInteger requestCount, List<Long> responseDelayMillis, List<JsonObject> responses)
+            throws IOException {
+        return startServer(requestCount, new AtomicReference<>(""), responseDelayMillis, responses);
+    }
+
     private HttpServer startServer(AtomicInteger requestCount, AtomicReference<String> requestBody, long responseDelayMillis,
             List<JsonObject> responses) throws IOException {
+        return startServer(requestCount, requestBody, List.of(responseDelayMillis), responses);
+    }
+
+    private HttpServer startServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<Long> responseDelayMillis, List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/chat/completions",
@@ -1361,7 +1398,17 @@ class NemoChatIT {
     }
 
     private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<Long> responseDelayMillis, List<JsonObject> responses) throws IOException {
+        handleResponse(exchange, requestCount, requestBody, responseDelayMillis, null, responses);
+    }
+
+    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
             long responseDelayMillis, List<String> requestBodies, List<JsonObject> responses) throws IOException {
+        handleResponse(exchange, requestCount, requestBody, List.of(responseDelayMillis), requestBodies, responses);
+    }
+
+    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
+            List<Long> responseDelayMillis, List<String> requestBodies, List<JsonObject> responses) throws IOException {
         int requestIndex = requestCount.incrementAndGet();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         requestBody.set(body);
@@ -1369,9 +1416,10 @@ class NemoChatIT {
             requestBodies.add(body);
         }
         JsonObject response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
-        if (responseDelayMillis > 0) {
+        long delayMillis = responseDelayMillis.get(Math.min(requestIndex - 1, responseDelayMillis.size() - 1));
+        if (delayMillis > 0) {
             try {
-                Thread.sleep(responseDelayMillis);
+                Thread.sleep(delayMillis);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

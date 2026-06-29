@@ -12,10 +12,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -195,6 +198,9 @@ public class NemoClient {
         }
     }
 
+    record ToolProgress(ToolTrace startTrace, boolean reported) {
+    }
+
     record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
         ResponseResult(String text, Integer contextUsagePercent) {
             this(text, contextUsagePercent, List.of());
@@ -216,6 +222,10 @@ public class NemoClient {
 
         default List<ChatTurn> drainQueuedTurns() {
             return List.of();
+        }
+
+        default boolean reportToolTrace(ToolTrace trace) {
+            return false;
         }
     }
 
@@ -370,6 +380,11 @@ public class NemoClient {
         @Override
         public List<ChatTurn> drainQueuedTurns() {
             return drainQueuedUserTurns(_conversation, _requestId);
+        }
+
+        @Override
+        public boolean reportToolTrace(ToolTrace trace) {
+            return NemoClient.this.reportToolTrace(_conversation, _requestId, trace);
         }
     }
 
@@ -1770,6 +1785,41 @@ public class NemoClient {
         return toolTrace(call, new ToolExecutionResult(output));
     }
 
+    static ToolTrace toolStartTrace(ToolCall call) {
+        ToolTrace trace = toolTrace(call, new ToolExecutionResult(""));
+        return new ToolTrace(trace.text() + " ...", trace.displayText() + " ...");
+    }
+
+    static ToolProgress reportToolStart(ToolExecutionSession executionSession, ToolCall call) {
+        ToolTrace trace = toolStartTrace(call);
+        return new ToolProgress(trace, reportToolTrace(executionSession, trace));
+    }
+
+    static void reportOrCollectToolCompletion(ToolExecutionSession executionSession, List<ToolTrace> fallback,
+            ToolProgress progress, ToolTrace completionTrace) {
+        if (!progress.reported()) {
+            fallback.add(completionTrace);
+            return;
+        }
+        if (!toolCompletionAddsVisibleDetail(progress.startTrace(), completionTrace)) {
+            return;
+        }
+        executionSession.reportToolTrace(completionTrace);
+    }
+
+    private static boolean reportToolTrace(ToolExecutionSession executionSession, ToolTrace trace) {
+        return executionSession != null && executionSession.reportToolTrace(trace);
+    }
+
+    private static boolean toolCompletionAddsVisibleDetail(ToolTrace startTrace, ToolTrace completionTrace) {
+        String startText = stripRunningSuffix(startTrace.displayText());
+        return !completionTrace.displayText().equals(startText);
+    }
+
+    private static String stripRunningSuffix(String text) {
+        return text.endsWith(" ...") ? text.substring(0, text.length() - 4) : text;
+    }
+
     static ToolTrace toolTrace(ToolCall call, ToolExecutionResult result) {
         String output = result.output();
         String detail;
@@ -2943,12 +2993,11 @@ public class NemoClient {
         Path start = resolvePathInsideWorkspace(root, rawPath);
         int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
         var files = new ArrayList<String>();
-        try (Stream<Path> stream = Files.walk(start)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
-                    .sorted()
-                    .limit(maxResults)
-                    .forEach(path -> files.add(root.relativize(path).toString()));
+        for (Path path : regularFilesUnder(start)) {
+            files.add(root.relativize(path).toString());
+            if (files.size() >= maxResults) {
+                break;
+            }
         }
         if (files.isEmpty()) {
             return "(no files)";
@@ -2968,24 +3017,51 @@ public class NemoClient {
         var matches = new ArrayList<String>();
         PathMatcher globMatcher = findGlobMatcher(query);
         String normalizedQuery = normalizeFindText(query);
-        try (Stream<Path> stream = Files.walk(start)) {
-            var iterator = stream.filter(Files::isRegularFile)
-                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
-                    .sorted()
-                    .iterator();
-            while (iterator.hasNext() && matches.size() < maxResults) {
-                Path path = iterator.next();
-                String relative = root.relativize(path).toString();
-                String fileName = path.getFileName() == null ? relative : path.getFileName().toString();
-                if (findFileMatches(relative, fileName, normalizedQuery, globMatcher)) {
-                    matches.add(relative);
-                }
+        for (Path path : regularFilesUnder(start)) {
+            if (matches.size() >= maxResults) {
+                break;
+            }
+            String relative = root.relativize(path).toString();
+            String fileName = path.getFileName() == null ? relative : path.getFileName().toString();
+            if (findFileMatches(relative, fileName, normalizedQuery, globMatcher)) {
+                matches.add(relative);
             }
         }
         if (matches.isEmpty()) {
             return "(no files found)";
         }
         return truncateOutput(configuration, String.join("\n", matches));
+    }
+
+    private static List<Path> regularFilesUnder(Path start) throws IOException {
+        var files = new ArrayList<Path>();
+        Files.walkFileTree(start, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                return isGitInternal(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                if (attrs.isRegularFile() && !isGitInternal(file)) {
+                    files.add(file);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                return FileVisitResult.CONTINUE;
+            }
+        });
+        files.sort(Comparator.naturalOrder());
+        return files;
+    }
+
+    private static boolean isGitInternal(Path path) {
+        Path name = path.getFileName();
+        return (name != null && ".git".equals(name.toString()))
+                || path.toString().contains(File.separator + ".git" + File.separator);
     }
 
     private static PathMatcher findGlobMatcher(String query) throws IOException {
@@ -3047,23 +3123,19 @@ public class NemoClient {
         String query = stringArgument(arguments, "query", "");
         int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
         var matches = new ArrayList<String>();
-        try (Stream<Path> stream = Files.walk(start)) {
-            var iterator = stream.filter(Files::isRegularFile)
-                    .filter(path -> !path.toString().contains(File.separator + ".git" + File.separator))
-                    .sorted()
-                    .iterator();
-            while (iterator.hasNext() && matches.size() < maxResults) {
-                Path path = iterator.next();
-                List<String> lines;
-                try {
-                    lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    continue;
-                }
-                for (int i = 0; i < lines.size() && matches.size() < maxResults; i++) {
-                    if (lines.get(i).contains(query)) {
-                        matches.add(root.relativize(path) + ":" + (i + 1) + ": " + lines.get(i));
-                    }
+        for (Path path : regularFilesUnder(start)) {
+            if (matches.size() >= maxResults) {
+                break;
+            }
+            List<String> lines;
+            try {
+                lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                continue;
+            }
+            for (int i = 0; i < lines.size() && matches.size() < maxResults; i++) {
+                if (lines.get(i).contains(query)) {
+                    matches.add(root.relativize(path) + ":" + (i + 1) + ": " + lines.get(i));
                 }
             }
         }
@@ -5031,6 +5103,11 @@ public class NemoClient {
         return turns;
     }
 
+    private boolean reportToolTrace(Conversation conversation, long requestId, ToolTrace trace) {
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> handleToolTrace(conversation, requestId, trace)));
+        return true;
+    }
+
     private static final List<CommandSpec> NEMO_COMMAND_SPECS = List.of(
             new CommandSpec("abort", List.of(), "[conversation-id|all]", "stop the current or selected worker"),
             new CommandSpec("sessions", List.of(), "", "list live SWIM server sessions"),
@@ -5822,6 +5899,13 @@ public class NemoClient {
         if (!queuedTurns.isEmpty()) {
             startRequest(conversation, List.of(new ChatTurn("me", queuedWorkerMessage(queuedTurns))));
         }
+    }
+
+    private synchronized void handleToolTrace(Conversation conversation, long requestId, ToolTrace trace) {
+        if (conversation._activeRequestId != requestId || !conversation._pending) {
+            return;
+        }
+        appendTurn(conversation, new ChatTurn("tool", trace.displayText(), false));
     }
 
     private synchronized void handleFailure(Conversation conversation, long requestId, String response) {

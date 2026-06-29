@@ -61,9 +61,11 @@ final class NemoLangChain4jClient {
                             toolCall.id(),
                             toolCall.name(),
                             parseArguments(toolCall.arguments()));
+                    NemoClient.ToolProgress progress = NemoClient.reportToolStart(executionSession, call);
                     NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(
                             configuration, context, call, executionSession);
-                    toolTraces.add(NemoClient.toolTrace(call, result));
+                    NemoClient.reportOrCollectToolCompletion(executionSession, toolTraces, progress,
+                            NemoClient.toolTrace(call, result));
                     messages.add(new ToolExecutionResultMessage(toolCall.id(), toolCall.name(), result.output()));
                 }
                 continue;

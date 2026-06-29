@@ -69,9 +69,11 @@ final class NemoResponsesClient {
                     input.add(rawToolCall);
                 }
                 for (NemoClient.ToolCall toolCall : parts.toolCalls()) {
+                    NemoClient.ToolProgress progress = NemoClient.reportToolStart(executionSession, toolCall);
                     NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(
                             configuration, context, toolCall, executionSession);
-                    toolTraces.add(NemoClient.toolTrace(toolCall, result));
+                    NemoClient.reportOrCollectToolCompletion(executionSession, toolTraces, progress,
+                            NemoClient.toolTrace(toolCall, result));
                     input.add(functionCallOutput(toolCall.callId(), result.output()));
                 }
                 continue;
