@@ -341,6 +341,25 @@ class NemoClientTest {
     }
 
     @Test
+    void normalizesGeminiProviderAliasesForGoogleAiStudioKeys() throws IOException {
+        Path config = tempDir.resolve("gemini.conf");
+        Files.writeString(config, String.join("\n",
+                "provider=google-ai-studio",
+                "api_key=gemini-token",
+                "model=gemini-2.5-flash",
+                "reasoning_effort=medium"));
+
+        var configuration = NemoClient.loadConfiguration(config);
+
+        assertEquals("gemini", configuration.provider());
+        assertTrue(configuration.isGeminiProvider());
+        assertTrue(configuration.requiresApiKey());
+        assertEquals("gemini-token", configuration.apiKey());
+        assertEquals("medium", configuration.reasoningEffort());
+        assertEquals("", configuration.baseUrl());
+    }
+
+    @Test
     void loadsMcpServersFromPropertiesFile() throws IOException {
         Path config = tempDir.resolve("nemo.properties");
         Files.writeString(config, String.join("\n",

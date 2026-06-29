@@ -1,6 +1,7 @@
 module org.fisk.swim.core {
     requires langchain4j.core;
     requires langchain4j.community.zhipu.ai;
+    requires langchain4j.google.ai.gemini;
     requires langchain4j.http.client.jdk;
     requires langchain4j.open.ai;
     requires com.google.gson;

@@ -25,6 +25,8 @@ import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.googleai.GeminiThinkingConfig;
+import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.output.TokenUsage;
 
@@ -80,10 +82,50 @@ final class NemoLangChain4jClient {
     }
 
     private ChatModel createModel(NemoClient.Configuration configuration) {
+        if (configuration.isGeminiProvider()) {
+            return createGeminiModel(configuration);
+        }
         if (configuration.isZaiProvider()) {
             return createZaiModel(configuration);
         }
         return createOpenAiCompatibleModel(configuration);
+    }
+
+    private ChatModel createGeminiModel(NemoClient.Configuration configuration) {
+        var builder = GoogleAiGeminiChatModel.builder()
+                .modelName(configuration.model())
+                .apiKey(configuration.apiKey())
+                .timeout(Duration.ofSeconds(configuration.timeoutSeconds()))
+                .maxRetries(configuration.maxRetries())
+                .logRequests(configuration.logRequests())
+                .logResponses(configuration.logResponses());
+        if (!configuration.baseUrl().isBlank()) {
+            builder.baseUrl(configuration.baseUrl());
+        }
+        var customHeaders = customHeaders(configuration);
+        if (!customHeaders.isEmpty()) {
+            builder.customHeaders(customHeaders);
+        }
+        if (configuration.temperature() != null) {
+            builder.temperature(configuration.temperature());
+        }
+        if (configuration.topP() != null) {
+            builder.topP(configuration.topP());
+        }
+        if (configuration.maxOutputTokens() != null) {
+            builder.maxOutputTokens(configuration.maxOutputTokens());
+        }
+        GeminiThinkingConfig thinkingConfig = geminiThinkingConfig(configuration);
+        if (thinkingConfig != null) {
+            builder.thinkingConfig(thinkingConfig);
+        }
+        if (configuration.returnThinking()) {
+            builder.returnThinking(true);
+        }
+        if (configuration.sendThinking()) {
+            builder.sendThinking(true);
+        }
+        return builder.build();
     }
 
     private ChatModel createOpenAiCompatibleModel(NemoClient.Configuration configuration) {
@@ -238,6 +280,27 @@ final class NemoLangChain4jClient {
             return value.substring(0, value.length() - suffix.length());
         }
         return value;
+    }
+
+    private static GeminiThinkingConfig geminiThinkingConfig(NemoClient.Configuration configuration) {
+        String reasoningEffort = configuration.reasoningEffort();
+        if (reasoningEffort == null || reasoningEffort.isBlank()) {
+            return null;
+        }
+        String normalized = reasoningEffort.trim().toLowerCase().replace('-', '_');
+        var builder = GeminiThinkingConfig.builder();
+        if (configuration.returnThinking()) {
+            builder.includeThoughts(true);
+        }
+        switch (normalized) {
+        case "none", "off", "false", "disabled", "disable", "0" -> builder.thinkingBudget(0);
+        case "minimal", "min" -> builder.thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.MINIMAL);
+        case "low" -> builder.thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.LOW);
+        case "medium", "med" -> builder.thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.MEDIUM);
+        case "high", "xhigh", "x_high", "very_high", "max" -> builder.thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.HIGH);
+        default -> builder.thinkingLevel(GeminiThinkingConfig.GeminiThinkingLevel.HIGH);
+        }
+        return builder.build();
     }
 
     private static java.util.Map<String, String> customHeaders(NemoClient.Configuration configuration) {

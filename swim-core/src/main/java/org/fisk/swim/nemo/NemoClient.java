@@ -962,6 +962,7 @@ public class NemoClient {
         String model() { return _model; }
         String baseUrl() { return _baseUrl; }
         boolean isZaiProvider() { return "zai".equals(_provider); }
+        boolean isGeminiProvider() { return "gemini".equals(_provider); }
         String organization() { return _organization; }
         String project() { return _project; }
         Map<String, String> headers() { return _headers; }
@@ -1010,6 +1011,7 @@ public class NemoClient {
         int toolCommandTimeoutSeconds() { return _toolCommandTimeoutSeconds; }
         boolean requiresApiKey() {
             return "openai".equals(_provider)
+                    || "gemini".equals(_provider)
                     || "zai".equals(_provider)
                     || "chatgpt".equals(_provider)
                     || "responses".equals(_provider)
@@ -1061,6 +1063,8 @@ public class NemoClient {
             }
             String normalized = provider.trim().toLowerCase().replace('_', '-');
             return switch (normalized) {
+            case "gemini", "google", "google-ai", "googleai", "google-ai-studio", "google-ai-studio-api",
+                    "ai-studio", "aistudio", "google-gemini" -> "gemini";
             case "z.ai", "z-ai", "zai", "zipuai", "zipu-ai", "zhipuai", "zhipu-ai", "zhipu", "bigmodel",
                     "bigmodel.cn" -> "zai";
             default -> normalized;
@@ -1068,7 +1072,11 @@ public class NemoClient {
         }
 
         private static String defaultBaseUrlForProvider(String provider) {
-            return "zai".equals(provider) ? _zaiDefaultBaseUrl : _defaultBaseUrl;
+            return switch (provider) {
+            case "gemini" -> "";
+            case "zai" -> _zaiDefaultBaseUrl;
+            default -> _defaultBaseUrl;
+            };
         }
 
         private static String responsesBaseToChatBase(URI responsesUri) {
