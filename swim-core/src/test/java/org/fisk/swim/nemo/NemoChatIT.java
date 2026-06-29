@@ -583,6 +583,53 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void geminiToolCallsPreserveThoughtSignaturesAcrossToolRoundTrips() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<String>("");
+        var requestPath = new AtomicReference<String>("");
+        var apiKeyHeader = new AtomicReference<String>("");
+        var requestBodies = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var server = startGeminiServer(requestCount, requestBody, requestPath, apiKeyHeader, requestBodies,
+                List.of(
+                        geminiToolCallResponse("call_1", "list_files", json(Map.of(
+                                "path", ".",
+                                "max_results", 5)), "signed-tool-state"),
+                        geminiTextResponse("Gemini tool answer")));
+        try {
+            writeGeminiConfig(server, false);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "List files");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "nemo> Gemini tool answer");
+
+                assertEquals(2, requestCount.get());
+                JsonObject firstRequest = JsonParser.parseString(requestBodies.get(0)).getAsJsonObject();
+                JsonObject firstThinkingConfig = firstRequest.getAsJsonObject("generationConfig")
+                        .getAsJsonObject("thinkingConfig");
+                assertEquals("high", firstThinkingConfig.get("thinkingLevel").getAsString());
+                assertFalse(firstThinkingConfig.has("includeThoughts"));
+
+                JsonObject secondRequest = JsonParser.parseString(requestBodies.get(1)).getAsJsonObject();
+                JsonObject functionCallPart = findGeminiPart(secondRequest, "functionCall");
+                assertEquals("signed-tool-state", functionCallPart.get("thoughtSignature").getAsString());
+                assertEquals("list_files",
+                        functionCallPart.getAsJsonObject("functionCall").get("name").getAsString());
+                assertEquals("/models/gemini-2.5-flash:generateContent", requestPath.get());
+                assertEquals("gemini-token", apiKeyHeader.get());
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void chatGptProviderUsesResponsesBackendFromResponsesUrl() throws Exception {
         var requestCount = new AtomicInteger();
         var requestBody = new AtomicReference<String>("");
@@ -1134,12 +1181,18 @@ class NemoChatIT {
     private HttpServer startGeminiServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
             AtomicReference<String> requestPath, AtomicReference<String> apiKeyHeader, List<JsonObject> responses)
             throws IOException {
+        return startGeminiServer(requestCount, requestBody, requestPath, apiKeyHeader, null, responses);
+    }
+
+    private HttpServer startGeminiServer(AtomicInteger requestCount, AtomicReference<String> requestBody,
+            AtomicReference<String> requestPath, AtomicReference<String> apiKeyHeader, List<String> requestBodies,
+            List<JsonObject> responses) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         server.setExecutor(Executors.newCachedThreadPool());
         server.createContext("/models/gemini-2.5-flash:generateContent", exchange -> {
             requestPath.set(exchange.getRequestURI().getPath());
             apiKeyHeader.set(exchange.getRequestHeaders().getFirst("x-goog-api-key"));
-            handleResponse(exchange, requestCount, requestBody, 0, responses);
+            handleResponse(exchange, requestCount, requestBody, 0, requestBodies, responses);
         });
         server.start();
         return server;
@@ -1304,8 +1357,17 @@ class NemoChatIT {
 
     private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
             long responseDelayMillis, List<JsonObject> responses) throws IOException {
+        handleResponse(exchange, requestCount, requestBody, responseDelayMillis, null, responses);
+    }
+
+    private void handleResponse(HttpExchange exchange, AtomicInteger requestCount, AtomicReference<String> requestBody,
+            long responseDelayMillis, List<String> requestBodies, List<JsonObject> responses) throws IOException {
         int requestIndex = requestCount.incrementAndGet();
-        requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        requestBody.set(body);
+        if (requestBodies != null) {
+            requestBodies.add(body);
+        }
         JsonObject response = responses.get(Math.min(requestIndex - 1, responses.size() - 1));
         if (responseDelayMillis > 0) {
             try {
@@ -1457,6 +1519,37 @@ class NemoChatIT {
         return response;
     }
 
+    private static JsonObject geminiToolCallResponse(String callId, String toolName, JsonObject arguments,
+            String thoughtSignature) {
+        JsonObject response = new JsonObject();
+        response.addProperty("responseId", "gemini-tool");
+        response.addProperty("modelVersion", "gemini-2.5-flash");
+        JsonArray candidates = new JsonArray();
+        JsonObject candidate = new JsonObject();
+        JsonObject content = new JsonObject();
+        content.addProperty("role", "model");
+        JsonArray parts = new JsonArray();
+        JsonObject part = new JsonObject();
+        JsonObject functionCall = new JsonObject();
+        functionCall.addProperty("id", callId);
+        functionCall.addProperty("name", toolName);
+        functionCall.add("args", arguments);
+        part.add("functionCall", functionCall);
+        part.addProperty("thoughtSignature", thoughtSignature);
+        parts.add(part);
+        content.add("parts", parts);
+        candidate.add("content", content);
+        candidate.addProperty("finishReason", "STOP");
+        candidates.add(candidate);
+        response.add("candidates", candidates);
+        JsonObject usageMetadata = new JsonObject();
+        usageMetadata.addProperty("promptTokenCount", 5000);
+        usageMetadata.addProperty("candidatesTokenCount", 100);
+        usageMetadata.addProperty("totalTokenCount", 5100);
+        response.add("usageMetadata", usageMetadata);
+        return response;
+    }
+
     private static JsonObject responsesTextResponse(String text) {
         JsonObject response = new JsonObject();
         response.addProperty("id", "resp-text");
@@ -1515,15 +1608,18 @@ class NemoChatIT {
     }
 
     private void writeGeminiConfig(HttpServer server) throws IOException {
+        writeGeminiConfig(server, true);
+    }
+
+    private void writeGeminiConfig(HttpServer server, boolean returnThinking) throws IOException {
         Path configDir = tempDir.resolve(".swim");
         Files.createDirectories(configDir.resolve("nemo"));
-        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n",
+        var lines = new java.util.ArrayList<>(List.of(
                 "provider=gemini",
                 "api_key=gemini-token",
                 "model=gemini-2.5-flash",
                 "base_url=http://127.0.0.1:" + server.getAddress().getPort(),
                 "reasoning_effort=xhigh",
-                "return_thinking=true",
                 "max_output_tokens=1024",
                 "tool.list_files=true",
                 "tool.read_file=true",
@@ -1531,6 +1627,10 @@ class NemoChatIT {
                 "tool.run_command=false",
                 "tool.write_file=true",
                 "tool.web_search=false"));
+        if (returnThinking) {
+            lines.add(5, "return_thinking=true");
+        }
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), String.join("\n", lines));
     }
 
     private void writeApprovalConfig(HttpServer server) throws IOException {
@@ -1649,6 +1749,21 @@ class NemoChatIT {
 
     private static JsonObject json(Map<String, ?> values) {
         return JsonParser.parseString(new com.google.gson.Gson().toJson(values)).getAsJsonObject();
+    }
+
+    private static JsonObject findGeminiPart(JsonObject request, String memberName) {
+        JsonArray contents = request.getAsJsonArray("contents");
+        for (int contentIndex = 0; contentIndex < contents.size(); contentIndex++) {
+            JsonObject content = contents.get(contentIndex).getAsJsonObject();
+            JsonArray parts = content.getAsJsonArray("parts");
+            for (int partIndex = 0; partIndex < parts.size(); partIndex++) {
+                JsonObject part = parts.get(partIndex).getAsJsonObject();
+                if (part.has(memberName)) {
+                    return part;
+                }
+            }
+        }
+        throw new AssertionError("No Gemini part contained " + memberName);
     }
 
     private static String jsonString(String value) {

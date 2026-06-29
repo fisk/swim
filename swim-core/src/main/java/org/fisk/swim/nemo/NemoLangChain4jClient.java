@@ -70,7 +70,10 @@ final class NemoLangChain4jClient {
             }
 
             String text = aiMessage.text();
-            if ((text == null || text.isBlank()) && aiMessage.thinking() != null && !aiMessage.thinking().isBlank()) {
+            if (configuration.returnThinking()
+                    && (text == null || text.isBlank())
+                    && aiMessage.thinking() != null
+                    && !aiMessage.thinking().isBlank()) {
                 text = aiMessage.thinking();
             }
             if (text == null || text.isBlank()) {
@@ -119,12 +122,10 @@ final class NemoLangChain4jClient {
         if (thinkingConfig != null) {
             builder.thinkingConfig(thinkingConfig);
         }
-        if (configuration.returnThinking()) {
-            builder.returnThinking(true);
-        }
-        if (configuration.sendThinking()) {
-            builder.sendThinking(true);
-        }
+        // Gemini thought signatures are protocol state for tool calls. Keep them even
+        // when visible thought summaries are not requested.
+        builder.returnThinking(true);
+        builder.sendThinking(true);
         return builder.build();
     }
 
