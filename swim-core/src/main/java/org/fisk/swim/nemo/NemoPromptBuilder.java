@@ -135,7 +135,7 @@ final class NemoPromptBuilder {
             lines.add("- mvn runs Maven with arguments supplied as an array: first the workspace-relative Maven project path, then the arguments after mvn. Use \".\" for the workspace root. It uses the same approval and OS sandbox handling as command execution.");
         }
         if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "shell_start")) {
-            lines.add("- shell_start starts long-running shell commands asynchronously; use shell_poll with the returned shell_id to collect output while continuing other work, and shell_stop to terminate one.");
+            lines.add("- shell_start starts long-running shell commands asynchronously; use shell_poll with the returned shell_id to collect output while continuing other work, shell_stop to terminate one, shells to list shell records, and shell_delete to stop and remove one.");
             lines.add("- shell_save creates a named shell line; shell_run executes the saved name later under the normal OS sandbox without repeating command-policy approval, asking only when sandboxing is unavailable or a sandbox denial needs an approved unsandboxed rerun.");
         }
         if (configuration.toolListFiles()) {

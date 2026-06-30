@@ -841,7 +841,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(28, tools.size());
+        assertEquals(30, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -883,6 +883,8 @@ class NemoClientTest {
         assertFalse(names.contains("shell_start"));
         assertFalse(names.contains("shell_poll"));
         assertFalse(names.contains("shell_stop"));
+        assertFalse(names.contains("shells"));
+        assertFalse(names.contains("shell_delete"));
         assertFalse(names.contains("shell_save"));
         assertFalse(names.contains("shell_list"));
         assertFalse(names.contains("shell_run"));
@@ -1552,6 +1554,44 @@ class NemoClientTest {
         String missing = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("shell-missing", "shell_poll", json(Map.of("shell_id", shellId))));
         assertTrue(missing.contains("Unknown shell: " + shellId));
+    }
+
+    @Test
+    void asyncShellsCanBeListedAndDeletedById() throws Exception {
+        Path project = tempDir.resolve("async-shell-management");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "hello");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolCommandPolicy("trusted")
+                .toolOsSandbox("disabled")
+                .build();
+
+        String started = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-start", "shell_start", json(Map.of(
+                        "command", "printf listed; sleep 0.5; printf done"))));
+
+        String shellId = shellIdFromOutput(started);
+        String listed = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shells", "shells", json(Map.of())));
+
+        assertTrue(listed.contains("Shells:"));
+        assertTrue(listed.contains(shellId));
+        assertTrue(listed.contains("printf listed"));
+
+        String deleted = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-delete", "shell_delete", json(Map.of("shell_id", shellId))));
+        assertTrue(deleted.contains("deleted: " + shellId));
+
+        String missing = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shell-missing", "shell_poll", json(Map.of("shell_id", shellId))));
+        assertTrue(missing.contains("Unknown shell: " + shellId));
+
+        String empty = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("shells-empty", "shells", json(Map.of())));
+        assertTrue(empty.contains("No Nemo shells."));
     }
 
     @Test

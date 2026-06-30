@@ -522,6 +522,18 @@ final class NemoLangChain4jClient {
                             .required(List.of("shell_id"))
                             .additionalProperties(false)
                             .build()));
+            tools.add(tool("shells",
+                    "List asynchronous shells started in this workspace, including running and finished shell records.",
+                    JsonObjectSchema.builder()
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("shell_delete",
+                    "Delete an asynchronous shell record by shell_id. If the shell is still running, stop it before removing the record.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("shell_id", "Identifier returned by shell_start.")
+                            .required(List.of("shell_id"))
+                            .additionalProperties(false)
+                            .build()));
             tools.add(tool("shell_save",
                     "Save or replace a named approved shell command line for this workspace after user approval. Later shell_run calls can execute the saved name without asking for command-policy approval again.",
                     JsonObjectSchema.builder()

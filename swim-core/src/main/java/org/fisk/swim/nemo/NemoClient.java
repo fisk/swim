@@ -177,8 +177,8 @@ public class NemoClient {
     record WebSearchResult(String title, String url, String snippet) {
     }
 
-    private record WorkerSnapshot(String id, String title, boolean pending, long elapsedSeconds,
-            Integer contextUsagePercent, List<String> pendingApprovalIds, List<ChatTurn> turns) {
+    private record WorkerSnapshot(String id, String title, boolean pending, boolean stuck, String stuckReason,
+            long elapsedSeconds, Integer contextUsagePercent, List<String> pendingApprovalIds, List<ChatTurn> turns) {
     }
 
     private record DuckDuckGoResultAnchor(int start, int end, String href, String titleHtml) {
@@ -306,6 +306,9 @@ public class NemoClient {
         }
 
         private synchronized void finish(int exitCode) {
+            if (_finished) {
+                return;
+            }
             _exitCode = exitCode;
             _finished = true;
             _finishedAtMillis = System.currentTimeMillis();
@@ -351,6 +354,8 @@ public class NemoClient {
         private long _requestSequence;
         private long _activeRequestId;
         private Thread _worker;
+        private boolean _stuck;
+        private String _stuckReason = "";
 
         private Conversation(String id, String title, Path workspaceRoot, long createdAtMillis, long updatedAtMillis) {
             _id = id;
@@ -1844,6 +1849,8 @@ public class NemoClient {
         case "shell_start" -> withOutputStatus(argumentSummary(call.arguments(), "command", "cwd"), output);
         case "shell_poll" -> argumentSummary(call.arguments(), "shell_id", "max_output_chars", "forget_if_finished");
         case "shell_stop" -> withOutputStatus(argumentSummary(call.arguments(), "shell_id"), output);
+        case "shells" -> firstOutputLine(output);
+        case "shell_delete" -> withOutputStatus(argumentSummary(call.arguments(), "shell_id"), output);
         case "shell_save" -> withOutputStatus(argumentSummary(call.arguments(), "name", "command", "cwd"), output);
         case "shell_list" -> firstOutputLine(output);
         case "shell_run" -> withOutputStatus(argumentSummary(call.arguments(), "name", "async"), output);
@@ -2100,6 +2107,8 @@ public class NemoClient {
         case "shell_start" -> new ToolExecutionResult(shellStart(configuration, context, call.arguments(), executionSession));
         case "shell_poll" -> new ToolExecutionResult(_instance.shellPoll(configuration, call.arguments()));
         case "shell_stop" -> new ToolExecutionResult(_instance.shellStop(call.arguments()));
+        case "shells" -> new ToolExecutionResult(_instance.shells(configuration, context));
+        case "shell_delete" -> new ToolExecutionResult(_instance.shellDelete(configuration, context, call.arguments()));
         case "shell_save" -> new ToolExecutionResult(_instance.shellSave(configuration, context, call.arguments(), executionSession));
         case "shell_list" -> new ToolExecutionResult(_instance.shellList(configuration, context));
         case "shell_run" -> new ToolExecutionResult(_instance.shellRun(configuration, context, call.arguments(), executionSession));
@@ -2202,7 +2211,7 @@ public class NemoClient {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow plugin tools "
                     + "unless the plugin marks them read-only. Use :permissions workspace-write to allow plugin tools.";
         }
-        if (List.of("run_command", "shell_start", "shell_poll", "shell_stop", "shell_save", "shell_list", "shell_run", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit", "drive_editor")
+        if (List.of("run_command", "shell_start", "shell_poll", "shell_stop", "shells", "shell_delete", "shell_save", "shell_list", "shell_run", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit", "drive_editor")
                 .contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
@@ -2779,6 +2788,8 @@ public class NemoClient {
                 worker._id,
                 worker._title,
                 worker._pending,
+                worker._stuck,
+                worker._stuckReason,
                 elapsedSeconds(worker),
                 worker._contextUsagePercent,
                 pendingApprovalIdsForConversation(worker),
@@ -2792,15 +2803,16 @@ public class NemoClient {
     }
 
     private synchronized String formatWorkerStatus(Conversation worker) {
-        String status = worker._pending ? "running " + elapsedSeconds(worker) + "s" : "idle";
         var approvals = pendingApprovalIdsForConversation(worker);
         String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
-        return worker._id + " | " + worker._title + " | " + status + approvalStatus + " | turns=" + worker._turns.size();
+        return worker._id + " | " + worker._title + " | " + conversationStatus(worker) + approvalStatus
+                + " | turns=" + worker._turns.size();
     }
 
     private static String formatWorkerSnapshot(WorkerSnapshot snapshot, int maxTurns) {
         var lines = new ArrayList<String>();
-        String status = snapshot.pending() ? "running " + snapshot.elapsedSeconds() + "s" : "idle";
+        String status = workerStatusText(snapshot.pending(), snapshot.stuck(), snapshot.stuckReason(),
+                snapshot.elapsedSeconds());
         lines.add("Worker " + snapshot.id() + " | " + snapshot.title() + " | " + status);
         if (!snapshot.pendingApprovalIds().isEmpty()) {
             lines.add("pending approvals: " + String.join(",", snapshot.pendingApprovalIds()));
@@ -3317,17 +3329,70 @@ public class NemoClient {
             return "Unknown shell: " + id;
         }
         if (!shell.snapshot(0).finished()) {
-            shell._process.destroy();
-            try {
-                if (!shell._process.waitFor(2, TimeUnit.SECONDS)) {
-                    shell._process.destroyForcibly();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                shell._process.destroyForcibly();
-            }
+            terminateAsyncShell(shell);
         }
         return formatShellSnapshot(shell.snapshot(_defaultMaxOutputChars));
+    }
+
+    private String shells(Configuration configuration, BufferContext context) {
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        return shells(configuration, root);
+    }
+
+    private String shells(Configuration configuration, Path root) {
+        return truncateOutput(configuration, formatShells(root, asyncShellSnapshots(root, configuration.toolMaxOutputChars())));
+    }
+
+    private String shellDelete(Configuration configuration, BufferContext context, JsonObject arguments) {
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        String id = stringArgument(arguments, "shell_id", stringArgument(arguments, "id", "")).trim();
+        if (id.isBlank()) {
+            return "shell_delete failed: shell_id is required.";
+        }
+        return truncateOutput(configuration, deleteAsyncShell(root, id, configuration.toolMaxOutputChars()));
+    }
+
+    private synchronized List<ShellSnapshot> asyncShellSnapshots(Path workspaceRoot, int maxOutputChars) {
+        Path normalizedRoot = workspaceRoot.toAbsolutePath().normalize();
+        return _asyncShells.values().stream()
+                .filter(shell -> shell._workspaceRoot.equals(normalizedRoot))
+                .map(shell -> shell.snapshot(maxOutputChars))
+                .sorted(Comparator.comparingLong(ShellSnapshot::startedAtMillis))
+                .toList();
+    }
+
+    private String deleteAsyncShell(Path workspaceRoot, String id, int maxOutputChars) {
+        AsyncShell shell;
+        synchronized (this) {
+            shell = _asyncShells.get(id);
+            if (shell == null || !shell._workspaceRoot.equals(workspaceRoot.toAbsolutePath().normalize())) {
+                return "Unknown shell: " + id;
+            }
+            _asyncShells.remove(id);
+        }
+        terminateAsyncShell(shell);
+        return "deleted: " + id + "\n" + formatShellSnapshot(shell.snapshot(maxOutputChars));
+    }
+
+    private static void terminateAsyncShell(AsyncShell shell) {
+        if (shell.snapshot(0).finished()) {
+            return;
+        }
+        shell._process.destroy();
+        try {
+            if (!shell._process.waitFor(2, TimeUnit.SECONDS)) {
+                shell._process.destroyForcibly();
+                shell._process.waitFor(1, TimeUnit.SECONDS);
+            }
+            if (!shell.snapshot(0).finished()) {
+                shell.finish(shell._process.exitValue());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            shell._process.destroyForcibly();
+        } catch (IllegalThreadStateException e) {
+            // The waiter thread will publish completion when the process exits.
+        }
     }
 
     private String shellSave(Configuration configuration, BufferContext context, JsonObject arguments,
@@ -3461,6 +3526,48 @@ public class NemoClient {
         lines.add("stderr" + (snapshot.stderrTruncated() ? " (truncated)" : "") + ":");
         lines.add(snapshot.stderr());
         return String.join("\n", lines);
+    }
+
+    private static String formatShells(Path workspaceRoot, List<ShellSnapshot> snapshots) {
+        if (snapshots.isEmpty()) {
+            return "No Nemo shells.";
+        }
+        var lines = new ArrayList<String>();
+        lines.add("Shells:");
+        for (ShellSnapshot snapshot : snapshots) {
+            lines.add("- " + snapshot.id()
+                    + " | " + shellStatusText(snapshot)
+                    + " | cwd=" + workspaceRelativeDisplay(workspaceRoot, snapshot.cwd())
+                    + " | sandboxed=" + snapshot.sandboxed()
+                    + " | " + compactText(oneLine(snapshot.command()), 160));
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String shellStatusText(ShellSnapshot snapshot) {
+        long end = snapshot.finished() ? snapshot.finishedAtMillis() : System.currentTimeMillis();
+        long elapsedSeconds = Math.max(0, (end - snapshot.startedAtMillis()) / 1000);
+        if (!snapshot.finished()) {
+            return "running " + elapsedSeconds + "s";
+        }
+        return "done exit " + snapshot.exitCode() + " in " + elapsedSeconds + "s";
+    }
+
+    private static String workspaceRelativeDisplay(Path workspaceRoot, Path path) {
+        Path root = workspaceRoot.toAbsolutePath().normalize();
+        Path normalized = path.toAbsolutePath().normalize();
+        if (normalized.equals(root)) {
+            return ".";
+        }
+        if (normalized.startsWith(root)) {
+            return root.relativize(normalized).toString().replace(File.separatorChar, '/');
+        }
+        return normalized.toString();
+    }
+
+    private static String compactText(String text, int maxChars) {
+        String value = text == null ? "" : text;
+        return value.length() <= maxChars ? value : value.substring(0, Math.max(0, maxChars - 3)) + "...";
     }
 
     private static String mvn(Configuration configuration, BufferContext context, JsonObject arguments,
@@ -5193,6 +5300,7 @@ public class NemoClient {
         conversation._pending = true;
         conversation._pendingStartedAtMillis = System.currentTimeMillis();
         conversation._contextUsagePercent = null;
+        clearStuck(conversation);
         long requestId = ++conversation._requestSequence;
         conversation._activeRequestId = requestId;
         if (isPanelVisible(conversation)) {
@@ -5261,6 +5369,8 @@ public class NemoClient {
             new CommandSpec("clear", List.of(), "", "clear the current Nemo conversation"),
             new CommandSpec("reset", List.of(), "[conversation-id]", "clear a Nemo conversation without deleting it"),
             new CommandSpec("delete", List.of(), "[conversation-id]", "delete a Nemo conversation"),
+            new CommandSpec("shells", List.of(), "", "list Nemo asynchronous shells"),
+            new CommandSpec("shell_delete", List.of(), "<shell-id>", "delete a Nemo asynchronous shell"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
             new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<conversation-id> <message>", "send a message to a worker without switching"),
@@ -5397,6 +5507,12 @@ public class NemoClient {
         case ":delete":
             handleDeleteCommand(conversation, argument);
             return;
+        case ":shells":
+            handleShellsCommand(conversation, argument);
+            return;
+        case ":shell_delete":
+            handleShellDeleteCommand(conversation, argument);
+            return;
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
@@ -5423,7 +5539,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -5470,6 +5586,24 @@ public class NemoClient {
         appendAssistantNote(conversation, sendWorkerMessage(conversation._workspaceRoot, sessionId, message));
     }
 
+    private void handleShellsCommand(Conversation conversation, String argument) {
+        if (!argument.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :shells");
+            return;
+        }
+        appendAssistantNote(conversation, shells(conversation._configuration, conversation._workspaceRoot));
+    }
+
+    private void handleShellDeleteCommand(Conversation conversation, String argument) {
+        String shellId = argument.trim();
+        if (shellId.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :shell_delete <shell-id>");
+            return;
+        }
+        appendAssistantNote(conversation, deleteAsyncShell(conversation._workspaceRoot, shellId,
+                conversation._configuration.toolMaxOutputChars()));
+    }
+
     private static int firstWhitespace(String text) {
         for (int i = 0; i < text.length(); ++i) {
             if (Character.isWhitespace(text.charAt(i))) {
@@ -5491,7 +5625,7 @@ public class NemoClient {
         int availablePluginTools = pluginToolDescriptors(configuration).size();
         lines.add("- plugin tools: " + availablePluginTools
                 + (registeredPluginTools == availablePluginTools ? "" : " available of " + registeredPluginTools + " registered"));
-        lines.add("- read-only blocks: run_command, shell_start, shell_poll, shell_stop, mvn, write_file, search_replace, apply_patch, git mutating subcommands, drive_editor");
+        lines.add("- read-only blocks: run_command, shell_start, shell_poll, shell_stop, shells, shell_delete, mvn, write_file, search_replace, apply_patch, git mutating subcommands, drive_editor");
         return String.join("\n", lines);
     }
 
@@ -5905,11 +6039,10 @@ public class NemoClient {
         lines.add("Conversations:");
         for (var session : sessions) {
             String marker = session._id.equals(_activeSessionId) ? "*" : "-";
-            String status = session._pending ? "running " + elapsedSeconds(session) + "s" : "idle";
             var approvals = pendingApprovalIdsForConversation(session);
             String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
-            lines.add(marker + " " + session._id + " | " + session._title + " | " + status + approvalStatus
-                    + " | turns=" + session._turns.size());
+            lines.add(marker + " " + session._id + " | " + session._title + " | " + conversationStatus(session)
+                    + approvalStatus + " | turns=" + session._turns.size());
         }
         return String.join("\n", lines);
     }
@@ -5917,11 +6050,11 @@ public class NemoClient {
     private String formatWorkers() {
         var workers = new ArrayList<Conversation>();
         for (var conversation : _conversations.values()) {
-            if (conversation._pending) {
+            if (conversation._pending || conversation._stuck) {
                 workers.add(conversation);
             }
         }
-        workers.sort(Comparator.comparingLong(conversation -> conversation._pendingStartedAtMillis));
+        workers.sort(Comparator.comparingLong(this::workerSortTime));
         if (workers.isEmpty()) {
             return "No Nemo workers running.";
         }
@@ -5931,9 +6064,33 @@ public class NemoClient {
         for (var worker : workers) {
             var approvals = pendingApprovalIdsForConversation(worker);
             String approvalStatus = approvals.isEmpty() ? "" : " | waiting for approval " + String.join(",", approvals);
-            lines.add("- " + worker._id + " | " + worker._title + " | " + elapsedSeconds(worker) + "s" + approvalStatus);
+            lines.add("- " + worker._id + " | " + worker._title + " | " + conversationStatus(worker)
+                    + approvalStatus);
         }
         return String.join("\n", lines);
+    }
+
+    private long workerSortTime(Conversation conversation) {
+        if (conversation._pendingStartedAtMillis > 0) {
+            return conversation._pendingStartedAtMillis;
+        }
+        return conversation._updatedAtMillis;
+    }
+
+    private static String conversationStatus(Conversation conversation) {
+        return workerStatusText(conversation._pending, conversation._stuck, conversation._stuckReason,
+                elapsedSeconds(conversation));
+    }
+
+    private static String workerStatusText(boolean pending, boolean stuck, String stuckReason, long elapsedSeconds) {
+        if (pending) {
+            return "running " + elapsedSeconds + "s";
+        }
+        if (stuck) {
+            String reason = oneLine(stuckReason);
+            return reason.isBlank() ? "stuck" : "stuck: " + reason;
+        }
+        return "idle";
     }
 
     private static long elapsedSeconds(Conversation conversation) {
@@ -5944,6 +6101,12 @@ public class NemoClient {
     }
 
     private boolean abortConversation(Conversation conversation) {
+        if (conversation._stuck && !conversation._pending) {
+            clearStuck(conversation);
+            conversation._updatedAtMillis = System.currentTimeMillis();
+            persistSessions();
+            return true;
+        }
         if (!conversation._pending || conversation._worker == null) {
             return false;
         }
@@ -5958,6 +6121,7 @@ public class NemoClient {
         conversation._pendingStartedAtMillis = 0;
         conversation._activeRequestId = 0;
         conversation._queuedUserTurns.clear();
+        clearStuck(conversation);
         Thread worker = conversation._worker;
         conversation._worker = null;
         if (isPanelVisible(conversation)) {
@@ -5984,6 +6148,7 @@ public class NemoClient {
         conversation._contextUsagePercent = response.contextUsagePercent();
         conversation._activeRequestId = 0;
         conversation._worker = null;
+        clearStuck(conversation);
         for (ToolTrace trace : response.toolTraces()) {
             appendTurn(conversation, new ChatTurn("tool", trace.displayText(), false));
         }
@@ -6015,6 +6180,7 @@ public class NemoClient {
         conversation._activeRequestId = 0;
         conversation._worker = null;
         conversation._queuedUserTurns.clear();
+        markStuck(conversation, response);
         conversation._updatedAtMillis = System.currentTimeMillis();
         if (isPanelVisible(conversation)) {
             conversation._panelView.appendMessage("nemo", response);
@@ -6026,6 +6192,16 @@ public class NemoClient {
             conversation._panelView.setContextUsagePercent(null);
         }
         persistSessions();
+    }
+
+    private static void clearStuck(Conversation conversation) {
+        conversation._stuck = false;
+        conversation._stuckReason = "";
+    }
+
+    private static void markStuck(Conversation conversation, String reason) {
+        conversation._stuck = true;
+        conversation._stuckReason = oneLine(reason);
     }
 
     private void showMessage(String message) {

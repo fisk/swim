@@ -1008,6 +1008,55 @@ class NemoChatIT {
 
     @Test
     @Timeout(20)
+    void failedWorkersRemainVisibleAsStuckInWorkerList() throws Exception {
+        var requestCount = new AtomicInteger();
+        var server = startErrorServer(requestCount, """
+                {
+                  "error": {
+                    "code": "Timeout",
+                    "message": "request timed out"
+                  }
+                }
+                """);
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "class Demo {}\n"), 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "Hello");
+                var panel = waitForPanel(window);
+                waitForLine(panel, "Nemo failed:");
+
+                submit(panel, ":workers");
+                waitForLine(panel, "Workers:");
+                var transcript = displayLines(panel);
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("session-1 | Session 1 | stuck")));
+                assertTrue(transcript.stream().anyMatch(line -> line.contains("request timed out")));
+                var workerToolConfiguration = NemoClient.Configuration.builder()
+                        .workspaceRoot(tempDir)
+                        .build();
+                String status = NemoClient.executeTool(workerToolConfiguration, window.getBufferContext(),
+                        new NemoClient.ToolCall("status", "worker_status", json(Map.of("session_id", "session-1"))));
+                assertTrue(status.contains("session-1 | Session 1 | stuck"));
+                assertTrue(status.contains("request timed out"));
+
+                submit(panel, ":abort session-1");
+                waitForLine(panel, "*aborted*");
+                submit(panel, ":workers");
+                waitForLine(panel, "No Nemo workers running.");
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+            assertEquals(1, requestCount.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(20)
     void listsAndAbortsWorkersAcrossSessions() throws Exception {
         var requestCount = new AtomicInteger();
         var server = startServer(requestCount, 3000, List.of(
@@ -1210,6 +1259,53 @@ class NemoChatIT {
 
                 submit(panel, ":session scratch");
                 waitForLine(panel, "Unknown command: :session scratch");
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void shellCommandsListAndDeleteAsyncShells() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                {
+                  "provider": "openai",
+                  "apiKey": ""
+                }
+                """);
+        Path file = writeFile("shells.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+                var shellConfig = NemoClient.Configuration.builder()
+                        .workspaceRoot(tempDir)
+                        .toolCommandPolicy("trusted")
+                        .toolOsSandbox("disabled")
+                        .build();
+
+                String started = NemoClient.executeTool(shellConfig, window.getBufferContext(),
+                        new NemoClient.ToolCall("shell-start", "shell_start", json(Map.of(
+                                "command", "printf chat-shell; sleep 0.5; printf done"))));
+                String shellId = shellIdFromOutput(started);
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":shells");
+                waitForLine(panel, "Shells:");
+                waitForLine(panel, shellId);
+                waitForLine(panel, "chat-shell");
+
+                submit(panel, ":shell_delete " + shellId);
+                waitForLine(panel, "deleted: " + shellId);
+
+                submit(panel, ":shells");
+                waitForLine(panel, "No Nemo shells.");
             }
         } finally {
             System.setProperty("user.home", originalUserHome);
@@ -1988,6 +2084,15 @@ class NemoChatIT {
         Path path = tempDir.resolve(name);
         Files.writeString(path, text);
         return path;
+    }
+
+    private static String shellIdFromOutput(String output) {
+        for (String line : output.split("\\R")) {
+            if (line.startsWith("shell_id: ")) {
+                return line.substring("shell_id: ".length()).trim();
+            }
+        }
+        throw new AssertionError("No shell_id in output: " + output);
     }
 
     @SuppressWarnings("unchecked")
