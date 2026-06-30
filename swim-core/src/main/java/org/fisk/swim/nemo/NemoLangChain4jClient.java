@@ -545,13 +545,13 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
             tools.add(tool("mvn",
-                    "Run Maven from a workspace subdirectory and return exit code, stdout, and stderr. Pass Maven arguments as an array so they are forwarded as arguments rather than raw shell text. Nemo applies the same approval and OS filesystem-write sandbox handling as command execution.",
+                    "Run Maven for a workspace Maven project and return exit code, stdout, and stderr. Pass argv-style arguments with the workspace-relative Maven project path first, followed by Maven arguments, for example [\"swim-core\", \"-q\", \"test\"] or [\".\", \"-q\", \"test\"]. Nemo applies the same approval and OS filesystem-write sandbox handling as command execution.",
                     JsonObjectSchema.builder()
-                            .addStringProperty("directory", "Optional working directory relative to the workspace root.")
                             .addProperty("arguments", JsonArraySchema.builder()
-                                    .description("Maven arguments to pass, for example [\"-q\", \"test\"] or [\"-pl\", \"swim-core\", \"-am\", \"test\"].")
-                                    .items(JsonStringSchema.builder().description("One Maven command-line argument.").build())
+                                    .description("First entry is the workspace-relative Maven project path. Remaining entries are passed after mvn, for example [\"swim-core\", \"-q\", \"test\"].")
+                                    .items(JsonStringSchema.builder().description("Maven project path first, then one Maven command-line argument.").build())
                                     .build())
+                            .required(List.of("arguments"))
                             .additionalProperties(false)
                             .build()));
         }
@@ -586,40 +586,16 @@ final class NemoLangChain4jClient {
                             .additionalProperties(false)
                             .build()));
         }
-        if (configuration.toolGitStatus()) {
-            tools.add(tool("git_status",
-                    "Show git status for the workspace or a subdirectory.",
+        if (configuration.toolGitEnabled()) {
+            tools.add(tool("git",
+                    "Run a project-scoped git command without using a shell. Pass argv-style arguments without the leading git, for example [\"status\", \"--short\"] or [\"commit\", \"-am\", \"test\"]. Read-only sessions allow inspection subcommands; workspace-write sessions also allow local mutating subcommands such as add and commit.",
                     JsonObjectSchema.builder()
-                            .addStringProperty("path", "Optional path relative to the workspace root.")
-                            .additionalProperties(false)
-                            .build()));
-        }
-        if (configuration.toolGitDiff()) {
-            tools.add(tool("git_diff",
-                    "Show git diff for the workspace or a subdirectory.",
-                    JsonObjectSchema.builder()
-                            .addStringProperty("path", "Optional path relative to the workspace root.")
-                            .additionalProperties(false)
-                            .build()));
-        }
-        if (configuration.toolGitAdd() && NemoClient.isToolAllowedByPermission(configuration, "git_add")) {
-            tools.add(tool("git_add",
-                    "Stage files in git. Use this before git_commit when the user asks you to commit changes.",
-                    JsonObjectSchema.builder()
-                            .addStringProperty("path", "Optional file or directory path relative to the workspace root.")
-                            .addProperty("paths", JsonArraySchema.builder()
-                                    .description("Optional list of file or directory paths relative to the workspace root.")
-                                    .items(JsonStringSchema.builder().description("Relative git pathspec.").build())
+                            .addStringProperty("directory", "Optional workspace-relative directory to run git from.")
+                            .addProperty("arguments", JsonArraySchema.builder()
+                                    .description("Git argv without the leading git executable.")
+                                    .items(JsonStringSchema.builder().description("One git argument.").build())
                                     .build())
-                            .additionalProperties(false)
-                            .build()));
-        }
-        if (configuration.toolGitCommit() && NemoClient.isToolAllowedByPermission(configuration, "git_commit")) {
-            tools.add(tool("git_commit",
-                    "Create a git commit from the staged changes.",
-                    JsonObjectSchema.builder()
-                            .addStringProperty("message", "Commit message to use.")
-                            .required(List.of("message"))
+                            .required(List.of("arguments"))
                             .additionalProperties(false)
                             .build()));
         }

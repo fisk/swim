@@ -841,7 +841,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(31, tools.size());
+        assertEquals(28, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -878,8 +878,7 @@ class NemoClientTest {
         assertTrue(names.contains("read_file"));
         assertTrue(names.contains("find"));
         assertTrue(names.contains("search_files"));
-        assertTrue(names.contains("git_status"));
-        assertTrue(names.contains("git_diff"));
+        assertTrue(names.contains("git"));
         assertFalse(names.contains("run_command"));
         assertFalse(names.contains("shell_start"));
         assertFalse(names.contains("shell_poll"));
@@ -891,6 +890,8 @@ class NemoClientTest {
         assertFalse(names.contains("write_file"));
         assertFalse(names.contains("search_replace"));
         assertFalse(names.contains("apply_patch"));
+        assertFalse(names.contains("git_status"));
+        assertFalse(names.contains("git_diff"));
         assertFalse(names.contains("git_add"));
         assertFalse(names.contains("git_commit"));
         assertFalse(names.contains("drive_editor"));
@@ -1654,7 +1655,7 @@ class NemoClientTest {
         String asyncShellOutput = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("blocked-async-shell", "shell_start", json(Map.of("command", "printf ok"))));
         String mvnOutput = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("blocked-mvn", "mvn", json(Map.of("arguments", List.of("-q", "test")))));
+                new NemoClient.ToolCall("blocked-mvn", "mvn", json(Map.of("arguments", List.of(".", "-q", "test")))));
         String writeOutput = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("blocked-write", "write_file", json(Map.of(
                         "path", "note.txt",
@@ -1664,12 +1665,16 @@ class NemoClientTest {
                         "path", "note.txt",
                         "search", "hello",
                         "replace", "changed"))));
+        String gitOutput = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("blocked-git", "git", json(Map.of(
+                        "arguments", List.of("commit", "-am", "blocked")))));
 
         assertTrue(shellOutput.contains("blocked by Nemo permissions"));
         assertTrue(asyncShellOutput.contains("blocked by Nemo permissions"));
         assertTrue(mvnOutput.contains("blocked by Nemo permissions"));
         assertTrue(writeOutput.contains("blocked by Nemo permissions"));
         assertTrue(replaceOutput.contains("blocked by Nemo permissions"));
+        assertTrue(gitOutput.contains("blocked by Nemo permissions"));
         assertEquals("hello\n", Files.readString(file));
         assertFalse(Files.exists(owned));
     }
@@ -2125,8 +2130,7 @@ class NemoClientTest {
 
         String output = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("mvn", "mvn", json(Map.of(
-                        "directory", "module",
-                        "arguments", List.of("-q", "test", "-DskipTests")))));
+                        "arguments", List.of("module", "-q", "test", "-DskipTests")))));
 
         assertTrue(output.contains("exit_code: 0"));
         String invocation = Files.readString(module.resolve("mvn.out"));
@@ -2134,6 +2138,25 @@ class NemoClientTest {
         assertTrue(invocation.contains("-q\n"));
         assertTrue(invocation.contains("test\n"));
         assertTrue(invocation.contains("-DskipTests\n"));
+    }
+
+    @Test
+    void mvnToolRequiresProjectPathAsFirstArgument() throws Exception {
+        Path project = tempDir.resolve("mvn-missing-path");
+        Files.createDirectories(project);
+        Path file = project.resolve("pom.xml");
+        Files.writeString(file, "<project />\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolOsSandbox("disabled")
+                .build();
+        var call = new NemoClient.ToolCall("mvn", "mvn", json(Map.of(
+                "arguments", List.of("-q", "test"))));
+
+        NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(configuration, context, call, null);
+
+        assertTrue(result.output().contains("Maven project path is required as the first argument"));
     }
 
     private static int promptBudgetChars(int contextWindowTokens) {
@@ -2243,16 +2266,20 @@ class NemoClientTest {
                 5);
 
         String status = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("5", "git_status", json(Map.of())));
+                new NemoClient.ToolCall("5", "git", json(Map.of(
+                        "arguments", List.of("status", "--short", "--branch")))));
         String diff = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("6", "git_diff", json(Map.of())));
+                new NemoClient.ToolCall("6", "git", json(Map.of(
+                        "arguments", List.of("diff", "--", ".")))));
         String patchResult = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("7", "apply_patch", json(Map.of(
                         "patch", "diff --git a/note.txt b/note.txt\n--- a/note.txt\n+++ b/note.txt\n@@ -1,2 +1,3 @@\n hello\n world\n+done\n"))));
         String addResult = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("8", "git_add", json(Map.of("path", "note.txt"))));
+                new NemoClient.ToolCall("8", "git", json(Map.of(
+                        "arguments", List.of("add", "note.txt")))));
         String commitResult = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("9", "git_commit", json(Map.of("message", "Update note"))));
+                new NemoClient.ToolCall("9", "git", json(Map.of(
+                        "arguments", List.of("commit", "-m", "Update note")))));
 
         assertTrue(status.contains("note.txt"));
         assertTrue(diff.contains("+world"));
@@ -2300,7 +2327,8 @@ class NemoClientTest {
                 5);
 
         String addResult = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("10", "git_add", json(Map.of("paths", List.of("a.txt", "dir/b.txt")))));
+                new NemoClient.ToolCall("10", "git", json(Map.of(
+                        "arguments", List.of("add", "a.txt", "dir/b.txt")))));
 
         assertTrue(addResult.contains("exit_code: 0"));
         String cachedDiff = runGitCapture(project, "git diff --cached --name-only");
@@ -2342,10 +2370,52 @@ class NemoClientTest {
                 5);
 
         String addResult = NemoClient.executeTool(configuration, context,
-                new NemoClient.ToolCall("11", "git_add", json(Map.of("path", ""))));
+                new NemoClient.ToolCall("11", "git", json(Map.of(
+                        "arguments", List.of("add", ".")))));
 
         assertTrue(addResult.contains("exit_code: 0"));
         assertTrue(runGitCapture(project, "git diff --cached --name-only").contains("note.txt"));
+    }
+
+    @Test
+    void gitToolsCommitWithoutShellSandboxApproval() throws Exception {
+        String originalOverride = System.getProperty("swim.nemo.os_sandbox_available");
+        System.setProperty("swim.nemo.os_sandbox_available", "false");
+        NemoClient.resetMacOsSandboxAvailabilityForTests();
+        try {
+            Path project = tempDir.resolve("repo-sandbox-commit");
+            Files.createDirectories(project);
+            Files.writeString(project.resolve("note.txt"), "one\n");
+            runGit(project, "git init");
+            runGit(project, "git config user.email 'nemo@example.com'");
+            runGit(project, "git config user.name 'Nemo'");
+            runGit(project, "git add note.txt");
+            runGit(project, "git commit -m init");
+            Files.writeString(project.resolve("note.txt"), "two\n");
+            var context = new BufferContext(Rect.create(0, 0, 80, 20), project.resolve("note.txt"));
+            var configuration = NemoClient.Configuration.builder()
+                    .workspaceRoot(project)
+                    .toolOsSandbox("required")
+                    .toolApprovalPolicy("on-request")
+                    .build();
+            var approvalSession = new RecordingToolSession();
+
+            String commitResult = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("sandbox-git-commit", "git", json(Map.of(
+                            "arguments", List.of("commit", "-am", "Update note")))),
+                    approvalSession);
+
+            assertEquals(0, approvalSession.approvals.get());
+            assertTrue(commitResult.contains("exit_code: 0"));
+            assertEquals("Update note", runGitCapture(project, "git log -1 --pretty=%s").trim());
+        } finally {
+            if (originalOverride == null) {
+                System.clearProperty("swim.nemo.os_sandbox_available");
+            } else {
+                System.setProperty("swim.nemo.os_sandbox_available", originalOverride);
+            }
+            NemoClient.resetMacOsSandboxAvailabilityForTests();
+        }
     }
 
     private static void runGit(Path cwd, String command) throws IOException, InterruptedException {

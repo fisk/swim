@@ -1009,6 +1009,7 @@ public class NemoClient {
         boolean toolGitDiff() { return _toolGitDiff; }
         boolean toolGitAdd() { return _toolGitAdd; }
         boolean toolGitCommit() { return _toolGitCommit; }
+        boolean toolGitEnabled() { return _toolGitStatus || _toolGitDiff || _toolGitAdd || _toolGitCommit; }
         String toolCommandPolicy() { return _toolCommandPolicy; }
         String toolPermissionMode() { return _toolPermissionMode; }
         String toolOsSandbox() { return _toolOsSandbox; }
@@ -1852,6 +1853,7 @@ public class NemoClient {
         case "write_file" -> writeFileSummary(call.arguments());
         case "search_replace" -> searchReplaceSummary(call.arguments());
         case "apply_patch" -> "patch=" + stringArgument(call.arguments(), "patch", "").length() + " chars";
+        case "git" -> gitSummary(call.arguments());
         case "git_status", "git_diff" -> argumentSummary(call.arguments(), "path");
         case "git_add" -> gitAddSummary(call.arguments());
         case "git_commit" -> argumentSummary(call.arguments(), "message");
@@ -1911,9 +1913,16 @@ public class NemoClient {
     }
 
     private static String mvnSummary(JsonObject arguments) {
+        MavenInvocation invocation = mavenInvocation(arguments);
+        return joinSummary(List.of(
+                "directory=" + mavenDisplayDirectory(invocation.directory()),
+                "mvn " + String.join(" ", invocation.arguments())));
+    }
+
+    private static String gitSummary(JsonObject arguments) {
         return joinSummary(List.of(
                 argumentSummary(arguments, "directory"),
-                "arguments=" + String.join(" ", mavenArguments(arguments))));
+                "git " + String.join(" ", gitArguments(arguments))));
     }
 
     private static String delegateTaskSummary(JsonObject arguments) {
@@ -2100,10 +2109,11 @@ public class NemoClient {
         case "write_file" -> writeFileDetailed(configuration, context, call.arguments());
         case "search_replace" -> searchReplaceDetailed(configuration, context, call.arguments());
         case "apply_patch" -> applyPatchDetailed(configuration, context, call.arguments(), executionSession);
+        case "git" -> new ToolExecutionResult(git(configuration, context, call.arguments()));
         case "git_status" -> new ToolExecutionResult(gitStatus(configuration, context, call.arguments()));
         case "git_diff" -> new ToolExecutionResult(gitDiff(configuration, context, call.arguments()));
-        case "git_add" -> new ToolExecutionResult(gitAdd(configuration, context, call.arguments(), executionSession));
-        case "git_commit" -> new ToolExecutionResult(gitCommit(configuration, context, call.arguments(), executionSession));
+        case "git_add" -> new ToolExecutionResult(gitAdd(configuration, context, call.arguments()));
+        case "git_commit" -> new ToolExecutionResult(gitCommit(configuration, context, call.arguments()));
         default -> new ToolExecutionResult("Unknown tool: " + call.name());
         };
     }
@@ -2136,7 +2146,7 @@ public class NemoClient {
     }
 
     private static boolean requiresActionApproval(String toolName) {
-        return List.of("run_command", "shell_start", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit")
+        return List.of("run_command", "shell_start", "mvn", "write_file", "search_replace", "apply_patch")
                 .contains(toolName);
     }
 
@@ -2153,8 +2163,11 @@ public class NemoClient {
         return switch (call.name()) {
         case "run_command" -> "run command: " + stringArgument(call.arguments(), "command", "");
         case "shell_start" -> "start async shell command: " + stringArgument(call.arguments(), "command", "");
-        case "mvn" -> "run Maven in " + stringArgument(call.arguments(), "directory", ".")
-                + ": mvn " + String.join(" ", mavenArguments(call.arguments()));
+        case "mvn" -> {
+            MavenInvocation invocation = mavenInvocation(call.arguments());
+            yield "run Maven in " + mavenDisplayDirectory(invocation.directory())
+                    + ": mvn " + String.join(" ", invocation.arguments());
+        }
         case "write_file" -> "write " + stringArgument(call.arguments(), "content", "").length()
                 + " chars to " + stringArgument(call.arguments(), "path", "");
         case "search_replace" -> "replace " + compactArgumentValue(call.arguments().get("search"))
@@ -3455,9 +3468,13 @@ public class NemoClient {
     private static String mvn(Configuration configuration, BufferContext context, JsonObject arguments,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
-        String rawDirectory = stringArgument(arguments, "directory", stringArgument(arguments, "cwd", ""));
+        MavenInvocation invocation = mavenInvocation(arguments);
+        String rawDirectory = invocation.directory();
+        if (rawDirectory.isBlank()) {
+            throw new IOException("Maven project path is required as the first argument; use \".\" for the workspace root.");
+        }
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawDirectory), rawDirectory);
-        List<String> args = mavenArguments(arguments);
+        List<String> args = invocation.arguments();
         for (String arg : args) {
             if (arg.indexOf('\0') >= 0) {
                 throw new IOException("Maven argument contains NUL byte");
@@ -3475,6 +3492,33 @@ public class NemoClient {
     }
 
     private static List<String> mavenArguments(JsonObject arguments) {
+        return mavenInvocation(arguments).arguments();
+    }
+
+    private static MavenInvocation mavenInvocation(JsonObject arguments) {
+        List<String> values = rawMavenArguments(arguments);
+        String rawDirectory = stringArgument(arguments, "directory", stringArgument(arguments, "cwd", ""));
+        if (!rawDirectory.isBlank()) {
+            return new MavenInvocation(rawDirectory, values);
+        }
+        if (values.isEmpty()) {
+            return new MavenInvocation("", List.of());
+        }
+        String directory = values.get(0);
+        if (directory.startsWith("-")) {
+            return new MavenInvocation("", values);
+        }
+        return new MavenInvocation(directory, values.subList(1, values.size()));
+    }
+
+    private record MavenInvocation(String directory, List<String> arguments) {
+    }
+
+    private static String mavenDisplayDirectory(String directory) {
+        return directory == null || directory.isBlank() ? "." : directory;
+    }
+
+    private static List<String> rawMavenArguments(JsonObject arguments) {
         var values = new ArrayList<String>();
         if (arguments.has("arguments") && arguments.get("arguments").isJsonArray()) {
             values.addAll(stringArrayArgument(arguments, "arguments"));
@@ -3832,31 +3876,45 @@ public class NemoClient {
         builder.append(prefix).append(line == null ? "" : line).append('\n');
     }
 
+    private static String git(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String rawDirectory = stringArgument(arguments, "directory", "");
+        Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawDirectory), rawDirectory);
+        List<String> args = gitArguments(arguments);
+        String block = gitPermissionBlock(configuration, args);
+        if (block != null) {
+            return block;
+        }
+        return runGitProcess(configuration, root, cwd, args);
+    }
+
     private static String gitStatus(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String rawPath = stringArgument(arguments, "path", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
-        return runShellCommand(configuration, root, cwd, "git --no-optional-locks status --short --branch", null);
+        return runGitProcess(configuration, root, cwd, List.of("status", "--short", "--branch"));
     }
 
     private static String gitDiff(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String rawPath = stringArgument(arguments, "path", "");
         Path cwd = requireDirectory(resolvePathInsideWorkspace(root, rawPath), rawPath);
-        return runShellCommand(configuration, root, cwd, "git --no-optional-locks diff -- " + shellQuote("."), null);
+        return runGitProcess(configuration, root, cwd, List.of("diff", "--", "."));
     }
 
-    private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments,
-            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+    private static String gitAdd(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         var paths = gitAddPathspecs(root, arguments);
         if (paths.isEmpty()) {
-            return runShellCommand(configuration, root, root, "git add -- .", executionSession);
+            paths = List.of(".");
         }
-        String joinedPathspecs = paths.stream()
-                .map(NemoClient::shellQuote)
-                .collect(Collectors.joining(" "));
-        return runShellCommand(configuration, root, root, "git add -- " + joinedPathspecs, executionSession);
+        var args = new ArrayList<String>();
+        args.add("add");
+        args.add("--");
+        args.addAll(paths);
+        return runGitProcess(configuration, root, root, args);
     }
 
     private static List<String> gitAddPathspecs(Path root, JsonObject arguments) throws IOException {
@@ -3881,17 +3939,104 @@ public class NemoClient {
 
     private static String toGitPathspec(Path root, String rawPath) throws IOException {
         Path path = resolvePathInsideWorkspace(root, rawPath);
-        return root.equals(path) ? "." : root.relativize(path).toString();
+        String pathspec = root.equals(path) ? "." : root.relativize(path).toString();
+        return pathspec.replace(File.separatorChar, '/');
     }
 
-    private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments,
-            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+    private static String gitCommit(Configuration configuration, BufferContext context, JsonObject arguments)
+            throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
         String message = stringArgument(arguments, "message", "");
         if (message.isBlank()) {
             throw new IOException("message is required");
         }
-        return runShellCommand(configuration, root, root, "git commit -m " + shellQuote(message), executionSession);
+        return runGitProcess(configuration, root, root, List.of("commit", "-m", message));
+    }
+
+    private static List<String> gitArguments(JsonObject arguments) {
+        return stringArrayArgument(arguments, "arguments");
+    }
+
+    private static String gitPermissionBlock(Configuration configuration, List<String> args) throws IOException {
+        if (args.isEmpty()) {
+            throw new IOException("git arguments are required");
+        }
+        for (String arg : args) {
+            if (arg.indexOf('\0') >= 0) {
+                throw new IOException("Git argument contains NUL byte");
+            }
+        }
+        String subcommand = args.get(0);
+        if (subcommand.startsWith("-")) {
+            return "Tool git blocked by Nemo permissions: global git options are not allowed; use the directory argument for cwd.";
+        }
+        if (!gitSubcommandEnabled(configuration, subcommand)) {
+            return "Tool git blocked by Nemo configuration: git " + subcommand + " is disabled.";
+        }
+        if ("read_only".equals(configuration.toolPermissionMode()) && gitMutatesWorkspace(subcommand)) {
+            return "Tool git blocked by Nemo permissions: read_only mode allows inspection only. "
+                    + "Use :permissions workspace-write to allow workspace changes.";
+        }
+        if (!gitAllowedSubcommand(subcommand)) {
+            return "Tool git blocked by Nemo permissions: unsupported git subcommand '" + subcommand + "'. "
+                    + "Allowed subcommands are status, diff, log, show, rev-parse, ls-files, add, and commit.";
+        }
+        return null;
+    }
+
+    private static boolean gitSubcommandEnabled(Configuration configuration, String subcommand) {
+        return switch (subcommand) {
+        case "status" -> configuration.toolGitStatus();
+        case "diff" -> configuration.toolGitDiff();
+        case "add" -> configuration.toolGitAdd();
+        case "commit" -> configuration.toolGitCommit();
+        case "log", "show", "rev-parse", "ls-files" -> configuration.toolGitStatus() || configuration.toolGitDiff();
+        default -> configuration.toolGitEnabled();
+        };
+    }
+
+    private static boolean gitAllowedSubcommand(String subcommand) {
+        return List.of("status", "diff", "log", "show", "rev-parse", "ls-files", "add", "commit")
+                .contains(subcommand);
+    }
+
+    private static boolean gitMutatesWorkspace(String subcommand) {
+        return List.of("add", "commit").contains(subcommand);
+    }
+
+    private static String runGitProcess(Configuration configuration, Path workspaceRoot, Path cwd, List<String> args)
+            throws IOException, InterruptedException {
+        var command = new ArrayList<String>();
+        command.add("git");
+        command.addAll(args);
+        var processBuilder = new ProcessBuilder(command)
+                .directory(cwd.toFile())
+                .redirectErrorStream(false);
+        processBuilder.environment().put("GIT_TERMINAL_PROMPT", "0");
+        processBuilder.environment().put("GIT_PAGER", "cat");
+        Path parent = workspaceRoot.toAbsolutePath().normalize().getParent();
+        if (parent != null) {
+            processBuilder.environment().put("GIT_CEILING_DIRECTORIES", parent.toString());
+        }
+        if ("read_only".equals(configuration.toolPermissionMode())) {
+            processBuilder.environment().put("GIT_OPTIONAL_LOCKS", "0");
+        }
+        var process = processBuilder.start();
+        try {
+            if (!process.waitFor(configuration.toolCommandTimeoutSeconds(), TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return new ShellResult("timeout", "", "git exceeded " + configuration.toolCommandTimeoutSeconds() + " seconds", false)
+                        .format(configuration);
+            }
+        } catch (InterruptedException e) {
+            process.destroyForcibly();
+            throw e;
+        }
+
+        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8);
+        return new ShellResult(String.valueOf(process.exitValue()), stdout, stderr, false)
+                .format(configuration);
     }
 
     private static String runShellCommand(Configuration configuration, Path workspaceRoot, Path cwd, String command,
@@ -5356,7 +5501,7 @@ public class NemoClient {
         int availablePluginTools = pluginToolDescriptors(configuration).size();
         lines.add("- plugin tools: " + availablePluginTools
                 + (registeredPluginTools == availablePluginTools ? "" : " available of " + registeredPluginTools + " registered"));
-        lines.add("- read-only blocks: run_command, shell_start, shell_poll, shell_stop, mvn, write_file, search_replace, apply_patch, git_add, git_commit, drive_editor");
+        lines.add("- read-only blocks: run_command, shell_start, shell_poll, shell_stop, mvn, write_file, search_replace, apply_patch, git mutating subcommands, drive_editor");
         return String.join("\n", lines);
     }
 

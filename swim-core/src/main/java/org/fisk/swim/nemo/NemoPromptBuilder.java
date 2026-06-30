@@ -132,7 +132,7 @@ final class NemoPromptBuilder {
             }
         }
         if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "mvn")) {
-            lines.add("- mvn runs Maven from an optional workspace subdirectory with arguments supplied as an array, using the same approval and OS sandbox handling as command execution.");
+            lines.add("- mvn runs Maven with arguments supplied as an array: first the workspace-relative Maven project path, then the arguments after mvn. Use \".\" for the workspace root. It uses the same approval and OS sandbox handling as command execution.");
         }
         if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "shell_start")) {
             lines.add("- shell_start starts long-running shell commands asynchronously; use shell_poll with the returned shell_id to collect output while continuing other work, and shell_stop to terminate one.");

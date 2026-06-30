@@ -493,9 +493,12 @@ class NemoChatIT {
                         .toString();
                 assertTrue(toolPayload.contains("list_files"));
                 assertTrue(toolPayload.contains("read_file"));
+                assertTrue(toolPayload.contains("\"git\""));
                 assertFalse(toolPayload.contains("run_command"));
                 assertFalse(toolPayload.contains("write_file"));
                 assertFalse(toolPayload.contains("apply_patch"));
+                assertFalse(toolPayload.contains("git_status"));
+                assertFalse(toolPayload.contains("git_diff"));
                 assertFalse(toolPayload.contains("git_add"));
                 assertFalse(toolPayload.contains("git_commit"));
             } finally {
