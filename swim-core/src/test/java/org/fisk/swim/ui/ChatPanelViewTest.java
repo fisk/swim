@@ -349,15 +349,15 @@ class ChatPanelViewTest {
     void chatCommandMenuCanUseNemoSpecificCommands() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {}, ignored -> {}, ignored -> {},
                 text -> CommandView.CommandMenuState.forCommandText(text, 0,
-                        List.of(new CommandView.CommandSpec("sessions", List.of(), "", "list sessions"),
-                                new CommandView.CommandSpec("switch", List.of(), "<session-id>", "switch session"))));
+                        List.of(new CommandView.CommandSpec("clear", List.of(), "", "clear conversation"),
+                                new CommandView.CommandSpec("switch", List.of(), "<conversation-id>", "switch conversation"))));
 
         dispatch(view, new KeyStroke(':', false, false));
-        dispatch(view, new KeyStroke('s', false, false));
+        dispatch(view, new KeyStroke('c', false, false));
 
         assertTrue(view.isCommandInputActive());
         assertTrue(view.getCommandMenuState().visible());
-        assertEquals("sessions", view.getCommandMenuState().selectedMatch().primaryName());
+        assertEquals("clear", view.getCommandMenuState().selectedMatch().primaryName());
     }
 
     @Test

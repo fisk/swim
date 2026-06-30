@@ -1147,6 +1147,77 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void clearClearsCurrentConversationWithoutDeletingIt() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                {
+                  "provider": "openai",
+                  "apiKey": ""
+                }
+                """);
+        Path file = writeFile("clear.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, "hello nemo");
+                waitForLine(panel, "Set api_key in");
+
+                submit(panel, ":clear");
+                waitForNoLine(panel, "hello nemo");
+                waitForNoLine(panel, "Set api_key in");
+                waitForNoLine(panel, "me> :clear");
+
+                submit(panel, ":conversations");
+                waitForLine(panel, "Conversations:");
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("session-1")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void serverSessionCommandsAreNotNemoChatCommands() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                {
+                  "provider": "openai",
+                  "apiKey": ""
+                }
+                """);
+        Path file = writeFile("session-command.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":sessions");
+                waitForLine(panel, "Unknown command: :sessions");
+                waitForNoLine(panel, "SWIM server sessions:");
+
+                submit(panel, ":session scratch");
+                waitForLine(panel, "Unknown command: :session scratch");
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void permissionsCommandShowsAndChangesSessionPermissionMode() throws Exception {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");

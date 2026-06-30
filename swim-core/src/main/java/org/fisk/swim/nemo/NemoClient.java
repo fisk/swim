@@ -48,8 +48,6 @@ import org.fisk.swim.api.SwimNemoToolDescriptor;
 import org.fisk.swim.api.SwimNemoToolInvocation;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.text.BufferContext;
-import org.fisk.swim.session.SwimServerSession;
-import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.CommandView.CommandMenuState;
 import org.fisk.swim.ui.CommandView.CommandSpec;
@@ -5255,14 +5253,12 @@ public class NemoClient {
 
     private static final List<CommandSpec> NEMO_COMMAND_SPECS = List.of(
             new CommandSpec("abort", List.of(), "[conversation-id|all]", "stop the current or selected worker"),
-            new CommandSpec("sessions", List.of(), "", "list live SWIM server sessions"),
-            new CommandSpec("session", List.of(), "<name>", "switch to a live SWIM server session"),
-            new CommandSpec("session-kill", List.of(), "<name>", "kill a live SWIM server session"),
             new CommandSpec("conversations", List.of("chats"), "", "list Nemo conversations for this workspace"),
             new CommandSpec("workers", List.of(), "", "list active Nemo workers"),
             new CommandSpec("new", List.of(), "[title]", "create a new Nemo conversation"),
             new CommandSpec("switch", List.of(), "<conversation-id>", "switch to another Nemo conversation"),
             new CommandSpec("rename", List.of(), "<title>", "rename the current Nemo conversation"),
+            new CommandSpec("clear", List.of(), "", "clear the current Nemo conversation"),
             new CommandSpec("reset", List.of(), "[conversation-id]", "clear a Nemo conversation without deleting it"),
             new CommandSpec("delete", List.of(), "[conversation-id]", "delete a Nemo conversation"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
@@ -5376,15 +5372,6 @@ public class NemoClient {
         case ":abort":
             handleAbortCommand(conversation, argument);
             return;
-        case ":sessions":
-            appendAssistantNote(conversation, formatServerSessions());
-            return;
-        case ":session":
-            handleServerSessionCommand(conversation, argument);
-            return;
-        case ":session-kill":
-            handleKillServerSessionCommand(conversation, argument);
-            return;
         case ":conversations":
         case ":chats":
             appendAssistantNote(conversation, formatConversations(conversation._workspaceRoot));
@@ -5400,6 +5387,9 @@ public class NemoClient {
             return;
         case ":rename":
             handleRenameCommand(conversation, argument);
+            return;
+        case ":clear":
+            handleClearCommand(conversation, argument);
             return;
         case ":reset":
             handleResetCommand(conversation, argument);
@@ -5433,7 +5423,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :sessions, :session <name>, :session-kill <name>, :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :reset [conversation-id], :delete [conversation-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -5799,6 +5789,15 @@ public class NemoClient {
         appendAssistantNote(conversation, "Renamed " + conversation._id + " to " + conversation._title + ".");
     }
 
+    private void handleClearCommand(Conversation conversation, String argument) {
+        if (!argument.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :clear");
+            return;
+        }
+        clearConversation(conversation);
+        showMessage("Cleared " + conversation._id + ".");
+    }
+
     private void handleResetCommand(Conversation conversation, String argument) {
         Conversation target = argument.isBlank()
                 ? conversation
@@ -5807,17 +5806,21 @@ public class NemoClient {
             appendAssistantNote(conversation, "Unknown session: " + argument);
             return;
         }
-        stopWorker(target);
-        target._turns.clear();
-        target._contextUsagePercent = null;
-        target._updatedAtMillis = System.currentTimeMillis();
-        persistSessions();
-        if (isPanelVisible(target)) {
-            target._panelView.setMessages(List.of());
-            target._panelView.setPending(false);
-            target._panelView.setContextUsagePercent(null);
-        }
+        clearConversation(target);
         showMessage("Reset " + target._id + ".");
+    }
+
+    private void clearConversation(Conversation conversation) {
+        stopWorker(conversation);
+        conversation._turns.clear();
+        conversation._contextUsagePercent = null;
+        conversation._updatedAtMillis = System.currentTimeMillis();
+        persistSessions();
+        if (isPanelVisible(conversation)) {
+            conversation._panelView.setMessages(List.of());
+            conversation._panelView.setPending(false);
+            conversation._panelView.setContextUsagePercent(null);
+        }
     }
 
     private void handleDeleteCommand(Conversation conversation, String argument) {
@@ -5884,58 +5887,6 @@ public class NemoClient {
             match = conversation;
         }
         return match;
-    }
-
-    private void handleServerSessionCommand(Conversation conversation, String argument) {
-        if (argument.isBlank()) {
-            appendAssistantNote(conversation, formatServerSessions());
-            return;
-        }
-        try {
-            SwimServerSessions.switchTo(argument);
-            appendAssistantNote(conversation, "Switching to SWIM session "
-                    + SwimServerSessions.normalizeName(argument) + ".");
-        } catch (IOException e) {
-            appendAssistantNote(conversation, "Unable to switch SWIM session: " + e.getMessage());
-        }
-    }
-
-    private void handleKillServerSessionCommand(Conversation conversation, String argument) {
-        if (argument.isBlank()) {
-            appendAssistantNote(conversation, "Usage: :session-kill <name>");
-            return;
-        }
-        try {
-            appendAssistantNote(conversation, SwimServerSessions.kill(argument));
-        } catch (IOException e) {
-            appendAssistantNote(conversation, "Unable to kill SWIM session: " + e.getMessage());
-        }
-    }
-
-    private static String formatServerSessions() {
-        if (!SwimServerSessions.isAvailable()) {
-            return "No SWIM session server is attached.";
-        }
-        List<SwimServerSession> sessions;
-        try {
-            sessions = SwimServerSessions.list();
-        } catch (IOException e) {
-            return "Unable to read SWIM server sessions: " + e.getMessage();
-        }
-        if (sessions.isEmpty()) {
-            return "No live SWIM server sessions.";
-        }
-
-        var lines = new ArrayList<String>();
-        lines.add("SWIM server sessions:");
-        for (var session : sessions) {
-            String marker = session.current() ? "*" : "-";
-            String attached = session.attached() ? "attached" : "detached";
-            String running = session.running() ? "pid " + session.pid() : "stopped";
-            String args = session.launchArgs().isEmpty() ? "" : " | " + String.join(" ", session.launchArgs());
-            lines.add(marker + " " + session.name() + " | " + attached + " | " + running + args);
-        }
-        return String.join("\n", lines);
     }
 
     private String formatConversations(Path workspaceRoot) {
