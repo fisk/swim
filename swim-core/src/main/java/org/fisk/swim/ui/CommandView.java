@@ -291,6 +291,21 @@ public class CommandView extends View {
         }
     }
 
+    public Pattern currentSearchPattern() {
+        if (_searchString == null || _searchString.isEmpty()) {
+            return null;
+        }
+        try {
+            return Pattern.compile(_searchString);
+        } catch (Throwable e) {
+            return null;
+        }
+    }
+
+    public boolean isCurrentSearchForward() {
+        return _searchForward;
+    }
+
     private void runCommand(String rawCommand) {
         rawCommand = rawCommand.trim();
         if (rawCommand.equals("")) {

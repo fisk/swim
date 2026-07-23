@@ -2024,6 +2024,15 @@ public class Window implements Drawable {
         return performJumpTo(location, lineWise);
     }
 
+    public int markPositionInCurrentBuffer(char mark) {
+        EditorLocation location = getEditorState().getMark(mark);
+        var context = getBufferContext();
+        if (location == null || context == null || !java.util.Objects.equals(location.path(), context.getBuffer().getPath())) {
+            return -1;
+        }
+        return location.position();
+    }
+
     public boolean jumpBack() {
         EditorLocation location = getEditorState().jumpBack();
         if (location == null) {

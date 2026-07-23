@@ -224,6 +224,43 @@ class NormalModeTest {
     }
 
     @Test
+    void additionalVimOperatorMotionsWork() throws Exception {
+        Path wordPath = tempDir.resolve("operator-word-end.txt");
+        Files.writeString(wordPath, "one two three");
+        try (var harness = HeadlessWindowHarness.create(wordPath, 40, 10)) {
+            var buffer = harness.getWindow().getBufferContext().getBuffer();
+            buffer.getCursor().setPosition("one two ".length());
+            HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('e'));
+            assertEquals("one tw hree", buffer.getString());
+        }
+
+        Path linePath = tempDir.resolve("operator-line-motions.txt");
+        Files.writeString(linePath, "one\n  two  \nthree\n");
+        try (var harness = HeadlessWindowHarness.create(linePath, 40, 10)) {
+            var buffer = harness.getWindow().getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('+'));
+            assertEquals("three\n", buffer.getString());
+        }
+
+        Path searchPath = tempDir.resolve("operator-search-repeat.txt");
+        Files.writeString(searchPath, "one target two target three");
+        try (var harness = HeadlessWindowHarness.create(searchPath, 40, 10)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            window.getCommandView().activate("/");
+            window.getCommandView().runSearch("target");
+            window.getCommandView().deactivate();
+            buffer.getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('n'));
+            assertEquals("target two target three", buffer.getString());
+        }
+    }
+
+    @Test
     void bangStartsNemoChat() throws Exception {
         Path path = tempDir.resolve("bang-opens-nemo.txt");
         Files.writeString(path, "abc");

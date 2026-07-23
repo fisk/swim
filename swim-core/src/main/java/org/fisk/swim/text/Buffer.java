@@ -662,6 +662,14 @@ public class Buffer {
         return result;
     }
 
+    public int previousWordEndPosition(int position, int count, boolean bigWord) {
+        int result = Math.max(0, Math.min(position, getLength()));
+        for (int i = 0; i < Math.max(1, count); i++) {
+            result = previousWordEndPositionOnce(result, bigWord);
+        }
+        return result;
+    }
+
     public int paragraphForwardPosition(int position, int count) {
         int line = getLineIndexAt(position);
         for (int i = 0; i < Math.max(1, count); i++) {
@@ -1663,6 +1671,14 @@ public class Buffer {
         }
         while (current + 1 < length && wordClassAt(current + 1, bigWord) == currentClass) {
             current++;
+        }
+        return current;
+    }
+
+    private int previousWordEndPositionOnce(int position, boolean bigWord) {
+        int current = Math.max(0, Math.min(position - 1, Math.max(0, getLength() - 1)));
+        while (current > 0 && wordClassAt(current, bigWord) == WordClass.WHITESPACE) {
+            current--;
         }
         return current;
     }

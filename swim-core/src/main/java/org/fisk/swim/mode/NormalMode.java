@@ -1052,7 +1052,57 @@ public class NormalMode extends Mode {
                 var range = buffer.lineRangeForPositions(start, 0);
                 return OperatorMotionParse.yes(motionIndex + 2, range, true);
             }
+            if (isCharacter(second, 'e') || isCharacter(second, 'E')) {
+                int target = buffer.previousWordEndPosition(start, count, isCharacter(second, 'E'));
+                return OperatorMotionParse.yes(motionIndex + 2, Range.create(Math.min(start, target), Math.max(start, target) + 1), false);
+            }
+            if (isCharacter(second, '_')) {
+                int line = Math.min(buffer.getLineCount() - 1, buffer.getLineIndexAt(start) + count - 1);
+                int target = lastNonBlankPosition(buffer, buffer.getLineStartByIndex(line));
+                return OperatorMotionParse.yes(motionIndex + 2, Range.create(Math.min(start, target), Math.max(start, target) + 1), false);
+            }
+            if (isCharacter(second, '*') || isCharacter(second, '#')) {
+                return currentWordSearchMotion(buffer, start, count, !isCharacter(second, '#'), false, motionIndex + 2);
+            }
             return OperatorMotionParse.no();
+        }
+
+        if (isCharacter(first, '*') || isCharacter(first, '#')) {
+            return currentWordSearchMotion(buffer, start, count, !isCharacter(first, '#'), true, motionIndex + 1);
+        }
+
+        if (isCharacter(first, '\'') || isCharacter(first, '`')) {
+            if (sequence.size() == motionIndex + 1) {
+                return OperatorMotionParse.maybe();
+            }
+            KeyStroke mark = sequence.get(motionIndex + 1);
+            if (mark.getKeyType() != KeyType.Character || mark.isCtrlDown() || mark.isAltDown()) {
+                return OperatorMotionParse.no();
+            }
+            int target = window.markPositionInCurrentBuffer(mark.getCharacter());
+            if (target < 0) {
+                return OperatorMotionParse.no();
+            }
+            if (isCharacter(first, '\'')) {
+                return OperatorMotionParse.yes(motionIndex + 2,
+                        buffer.lineRangeForPositions(start, buffer.getLineStartPosition(target)), true);
+            }
+            return OperatorMotionParse.yes(motionIndex + 2,
+                    Range.create(Math.min(start, target), Math.max(start, target)), false);
+        }
+
+        if (isCharacter(first, 'n') || isCharacter(first, 'N')) {
+            var commandView = window.getCommandView();
+            Pattern pattern = commandView == null ? null : commandView.currentSearchPattern();
+            if (pattern == null) {
+                return OperatorMotionParse.no();
+            }
+            boolean forward = commandView.isCurrentSearchForward() != isCharacter(first, 'N');
+            int target = findSearchTarget(buffer.getString(), start, pattern, forward, count);
+            if (target < 0) {
+                return OperatorMotionParse.no();
+            }
+            return OperatorMotionParse.yes(motionIndex + 1, Range.create(Math.min(start, target), Math.max(start, target)), false);
         }
 
         if (isCharacter(first, '/') || isCharacter(first, '?')) {
@@ -1131,6 +1181,17 @@ public class NormalMode extends Mode {
         if (isCharacter(stroke, '0')) {
             return MotionTarget.character(Range.create(buffer.getLineStartPosition(start), start), 1);
         }
+        if (isCharacter(stroke, '|')) {
+            target = buffer.getPositionAtLineColumn(buffer.getLineIndexAt(start), count - 1);
+            return MotionTarget.character(Range.create(Math.min(start, target), Math.max(start, target)), 1);
+        }
+        if (isCharacter(stroke, '+') || isCharacter(stroke, '-')) {
+            int direction = isCharacter(stroke, '+') ? 1 : -1;
+            int line = Math.max(0, Math.min(buffer.getLineCount() - 1,
+                    buffer.getLineIndexAt(start) + direction * count));
+            return MotionTarget.line(buffer.lineRangeForPositions(start,
+                    firstNonBlankPosition(buffer, buffer.getLineStartByIndex(line))), 1);
+        }
         if (isCharacter(stroke, '^') || isCharacter(stroke, '_')) {
             int lineStart = buffer.getLineStartPosition(start);
             int lineEnd = buffer.getLineEndPosition(start, false);
@@ -1208,6 +1269,21 @@ public class NormalMode extends Mode {
     }
 
     private static int findSearchTarget(String text, int start, Pattern pattern, boolean forward) {
+        return findSearchTarget(text, start, pattern, forward, 1);
+    }
+
+    private static int findSearchTarget(String text, int start, Pattern pattern, boolean forward, int count) {
+        int target = start;
+        for (int i = 0; i < Math.max(1, count); i++) {
+            target = findSearchTargetOnce(text, target, pattern, forward);
+            if (target < 0) {
+                return -1;
+            }
+        }
+        return target;
+    }
+
+    private static int findSearchTargetOnce(String text, int start, Pattern pattern, boolean forward) {
         var matcher = pattern.matcher(text);
         if (forward) {
             return matcher.find(Math.min(text.length(), start + 1)) ? matcher.start() : -1;
@@ -1221,6 +1297,41 @@ public class NormalMode extends Mode {
             }
         }
         return last;
+    }
+
+    private static OperatorMotionParse currentWordSearchMotion(org.fisk.swim.text.Buffer buffer, int start, int count,
+            boolean forward, boolean wholeWord, int index) {
+        String word = buffer.getInnerWord();
+        if (word == null || word.isEmpty()) {
+            return OperatorMotionParse.no();
+        }
+        String expression = Pattern.quote(word);
+        if (wholeWord) {
+            expression = "(?<!\\w)" + expression + "(?!\\w)";
+        }
+        int target = findSearchTarget(buffer.getString(), start, Pattern.compile(expression), forward, count);
+        if (target < 0) {
+            return OperatorMotionParse.no();
+        }
+        return OperatorMotionParse.yes(index, Range.create(Math.min(start, target), Math.max(start, target)), false);
+    }
+
+    private static int firstNonBlankPosition(org.fisk.swim.text.Buffer buffer, int position) {
+        int end = buffer.getLineEndPosition(position, false);
+        int target = position;
+        while (target < end && (buffer.getCharacter(target).equals(" ") || buffer.getCharacter(target).equals("\t"))) {
+            target++;
+        }
+        return target;
+    }
+
+    private static int lastNonBlankPosition(org.fisk.swim.text.Buffer buffer, int position) {
+        int start = buffer.getLineStartPosition(position);
+        int target = buffer.getLineEndPosition(position, false) - 1;
+        while (target >= start && (buffer.getCharacter(target).equals(" ") || buffer.getCharacter(target).equals("\t"))) {
+            target--;
+        }
+        return Math.max(start, target);
     }
 
     private OperatorParse parseOperator(List<KeyStroke> sequence, int index) {
