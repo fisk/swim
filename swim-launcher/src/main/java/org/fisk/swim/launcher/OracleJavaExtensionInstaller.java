@@ -12,12 +12,13 @@ import java.nio.file.StandardCopyOption;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import org.fisk.swim.api.SwimHttpClients;
 
 public final class OracleJavaExtensionInstaller {
     private static final URI VSIX_URI = URI.create(
             "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/Oracle/vsextensions/oracle-java/latest/vspackage");
 
-    private final HttpClient _httpClient = HttpClient.newBuilder()
+    private final HttpClient _httpClient = SwimHttpClients.newBuilder()
             .followRedirects(HttpClient.Redirect.ALWAYS)
             .build();
 
@@ -75,6 +76,7 @@ public final class OracleJavaExtensionInstaller {
                 .header("Accept", "application/octet-stream")
                 .header("Accept-Encoding", "gzip")
                 .GET()
+                .timeout(java.time.Duration.ofMinutes(10))
                 .build();
         var response = _httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
         if (response.statusCode() / 100 != 2) {

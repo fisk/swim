@@ -12,6 +12,7 @@ import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReference;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Map;
@@ -372,6 +373,7 @@ public class Main implements SwimHost {
         var command = List.of("mvn", "-q", "-DskipTests", "package");
         var processBuilder = new ProcessBuilder(command);
         processBuilder.directory(buildRoot.toFile());
+        configureBuildJava(processBuilder, buildRoot);
         processBuilder.redirectErrorStream(true);
         try {
             var process = processBuilder.start();
@@ -385,6 +387,18 @@ public class Main implements SwimHost {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
+        }
+    }
+
+    private static void configureBuildJava(ProcessBuilder processBuilder, Path buildRoot) {
+        try {
+            Path javaHome = Path.of(Files.readString(buildRoot.resolve("image").resolve("build-java-home")).trim());
+            Path javaBin = javaHome.resolve("bin");
+            if (!Files.isExecutable(javaBin.resolve("javac"))) return;
+            var environment = processBuilder.environment();
+            environment.put("JAVA_HOME", javaHome.toString());
+            environment.put("PATH", javaBin + System.getProperty("path.separator") + environment.getOrDefault("PATH", ""));
+        } catch (IOException | InvalidPathException ignored) {
         }
     }
 

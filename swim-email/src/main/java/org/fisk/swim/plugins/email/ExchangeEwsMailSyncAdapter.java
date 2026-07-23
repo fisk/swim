@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import org.fisk.swim.api.SwimHttpClients;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPathConstants;
@@ -376,7 +377,7 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
     }
 
     private static final class HttpEwsTransport implements EwsTransport {
-        private final HttpClient _client = HttpClient.newBuilder()
+        private final HttpClient _client = SwimHttpClients.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();

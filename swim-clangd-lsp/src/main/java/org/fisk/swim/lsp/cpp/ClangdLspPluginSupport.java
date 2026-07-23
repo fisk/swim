@@ -130,7 +130,7 @@ public final class ClangdLspPluginSupport {
     }
 
     private static ClangdLspClient startClientIfNeeded(Path path, ClangdLspClient client) {
-        if (client.isEnabled() && !client.hasStarted()) {
+        if (client.isEnabled() && !client.isReady()) {
             try {
                 client.startServer(path);
                 client.ensureInit();
@@ -143,8 +143,9 @@ public final class ClangdLspPluginSupport {
     }
 
     private static void withLoadedClient(Window window, java.util.function.Consumer<ClangdLspClient> action) {
-        ensureLoaded(window.getBufferContext().getBuffer().getPath());
-        action.accept(getClient());
+        Path path = window.getBufferContext().getBuffer().getPath();
+        ensureLoaded(path);
+        action.accept(startClientIfNeeded(path, getClient()));
     }
 
     public static void goToDefinition() {

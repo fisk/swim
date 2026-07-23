@@ -45,7 +45,7 @@ public final class DesktopSupport {
     static List<String> browserCommand(String osName, String target) {
         String normalizedOs = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
         if (normalizedOs.contains("mac")) {
-            return List.of(resolveExecutable("/usr/bin/open", "open"), target);
+            return List.of("/usr/bin/open", target);
         }
         if (normalizedOs.contains("win")) {
             return List.of(resolveWindowsExecutable("rundll32.exe", "rundll32"), "url.dll,FileProtocolHandler", target);

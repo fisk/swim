@@ -84,18 +84,18 @@ public class VisualLineMode extends VisualMode {
         int minX = rect.getPoint().getX();
         int maxY = maxCursor.getYRelative();
         int maxX = minX + rect.getSize().getWidth();
-        for (int line = minY; line <= maxY; ++line) {
+        int firstVisibleLine = Math.max(0, minY);
+        int lastVisibleLine = Math.min(rect.getSize().getHeight() - 1, maxY);
+        for (int line = firstVisibleLine; line <= lastVisibleLine; ++line) {
             graphics.setBackgroundColor(UiTheme.VISUAL_SELECTION_BACKGROUND);
-            graphics.drawRectangle(new TerminalPosition(minX, line), new TerminalSize(maxX - minX, 1), ' ');
+            graphics.drawRectangle(new TerminalPosition(minX, rect.getPoint().getY() + line),
+                    new TerminalSize(maxX - minX, 1), ' ');
         }
     }
 
     public boolean isSelected(int position) {
-        var minPosition = minCursor().getPhysicalLine().getStartPosition();
-        var maxPosition = maxCursor().getPhysicalLine().getEndPosition(false);
-        if (maxCursor().getPhysicalLine().getNext() == null) {
-            minPosition = Math.max(0, minPosition - 1);
-        }
+        int minPosition = minCursor().getPhysicalLine().getStartPosition();
+        int maxPosition = maxCursor().getPhysicalLine().getEndPosition(true);
         return position >= minPosition && position < maxPosition;
     }
 }

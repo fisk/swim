@@ -304,17 +304,27 @@ public class Window implements Drawable {
             return false;
         }
 
-        BufferContext nextBufferContext;
-        try {
-            nextBufferContext = new BufferContext(currentBufferView.getBounds(), path);
-        } catch (Throwable e) {
-            _log.error("Failed to open buffer " + path, e);
-            return false;
+        Path normalizedPath = path == null ? null : path.toAbsolutePath().normalize();
+        if (bufferPathEquals(currentBufferContext, normalizedPath)) {
+            return true;
         }
-        var nextBufferView = nextBufferContext.getBufferView();
-        registerBufferView(nextBufferContext, nextBufferView);
+
+        BufferContext nextBufferContext;
+        BufferView nextBufferView;
+        nextBufferContext = findRegisteredBufferContext(normalizedPath);
+        if (nextBufferContext != null) {
+            nextBufferView = nextBufferContext.getBufferView();
+        } else {
+            try {
+                nextBufferContext = new BufferContext(currentBufferView.getBounds(), path);
+            } catch (Throwable e) {
+                _log.error("Failed to open buffer " + path, e);
+                return false;
+            }
+            nextBufferView = nextBufferContext.getBufferView();
+            registerBufferView(nextBufferContext, nextBufferView);
+        }
         replaceViewInLayout(currentBufferView, nextBufferView);
-        unregisterBufferView(currentBufferView);
 
         _bufferContext = nextBufferContext;
         _activeBufferView = nextBufferView;
@@ -4346,6 +4356,18 @@ public class Window implements Drawable {
             return null;
         }
         return _bufferContextsByView.get(bufferView);
+    }
+
+    private BufferContext findRegisteredBufferContext(Path normalizedPath) {
+        if (normalizedPath == null || _bufferContextsByView == null) {
+            return null;
+        }
+        for (BufferContext context : _bufferContextsByView.values()) {
+            if (bufferPathEquals(context, normalizedPath)) {
+                return context;
+            }
+        }
+        return null;
     }
 
     private boolean canEmbedDirectoryBrowserInCurrentWorkspace() {

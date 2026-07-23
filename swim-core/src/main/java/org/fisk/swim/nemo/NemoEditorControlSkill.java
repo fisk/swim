@@ -8,6 +8,7 @@ final class NemoEditorControlSkill {
             "Use screen_snapshot after the control session starts unless the immediately previous tool result already contains the needed after snapshot.",
             "Prefer small, bounded drive_editor inputs and inspect the after snapshot before continuing.",
             "drive_editor input is literal text plus tokens: <ESC>, <ENTER>, <TAB>, <BACKSPACE>, <UP>, <DOWN>, <LEFT>, <RIGHT>, <PAGE-UP>, <PAGE-DOWN>, <SPACE>, <LT>, <GT>, and <CTRL-x>.",
+            "For filename/path search, press <SPACE> f in NORMAL mode to open Project Files; type the filename or path fragment there. Use <SPACE> / or :grep only when searching file contents.",
             "Use drive_editor for editor : commands exactly as a user would type them, for example :vsplit<ENTER>, :e src/Main.java<ENTER>, or :w<ENTER>. Driven editor actions are opt-in and run through the editor sandbox: workspace-local files, splits, focus, buffer navigation, quickfix/location navigation, project search, search prompts, edits, and workspace-local saves are allowed when permissions allow them.",
             "Do not use drive_editor for shell input, opening Nemo, switching to mail/Slack/Todo, rebuild/reload, debugger/git UI commands, approving prompts, or external-workspace actions; those actions are blocked or require normal Nemo tools or host action.",
             "screen_snapshot never exposes mail or private non-buffer workspaces. If a blocked/private view is visible, stop and ask the host to switch away before any editor inspection.",

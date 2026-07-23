@@ -9,6 +9,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import org.fisk.swim.api.SwimHttpClients;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -48,6 +49,7 @@ import org.fisk.swim.api.SwimNemoToolDescriptor;
 import org.fisk.swim.api.SwimNemoToolInvocation;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.fileindex.SwimProjectConfig;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.CommandView.CommandMenuState;
 import org.fisk.swim.ui.CommandView.CommandSpec;
@@ -113,7 +115,7 @@ public class NemoClient {
     private final NemoLangChain4jClient _langChain4jClient = new NemoLangChain4jClient();
     private final NemoResponsesClient _responsesClient = new NemoResponsesClient();
     private final NemoMcpClient _mcpClient = new NemoMcpClient();
-    private static final HttpClient _webSearchHttpClient = HttpClient.newBuilder()
+    private static final HttpClient _webSearchHttpClient = SwimHttpClients.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
@@ -1417,7 +1419,8 @@ public class NemoClient {
                     pathOrNull(firstNonBlank(property(properties, prefix + "cwd"),
                             property(properties, prefix + "working_directory"),
                             property(properties, prefix + "workingDirectory"))),
-                    intProperty(properties, prefix + "timeout_seconds", _defaultCommandTimeoutSeconds)));
+                    intProperty(properties, prefix + "timeout_seconds", _defaultCommandTimeoutSeconds),
+                    booleanProperty(properties, prefix + "trusted", false)));
         }
         return configs;
     }
@@ -2582,7 +2585,7 @@ public class NemoClient {
         if (!isMcpAllowed(configuration)) {
             return "MCP tool " + call.name() + " is unavailable in this session.";
         }
-        if (!"full_access".equals(configuration.toolPermissionMode())) {
+        if (!"full_access".equals(configuration.toolPermissionMode()) && !isTrustedMcpTool(configuration, call.name())) {
             Path root = resolveWorkspaceRoot(configuration, context);
             String approvalBlock = requestEscalationApprovalIfNeeded(
                     configuration,
@@ -2601,6 +2604,14 @@ public class NemoClient {
         }
         return _mcpClient.callTool(configuration.mcpServers(), call.name(), call.arguments(),
                 configuration.toolMaxOutputChars());
+    }
+
+    private static boolean isTrustedMcpTool(Configuration configuration, String toolName) {
+        if (!isMcpToolName(toolName)) return false;
+        for (NemoMcpServerConfig server : configuration.mcpServers()) {
+            if (server.trusted() && toolName.startsWith("mcp__" + server.name() + "__")) return true;
+        }
+        return false;
     }
 
     private String callPluginTool(Configuration configuration, BufferContext context, ToolCall call,
@@ -2951,7 +2962,7 @@ public class NemoClient {
         Path path = requested.isAbsolute()
                 ? requested.normalize()
                 : workspaceRoot.resolve(requested).normalize();
-        if (!path.startsWith(workspaceRoot)) {
+        if (!isPathInsideWorkspaceOrProjectExtension(workspaceRoot, path)) {
             throw new IOException("Path escapes workspace root: " + rawPath);
         }
         Path fallback = maybeStripWorkspaceRootPrefix(workspaceRoot, requested, path);
@@ -2973,7 +2984,7 @@ public class NemoClient {
         Path path = requested.isAbsolute()
                 ? requested.normalize()
                 : base.resolve(requested).normalize();
-        if (!path.startsWith(workspaceRoot)) {
+        if (!isPathInsideWorkspaceOrProjectExtension(workspaceRoot, path)) {
             throw new IOException("Path escapes workspace root: " + rawPath);
         }
         return path;
@@ -2994,6 +3005,12 @@ public class NemoClient {
             return null;
         }
         return stripped;
+    }
+
+    private static boolean isPathInsideWorkspaceOrProjectExtension(Path workspaceRoot, Path path) {
+        if (path.startsWith(workspaceRoot)) return true;
+        SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
+        return project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith);
     }
 
     private static Path requireDirectory(Path path, String rawPath) throws IOException {

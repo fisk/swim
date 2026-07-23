@@ -24,6 +24,10 @@ public class ListView extends View implements KeyBindingHintProvider {
     public static abstract class ListItem {
         public abstract void onClick();
         public abstract String displayString();
+
+        public AttributedString displayAttributedString(TextColor foreground, TextColor background) {
+            return AttributedString.create(displayString(), foreground, background);
+        }
     }
 
     private List<? extends ListItem> _list;
@@ -247,9 +251,9 @@ public class ListView extends View implements KeyBindingHintProvider {
             var line = new AttributedString();
             line.append(selected ? "▌ " : "  ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE,
                     background);
-            line.append(item.displayString(),
+            line.append(item.displayAttributedString(
                     selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
-                    background);
+                    background));
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), y), width, line, UiTheme.TEXT_MUTED,
                     background);
         }

@@ -72,6 +72,7 @@ public final class LauncherImageInstaller {
         deleteRecursively(imageRoot);
         runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), imageRoot);
         installJavaLauncher(imageRoot);
+        Files.writeString(imageRoot.resolve("build-java-home"), System.getProperty("java.home"));
         installSourceLauncher(swimHome.resolve(PUBLIC_LAUNCHER_TARGET),
                 imageRoot.resolve("bin").resolve(javaExecutableName()), resolveNetBeansJvmArgs(swimHome));
         Files.deleteIfExists(imageRoot.resolve("bin").resolve(APP_NAME));
@@ -289,6 +290,10 @@ public final class LauncherImageInstaller {
         return values.stream().collect(java.util.stream.Collectors.joining(" "));
     }
 
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\\"'\\\"'") + "'";
+    }
+
     private static String javaListLiteral(List<String> values) {
         return values.stream()
                 .map(LauncherImageInstaller::javaStringLiteral)
@@ -307,7 +312,8 @@ public final class LauncherImageInstaller {
             String finalFieldMutationOption,
             String illegalFinalFieldMutationOption) {
         return String.format("""
-                #!%s %s --source 25
+                #!/bin/sh
+                // 2>/dev/null; exec %s %s --source 25 "$0" "$@"
                 import java.io.*;
                 import java.net.*;
                 import java.nio.channels.*;
@@ -833,7 +839,7 @@ public final class LauncherImageInstaller {
                         }
                     }
                 }
-                """, embeddedJava, clientOptions, finalFieldMutationOption, illegalFinalFieldMutationOption,
+                """, shellQuote(embeddedJava.toString()), clientOptions, finalFieldMutationOption, illegalFinalFieldMutationOption,
                 appOptions, serverOptions,
                 javaStringLiteral(embeddedJava.toString()));
     }

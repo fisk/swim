@@ -670,6 +670,24 @@ class NormalModeTest {
     }
 
     @Test
+    void vimWordSearchUsesWholeWordsAndSupportsPartialWordVariants() throws Exception {
+        Path path = tempDir.resolve("word-search.txt");
+        Files.writeString(path, "token tokenized token\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('*'));
+            assertEquals(16, window.getBufferContext().getBuffer().getCursor().getPosition());
+
+            window.getBufferContext().getBuffer().getCursor().setPosition(0);
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('*'));
+            assertEquals(6, window.getBufferContext().getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
     void visualBlockYankPastesRectangularText() throws Exception {
         Path path = tempDir.resolve("visual-block-paste.txt");
         Files.writeString(path, "ab12\ncd34\n");

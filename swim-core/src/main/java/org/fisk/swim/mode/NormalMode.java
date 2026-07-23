@@ -420,22 +420,16 @@ public class NormalMode extends Mode {
             }
         });
         _rootResponder.addEventResponder("*", "Search", "search current word forward", () -> {
-            allow("search current word");
-            var word = window.getBufferContext().getBuffer().getInnerWord();
-            if (word != null && !word.equals("")) {
-                window.getCommandView().activate("/");
-                window.getCommandView().runSearch(word);
-                window.getCommandView().deactivate();
-            }
+            searchCurrentWord(window, true, true);
         });
         _rootResponder.addEventResponder("#", "Search", "search current word backward", () -> {
-            allow("search current word");
-            var word = window.getBufferContext().getBuffer().getInnerWord();
-            if (word != null && !word.equals("")) {
-                window.getCommandView().activate("?");
-                window.getCommandView().runSearch(word);
-                window.getCommandView().deactivate();
-            }
+            searchCurrentWord(window, false, true);
+        });
+        _rootResponder.addEventResponder("g *", "Search", "search current word fragment forward", () -> {
+            searchCurrentWord(window, true, false);
+        });
+        _rootResponder.addEventResponder("g #", "Search", "search current word fragment backward", () -> {
+            searchCurrentWord(window, false, false);
         });
         _rootResponder.addEventResponder("/", "Search", "forward search", () -> {
             window.getCommandView().activate("/");
@@ -490,6 +484,24 @@ public class NormalMode extends Mode {
             allow("set mark");
             window.setMark(mark);
         }), KeyBindingHint.of("m <CHAR>", "Marks", "set mark")));
+    }
+
+    private void searchCurrentWord(Window window, boolean forward, boolean wholeWord) {
+        allow("search current word");
+        if (window == null || window.getBufferContext() == null) {
+            return;
+        }
+        String word = window.getBufferContext().getBuffer().getInnerWord();
+        if (word == null || word.isEmpty()) {
+            return;
+        }
+        String pattern = Pattern.quote(word);
+        if (wholeWord) {
+            pattern = "(?<!\\w)" + pattern + "(?!\\w)";
+        }
+        window.getCommandView().activate(forward ? "/" : "?");
+        window.getCommandView().runSearch(pattern);
+        window.getCommandView().deactivate();
     }
 
     private void installLeaderMoveBindings(Window window, String leader) {

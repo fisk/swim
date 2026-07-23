@@ -7,6 +7,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
+import org.fisk.swim.api.SwimHttpClients;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,7 +20,7 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.transport.RefSpec;
 
 final class GitHubPullRequestService {
-    private static final HttpClient HTTP = HttpClient.newBuilder()
+    private static final HttpClient HTTP = SwimHttpClients.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 

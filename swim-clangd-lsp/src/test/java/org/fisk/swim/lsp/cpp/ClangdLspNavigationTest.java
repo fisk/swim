@@ -150,6 +150,11 @@ class ClangdLspNavigationTest {
         }
 
         @Override
+        public boolean isReady() {
+            return true;
+        }
+
+        @Override
         public synchronized void startServer(Path filePath) {
         }
 

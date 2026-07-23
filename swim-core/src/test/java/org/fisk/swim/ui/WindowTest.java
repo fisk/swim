@@ -1851,6 +1851,27 @@ class WindowTest {
     }
 
     @Test
+    void reopeningAnOpenFilePreservesUnsavedEditsAndCursor() throws Exception {
+        Path first = writeFile("reopen-first.txt", "first\n");
+        Path second = writeFile("reopen-second.txt", "second\n");
+
+        try (var harness = HeadlessWindowHarness.create(first, 60, 14)) {
+            var window = harness.getWindow();
+            var firstBuffer = window.getBufferContext().getBuffer();
+            firstBuffer.getCursor().setPosition(firstBuffer.getLength());
+            firstBuffer.insert("draft");
+            int cursor = firstBuffer.getCursor().getPosition();
+
+            assertTrue(window.setBufferPath(second));
+            assertTrue(window.setBufferPath(first));
+
+            assertSame(firstBuffer, window.getBufferContext().getBuffer());
+            assertEquals("first\ndraft", firstBuffer.getString());
+            assertEquals(cursor, firstBuffer.getCursor().getPosition());
+        }
+    }
+
+    @Test
     void tmuxPrefixCreatesShellTabAndSwitchesStableWorkspaces() throws Exception {
         TerminalContextTestSupport.install(60, 16);
         Path file = writeFile("tmux-workspace.txt", "abc");

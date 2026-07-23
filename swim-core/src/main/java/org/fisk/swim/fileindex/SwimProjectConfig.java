@@ -8,10 +8,12 @@ import java.util.List;
 public final class SwimProjectConfig {
     private final Path _root;
     private final Path _compileCommandsPath;
+    private final List<Path> _nemoWorkspaceWriteRoots;
 
-    private SwimProjectConfig(Path root, Path compileCommandsPath) {
+    private SwimProjectConfig(Path root, Path compileCommandsPath, List<Path> nemoWorkspaceWriteRoots) {
         _root = root;
         _compileCommandsPath = compileCommandsPath;
+        _nemoWorkspaceWriteRoots = List.copyOf(nemoWorkspaceWriteRoots);
     }
 
     public static boolean hasMarker(Path directory) {
@@ -28,9 +30,10 @@ public final class SwimProjectConfig {
         }
         Path marker = directory.resolve(".swim");
         if (!Files.isRegularFile(marker)) {
-            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null);
+            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, List.of());
         }
-        return new SwimProjectConfig(directory.toAbsolutePath().normalize(), parseCompileCommandsPath(directory, marker));
+        Path root = directory.toAbsolutePath().normalize();
+        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker), parseNemoWorkspaceWriteRoots(root, marker));
     }
 
     public Path root() {
@@ -46,6 +49,23 @@ public final class SwimProjectConfig {
             return null;
         }
         return _compileCommandsPath.getParent();
+    }
+
+    public List<Path> nemoWorkspaceWriteRoots() { return _nemoWorkspaceWriteRoots; }
+
+    private static List<Path> parseNemoWorkspaceWriteRoots(Path root, Path marker) {
+        try {
+            var roots = new java.util.ArrayList<Path>();
+            for (String line : Files.readAllLines(marker)) {
+                String[] pair = line.split("=", 2);
+                if (pair.length != 2 || !"nemo.workspace_write_roots".equals(pair[0].trim())) continue;
+                for (String value : pair[1].split(",")) {
+                    Path path = Path.of(value.trim());
+                    roots.add((path.isAbsolute() ? path : root.resolve(path)).toAbsolutePath().normalize());
+                }
+            }
+            return roots;
+        } catch (IOException e) { return List.of(); }
     }
 
     private static Path parseCompileCommandsPath(Path root, Path marker) {

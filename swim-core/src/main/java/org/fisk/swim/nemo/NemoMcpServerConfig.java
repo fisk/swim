@@ -11,7 +11,12 @@ record NemoMcpServerConfig(
         List<String> args,
         Map<String, String> env,
         Path cwd,
-        int timeoutSeconds) {
+        int timeoutSeconds,
+        boolean trusted) {
+    NemoMcpServerConfig(String name, boolean enabled, String command, List<String> args, Map<String, String> env,
+            Path cwd, int timeoutSeconds) {
+        this(name, enabled, command, args, env, cwd, timeoutSeconds, false);
+    }
     NemoMcpServerConfig {
         name = name == null || name.isBlank() ? "server" : name.trim();
         command = command == null ? "" : command.trim();

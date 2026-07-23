@@ -123,9 +123,11 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.jsonrpc.messages.Either3;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.LspFeaturePopupView;
+import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
@@ -763,12 +765,12 @@ public final class LspFeatureSupport {
                 if (target == null) {
                     continue;
                 }
-                entries.add(symbolEntry(info.getKind(), info.getName(), info.getContainerName(), target, 0));
+                entries.add(documentSymbolEntry(info.getKind(), info.getName(), info.getContainerName(), target, 0));
             } else {
                 collectDocumentSymbolEntries(entries, snapshot.uri(), symbol.getRight(), 0);
             }
         }
-        showEntries(snapshot, "Document Symbols", entries, "No document symbols");
+        showDocumentSymbolList(entries, "No document symbols");
     }
 
     private void showWorkspaceSymbols(Snapshot snapshot,
@@ -1223,6 +1225,45 @@ public final class LspFeatureSupport {
         window.showLspFeaturePopup(title, entries, anchor(snapshot));
     }
 
+    private void showDocumentSymbolList(List<LspFeaturePopupView.Entry> entries, String emptyMessage) {
+        if (entries == null || entries.isEmpty()) {
+            status(emptyMessage);
+            return;
+        }
+        Window window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        var items = new ArrayList<ListItem>(entries.size());
+        for (var entry : entries) {
+            items.add(new ListItem() {
+                @Override
+                public void onClick() {
+                    if (entry.action() != null) {
+                        entry.action().run();
+                    }
+                }
+
+                @Override
+                public String displayString() {
+                    String detail = entry.detail();
+                    return detail.isBlank() ? entry.label() : entry.label() + "  " + detail;
+                }
+
+                @Override
+                public AttributedString displayAttributedString(TextColor foreground, TextColor background) {
+                    var line = new AttributedString();
+                    line.append(entry.label(), entry.accent(), background);
+                    if (!entry.detail().isBlank()) {
+                        line.append("  " + entry.detail(), UiTheme.TEXT_MUTED, background);
+                    }
+                    return line;
+                }
+            });
+        }
+        window.showList(items, "Document Symbols");
+    }
+
     private List<LocationTarget> locationTargets(
             List<? extends Location> locations,
             List<? extends LocationLink> links) {
@@ -1297,6 +1338,21 @@ public final class LspFeatureSupport {
         return new LspFeaturePopupView.Entry(symbolKind(kind), label, detail, symbolAccent(kind), () -> jumpToTarget(target));
     }
 
+    private LspFeaturePopupView.Entry documentSymbolEntry(
+            SymbolKind kind,
+            String name,
+            String detail,
+            LocationTarget target,
+            int depth) {
+        String indent = depth <= 0 ? "" : "  ".repeat(Math.min(depth, 8));
+        return new LspFeaturePopupView.Entry(
+                symbolKind(kind),
+                indent + nullToBlank(name),
+                nullToBlank(detail),
+                symbolAccent(kind),
+                () -> jumpToTarget(target));
+    }
+
     private void collectDocumentSymbolEntries(
             List<LspFeaturePopupView.Entry> entries,
             String uri,
@@ -1307,7 +1363,7 @@ public final class LspFeatureSupport {
         }
         LocationTarget target = locationTarget(uri, symbol.getSelectionRange().getStart());
         if (target != null) {
-            entries.add(symbolEntry(symbol.getKind(), symbol.getName(), symbol.getDetail(), target, depth));
+            entries.add(documentSymbolEntry(symbol.getKind(), symbol.getName(), symbol.getDetail(), target, depth));
         }
         if (symbol.getChildren() != null) {
             for (var child : symbol.getChildren()) {

@@ -290,6 +290,21 @@ class Demo {
     }
 
     @Test
+    void visualLineSelectionDoesNotStyleThePreviousLineTerminator() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("visual-last-line.txt", "one\ntwo"), 20, 8)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(4);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('V'));
+
+            var mode = (VisualLineMode) window.getCurrentMode();
+            assertFalse(mode.isSelected(3));
+            assertTrue(mode.isSelected(4));
+        }
+    }
+
+    @Test
     void leaderMovesAndIndentsVisualLineSelection() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("visual-leader.txt", """
                 one

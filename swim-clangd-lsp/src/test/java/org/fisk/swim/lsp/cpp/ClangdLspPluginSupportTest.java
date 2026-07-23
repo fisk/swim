@@ -275,6 +275,11 @@ class ClangdLspPluginSupportTest {
         }
 
         @Override
+        public boolean isReady() {
+            return started;
+        }
+
+        @Override
         public synchronized void startServer(Path filePath) {
             startCalls++;
             started = true;

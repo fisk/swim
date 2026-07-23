@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.api.SwimHttpClients;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -36,7 +37,7 @@ final class NemoResponsesClient {
         JsonArray input = new JsonArray();
         input.add(userMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
 
-        HttpClient httpClient = HttpClient.newBuilder()
+        HttpClient httpClient = SwimHttpClients.newBuilder()
                 .connectTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
                 .build();
         JsonArray tools = tools(configuration);

@@ -274,7 +274,8 @@ class MainTest {
 
         String content = Files.readString(launcher);
         embeddedJava = embeddedJava.toAbsolutePath().normalize();
-        assertTrue(content.startsWith("#!" + embeddedJava + " -XX:+UseZGC -Xmx128M --source 25"));
+        assertTrue(content.startsWith("#!/bin/sh\n// 2>/dev/null; exec '" + embeddedJava
+                + "' -XX:+UseZGC -Xmx128M --source 25 \"$0\" \"$@\"\n"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));

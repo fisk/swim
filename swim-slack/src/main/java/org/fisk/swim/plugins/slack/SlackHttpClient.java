@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import org.fisk.swim.api.SwimHttpClients;
 
 import org.fisk.swim.slack.SlackChannelSummary;
 import org.fisk.swim.slack.SlackClient;
@@ -153,7 +154,7 @@ final class SlackHttpClient implements SlackClient {
     private final Map<String, WorkspaceState> _workspaces = new LinkedHashMap<>();
 
     SlackHttpClient(SlackPaths paths) throws IOException {
-        this(paths, new DefaultSlackTransport(HttpClient.newBuilder().build()));
+        this(paths, new DefaultSlackTransport(SwimHttpClients.newBuilder().build()));
     }
 
     SlackHttpClient(SlackPaths paths, SlackTransport transport) throws IOException {

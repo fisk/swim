@@ -283,6 +283,10 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         return _started;
     }
 
+    public boolean isReady() {
+        return _enabled && _server != null && _capabilities != null;
+    }
+
     public void disable() {
         _enabled = false;
     }

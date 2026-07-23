@@ -20,6 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import org.fisk.swim.api.SwimHttpClients;
 import java.util.stream.Collectors;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -416,7 +417,7 @@ final class MicrosoftOAuth2Client {
     }
 
     private static final class HttpOAuthTransport implements OAuthHttpTransport {
-        private final HttpClient _client = HttpClient.newBuilder().build();
+        private final HttpClient _client = SwimHttpClients.newBuilder().build();
 
         @Override
         public String postForm(String url, Map<String, String> form) throws IOException {

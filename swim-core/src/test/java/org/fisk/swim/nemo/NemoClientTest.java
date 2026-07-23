@@ -727,6 +727,7 @@ class NemoClientTest {
         assertTrue(prompt.contains("Applicable workspace instructions"));
         assertTrue(prompt.contains("--- built-in/editor-control ---"));
         assertTrue(prompt.contains("Call start_editor_control before screen_snapshot"));
+        assertTrue(prompt.contains("<SPACE> f in NORMAL mode to open Project Files"));
         assertTrue(prompt.contains("--- SKILLS.md ---"));
         assertTrue(prompt.contains("Root skill"));
         assertTrue(prompt.contains("--- src/SKILLS.md ---"));
