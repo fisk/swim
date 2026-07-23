@@ -173,19 +173,35 @@ final class GitConflictResolverState {
         selectedBlock().chooseBoth();
     }
 
+    String oursDocument() {
+        return renderDocument(GitConflictBlock::ours);
+    }
+
+    String theirsDocument() {
+        return renderDocument(GitConflictBlock::theirs);
+    }
+
+    String proposedDocument() {
+        return renderDocument(GitConflictBlock::result);
+    }
+
     void writeResolvedFile() throws IOException {
+        Files.writeString(_path, proposedDocument());
+    }
+
+    private String renderDocument(java.util.function.Function<GitConflictBlock, List<String>> conflictContents) {
         var output = new ArrayList<String>();
         for (Segment segment : _segments) {
             if (segment instanceof TextSegment textSegment) {
                 output.addAll(textSegment.lines());
             } else if (segment instanceof ConflictSegment conflictSegment) {
-                output.addAll(conflictSegment.block().result());
+                output.addAll(conflictContents.apply(conflictSegment.block()));
             }
         }
         String text = String.join("\n", output);
         if (_endsWithNewline) {
             text += "\n";
         }
-        Files.writeString(_path, text);
+        return text;
     }
 }

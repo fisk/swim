@@ -33,6 +33,16 @@ class GitConflictResolverStateTest {
         assertEquals(List.of("base-line"), state.selectedBlock().base());
         assertEquals(List.of("ours"), state.selectedBlock().ours());
         assertEquals(List.of("theirs"), state.selectedBlock().theirs());
+        assertEquals("""
+                before
+                ours
+                after
+                """, state.oursDocument());
+        assertEquals("""
+                before
+                theirs
+                after
+                """, state.theirsDocument());
 
         state.chooseBoth();
         state.writeResolvedFile();
