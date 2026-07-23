@@ -258,7 +258,8 @@ class GitStatusServiceTest {
         GitStatusService.stageAll(repo);
         GitStatusSnapshot staged = GitStatusService.snapshot(tracked);
         assertTrue(staged.staged().stream().anyMatch(change -> "tracked.txt".equals(change.relativePath())));
-        assertTrue(staged.staged().stream().anyMatch(change -> "new.txt".equals(change.relativePath())));
+        assertFalse(staged.staged().stream().anyMatch(change -> "new.txt".equals(change.relativePath())));
+        assertTrue(staged.untracked().stream().anyMatch(change -> "new.txt".equals(change.relativePath())));
 
         GitStatusService.unstageAll(repo);
         GitStatusSnapshot unstaged = GitStatusService.snapshot(tracked);

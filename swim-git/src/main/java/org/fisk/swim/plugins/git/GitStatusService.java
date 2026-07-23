@@ -66,7 +66,8 @@ final class GitStatusService {
 
     static void stageAll(Path repositoryRoot) throws IOException, GitAPIException {
         try (var git = Git.open(repositoryRoot.toFile())) {
-            git.add().addFilepattern(".").call();
+            // "Stage all" applies worktree changes to files Git already
+            // tracks.  Untracked files remain explicit, per-file additions.
             git.add().setUpdate(true).addFilepattern(".").call();
         }
     }
