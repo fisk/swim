@@ -139,9 +139,15 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
             command.add("/usr/bin/script");
             command.add("-q");
             command.add("/dev/null");
+            // util-linux script treats a following "-i" as one of its own
+            // options.  Pass the interactive shell invocation through -c so
+            // the shell, rather than script, receives it.
+            command.add("-c");
+            command.add(shellCommand + " -i");
+        } else {
+            command.add(shellCommand);
+            command.add("-i");
         }
-        command.add(shellCommand);
-        command.add("-i");
         var builder = new ProcessBuilder(command)
                 .redirectErrorStream(true);
         builder.environment().putIfAbsent("TERM", "xterm-256color");

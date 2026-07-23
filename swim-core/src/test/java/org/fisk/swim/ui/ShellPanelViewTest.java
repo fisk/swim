@@ -86,6 +86,12 @@ class ShellPanelViewTest {
         assertEquals("80", builder.environment().get("COLUMNS"));
         assertEquals("24", builder.environment().get("LINES"));
         assertNull(builder.environment().get("TMUX"));
+        if (builder.command().getFirst().equals("/usr/bin/script")) {
+            assertEquals(java.util.List.of("/usr/bin/script", "-q", "/dev/null", "-c", "/bin/sh -i"),
+                    builder.command());
+        } else {
+            assertEquals(java.util.List.of("/bin/sh", "-i"), builder.command());
+        }
     }
 
     private static TextColor invokeColourResolver(String methodName, TextColor colour) throws Exception {
