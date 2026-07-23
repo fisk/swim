@@ -1271,6 +1271,23 @@ class NemoClientTest {
     }
 
     @Test
+    void macOsSandboxProfileIncludesConfiguredWorkspaceWriteRoots() throws Exception {
+        Path project = tempDir.resolve("workspace-profile-extension");
+        Path extension = tempDir.resolve("parent-build");
+        Files.createDirectories(project);
+        Files.createDirectories(extension);
+        Files.writeString(project.resolve(".swim"), "nemo.workspace_write_roots=" + extension + "\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+
+        String profile = NemoClient.macOsSandboxProfile(configuration, project);
+
+        assertTrue(profile.contains(project.toAbsolutePath().normalize().toString()));
+        assertTrue(profile.contains(extension.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
     void executesReadListAndSearchToolsInsideWorkspace() throws Exception {
         Path project = tempDir.resolve("project");
         Path file = project.resolve("src/Main.txt");
@@ -1738,6 +1755,27 @@ class NemoClientTest {
 
         assertTrue(output.contains("exit_code: 0"));
         assertTrue(Files.exists(owned));
+    }
+
+    @Test
+    void runCommandRefreshesAnOpenBufferChangedOnDisk() throws Exception {
+        Path project = tempDir.resolve("workspace-refresh-open-buffer");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "before\n");
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .toolPermissionMode("full-access")
+                .build();
+
+        try (var harness = HeadlessWindowHarness.create(file, 80, 20)) {
+            String output = NemoClient.executeTool(configuration, harness.getWindow().getBufferContext(),
+                    new NemoClient.ToolCall("refresh-open-buffer", "run_command", json(Map.of(
+                            "command", "printf 'after\\n' > note.txt"))));
+
+            assertTrue(output.contains("exit_code: 0"));
+            assertEquals("after\n", harness.getWindow().getBufferContext().getBuffer().getString());
+        }
     }
 
     @Test

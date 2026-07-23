@@ -271,6 +271,7 @@ public class NemoClient {
         private final String _command;
         private final boolean _sandboxed;
         private final Process _process;
+        private final List<OpenBufferFileSnapshot> _openBufferFilesBeforeStart;
         private final long _startedAtMillis = System.currentTimeMillis();
         private final StringBuilder _stdout = new StringBuilder();
         private final StringBuilder _stderr = new StringBuilder();
@@ -280,13 +281,15 @@ public class NemoClient {
         private Integer _exitCode;
         private long _finishedAtMillis;
 
-        private AsyncShell(String id, Path workspaceRoot, Path cwd, String command, boolean sandboxed, Process process) {
+        private AsyncShell(String id, Path workspaceRoot, Path cwd, String command, boolean sandboxed, Process process,
+                List<OpenBufferFileSnapshot> openBufferFilesBeforeStart) {
             _id = id;
             _workspaceRoot = workspaceRoot;
             _cwd = cwd;
             _command = command;
             _sandboxed = sandboxed;
             _process = process;
+            _openBufferFilesBeforeStart = List.copyOf(openBufferFilesBeforeStart);
         }
 
         private synchronized void appendStdout(String text) {
@@ -3258,20 +3261,21 @@ public class NemoClient {
             return sandboxBlock;
         }
 
+        List<OpenBufferFileSnapshot> before = snapshotOpenBufferFiles();
         ShellInvocation invocation = shellInvocation(configuration, root, cwd, command);
         var processBuilder = new ProcessBuilder(invocation.command())
                 .directory(cwd.toFile())
                 .redirectErrorStream(false);
         var process = processBuilder.start();
-        AsyncShell shell = _instance.registerAsyncShell(root, cwd, command, invocation.sandboxed(), process);
+        AsyncShell shell = _instance.registerAsyncShell(root, cwd, command, invocation.sandboxed(), process, before);
         return formatShellStarted(shell.snapshot(configuration.toolMaxOutputChars()));
     }
 
     private synchronized AsyncShell registerAsyncShell(Path workspaceRoot, Path cwd, String command, boolean sandboxed,
-            Process process) {
+            Process process, List<OpenBufferFileSnapshot> openBufferFilesBeforeStart) {
         String id = "shell-" + _nextAsyncShellNumber++;
         var shell = new AsyncShell(id, workspaceRoot.toAbsolutePath().normalize(), cwd.toAbsolutePath().normalize(),
-                command, sandboxed, process);
+                command, sandboxed, process, openBufferFilesBeforeStart);
         _asyncShells.put(id, shell);
         startAsyncShellThreads(shell);
         return shell;
@@ -3285,6 +3289,7 @@ public class NemoClient {
         Thread waiter = new Thread(() -> {
             try {
                 shell.finish(shell._process.waitFor());
+                refreshChangedOpenBuffers(shell._openBufferFilesBeforeStart);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -4169,28 +4174,33 @@ public class NemoClient {
             return sandboxBlock;
         }
 
-        ShellResult result = runShellProcess(configuration, workspaceRoot, cwd, command);
-        if (shouldRequestSandboxDenialApproval(configuration, result, executionSession)) {
-            String approvalBlock = requestEscalationApprovalIfNeeded(
-                    configuration,
-                    executionSession,
-                    workspaceRoot,
-                    new ToolApprovalRequest(
-                            "run_command",
-                            "OS sandbox blocked filesystem write",
-                            "rerun without the OS filesystem sandbox after this sandbox denial: " + command
-                                    + "\nStderr: " + oneLine(result.stderr()),
-                            "sandbox-denied:" + workspaceRoot.toAbsolutePath().normalize() + ":" + command
-                                    + ":" + compactRawBody(result.stderr()),
-                            true),
-                    result.format(configuration));
-            if (approvalBlock == null) {
-                result = runShellProcess(configuration.withToolOsSandbox("disabled"), workspaceRoot, cwd, command);
-            } else {
-                return approvalBlock;
+        List<OpenBufferFileSnapshot> before = snapshotOpenBufferFiles();
+        try {
+            ShellResult result = runShellProcess(configuration, workspaceRoot, cwd, command);
+            if (shouldRequestSandboxDenialApproval(configuration, result, executionSession)) {
+                String approvalBlock = requestEscalationApprovalIfNeeded(
+                        configuration,
+                        executionSession,
+                        workspaceRoot,
+                        new ToolApprovalRequest(
+                                "run_command",
+                                "OS sandbox blocked filesystem write",
+                                "rerun without the OS filesystem sandbox after this sandbox denial: " + command
+                                        + "\nStderr: " + oneLine(result.stderr()),
+                                "sandbox-denied:" + workspaceRoot.toAbsolutePath().normalize() + ":" + command
+                                        + ":" + compactRawBody(result.stderr()),
+                                true),
+                        result.format(configuration));
+                if (approvalBlock == null) {
+                    result = runShellProcess(configuration.withToolOsSandbox("disabled"), workspaceRoot, cwd, command);
+                } else {
+                    return approvalBlock;
+                }
             }
+            return result.format(configuration);
+        } finally {
+            refreshChangedOpenBuffers(before);
         }
-        return result.format(configuration);
     }
 
     private static ShellResult runShellProcess(Configuration configuration, Path workspaceRoot, Path cwd, String command)
@@ -4462,8 +4472,19 @@ public class NemoClient {
     }
 
     private static List<Path> sandboxWritableRoots(Path workspaceRoot) throws IOException {
-        Path normalized = workspaceRoot.toAbsolutePath().normalize();
-        var roots = new ArrayList<Path>();
+        var roots = new LinkedHashSet<Path>();
+        addSandboxWritableRoot(roots, workspaceRoot);
+        SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
+        if (project != null) {
+            for (Path root : project.nemoWorkspaceWriteRoots()) {
+                addSandboxWritableRoot(roots, root);
+            }
+        }
+        return List.copyOf(roots);
+    }
+
+    private static void addSandboxWritableRoot(LinkedHashSet<Path> roots, Path root) throws IOException {
+        Path normalized = root.toAbsolutePath().normalize();
         roots.add(normalized);
         try {
             Path real = normalized.toRealPath();
@@ -4475,7 +4496,6 @@ public class NemoClient {
                 throw e;
             }
         }
-        return roots;
     }
 
     private static String sandboxString(String value) {
@@ -4497,6 +4517,44 @@ public class NemoClient {
             Window window = Window.getInstance();
             return window != null && window.refreshOpenBuffersForPath(path, content);
         }, false);
+    }
+
+    private record OpenBufferFileSnapshot(Path path, boolean exists, String content) {
+    }
+
+    private static List<OpenBufferFileSnapshot> snapshotOpenBufferFiles() throws InterruptedException {
+        return runOnEditorThread(() -> {
+            Window window = Window.getInstance();
+            if (window == null) {
+                return List.of();
+            }
+            var snapshots = new LinkedHashMap<Path, OpenBufferFileSnapshot>();
+            for (BufferContext context : window.openBufferContextsSnapshot()) {
+                Path path = context.getBuffer().getPath();
+                if (path == null) {
+                    continue;
+                }
+                Path normalized = path.toAbsolutePath().normalize();
+                boolean exists = Files.isRegularFile(normalized);
+                String content = exists ? Files.readString(normalized, StandardCharsets.UTF_8) : "";
+                snapshots.putIfAbsent(normalized, new OpenBufferFileSnapshot(normalized, exists, content));
+            }
+            return List.copyOf(snapshots.values());
+        }, List.of());
+    }
+
+    private static void refreshChangedOpenBuffers(List<OpenBufferFileSnapshot> before) throws InterruptedException {
+        for (OpenBufferFileSnapshot snapshot : before) {
+            try {
+                boolean exists = Files.isRegularFile(snapshot.path());
+                String content = exists ? Files.readString(snapshot.path(), StandardCharsets.UTF_8) : "";
+                if (exists != snapshot.exists() || !content.equals(snapshot.content())) {
+                    refreshOpenBuffersForPath(snapshot.path(), content);
+                }
+            } catch (IOException e) {
+                _log.warn("Unable to refresh Nemo-modified open buffer {}", snapshot.path(), e);
+            }
+        }
     }
 
     private static void writeOpenBuffer(BufferContext context, String content) throws IOException {
