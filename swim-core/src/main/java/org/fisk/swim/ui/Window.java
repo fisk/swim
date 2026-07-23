@@ -2405,18 +2405,7 @@ public class Window implements Drawable {
         boolean readOnly = buffer.isReadOnly();
         buffer.setReadOnly(false);
         try {
-            int cursorPosition = Math.min(buffer.getCursor().getPosition(), content.length());
-            int length = buffer.getLength();
-            if (length > 0) {
-                buffer.remove(0, length);
-            }
-            if (!content.isEmpty()) {
-                buffer.insert(0, content);
-            }
-            buffer.getUndoLog().commit();
-            buffer.getCursor().setPosition(cursorPosition);
-            buffer.markUnmodified();
-            context.getTextLayout().calculate();
+            buffer.replaceContentsFromExternal(content);
             context.getBufferView().adaptViewToCursor();
             context.getBufferView().setNeedsRedraw();
         } finally {
@@ -3184,7 +3173,7 @@ public class Window implements Drawable {
         var screen = TerminalContext.getInstance().getScreen();
         var terminalContext = TerminalContext.getInstance();
         var terminalSize = terminalContext.getTerminalSize();
-        var resizedSize = screen.doResizeIfNecessary();
+        var resizedSize = TerminalContext.isTerminalSizeFrozen() ? null : screen.doResizeIfNecessary();
         if (resizedSize != null) {
             terminalSize = resizedSize;
         }

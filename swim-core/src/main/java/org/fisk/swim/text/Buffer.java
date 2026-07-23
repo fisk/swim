@@ -178,6 +178,33 @@ public class Buffer {
         _savedVersion = _version;
     }
 
+    /**
+     * Replaces this buffer after an external tool changed its backing file.
+     * This is deliberately not expressed as a remove/insert edit: language
+     * servers need a didClose/didOpen resynchronization, not a sequence of
+     * incremental ranges calculated against stale text layout.
+     */
+    public void replaceContentsFromExternal(String content) {
+        var mode = languageMode();
+        boolean notifyLanguageMode = _open;
+        if (notifyLanguageMode) {
+            mode.didClose(_bufferContext);
+        }
+        _string = new StringBuilder(content == null ? "" : content);
+        _folds.clear();
+        _version++;
+        _savedVersion = _version;
+        _undoLog.clear();
+        invalidateAttributedStringCache();
+        _bufferContext.getTextLayout().calculate();
+        for (Cursor cursor : _cursors) {
+            cursor.setPosition(Math.min(cursor.getPosition(), _string.length()));
+        }
+        if (notifyLanguageMode) {
+            mode.didOpen(_bufferContext);
+        }
+    }
+
     public void undo() {
         int position = _undoLog.undo();
         if (position == -1) {
@@ -1853,14 +1880,51 @@ public class Buffer {
         if (_path == null) {
             throw new IOException("Buffer has no file path");
         }
-        languageMode().willSave(_bufferContext);
+        var mode = languageMode();
+        if (mode.trimTrailingWhitespaceOnSave(_bufferContext)) {
+            trimTrailingWhitespace();
+        }
+        mode.willSave(_bufferContext);
         Files.writeString(_path, _string.toString());
         _savedVersion = _version;
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {
             window.getCommandView().setMessage("Saved file");
         }
-        languageMode().didSave(_bufferContext);
+        mode.didSave(_bufferContext);
+    }
+
+    private void trimTrailingWhitespace() {
+        boolean changed = false;
+        int lineEnd = _string.length();
+        if (lineEnd > 0 && _string.charAt(lineEnd - 1) == '\n') {
+            lineEnd--;
+        }
+        while (true) {
+            int lineStart = lineEnd;
+            while (lineStart > 0 && _string.charAt(lineStart - 1) != '\n') {
+                lineStart--;
+            }
+            int whitespaceStart = lineEnd;
+            while (whitespaceStart > lineStart) {
+                char character = _string.charAt(whitespaceStart - 1);
+                if (character != ' ' && character != '\t') {
+                    break;
+                }
+                whitespaceStart--;
+            }
+            if (whitespaceStart < lineEnd) {
+                remove(whitespaceStart, lineEnd);
+                changed = true;
+            }
+            if (lineStart == 0) {
+                break;
+            }
+            lineEnd = lineStart - 1;
+        }
+        if (changed) {
+            commitUndo();
+        }
     }
 
     public void close() {

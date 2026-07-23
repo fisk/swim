@@ -4593,16 +4593,7 @@ public class NemoClient {
 
     private static void replaceOpenBufferContents(BufferContext context, String content) throws IOException {
         var buffer = context.getBuffer();
-        int cursorPosition = Math.min(buffer.getCursor().getPosition(), content.length());
-        int length = buffer.getLength();
-        if (length > 0) {
-            buffer.remove(0, length);
-        }
-        if (!content.isEmpty()) {
-            buffer.insert(0, content);
-        }
-        buffer.getUndoLog().commit();
-        buffer.getCursor().setPosition(cursorPosition);
+        buffer.replaceContentsFromExternal(content);
         context.getBufferView().adaptViewToCursor();
         buffer.writeOrThrow();
     }

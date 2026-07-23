@@ -122,7 +122,14 @@ public class Mode implements EventResponder, Drawable, KeyBindingHintProvider {
         _rootResponder.addEventResponder("<PAGEUP>", "Navigation", "page up", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollPageUp(); }));
         _rootResponder.addEventResponder("<PAGEDOWN>", "Navigation", "page down", allowed("scroll buffer", () -> { bufferContext.getBufferView().scrollPageDown(); }));
         _rootResponder.addEventResponder("g g", "Navigation", "buffer start", allowed("cursor motion", () -> { window.performJump(cursor::goStartOfBuffer); }));
-        _rootResponder.addEventResponder("G", "Navigation", "buffer end", allowed("cursor motion", () -> { window.performJump(cursor::goEndOfBuffer); }));
+        _rootResponder.addEventResponder(new MotionResponder("G", "Navigation", "line or buffer end", (count, hasExplicitCount) -> {
+            allow("cursor motion");
+            if (hasExplicitCount) {
+                window.performJump(() -> cursor.setPosition(buffer.getLineStartByIndex(count - 1)));
+            } else {
+                window.performJump(cursor::goEndOfBuffer);
+            }
+        }));
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "f", true));
         _rootResponder.addEventResponder(new FindResponder(bufferContext, "F", false));
     }

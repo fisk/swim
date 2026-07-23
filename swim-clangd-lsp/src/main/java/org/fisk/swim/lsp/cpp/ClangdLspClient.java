@@ -419,6 +419,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
     }
 
     @Override
+    public boolean trimTrailingWhitespaceOnSave(BufferContext bufferContext) {
+        return true;
+    }
+
+    @Override
     public void didSave(BufferContext bufferContext) {
         if (!_enabled || _server == null) {
             return;

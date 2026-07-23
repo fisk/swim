@@ -16,9 +16,14 @@ public class MotionResponder implements EventResponder, KeyBindingHintProvider {
     private final KeyBindingHint _hint;
     
     private Responder _delegate;
+    private CountResponder _countDelegate;
     
     public static interface Responder {
         void respond(int count);
+    }
+
+    public static interface CountResponder {
+        void respond(int count, boolean hasExplicitCount);
     }
 
     private StringBuffer _prefix = new StringBuffer();
@@ -84,6 +89,16 @@ public class MotionResponder implements EventResponder, KeyBindingHintProvider {
                 : KeyBindingHint.of(motion, group, summary, commandName);
     }
 
+    public MotionResponder(String motion, String group, String summary, CountResponder responder) {
+        _motion = motion;
+        _prefixResponder = getInitialResponder();
+        _motionResponder = new TextEventResponder(_motion, () -> {});
+        _countDelegate = responder;
+        _hint = group == null || group.isBlank() || summary == null || summary.isBlank()
+                ? null
+                : KeyBindingHint.of(motion, group, summary);
+    }
+
     @Override
     public Response processEvent(KeyStrokes events) {
         _prefixResponder.processEvent(events);
@@ -96,6 +111,10 @@ public class MotionResponder implements EventResponder, KeyBindingHintProvider {
     @Override
     public void respond() {
         var prefixStr = _prefix.toString();
+        if (_countDelegate != null) {
+            _countDelegate.respond(prefixStr.equals("") ? 1 : Integer.parseInt(prefixStr), !prefixStr.equals(""));
+            return;
+        }
         if (prefixStr.equals("")) {
             _delegate.respond(1);
         } else {

@@ -67,12 +67,30 @@ public final class LauncherImageInstaller {
     static void install(Path swimHome) throws IOException {
         Path launcherTarget = swimHome.resolve("swim-launcher").resolve("target");
         Path imageRoot = swimHome.resolve("image");
+        Path stagedImageRoot = imageRoot.resolveSibling(imageRoot.getFileName() + ".next");
 
         Path launcherJar = findLauncherJar(launcherTarget);
-        deleteRecursively(imageRoot);
-        runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), imageRoot);
-        installJavaLauncher(imageRoot);
-        Files.writeString(imageRoot.resolve("build-java-home"), System.getProperty("java.home"));
+        deleteRecursively(stagedImageRoot);
+        runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), stagedImageRoot);
+        installJavaLauncher(stagedImageRoot);
+        Files.writeString(stagedImageRoot.resolve("build-java-home"), System.getProperty("java.home"));
+
+        Path previousImageRoot = imageRoot.resolveSibling(imageRoot.getFileName() + ".previous");
+        deleteRecursively(previousImageRoot);
+        boolean previousMoved = false;
+        try {
+            if (Files.exists(imageRoot)) {
+                Files.move(imageRoot, previousImageRoot, StandardCopyOption.REPLACE_EXISTING);
+                previousMoved = true;
+            }
+            Files.move(stagedImageRoot, imageRoot, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            if (previousMoved && !Files.exists(imageRoot) && Files.exists(previousImageRoot)) {
+                Files.move(previousImageRoot, imageRoot, StandardCopyOption.REPLACE_EXISTING);
+            }
+            throw e;
+        }
+        deleteRecursively(previousImageRoot);
         installSourceLauncher(swimHome.resolve(PUBLIC_LAUNCHER_TARGET),
                 imageRoot.resolve("bin").resolve(javaExecutableName()), resolveNetBeansJvmArgs(swimHome));
         Files.deleteIfExists(imageRoot.resolve("bin").resolve(APP_NAME));

@@ -21,6 +21,14 @@ public interface LanguageMode {
         return false;
     }
 
+    /**
+     * Whether saving this language should remove spaces and tabs at the end of
+     * each line. Plain text deliberately keeps its whitespace unchanged.
+     */
+    default boolean trimTrailingWhitespaceOnSave(BufferContext bufferContext) {
+        return false;
+    }
+
     default String getIndentationString(BufferContext bufferContext) {
         return Settings.getIndentationString();
     }

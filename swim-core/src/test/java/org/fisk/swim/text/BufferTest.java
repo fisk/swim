@@ -79,6 +79,30 @@ class BufferTest {
     }
 
     @Test
+    void saveTrimsTrailingWhitespaceWhenLanguageModeRequestsIt() throws Exception {
+        var mode = new CountingLanguageMode(false, null, true);
+        try (var ignored = LanguagePluginRegistry.register("trimtest", "buffer-trim-test", path -> mode)) {
+            var context = createBufferContext("first  \nsecond\t\n", 80, "trimtest");
+            var buffer = context.getBuffer();
+
+            buffer.writeOrThrow();
+
+            assertEquals("first\nsecond\n", buffer.getString());
+            assertEquals("first\nsecond\n", Files.readString(buffer.getPath()));
+        }
+    }
+
+    @Test
+    void saveKeepsTrailingWhitespaceForPlainText() throws IOException {
+        var context = createBufferContext("first  \nsecond\t\n", 80);
+        var buffer = context.getBuffer();
+
+        buffer.writeOrThrow();
+
+        assertEquals("first  \nsecond\t\n", Files.readString(buffer.getPath()));
+    }
+
+    @Test
     void removeBeforeHandlesMultipleCursorsInOrder() throws IOException {
         var context = createBufferContext("abcd", 80);
         var buffer = context.getBuffer();
@@ -441,6 +465,24 @@ class BufferTest {
     }
 
     @Test
+    void externalContentReplacementResynchronizesTheLanguageMode() throws Exception {
+        var mode = new CountingLanguageMode();
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("before", 80, "cachetest").getBuffer();
+            buffer.getCursor().setPosition(6);
+
+            buffer.replaceContentsFromExternal("after\ntext");
+
+            assertEquals("after\ntext", buffer.getString());
+            assertEquals(1, mode.closeCount());
+            assertEquals(2, mode.openCount());
+            assertEquals(6, buffer.getCursor().getPosition());
+            buffer.undo();
+            assertEquals("after\ntext", buffer.getString());
+        }
+    }
+
+    @Test
     void undoRecalculatesLayoutBetweenBatchedChangesBeforeNotifyingLanguageMode() throws Exception {
         var mode = new LayoutRecordingLanguageMode();
         try (var ignored = LanguagePluginRegistry.register("undoevents", "buffer-undo-events", path -> mode)) {
@@ -488,16 +530,24 @@ class BufferTest {
     private static final class CountingLanguageMode implements LanguageMode {
         private int _colouringCount;
         private int _openCount;
+        private int _closeCount;
         private final boolean _reuseCacheAfterEdit;
         private final TextColor _foregroundColour;
+        private final boolean _trimTrailingWhitespaceOnSave;
 
         private CountingLanguageMode() {
-            this(false, null);
+            this(false, null, false);
         }
 
         private CountingLanguageMode(boolean reuseCacheAfterEdit, TextColor foregroundColour) {
+            this(reuseCacheAfterEdit, foregroundColour, false);
+        }
+
+        private CountingLanguageMode(boolean reuseCacheAfterEdit, TextColor foregroundColour,
+                boolean trimTrailingWhitespaceOnSave) {
             _reuseCacheAfterEdit = reuseCacheAfterEdit;
             _foregroundColour = foregroundColour;
+            _trimTrailingWhitespaceOnSave = trimTrailingWhitespaceOnSave;
         }
 
         int colouringCount() {
@@ -506,6 +556,10 @@ class BufferTest {
 
         int openCount() {
             return _openCount;
+        }
+
+        int closeCount() {
+            return _closeCount;
         }
 
         @Override
@@ -526,6 +580,7 @@ class BufferTest {
 
         @Override
         public void didClose(BufferContext bufferContext) {
+            _closeCount++;
         }
 
         @Override
@@ -559,6 +614,11 @@ class BufferTest {
         @Override
         public boolean canReuseAttributedStringCacheAfterEdit(BufferContext bufferContext) {
             return _reuseCacheAfterEdit;
+        }
+
+        @Override
+        public boolean trimTrailingWhitespaceOnSave(BufferContext bufferContext) {
+            return _trimTrailingWhitespaceOnSave;
         }
     }
 

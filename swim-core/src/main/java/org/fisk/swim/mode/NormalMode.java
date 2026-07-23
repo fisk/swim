@@ -1104,14 +1104,15 @@ public class NormalMode extends Mode {
                     Range.create(Math.min(start, begin), Math.max(start, end)), false);
         }
 
-        MotionTarget target = motionTarget(buffer, first, start, count);
+        MotionTarget target = motionTarget(buffer, first, start, count, motionCount.hasExplicitCount());
         if (target == null) {
             return OperatorMotionParse.no();
         }
         return OperatorMotionParse.yes(motionIndex + target.consumed(), target.range(), target.lineWise());
     }
 
-    private MotionTarget motionTarget(org.fisk.swim.text.Buffer buffer, KeyStroke stroke, int start, int count) {
+    private MotionTarget motionTarget(org.fisk.swim.text.Buffer buffer, KeyStroke stroke, int start, int count,
+            boolean hasExplicitCount) {
         int target;
         if (isCharacter(stroke, 'h')) {
             return MotionTarget.character(Range.create(Math.max(0, start - count), start), 1);
@@ -1178,7 +1179,7 @@ public class NormalMode extends Mode {
             return MotionTarget.character(Range.create(Math.min(start, target), Math.min(buffer.getLength(), Math.max(start, target) + 1)), 1);
         }
         if (isCharacter(stroke, 'G')) {
-            int line = count <= 1 ? buffer.getLineCount() - 1 : Math.min(buffer.getLineCount() - 1, count - 1);
+            int line = hasExplicitCount ? Math.min(buffer.getLineCount() - 1, count - 1) : buffer.getLineCount() - 1;
             return MotionTarget.line(buffer.lineRangeForPositions(start, buffer.getLineStartByIndex(line)), 1);
         }
         if (isCharacter(stroke, 'f') || isCharacter(stroke, 'F') || isCharacter(stroke, 't') || isCharacter(stroke, 'T')) {
@@ -1296,7 +1297,7 @@ public class NormalMode extends Mode {
                 current++;
             }
         }
-        return new CountParse(count == 0 ? 1 : count, current);
+        return new CountParse(count == 0 ? 1 : count, current, current > index);
     }
 
     private static List<KeyStroke> keySequence(KeyStrokes events) {
@@ -1365,7 +1366,7 @@ public class NormalMode extends Mode {
         }
     }
 
-    private record CountParse(int count, int index) {
+    private record CountParse(int count, int index, boolean hasExplicitCount) {
     }
 
     private record OperatorParse(ParseStatus status, int index, Operator operator) {

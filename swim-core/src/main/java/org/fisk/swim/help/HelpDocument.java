@@ -221,7 +221,7 @@ public final class HelpDocument {
                                 "w moves to the next word, b moves back to the previous word, and e moves to the end of a word. Uppercase W, B, and E treat punctuation as part of a larger WORD. Use 0 for the first column, ^ or _ for the first nonblank character, and $ for the end of the line.",
                                 "w\nb\n0\n$"),
                         section("Big jumps",
-                                "gg jumps to the top of the buffer, while G jumps to the end. H, M, and L move to the top, middle, and bottom of the visible screen. Ctrl-d and Ctrl-u scroll half pages, while Ctrl-f and Ctrl-b scroll full pages.",
+                                "gg jumps to the top of the buffer, while G jumps to the end. A count before G jumps to that line, so 1337G goes to line 1337. H, M, and L move to the top, middle, and bottom of the visible screen. Ctrl-d and Ctrl-u scroll half pages, while Ctrl-f and Ctrl-b scroll full pages.",
                                 "gg\nG\n<CTRL>-d\n<CTRL>-f"),
                         section("Search",
                                 "/ starts a forward regex search and ? starts a backward regex search. Press Enter to run it, then use n for the next match and N for the previous match. Searches are also motions, so d/foo<Enter> deletes from the cursor through the next match.",

@@ -71,6 +71,10 @@ public class TerminalContext {
         return instance;
     }
 
+    public static boolean isTerminalSizeFrozen() {
+        return Boolean.getBoolean(FREEZE_SIZE_PROPERTY);
+    }
+
     public static void shutdownInstance() {
         TerminalContext instance = _instance;
         if (instance == null) {

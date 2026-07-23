@@ -170,6 +170,60 @@ class NormalModeTest {
     }
 
     @Test
+    void countedGJumpsToTheRequestedOneBasedLine() throws Exception {
+        Path path = tempDir.resolve("counted-g.txt");
+        StringBuilder text = new StringBuilder();
+        for (int line = 1; line <= 1400; line++) {
+            text.append("line ").append(line).append('\n');
+        }
+        Files.writeString(path, text.toString());
+
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var window = harness.getWindow();
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('1'), HeadlessWindowHarness.key('3'),
+                    HeadlessWindowHarness.key('3'), HeadlessWindowHarness.key('7'),
+                    HeadlessWindowHarness.key('G'));
+
+            assertEquals(window.getBufferContext().getBuffer().getLineStartByIndex(1336),
+                    window.getBufferContext().getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void gMotionsAreAvailableToLinewiseOperators() throws Exception {
+        Path toEnd = tempDir.resolve("delete-to-end.txt");
+        Files.writeString(toEnd, "one\ntwo\nthree\nfour\n");
+        try (var harness = HeadlessWindowHarness.create(toEnd, 40, 10)) {
+            var buffer = harness.getWindow().getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getLineStartByIndex(1));
+            HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('G'));
+            assertEquals("one\n", buffer.getString());
+        }
+
+        Path toStart = tempDir.resolve("delete-to-start.txt");
+        Files.writeString(toStart, "one\ntwo\nthree\nfour\n");
+        try (var harness = HeadlessWindowHarness.create(toStart, 40, 10)) {
+            var buffer = harness.getWindow().getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getLineStartByIndex(2));
+            HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('g'));
+            assertEquals("four\n", buffer.getString());
+        }
+
+        Path toLine = tempDir.resolve("delete-to-line.txt");
+        Files.writeString(toLine, "one\ntwo\nthree\nfour\nfive\n");
+        try (var harness = HeadlessWindowHarness.create(toLine, 40, 10)) {
+            var buffer = harness.getWindow().getBufferContext().getBuffer();
+            buffer.getCursor().setPosition(buffer.getLineStartByIndex(1));
+            HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
+                    HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('4'), HeadlessWindowHarness.key('G'));
+            assertEquals("one\nfive\n", buffer.getString());
+        }
+    }
+
+    @Test
     void bangStartsNemoChat() throws Exception {
         Path path = tempDir.resolve("bang-opens-nemo.txt");
         Files.writeString(path, "abc");

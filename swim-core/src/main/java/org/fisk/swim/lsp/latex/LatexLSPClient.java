@@ -25,6 +25,11 @@ public class LatexLSPClient implements LanguageMode {
     }
 
     @Override
+    public boolean trimTrailingWhitespaceOnSave(BufferContext bufferContext) {
+        return true;
+    }
+
+    @Override
     public void didSave(BufferContext bufferContext) {
     }
 

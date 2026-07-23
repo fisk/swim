@@ -134,6 +134,12 @@ public class UndoLog {
         _undoHead = record;
     }
 
+    public void clear() {
+        _head = null;
+        _undoHead = null;
+        _redoHead = null;
+    }
+
     public int undo() {
         if (_undoHead == null) {
             return -1;
