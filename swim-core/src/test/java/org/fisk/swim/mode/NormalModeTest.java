@@ -231,6 +231,22 @@ class NormalModeTest {
     }
 
     @Test
+    void leaderBackslashStartsShellPanel() throws Exception {
+        Path path = tempDir.resolve("leader-shell-panel.txt");
+        Files.writeString(path, "abc\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 40, 10)) {
+            var window = harness.getWindow();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+                    HeadlessWindowHarness.key('\\'));
+
+            assertTrue(window.getPanelView() instanceof ShellPanelView);
+            window.closePanelShellSession();
+        }
+    }
+
+    @Test
     void eMovesToEndOfWord() throws Exception {
         Path path = tempDir.resolve("e-word-end.txt");
         Files.writeString(path, "alpha beta\n");

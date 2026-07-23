@@ -411,14 +411,6 @@ public class NormalMode extends Mode {
             }
             NemoClient.getInstance().run(window.getBufferContext(), "");
         });
-        _rootResponder.addEventResponder(">", "Tools", "shell panel", () -> {
-            if (window.blockEditorDriveAction("shell panel", "opening shell input through drive_editor is not allowed")) {
-                return;
-            }
-            if (!window.showShellPanel()) {
-                window.getCommandView().setMessage("Failed to start shell");
-            }
-        });
         _rootResponder.addEventResponder("*", "Search", "search current word forward", () -> {
             searchCurrentWord(window, true, true);
         });
@@ -537,6 +529,14 @@ public class NormalMode extends Mode {
                 return;
             }
             TodoUiSupport.toggle(window);
+        });
+        _rootResponder.addEventResponder(leader + " \\", "Tools", "shell panel", "shell", () -> {
+            if (window.blockEditorDriveAction("shell panel", "opening shell input through drive_editor is not allowed")) {
+                return;
+            }
+            if (!window.showShellPanel()) {
+                window.getCommandView().setMessage("Failed to start shell");
+            }
         });
     }
 
