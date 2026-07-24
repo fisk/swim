@@ -65,6 +65,18 @@ public class VisualLineMode extends VisualMode {
                     Window.getInstance() == null ? null : Window.getInstance().consumeSelectedRegister());
             window.switchToMode(window.getNormalMode());
         });
+        _rootResponder.addEventResponder("J", "Editing", "join selected lines", () -> {
+            allow("buffer edit");
+            int firstLine = buffer.getLineIndexAt(minCursor().getPosition());
+            int lastLine = buffer.getLineIndexAt(maxCursor().getPosition());
+            cursor.setPosition(buffer.getLineStartByIndex(firstLine));
+            window.beginRepeatRecording("J");
+            if (buffer.joinLines(Math.max(1, lastLine - firstLine))) {
+                buffer.getUndoLog().commit();
+            }
+            window.commitRepeatRecording();
+            window.switchToMode(window.getNormalMode());
+        });
         _rootResponder.addEventResponder("z f", () -> {
             allow("fold");
             if (buffer.createFold(getSelection().getStart(), getSelection().getEnd())) {

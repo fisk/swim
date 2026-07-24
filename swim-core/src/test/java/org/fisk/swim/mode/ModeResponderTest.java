@@ -305,6 +305,22 @@ class Demo {
     }
 
     @Test
+    void visualLineJoinCombinesAllSelectedLines() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("visual-line-join.txt", "one\n  two\nthree\nfour\n"), 20, 8)) {
+            Window window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('V'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('j'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('j'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('J'));
+
+            assertSame(window.getNormalMode(), window.getCurrentMode());
+            assertEquals("one two three\nfour\n", buffer.getString());
+        }
+    }
+
+    @Test
     void leaderMovesAndIndentsVisualLineSelection() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("visual-leader.txt", """
                 one
