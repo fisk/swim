@@ -441,6 +441,20 @@ final class NemoLangChain4jClient {
                 JsonObjectSchema.builder()
                         .additionalProperties(false)
                         .build()));
+        tools.add(tool("analyze_open_file",
+                "Open a hidden project-local document for LSP analysis and return an analysis_handle. Call lsp_query with that handle, then analyze_close_file when finished.",
+                JsonObjectSchema.builder().addStringProperty("path", "Workspace-relative source file path.")
+                        .required(List.of("path")).additionalProperties(false).build()));
+        tools.add(tool("lsp_query",
+                "Run a read-only LSP analysis command against an analysis_handle. Supported commands depend on language backend; definition and references are available for Java and C/C++.",
+                JsonObjectSchema.builder().addStringProperty("handle", "Handle returned by analyze_open_file.")
+                        .addStringProperty("command", "LSP command, such as definition or references.")
+                        .addIntegerProperty("line", "1-based line.").addIntegerProperty("column", "1-based column.")
+                        .addStringProperty("query", "Optional command query.").required(List.of("handle", "command"))
+                        .additionalProperties(false).build()));
+        tools.add(tool("analyze_close_file", "Close a hidden analysis document and release its LSP lease.",
+                JsonObjectSchema.builder().addStringProperty("handle", "Handle returned by analyze_open_file.")
+                        .required(List.of("handle")).additionalProperties(false).build()));
         for (NemoMcpClient.ToolDescriptor descriptor : NemoClient.mcpToolDescriptors(configuration)) {
             tools.add(mcpTool(descriptor));
         }

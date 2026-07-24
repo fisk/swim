@@ -148,8 +148,13 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     @Override
     public void setBounds(Rect rect) {
+        boolean followTranscript = isAtBottom();
         super.setBounds(rect);
-        scrollToBottom();
+        if (followTranscript) {
+            scrollToBottom();
+        } else {
+            clampStartLine();
+        }
         ensureInputVisible();
     }
 
@@ -358,8 +363,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     public void appendMessage(String speaker, String text) {
+        boolean followTranscript = isAtBottom();
         _messages.add(new ChatMessage(speaker, text));
-        scrollToBottom();
+        if (followTranscript) {
+            scrollToBottom();
+        }
         setNeedsRedraw();
     }
 
@@ -373,9 +381,14 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     public void setMessages(List<ChatMessage> messages) {
+        boolean followTranscript = isAtBottom();
         _messages.clear();
         _messages.addAll(messages);
-        scrollToBottom();
+        if (followTranscript) {
+            scrollToBottom();
+        } else {
+            clampStartLine();
+        }
         setNeedsRedraw();
     }
 
@@ -384,6 +397,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     public void setPending(boolean pending, long startedAtMillis) {
+        boolean followTranscript = isAtBottom();
         _pending = pending;
         if (pending) {
             _pendingStartedAtMillis = startedAtMillis > 0 ? startedAtMillis : System.currentTimeMillis();
@@ -392,7 +406,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
             _pendingStartedAtMillis = 0;
             _pendingRefreshGeneration++;
         }
-        scrollToBottom();
+        if (followTranscript) {
+            scrollToBottom();
+        } else {
+            clampStartLine();
+        }
         setNeedsRedraw();
     }
 
@@ -772,6 +790,14 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     private void scrollToBottom() {
         _startLine = Math.max(0, getDisplayLines().size() - bodyHeight());
+    }
+
+    private boolean isAtBottom() {
+        return _startLine >= Math.max(0, getDisplayLines().size() - bodyHeight());
+    }
+
+    private void clampStartLine() {
+        _startLine = Math.max(0, Math.min(_startLine, getDisplayLines().size() - bodyHeight()));
     }
 
     private void scrollDown(int amount) {

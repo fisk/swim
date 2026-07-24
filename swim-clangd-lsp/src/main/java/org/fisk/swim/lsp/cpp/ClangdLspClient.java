@@ -81,6 +81,7 @@ import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.NemoLspBackend;
 import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
 import org.fisk.swim.lsp.shared.AsyncLspRequestQueue;
 import org.fisk.swim.lsp.shared.AsyncSemanticTokenHighlighter;
@@ -101,7 +102,7 @@ import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TextColor;
 
-public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
+public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, NemoLspBackend {
     private static final Logger _log = LogFactory.createLog();
     private static final String DIAGNOSTIC_PROVIDER_ID = "clangd-lsp";
 
@@ -746,6 +747,35 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         _features.showColorPresentations(bufferContext);
     }
 
+    @Override
+    public String analyze(Path workspaceRoot, BufferContext bufferContext, String command, int line, int column, String query) {
+        if (!_enabled || _server == null) {
+            return "clangd is not ready.";
+        }
+        int position = bufferContext.getBuffer().getPositionAtLineColumn(line - 1, column - 1);
+        try {
+            return switch (command) {
+            case "definition" -> formatNemoLocations(workspaceRoot, requestDefinitionEntries(bufferContext, position));
+            case "references" -> formatNemoLocations(workspaceRoot, requestReferenceEntries(bufferContext, position));
+            default -> "Unsupported clangd analysis command: " + command;
+            };
+        } catch (Exception e) {
+            return "clangd " + command + " failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private static String formatNemoLocations(Path workspaceRoot, List<LspLocationMenuSession.Entry> entries) {
+        var lines = new ArrayList<String>();
+        for (var entry : entries) {
+            if (!entry.path().toAbsolutePath().normalize().startsWith(workspaceRoot)) {
+                continue;
+            }
+            lines.add(entry.path() + ":" + (entry.position().getLine() + 1) + ":" + (entry.position().getCharacter() + 1)
+                    + " " + entry.label());
+        }
+        return lines.isEmpty() ? "No project-local results." : String.join("\n", lines);
+    }
+
     private List<Either<Command, CodeAction>> requestCodeActions(
             BufferContext bufferContext,
             Range range,
@@ -867,8 +897,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         return true;
     }
 
-    private List<LspLocationMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext) throws Exception {
-        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+    private List<LspLocationMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext, int cursor) throws Exception {
         var params = new org.eclipse.lsp4j.DefinitionParams(
                 bufferContext.getBuffer().getTextDocumentID(),
                 getPosition(bufferContext, cursor));
@@ -882,8 +911,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider {
         return dedupeEntries(entries);
     }
 
-    private List<LspLocationMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
-        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+    private List<LspLocationMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext, int cursor) throws Exception {
         var params = new ReferenceParams(
                 bufferContext.getBuffer().getTextDocumentID(),
                 getPosition(bufferContext, cursor),

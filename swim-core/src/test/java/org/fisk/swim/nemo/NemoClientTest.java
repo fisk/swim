@@ -20,6 +20,10 @@ import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
+import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
+import org.fisk.swim.lsp.NemoLspBackend;
+import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.HeadlessWindowHarness;
 import org.fisk.swim.ui.Rect;
@@ -44,6 +48,31 @@ class NemoClientTest {
             approvals.incrementAndGet();
             this.request.set(request);
             return new NemoClient.ApprovalResult(approved, false);
+        }
+    }
+
+    private static final class RecordingNemoLspMode implements LanguageMode, NemoLspBackend {
+        private int opened;
+        private int closed;
+        private int line;
+        private int column;
+
+        @Override public void didInsert(BufferContext context, int position, String text) { }
+        @Override public void didRemove(BufferContext context, int start, int end) { }
+        @Override public void willSave(BufferContext context) { }
+        @Override public void didSave(BufferContext context) { }
+        @Override public void didClose(BufferContext context) { closed++; }
+        @Override public void didOpen(BufferContext context) { opened++; }
+        @Override public int getIndentationLevel(BufferContext context) { return 0; }
+        @Override public boolean isIndentationEnd(BufferContext context, String character) { return false; }
+        @Override public org.eclipse.lsp4j.TextDocumentItem getTextDocument(BufferContext context) { return null; }
+        @Override public void applyColouring(BufferContext context, AttributedString text) { }
+
+        @Override
+        public String analyze(Path workspaceRoot, BufferContext context, String command, int line, int column, String query) {
+            this.line = line;
+            this.column = column;
+            return command + " at " + line + ":" + column;
         }
     }
 
@@ -842,7 +871,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(30, tools.size());
+        assertEquals(33, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -855,6 +884,49 @@ class NemoClientTest {
         assertEquals("finish_editor_control", tools.get(9).name());
         assertEquals("swim_help", tools.get(10).name());
         assertEquals("current_editor_context", tools.get(11).name());
+        assertEquals("analyze_open_file", tools.get(12).name());
+        assertEquals("lsp_query", tools.get(13).name());
+        assertEquals("analyze_close_file", tools.get(14).name());
+    }
+
+    @Test
+    void lspAnalysisToolsScopeHiddenDocumentsToTheSessionAndWorkspace() throws Exception {
+        Path project = tempDir.resolve("lsp-project");
+        Files.createDirectories(project);
+        Path source = project.resolve("Sample.lspnemo");
+        Files.writeString(source, "secret-free source\n");
+        Path confidential = tempDir.resolve("confidential.lspnemo");
+        Files.writeString(confidential, "CONFIDENTIAL-NEMO-MUST-NOT-SEE\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), source);
+        var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
+        var mode = new RecordingNemoLspMode();
+        var owner = new RecordingToolSession();
+        var otherOwner = new RecordingToolSession();
+
+        try (var ignored = LanguagePluginRegistry.register("lspnemo", "nemo-lsp-test", path -> mode)) {
+            String opened = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("open", "analyze_open_file", json(Map.of("path", "Sample.lspnemo"))), owner);
+            String handle = opened.substring(opened.indexOf(":") + 1, opened.indexOf('\n')).trim();
+            String result = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("query", "lsp_query", json(Map.of(
+                            "handle", handle, "command", "definition", "line", 1, "column", 3))), owner);
+            String foreignResult = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("foreign", "lsp_query", json(Map.of("handle", handle, "command", "definition"))), otherOwner);
+            String outside = NemoClient.executeToolSafely(configuration, context,
+                    new NemoClient.ToolCall("outside", "analyze_open_file", json(Map.of("path", "../confidential.lspnemo"))), owner);
+
+            assertEquals("definition at 1:3", result);
+            assertEquals(1, mode.opened);
+            assertEquals(1, mode.line);
+            assertEquals(3, mode.column);
+            assertEquals("Unknown or closed analysis handle.", foreignResult);
+            assertTrue(outside.contains("Path escapes workspace root"));
+            assertFalse(outside.contains("CONFIDENTIAL-NEMO-MUST-NOT-SEE"));
+
+            assertEquals("Analysis document closed.", NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("close", "analyze_close_file", json(Map.of("handle", handle))), owner));
+            assertEquals(1, mode.closed);
+        }
     }
 
     @Test

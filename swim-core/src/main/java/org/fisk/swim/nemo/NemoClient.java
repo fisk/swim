@@ -124,6 +124,7 @@ public class NemoClient {
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
     private final Map<String, AsyncShell> _asyncShells = new LinkedHashMap<>();
+    private final NemoLspAnalysisLeaseManager _lspAnalysisLeases = new NemoLspAnalysisLeaseManager();
     private final List<ApprovalRule> _approvalRules = new ArrayList<>();
     private final List<ApprovedShellLine> _approvedShellLines = new ArrayList<>();
     private EditorControlLease _editorControlLease;
@@ -154,6 +155,7 @@ public class NemoClient {
         _pendingApprovals.clear();
         stopAsyncShellsForTests();
         _asyncShells.clear();
+        _lspAnalysisLeases.closeAll("standalone");
         _approvalRules.clear();
         _approvedShellLines.clear();
         _editorControlLease = null;
@@ -2108,6 +2110,9 @@ public class NemoClient {
         case "list_files" -> new ToolExecutionResult(listFiles(configuration, context, call.arguments()));
         case "find" -> new ToolExecutionResult(findFiles(configuration, context, call.arguments()));
         case "read_file" -> new ToolExecutionResult(readFile(configuration, context, call.arguments()));
+        case "analyze_open_file" -> new ToolExecutionResult(_instance.openLspAnalysis(configuration, context, call.arguments(), executionSession));
+        case "lsp_query" -> new ToolExecutionResult(_instance.queryLspAnalysis(call.arguments(), executionSession));
+        case "analyze_close_file" -> new ToolExecutionResult(_instance.closeLspAnalysis(call.arguments(), executionSession));
         case "search_files" -> new ToolExecutionResult(searchFiles(configuration, context, call.arguments()));
         case "run_command" -> new ToolExecutionResult(runCommand(configuration, context, call.arguments(), executionSession));
         case "shell_start" -> new ToolExecutionResult(shellStart(configuration, context, call.arguments(), executionSession));
@@ -3156,6 +3161,33 @@ public class NemoClient {
             output.add(i + ": " + lines.get(i - 1));
         }
         return truncateOutput(configuration, String.join("\n", output));
+    }
+
+    private String openLspAnalysis(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        String handle = _lspAnalysisLeases.open(lspAnalysisOwnerId(executionSession), root.toAbsolutePath().normalize(), path);
+        return "analysis_handle: " + handle + "\npath: " + path;
+    }
+
+    private String queryLspAnalysis(JsonObject arguments, ToolExecutionSession executionSession) {
+        return _lspAnalysisLeases.analyze(lspAnalysisOwnerId(executionSession), stringArgument(arguments, "handle", ""),
+                stringArgument(arguments, "command", ""), intArgument(arguments, "line", 1),
+                intArgument(arguments, "column", 1), stringArgument(arguments, "query", ""));
+    }
+
+    private String closeLspAnalysis(JsonObject arguments, ToolExecutionSession executionSession) {
+        return _lspAnalysisLeases.close(lspAnalysisOwnerId(executionSession), stringArgument(arguments, "handle", ""))
+                ? "Analysis document closed." : "Unknown or already closed analysis handle.";
+    }
+
+    private static String lspAnalysisOwnerId(ToolExecutionSession executionSession) {
+        return executionSession == null ? "standalone" : "lsp:" + editorControlOwnerId(executionSession);
+    }
+
+    private void releaseLspAnalysisLeases(ToolExecutionSession executionSession) {
+        _lspAnalysisLeases.closeAll(lspAnalysisOwnerId(executionSession));
     }
 
     private static String searchFiles(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
@@ -6183,6 +6215,7 @@ public class NemoClient {
     private void stopWorker(Conversation conversation) {
         long requestId = conversation._activeRequestId;
         releaseEditorControlLease(conversation, requestId);
+        releaseLspAnalysisLeases(new ConversationToolExecutionSession(conversation, requestId));
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._activeRequestId = 0;
@@ -6204,6 +6237,7 @@ public class NemoClient {
             return;
         }
         releaseEditorControlLease(conversation, requestId);
+        releaseLspAnalysisLeases(new ConversationToolExecutionSession(conversation, requestId));
         List<ChatTurn> queuedTurns = List.of();
         if (!conversation._queuedUserTurns.isEmpty()) {
             queuedTurns = List.copyOf(conversation._queuedUserTurns);
@@ -6240,6 +6274,7 @@ public class NemoClient {
             return;
         }
         releaseEditorControlLease(conversation, requestId);
+        releaseLspAnalysisLeases(new ConversationToolExecutionSession(conversation, requestId));
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._contextUsagePercent = null;

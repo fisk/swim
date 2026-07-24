@@ -179,15 +179,15 @@ class MailPanelViewTest {
 
         allowCountsToFinish.countDown();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        Map<String, Integer> loadedCounts = initialCounts;
         while (HeadlessWindowHarness.getField(panel, "_allUnreadCount", Integer.class) != 2
                 && System.nanoTime() < deadline) {
             Thread.sleep(10);
-            loadedCounts = (Map<String, Integer>) HeadlessWindowHarness.getField(panel, "_tagUnreadCounts");
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Integer> loadedAccountCounts = (Map<String, Integer>) HeadlessWindowHarness.getField(panel, "_accountUnreadCounts");
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> loadedCounts = (Map<String, Integer>) HeadlessWindowHarness.getField(panel, "_tagUnreadCounts");
         assertEquals(2, loadedAccountCounts.get("work"));
         assertEquals(2, HeadlessWindowHarness.getField(panel, "_allUnreadCount", Integer.class));
         assertEquals(2, loadedCounts.get("vip"));
@@ -1008,12 +1008,17 @@ class MailPanelViewTest {
     }
 
     @Test
-    void mouseWheelMovesThreadSelection() {
+    void mouseWheelMovesThreadSelection() throws Exception {
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
 
         HeadlessWindowHarness.dispatch(panel,
                 new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(30, 3)));
 
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class) != 2
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
         assertEquals(2, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
     }
 

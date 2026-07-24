@@ -211,6 +211,26 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void transcriptUpdatesDoNotPullReadersBackToTheBottom() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 4), "Nemo", ignored -> {});
+        view.setMessages(List.of(
+                new ChatPanelView.ChatMessage("nemo", "one\ntwo\nthree\nfour\nfive")));
+        dispatch(view, new KeyStroke(KeyType.ArrowUp));
+        int scrolledStartLine = view.getStartLine();
+
+        view.appendMessage("tool", "progress");
+        view.setPending(true);
+
+        assertEquals(scrolledStartLine, view.getStartLine());
+
+        view.activatePrompt();
+        int bottomStartLine = view.getStartLine();
+        view.appendMessage("tool", "more progress");
+
+        assertEquals(bottomStartLine + 1, view.getStartLine());
+    }
+
+    @Test
     void cursorRendersOnPromptWhenDraftIsEmpty() {
         var view = new ChatPanelView(Rect.create(3, 4, 40, 5), "Nemo", ignored -> {});
 

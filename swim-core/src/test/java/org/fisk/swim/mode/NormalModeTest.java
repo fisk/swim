@@ -232,7 +232,7 @@ class NormalModeTest {
             buffer.getCursor().setPosition("one two ".length());
             HeadlessWindowHarness.dispatch(harness.getWindow().getNormalMode(),
                     HeadlessWindowHarness.key('d'), HeadlessWindowHarness.key('g'), HeadlessWindowHarness.key('e'));
-            assertEquals("one tw hree", buffer.getString());
+            assertEquals("one twhree", buffer.getString());
         }
 
         Path linePath = tempDir.resolve("operator-line-motions.txt");

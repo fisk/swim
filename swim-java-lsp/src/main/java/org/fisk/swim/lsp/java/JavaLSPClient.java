@@ -98,6 +98,7 @@ import org.fisk.swim.lsp.DiagnosticActionProvider;
 import org.fisk.swim.lsp.DiagnosticEntry;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.NemoLspBackend;
 import org.fisk.swim.lsp.LspCompletionSession;
 import org.fisk.swim.lsp.LspLocationMenuSession;
 import org.fisk.swim.lsp.shared.AsyncCompletionCoordinator;
@@ -119,7 +120,7 @@ import org.slf4j.Logger;
 import com.google.gson.Gson;
 import com.googlecode.lanterna.TextColor;
 
-public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticActionProvider {
+public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticActionProvider, NemoLspBackend {
     private static final Logger _log = LogFactory.createLog();
     private static final Gson _gson = new Gson();
     private static final String DIAGNOSTIC_PROVIDER_ID = "java-lsp";
@@ -1384,6 +1385,35 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         _features.showDocumentSymbols(bufferContext);
     }
 
+    @Override
+    public String analyze(Path workspaceRoot, BufferContext bufferContext, String command, int line, int column, String query) {
+        if (!_enabled || _server == null) {
+            return "Java LSP is not ready.";
+        }
+        int position = bufferContext.getBuffer().getPositionAtLineColumn(line - 1, column - 1);
+        try {
+            return switch (command) {
+            case "definition" -> formatNemoLocations(workspaceRoot, requestDefinitionEntries(bufferContext, position));
+            case "references" -> formatNemoLocations(workspaceRoot, requestReferenceEntries(bufferContext, position));
+            default -> "Unsupported Java LSP analysis command: " + command;
+            };
+        } catch (Exception e) {
+            return "Java LSP " + command + " failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private static String formatNemoLocations(Path workspaceRoot, List<LspLocationMenuSession.Entry> entries) {
+        var lines = new ArrayList<String>();
+        for (var entry : entries) {
+            if (!entry.path().toAbsolutePath().normalize().startsWith(workspaceRoot)) {
+                continue;
+            }
+            lines.add(entry.path() + ":" + (entry.position().getLine() + 1) + ":" + (entry.position().getCharacter() + 1)
+                    + " " + entry.label());
+        }
+        return lines.isEmpty() ? "No project-local results." : String.join("\n", lines);
+    }
+
     public void promptWorkspaceSymbols(BufferContext bufferContext) {
         _features.promptWorkspaceSymbols(bufferContext);
     }
@@ -1680,8 +1710,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return _gson.fromJson(_gson.toJsonTree(rawEdit), WorkspaceEdit.class);
     }
 
-    private List<LspLocationMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext) throws Exception {
-        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+    private List<LspLocationMenuSession.Entry> requestDefinitionEntries(BufferContext bufferContext, int cursor) throws Exception {
         var params = new DefinitionParams(bufferContext.getBuffer().getTextDocumentID(), getPosition(bufferContext, cursor));
         var response = _server.getTextDocumentService().definition(params).get(2, TimeUnit.SECONDS);
         if (response == null) {
@@ -1703,8 +1732,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         return List.copyOf(deduped.values());
     }
 
-    private List<LspLocationMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext) throws Exception {
-        int cursor = bufferContext.getBuffer().getCursor().getPosition();
+    private List<LspLocationMenuSession.Entry> requestReferenceEntries(BufferContext bufferContext, int cursor) throws Exception {
         var params = new ReferenceParams(
                 bufferContext.getBuffer().getTextDocumentID(),
                 getPosition(bufferContext, cursor),
