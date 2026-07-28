@@ -90,6 +90,11 @@ public class CommandView extends View {
             new CommandSpec("s", List.of(), "/pattern/replacement/[g]", "substitute in the current line"),
             new CommandSpec("%s", List.of(), "/pattern/replacement/[g]", "substitute in the whole buffer"),
             new CommandSpec("grep", List.of("search"), "<text>", "search project text"),
+            new CommandSpec("compile", List.of(), "", "choose and run the project compilation command"),
+            new CommandSpec("compile-file", List.of("compile-current"), "", "compile the current C/C++ translation unit"),
+            new CommandSpec("compile-log", List.of(), "", "show the live compilation log"),
+            new CommandSpec("compile-follow", List.of(), "[on|off]", "follow live compilation output"),
+            new CommandSpec("compile-status", List.of(), "", "show compilation process status"),
             new CommandSpec("help", List.of("h"), "", "open the built-in help"),
             new CommandSpec("detach", List.of(), "", "detach the current client"),
             new CommandSpec("sessions", List.of(), "", "show live SWIM server sessions"),
@@ -485,6 +490,26 @@ public class CommandView extends View {
         case "search":
             ProjectSearchUiSupport.open(Window.getInstance(), argument);
             break;
+        case "compile":
+            if (!argument.isBlank()) {
+                _message = ":compile edits the command in its prompt";
+            } else {
+                Window.getInstance().compileProject();
+            }
+            break;
+        case "compile-file":
+        case "compile-current":
+            Window.getInstance().compileCurrentFile();
+            break;
+        case "compile-log":
+            Window.getInstance().showCompilationLog();
+            break;
+        case "compile-follow":
+            Window.getInstance().setCompilationFollow(argument);
+            break;
+        case "compile-status":
+            _message = Window.getInstance().compilationStatus();
+            break;
         case "h":
         case "help":
             if (!Window.getInstance().showHelpWorkspace()) {
@@ -727,7 +752,7 @@ public class CommandView extends View {
         case "q", "q!", "wq", "x" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
         case "mail", "todo", "slack", "nemo" -> blockEditorDriveCommand(window, rawCommand,
                 "opening host communication or assistant workspaces is not allowed");
-        case "shell", "sh", "vshell", "hshell" -> blockEditorDriveCommand(window, rawCommand,
+        case "shell", "sh", "vshell", "hshell", "compile", "compile-file", "compile-current", "compile-log", "compile-follow", "compile-status" -> blockEditorDriveCommand(window, rawCommand,
                 "opening shell input through drive_editor is not allowed");
         case "reload", "rebuild", "upgrade" -> blockEditorDriveCommand(window, rawCommand,
                 "reload and rebuild commands require host action");
@@ -1759,6 +1784,13 @@ public class CommandView extends View {
             return;
         }
         var rootView = window.getRootView();
+        // A command may have opened a modal prompt while handling Enter.  Do
+        // not steal its first-responder status when dismissing this command bar.
+        if (rootView.getFirstResponder() != this) {
+            window.refreshChromeState();
+            rootView.setNeedsRedraw();
+            return;
+        }
         var activeView = window.getActiveView();
         rootView.setFirstResponder(activeView != null ? activeView : window.getBufferContext().getBufferView());
         window.refreshChromeState();

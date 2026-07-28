@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.lang.reflect.Method;
 import java.lang.ProcessBuilder;
+import java.nio.file.Path;
 
 import org.fisk.swim.terminal.TerminalCell;
 import org.fisk.swim.terminal.TerminalEmulator;
@@ -94,6 +95,23 @@ class ShellPanelViewTest {
         }
     }
 
+    @Test
+    void commandProcessUsesShellCommandAndProjectDirectory() throws Exception {
+        Path project = Path.of("/tmp/project");
+        ProcessBuilder builder = invokeCommandProcessBuilder("/bin/sh", "make test", project, Size.create(100, 30));
+
+        if (builder.command().getFirst().equals("/usr/bin/script")) {
+            assertEquals(java.util.List.of("/usr/bin/script", "-q", "/dev/null", "-c", "/bin/sh -lc 'make test'"),
+                    builder.command());
+        } else {
+            assertEquals(java.util.List.of("/bin/sh", "-lc", "make test"), builder.command());
+        }
+        assertEquals(project.toFile(), builder.directory());
+        assertEquals("100", builder.environment().get("COLUMNS"));
+        assertEquals("30", builder.environment().get("LINES"));
+        assertNull(builder.environment().get("TMUX"));
+    }
+
     private static TextColor invokeColourResolver(String methodName, TextColor colour) throws Exception {
         Method method = ShellPanelView.class.getDeclaredMethod(methodName, TextColor.class);
         method.setAccessible(true);
@@ -104,5 +122,13 @@ class ShellPanelViewTest {
         Method method = ShellPanelView.class.getDeclaredMethod("createProcessBuilder", String.class, Size.class);
         method.setAccessible(true);
         return (ProcessBuilder) method.invoke(null, shellCommand, size);
+    }
+
+    private static ProcessBuilder invokeCommandProcessBuilder(String shellCommand, String command, Path directory, Size size)
+            throws Exception {
+        Method method = ShellPanelView.class.getDeclaredMethod("createCommandProcessBuilder", String.class, String.class,
+                Path.class, Size.class);
+        method.setAccessible(true);
+        return (ProcessBuilder) method.invoke(null, shellCommand, command, directory, size);
     }
 }

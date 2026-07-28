@@ -171,6 +171,9 @@ public class Window implements Drawable {
     private Mode _currentMode;
     private View _panelView;
     private ShellPanelView _savedPanelShell;
+    private ShellPanelView _compilePanelShell;
+    private BufferContext _compileOutputContext;
+    private boolean _compileFollow = true;
     private List<WorkspaceState> _workspaceHistory = new ArrayList<>();
     private List<WorkspaceState> _workspaceOrder = new ArrayList<>();
     private List<Path> _bufferHistory = new ArrayList<>();
@@ -777,6 +780,173 @@ public class Window implements Drawable {
             }
         }
         return showPanel(shellView);
+    }
+
+    public void compileProject() {
+        if (blockEditorDriveAction("compile project", "running project commands requires host action")) {
+            return;
+        }
+        Path root = compileProjectRoot();
+        if (root == null) {
+            _commandView.setMessage("No project root for the current buffer");
+            return;
+        }
+        if (_compilePanelShell != null && _compilePanelShell.isRunning()) {
+            showBottomInputPrompt("Compilation running", "restart [r] / continue [c]", "c", choice -> {
+                String normalized = choice.trim().toLowerCase(java.util.Locale.ROOT);
+                if (normalized.equals("r") || normalized.equals("restart")) {
+                    _compilePanelShell.stop();
+                    startCompilation(root, configuredCompileCommand(root));
+                } else if (normalized.equals("c") || normalized.equals("continue")) {
+                    showCompilationPanel();
+                } else {
+                    _commandView.setMessage("Compilation continues (enter r to restart or c to show it)");
+                }
+            });
+            return;
+        }
+        showBottomInputPrompt("Compile", "command", configuredCompileCommand(root), command -> startCompilation(root, command));
+    }
+
+    public void compileCurrentFile() {
+        if (blockEditorDriveAction("compile current file", "running project commands requires host action")) return;
+        var context = getBufferContext();
+        Path source = context == null ? null : context.getBuffer().getPath();
+        Path root = compileProjectRoot();
+        if (source == null || root == null) {
+            _commandView.setMessage("The current buffer is not a project source file");
+            return;
+        }
+        var config = org.fisk.swim.fileindex.SwimProjectConfig.load(root);
+        Path database = config == null ? root.resolve("compile_commands.json") : config.compileCommandsPath();
+        if (database == null) database = root.resolve("compile_commands.json");
+        try {
+            var entry = org.fisk.swim.fileindex.CompileCommandLookup.find(database, source);
+            if (entry == null) {
+                _commandView.setMessage("No compile command for " + source.getFileName());
+                return;
+            }
+            startCompilation(entry.directory(), entry.command());
+        } catch (IOException | IllegalStateException e) {
+            _commandView.setMessage("Could not read compile_commands.json: " + e.getMessage());
+        }
+    }
+
+    public void showCompilationLog() {
+        if (!showCompilationPanel() && _commandView != null) _commandView.setMessage("No compilation log is available");
+    }
+
+    public void setCompilationFollow(String value) {
+        if (value == null || value.isBlank()) {
+            _compileFollow = !_compileFollow;
+        } else if (value.equalsIgnoreCase("on")) {
+            _compileFollow = true;
+        } else if (value.equalsIgnoreCase("off")) {
+            _compileFollow = false;
+        } else {
+            _commandView.setMessage("Usage: :compile-follow [on|off]");
+            return;
+        }
+        _commandView.setMessage("Compilation follow " + (_compileFollow ? "enabled" : "disabled"));
+    }
+
+    public String compilationStatus() {
+        if (_compilePanelShell == null) return "No compilation has been started";
+        return _compilePanelShell.statusSummary();
+    }
+
+    private Path compileProjectRoot() {
+        var context = getBufferContext();
+        if (context == null || context.getBuffer().getPath() == null) {
+            return null;
+        }
+        return ProjectPaths.getProjectRootPath(context.getBuffer().getPath());
+    }
+
+    private String configuredCompileCommand(Path root) {
+        var config = org.fisk.swim.fileindex.SwimProjectConfig.load(root);
+        return config == null || config.compileCommand() == null ? "make" : config.compileCommand();
+    }
+
+    private void startCompilation(Path root, String command) {
+        if (command == null || command.isBlank()) {
+            _commandView.setMessage("Compilation command is empty");
+            return;
+        }
+        if (_compilePanelShell != null) {
+            if (_panelView == _compilePanelShell) {
+                hidePanel();
+            }
+            _compilePanelShell.stop();
+            _compilePanelShell.removeFromParent();
+            _compilePanelShell = null;
+        }
+        if (_compileOutputContext != null) {
+            if (_panelView == _compileOutputContext.getBufferView()) {
+                hidePanel();
+            }
+            unregisterBufferView(_compileOutputContext.getBufferView());
+            _compileOutputContext = null;
+        }
+        try {
+            var shell = ShellPanelView.createCommand(this, "Compile: " + command, command, root);
+            _compilePanelShell = shell;
+            _compileOutputContext = createCompileOutputContext(shell);
+            shell.setOnOutput(() -> refreshCompileOutput(shell));
+            try {
+                org.fisk.swim.fileindex.SwimProjectConfig.saveCompileCommand(root, command);
+            } catch (java.io.IOException e) {
+                _commandView.setMessage("Started compilation; could not save command: " + e.getMessage());
+            }
+            if (!showCompilationPanel()) {
+                _commandView.setMessage("Compilation started, but the output panel could not be opened");
+            }
+        } catch (IOException e) {
+            _commandView.setMessage("Failed to start compilation: " + e.getMessage());
+        }
+    }
+
+    private boolean showCompilationPanel() {
+        if (_compilePanelShell == null || _compileOutputContext == null) {
+            return false;
+        }
+        var outputView = _compileOutputContext.getBufferView();
+        if (_panelView == outputView) {
+            return true;
+        }
+        if (_panelView != null) {
+            hidePanel();
+        }
+        return showPanel(outputView);
+    }
+
+    private BufferContext createCompileOutputContext(ShellPanelView shell) {
+        var bounds = shell.getBounds();
+        var context = new BufferContext(Rect.create(0, 0, bounds.getSize().getWidth(), bounds.getSize().getHeight()), "", true);
+        registerBufferView(context, context.getBufferView());
+        return context;
+    }
+
+    private void refreshCompileOutput(ShellPanelView shell) {
+        if (shell != _compilePanelShell || _compileOutputContext == null) {
+            return;
+        }
+        var context = _compileOutputContext;
+        var buffer = context.getBuffer();
+        int cursor = buffer.getCursor().getPosition();
+        String text = shell.buildBrowseText();
+        buffer.setReadOnly(false);
+        if (buffer.getLength() > 0) {
+            buffer.rawRemove(0, buffer.getLength());
+        }
+        if (!text.isEmpty()) {
+            buffer.rawInsert(0, text);
+        }
+        buffer.setReadOnly(true);
+        context.getTextLayout().calculate();
+        buffer.getCursor().setPosition(_compileFollow ? buffer.getLength() : Math.min(cursor, buffer.getLength()));
+        if (_compileFollow) context.getBufferView().adaptViewToCursor();
+        context.getBufferView().setNeedsRedraw();
     }
 
     public BufferView splitActiveBufferHorizontally() {
@@ -3368,10 +3538,20 @@ public class Window implements Drawable {
     }
 
     public void showInputPrompt(String title, String label, String initialValue, Consumer<String> onSubmit) {
+        showInputPrompt(title, label, initialValue, false, onSubmit);
+    }
+
+    public void showBottomInputPrompt(String title, String label, String initialValue, Consumer<String> onSubmit) {
+        showInputPrompt(title, label, initialValue, true, onSubmit);
+    }
+
+    private void showInputPrompt(String title, String label, String initialValue, boolean bottomFullWidth,
+            Consumer<String> onSubmit) {
         if (_rootView == null) {
             return;
         }
         var prompt = new InputPromptPopupView(Rect.create(0, 0, 0, 0), title, label, initialValue);
+        prompt.setBottomFullWidth(bottomFullWidth);
         Runnable close = () -> {
             prompt.removeFromParent();
             focusActiveBuffer();
@@ -3421,7 +3601,9 @@ public class Window implements Drawable {
         }
         if (_panelView instanceof ShellPanelView shellView && shellView.getParent() == _rootView) {
             _panelView = null;
-            if (_savedPanelShell == shellView) {
+            if (_compilePanelShell == shellView) {
+                shellView.detachFromParentPreservingSession();
+            } else if (_savedPanelShell == shellView) {
                 shellView.detachFromParentPreservingSession();
             } else {
                 shellView.closeForPanel();
@@ -4222,8 +4404,11 @@ public class Window implements Drawable {
         if (view == _panelView) {
             _panelView = null;
         }
+        boolean preserveCompileOutput = _compileOutputContext != null && view == _compileOutputContext.getBufferView();
         if (view instanceof BufferView bufferView) {
-            unregisterBufferView(bufferView);
+            if (!preserveCompileOutput) {
+                unregisterBufferView(bufferView);
+            }
             if (_activeBufferView == bufferView) {
                 _activeBufferView = splitRoot.isSingleLeaf() ? null : findFirstBufferView();
                 _bufferContext = getBufferContextFor(_activeBufferView);

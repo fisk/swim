@@ -8,13 +8,15 @@ import java.util.List;
 public final class SwimProjectConfig {
     private final Path _root;
     private final Path _compileCommandsPath;
+    private final String _compileCommand;
     private final List<String> _clangdRemoveCompileArguments;
     private final List<Path> _nemoWorkspaceWriteRoots;
 
-    private SwimProjectConfig(Path root, Path compileCommandsPath, List<String> clangdRemoveCompileArguments,
+    private SwimProjectConfig(Path root, Path compileCommandsPath, String compileCommand, List<String> clangdRemoveCompileArguments,
             List<Path> nemoWorkspaceWriteRoots) {
         _root = root;
         _compileCommandsPath = compileCommandsPath;
+        _compileCommand = compileCommand;
         _clangdRemoveCompileArguments = List.copyOf(clangdRemoveCompileArguments);
         _nemoWorkspaceWriteRoots = List.copyOf(nemoWorkspaceWriteRoots);
     }
@@ -33,10 +35,10 @@ public final class SwimProjectConfig {
         }
         Path marker = directory.resolve(".swim");
         if (!Files.isRegularFile(marker)) {
-            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, List.of(), List.of());
+            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, null, List.of(), List.of());
         }
         Path root = directory.toAbsolutePath().normalize();
-        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker),
+        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker), parseCompileCommand(marker),
                 parseClangdRemoveCompileArguments(marker), parseNemoWorkspaceWriteRoots(root, marker));
     }
 
@@ -46,6 +48,26 @@ public final class SwimProjectConfig {
 
     public Path compileCommandsPath() {
         return _compileCommandsPath;
+    }
+
+    /** The project build command, when configured in a regular .swim file. */
+    public String compileCommand() { return _compileCommand; }
+
+    public static void saveCompileCommand(Path root, String command) throws IOException {
+        if (root == null || command == null || command.isBlank()) {
+            return;
+        }
+        Path marker = root.resolve(".swim");
+        if (!Files.isRegularFile(marker)) {
+            return;
+        }
+        var lines = new java.util.ArrayList<>(Files.readAllLines(marker));
+        lines.removeIf(line -> {
+            String[] pair = line.split("=", 2);
+            return pair.length == 2 && "compile.command".equals(pair[0].trim());
+        });
+        lines.add("compile.command = " + command);
+        Files.write(marker, lines);
     }
 
     public Path compileCommandsRoot() {
@@ -77,6 +99,19 @@ public final class SwimProjectConfig {
         } catch (IOException e) {
         }
         return List.of();
+    }
+
+    private static String parseCompileCommand(Path marker) {
+        try {
+            for (String line : Files.readAllLines(marker)) {
+                String[] pair = line.split("=", 2);
+                if (pair.length == 2 && "compile.command".equals(pair[0].trim()) && !pair[1].trim().isEmpty()) {
+                    return pair[1].trim();
+                }
+            }
+        } catch (IOException e) {
+        }
+        return null;
     }
 
     private static List<Path> parseNemoWorkspaceWriteRoots(Path root, Path marker) {

@@ -446,7 +446,7 @@ final class NemoLangChain4jClient {
                 JsonObjectSchema.builder().addStringProperty("path", "Workspace-relative source file path.")
                         .required(List.of("path")).additionalProperties(false).build()));
         tools.add(tool("lsp_query",
-                "Run a read-only LSP analysis command against an analysis_handle. Supported commands depend on language backend; definition and references are available for Java and C/C++.",
+                "Run a read-only LSP analysis command against an analysis_handle. Supported commands depend on language backend; C/C++ provides definition and references, while the editor also exposes declaration and implementation navigation through clangd.",
                 JsonObjectSchema.builder().addStringProperty("handle", "Handle returned by analyze_open_file.")
                         .addStringProperty("command", "LSP command, such as definition or references.")
                         .addIntegerProperty("line", "1-based line.").addIntegerProperty("column", "1-based column.")
@@ -614,7 +614,7 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolGitEnabled()) {
             tools.add(tool("git",
-                    "Run a project-scoped git command without using a shell. Pass argv-style arguments without the leading git, for example [\"status\", \"--short\"] or [\"commit\", \"-am\", \"test\"]. Read-only sessions allow inspection subcommands; workspace-write sessions also allow local mutating subcommands such as add and commit.",
+                    "Run a project-scoped git command without using a shell. Pass argv-style arguments without the leading git, for example [\"diff\", \"-U20\", \"--\", \"src/file.cpp\"] for a named uncommitted file with context. Read-only sessions allow inspection subcommands; workspace-write sessions also allow local mutating subcommands such as add and commit.",
                     JsonObjectSchema.builder()
                             .addStringProperty("directory", "Optional workspace-relative directory to run git from.")
                             .addProperty("arguments", JsonArraySchema.builder()

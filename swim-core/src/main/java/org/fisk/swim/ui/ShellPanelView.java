@@ -57,6 +57,9 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
     private final TerminalCursor _cursor;
     private Runnable _onExit = () -> {
     };
+    private Runnable _onOutput = () -> {
+    };
+    private volatile long _lastOutputNanos = System.nanoTime();
     private boolean _commandMode;
     private final StringBuilder _command = new StringBuilder();
     private byte[] _pendingBytes;
@@ -98,6 +101,27 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
             }
         });
         return shellView;
+    }
+
+    /** Creates a bottom terminal panel for a one-shot command, rooted at {@code workingDirectory}. */
+    public static ShellPanelView createCommand(Window window, String title, String command, Path workingDirectory)
+            throws IOException {
+        Rect bounds = initialPanelBounds(window, Rect.create(0, 0, 0, 0));
+        return new ShellPanelView(bounds, title, ignored -> { }, detectShellCommand(), command, workingDirectory);
+    }
+
+    private ShellPanelView(Rect bounds, String title, java.util.function.Consumer<String> ignored, String shellCommand,
+            String command, Path workingDirectory) throws IOException {
+        super(bounds);
+        _title = title;
+        setBackgroundColour(com.googlecode.lanterna.TextColor.ANSI.DEFAULT);
+        _emulator = new TerminalEmulator(Math.max(1, bounds.getSize().getWidth()), Math.max(1, bounds.getSize().getHeight()));
+        _emulator.setDeviceResponseHandler(this::writeTerminalResponse);
+        _cursor = new TerminalCursor(this);
+        _process = createCommandProcessBuilder(shellCommand, command, workingDirectory, bounds.getSize()).start();
+        _stdin = _process.getOutputStream();
+        startOutputPump();
+        startExitWatcher();
     }
 
     private static Rect initialPanelBounds(Window window, Rect requestedBounds) {
@@ -157,6 +181,55 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         return builder;
     }
 
+    private static ProcessBuilder createCommandProcessBuilder(String shellCommand, String command, Path workingDirectory,
+            Size size) {
+        ProcessBuilder builder;
+        if (Files.isExecutable(Path.of("/usr/bin/script"))) {
+            // Build tools adapt their output when stdout is a terminal.  Give
+            // them a PTY just like the interactive shell panel does.
+            builder = new ProcessBuilder("/usr/bin/script", "-q", "/dev/null", "-c",
+                    shellCommand + " -lc " + shellQuote(command));
+        } else {
+            builder = new ProcessBuilder(shellCommand, "-lc", command);
+        }
+        builder.redirectErrorStream(true);
+        if (workingDirectory != null) {
+            builder.directory(workingDirectory.toFile());
+        }
+        builder.environment().putIfAbsent("TERM", "xterm-256color");
+        builder.environment().put("COLUMNS", Integer.toString(Math.max(1, size.getWidth())));
+        builder.environment().put("LINES", Integer.toString(Math.max(1, size.getHeight())));
+        builder.environment().remove("TMUX");
+        return builder;
+    }
+
+    private static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\"'\"'") + "'";
+    }
+
+    public boolean isRunning() {
+        return _process.isAlive();
+    }
+
+    public void stop() {
+        _process.descendants().forEach(ProcessHandle::destroyForcibly);
+        closeProcess();
+    }
+
+    public String statusSummary() {
+        if (!_process.isAlive()) {
+            return "Compilation finished (exit " + _process.exitValue() + ")";
+        }
+        long silentSeconds = java.util.concurrent.TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - _lastOutputNanos);
+        var cpu = _process.toHandle().info().totalCpuDuration();
+        String cpuText = cpu.map(duration -> String.format(java.util.Locale.ROOT, "%.1fs CPU", duration.toMillis() / 1000.0))
+                .orElse("CPU unknown");
+        String output = buildBrowseText().toLowerCase(java.util.Locale.ROOT);
+        String phase = output.contains("linking") || output.contains(" ld ") ? "linking"
+                : output.contains("compiling") || output.contains(" -c ") ? "compiling" : "running";
+        return "Compilation " + phase + ": " + cpuText + ", " + silentSeconds + "s since output";
+    }
+
     String getTitle() {
         return _title;
     }
@@ -172,6 +245,10 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
     void setOnExit(Runnable onExit) {
         _onExit = onExit == null ? () -> {
         } : onExit;
+    }
+
+    void setOnOutput(Runnable onOutput) {
+        _onOutput = onOutput == null ? () -> { } : onOutput;
     }
 
     CommandView.CommandMenuState getCommandMenuState() {
@@ -403,6 +480,8 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         }
         EventThread.getInstance().enqueue(new RunnableEvent(() -> {
             _emulator.feed(text);
+            _lastOutputNanos = System.nanoTime();
+            _onOutput.run();
             setNeedsRedraw();
         }));
     }

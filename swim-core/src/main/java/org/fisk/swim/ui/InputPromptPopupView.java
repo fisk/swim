@@ -48,6 +48,8 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
     private final String _label;
     private final StringBuilder _value;
     private final PromptCursor _cursor;
+    private int _cursorIndex;
+    private boolean _bottomFullWidth;
     private Consumer<String> _onSubmit = ignored -> {
     };
     private Runnable _onCancel = () -> {
@@ -58,14 +60,45 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
         _title = title == null || title.isBlank() ? "Input" : title;
         _label = label == null || label.isBlank() ? "value" : label;
         _value = new StringBuilder(initialValue == null ? "" : initialValue);
+        _cursorIndex = _value.length();
         _cursor = new PromptCursor(this);
         setBackgroundColour(UiTheme.SURFACE_ELEVATED);
         _responders.addEventResponder("<ENTER>", "Prompt", "submit", this::submit);
         _responders.addEventResponder("<ESC>", "Prompt", "cancel", this::cancel);
         _responders.addEventResponder("<BACKSPACE>", "Prompt", "delete character", () -> {
             allowEditorDriveAction("edit lsp prompt");
-            if (_value.length() > 0) {
-                _value.deleteCharAt(_value.length() - 1);
+            if (_cursorIndex > 0) {
+                _value.deleteCharAt(--_cursorIndex);
+                setNeedsRedraw();
+            }
+        });
+        _responders.addEventResponder("<LEFT>", "Prompt", "cursor left", () -> moveCursor(-1));
+        _responders.addEventResponder("<RIGHT>", "Prompt", "cursor right", () -> moveCursor(1));
+        _responders.addEventResponder(new EventResponder() {
+            private KeyType _keyType;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                if (events.remaining() != 0) {
+                    return Response.NO;
+                }
+                _keyType = events.current().getKeyType();
+                return switch (_keyType) {
+                case Home, End, Delete -> Response.YES;
+                default -> Response.NO;
+                };
+            }
+
+            @Override
+            public void respond() {
+                allowEditorDriveAction("edit prompt");
+                if (_keyType == KeyType.Home) {
+                    _cursorIndex = 0;
+                } else if (_keyType == KeyType.End) {
+                    _cursorIndex = _value.length();
+                } else if (_keyType == KeyType.Delete && _cursorIndex < _value.length()) {
+                    _value.deleteCharAt(_cursorIndex);
+                }
                 setNeedsRedraw();
             }
         });
@@ -89,7 +122,7 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
             @Override
             public void respond() {
                 allowEditorDriveAction("edit lsp prompt");
-                _value.append(_character);
+                _value.insert(_cursorIndex++, _character);
                 setNeedsRedraw();
             }
         });
@@ -111,6 +144,12 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
     public void setOnCancel(Runnable onCancel) {
         _onCancel = onCancel == null ? () -> {
         } : onCancel;
+    }
+
+    /** Positions this prompt like a command line across the bottom of its parent. */
+    public void setBottomFullWidth(boolean bottomFullWidth) {
+        _bottomFullWidth = bottomFullWidth;
+        syncBounds();
     }
 
     @Override
@@ -193,8 +232,14 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
         Point origin = absoluteOrigin();
         int width = Math.max(1, getBounds().getSize().getWidth());
         int prefixLength = _label.length() + 3;
-        int x = Math.min(width - 1, prefixLength + _value.length());
+        int x = Math.min(width - 1, prefixLength + _cursorIndex);
         return Point.create(origin.getX() + Math.max(0, x), origin.getY() + 1);
+    }
+
+    private void moveCursor(int delta) {
+        allowEditorDriveAction("edit prompt");
+        _cursorIndex = Math.max(0, Math.min(_value.length(), _cursorIndex + delta));
+        setNeedsRedraw();
     }
 
     private Point absoluteOrigin() {
@@ -208,6 +253,10 @@ public class InputPromptPopupView extends View implements KeyBindingHintProvider
     }
 
     private Rect calculateBounds(Size parentSize) {
+        if (_bottomFullWidth) {
+            int height = Math.min(parentSize.getHeight(), 3);
+            return Rect.create(0, Math.max(0, parentSize.getHeight() - height), parentSize.getWidth(), height);
+        }
         int width = Math.min(parentSize.getWidth(), Math.max(MIN_WIDTH,
                 Math.min(MAX_WIDTH, Math.max(_title.length() + 8, _label.length() + _value.length() + 8))));
         int height = Math.min(parentSize.getHeight(), 3);
