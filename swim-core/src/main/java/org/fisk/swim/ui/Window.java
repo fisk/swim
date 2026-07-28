@@ -836,6 +836,15 @@ public class Window implements Drawable {
         if (!showCompilationPanel() && _commandView != null) _commandView.setMessage("No compilation log is available");
     }
 
+    /** Hides the modal compilation buffer without interrupting its process. */
+    public boolean hideCompilationOutput() {
+        if (_compileOutputContext == null || _panelView != _compileOutputContext.getBufferView()) {
+            return false;
+        }
+        hidePanel();
+        return true;
+    }
+
     public void setCompilationFollow(String value) {
         if (value == null || value.isBlank()) {
             _compileFollow = !_compileFollow;
@@ -1038,6 +1047,12 @@ public class Window implements Drawable {
             view.removeFromParent();
         }
 
+        // The split root itself remains attached to the window root after its
+        // leaves are detached.  Remove it before reattaching the survivor or
+        // it continues to paint stale split borders behind the buffer.
+        if (_workspaceView != keepView) {
+            _workspaceView.removeFromParent();
+        }
         keepView.removeFromParent();
         _workspaceView = keepView;
         attachWorkspaceView();

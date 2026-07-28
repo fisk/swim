@@ -89,6 +89,7 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<CTRL>-w W", "Panes", "previous pane", "focus", allowed("focus buffer split", () -> { announceIfUnmoved(window.focusPreviousView(), "No other pane"); }));
         _rootResponder.addEventResponder("<CTRL>-w q", "Panes", "close pane", "close", allowed("close buffer split", () -> { announceIfUnmoved(window.closeActiveView(), "Cannot close the last buffer view"); }));
         _rootResponder.addEventResponder("<CTRL>-w o", "Panes", "only pane", "only", allowed("close buffer splits", () -> { announceIfUnmoved(window.closeOtherViews(), "No other panes to close"); }));
+        _rootResponder.addEventResponder("<ESC>", "Compile", "hide output", () -> window.hideCompilationOutput());
         _rootResponder.addEventResponder(ctrlWMotion(">", "wider", count ->
                 { allow("resize buffer split"); announceIfUnmoved(window.resizeActiveViewWidth(4 * count), "No vertical split to resize"); }));
         _rootResponder.addEventResponder(ctrlWMotion("<", "narrower", count ->

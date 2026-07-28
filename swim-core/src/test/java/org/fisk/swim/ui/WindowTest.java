@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -173,11 +174,14 @@ class WindowTest {
             var right = window.splitActiveBufferHorizontally();
             assertNotNull(right);
             assertSame(right, window.getActiveView());
+            var oldSplit = assertInstanceOf(SplitView.class, HeadlessWindowHarness.getField(window, "_workspaceView"));
 
             assertTrue(window.closeOtherViews());
 
             assertSame(right, window.getActiveView());
             assertFalse(HeadlessWindowHarness.getField(window, "_workspaceView", View.class) instanceof SplitView);
+            assertNull(oldSplit.getParent());
+            assertSame(HeadlessWindowHarness.getField(window, "_rootView", View.class), right.getParent());
         }
     }
 
