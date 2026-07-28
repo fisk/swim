@@ -186,6 +186,7 @@ public class Window implements Drawable {
     private ListEventResponder _tmuxPrefixResponder;
     private List<KeyBindingHint> _tmuxPrefixHints = List.of();
     private List<KeyBindingHint> _globalNormalModeHints = List.of();
+    private List<KeyBindingHint> _cachedNormalModeHints = List.of();
     private boolean _replayingRemap;
     private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
     private SearchLocationList _locationList = SearchLocationList.empty("Location");
@@ -2877,6 +2878,10 @@ public class Window implements Drawable {
                     return path == null ? null : path.toAbsolutePath().normalize().toString();
                 }
                 return null;
+            }, leaf -> {
+                if (!(leaf instanceof BufferView bufferView)) return 0;
+                BufferContext context = bufferContextForSnapshot(contextsByView, bufferView);
+                return context == null ? 0 : context.getBuffer().getCursor().getPosition();
             }));
         }
         if (view instanceof BufferView bufferView) {
@@ -2885,7 +2890,8 @@ public class Window implements Drawable {
                 return null;
             }
             Path path = context.getBuffer().getPath();
-            return path == null ? null : new SessionLayoutNode(null, 0.0, null, null, path.toAbsolutePath().normalize().toString());
+            return path == null ? null : new SessionLayoutNode(null, 0.0, null, null,
+                    path.toAbsolutePath().normalize().toString(), context.getBuffer().getCursor().getPosition());
         }
         return null;
     }
@@ -2908,7 +2914,7 @@ public class Window implements Drawable {
                 node.ratio(),
                 toSessionLayout(node.first()),
                 toSessionLayout(node.second()),
-                node.leafId());
+                node.leafId(), node.cursorPosition());
     }
 
     private void restoreSessionWorkspaces(EditorSession session) {
@@ -2971,6 +2977,8 @@ public class Window implements Drawable {
         }
         if (node.path() != null) {
             BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), Path.of(node.path()));
+            context.getBuffer().getCursor().setPosition(Math.max(0,
+                    Math.min(node.cursorPosition(), context.getBuffer().getLength())));
             var contexts = new IdentityHashMap<BufferView, BufferContext>();
             contexts.put(context.getBufferView(), context);
             var counts = new IdentityHashMap<BufferContext, Integer>();
@@ -3061,7 +3069,11 @@ public class Window implements Drawable {
             _keyMenuView.setBufferFocused(_activeBufferView != null && responder == _activeBufferView);
             _keyMenuView.setFocusContext(focusContextFor(responder));
             _keyMenuView.setContextLabel(contextLabelFor(responder));
-            _keyMenuView.setContextKeyHints(contextHintFor(responder), keyBindingHintsFor(responder));
+            List<KeyBindingHint> hints = keyBindingHintsFor(responder);
+            if (responder == _activeBufferView && _currentMode == _normalMode) {
+                _cachedNormalModeHints = hints;
+            }
+            _keyMenuView.setContextKeyHints(contextHintFor(responder), hints);
             _keyMenuView.setCommandState(_commandView == null || !_commandView.isActive() ? null : _commandView.getPrompt(),
                     _commandView == null ? "" : _commandView.getCommandText());
             _keyMenuView.setChatPending(responder instanceof ChatPanelView chatPanelView && chatPanelView.isPending());
@@ -3090,6 +3102,33 @@ public class Window implements Drawable {
         }
         if (_mailNotificationView != null) {
             _mailNotificationView.setNeedsRedraw();
+        }
+    }
+
+    /**
+     * Refresh only the elements that change while text is typed into ':' or a
+     * search prompt.  Full chrome refreshes also resolve project roots for all
+     * open buffers, which can block the event thread on network filesystems.
+     */
+    public void refreshCommandPromptChrome() {
+        if (_keyMenuView != null) {
+            EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+            _keyMenuView.setModeName(modeNameForDisplay());
+            _keyMenuView.setBufferFocused(_activeBufferView != null && responder == _activeBufferView);
+            _keyMenuView.setFocusContext(focusContextFor(responder));
+            _keyMenuView.setContextLabel(contextLabelFor(responder));
+            List<KeyBindingHint> hints = responder == _activeBufferView && _currentMode == _normalMode
+                    ? _cachedNormalModeHints
+                    : keyBindingHintsFor(responder);
+            _keyMenuView.setContextKeyHints(contextHintFor(responder), hints);
+            _keyMenuView.setCommandState(_commandView == null || !_commandView.isActive() ? null : _commandView.getPrompt(),
+                    _commandView == null ? "" : _commandView.getCommandText());
+        }
+        if (_commandMenuView != null) {
+            _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
+        }
+        if (_commandView != null) {
+            _commandView.setNeedsRedraw();
         }
     }
 
@@ -3343,7 +3382,7 @@ public class Window implements Drawable {
         if (commandName == null || commandName.isBlank()) {
             return "";
         }
-        for (var hint : modeKeyBindingHints(_normalMode)) {
+        for (var hint : _cachedNormalModeHints) {
             if (commandName.equals(hint.commandName())) {
                 return displayKeySequence(hint.key());
             }

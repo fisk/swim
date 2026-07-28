@@ -26,7 +26,8 @@ public class SplitView extends View {
             double ratio,
             SessionNode first,
             SessionNode second,
-            String leafId) {
+            String leafId,
+            int cursorPosition) {
     }
 
     private sealed interface Node permits LeafNode, BranchNode {
@@ -206,7 +207,11 @@ public class SplitView extends View {
     }
 
     public SessionNode snapshot(Function<View, String> leafIdProvider) {
-        return snapshotNode(_root, leafIdProvider);
+        return snapshot(leafIdProvider, ignored -> 0);
+    }
+
+    public SessionNode snapshot(Function<View, String> leafIdProvider, java.util.function.ToIntFunction<View> cursorPositionProvider) {
+        return snapshotNode(_root, leafIdProvider, cursorPositionProvider);
     }
 
     @Override
@@ -615,16 +620,18 @@ public class SplitView extends View {
         return null;
     }
 
-    private static SessionNode snapshotNode(Node node, Function<View, String> leafIdProvider) {
+    private static SessionNode snapshotNode(Node node, Function<View, String> leafIdProvider,
+            java.util.function.ToIntFunction<View> cursorPositionProvider) {
         if (node instanceof LeafNode leaf) {
-            return new SessionNode(null, 0.0, null, null, leafIdProvider.apply(leaf._view));
+            return new SessionNode(null, 0.0, null, null, leafIdProvider.apply(leaf._view),
+                    cursorPositionProvider.applyAsInt(leaf._view));
         }
         var branch = (BranchNode) node;
         return new SessionNode(
                 branch._orientation.name(),
                 branch._ratio,
-                snapshotNode(branch._first, leafIdProvider),
-                snapshotNode(branch._second, leafIdProvider),
-                null);
+                snapshotNode(branch._first, leafIdProvider, cursorPositionProvider),
+                snapshotNode(branch._second, leafIdProvider, cursorPositionProvider),
+                null, 0);
     }
 }

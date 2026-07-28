@@ -109,7 +109,7 @@ public class CommandView extends View {
             new CommandSpec("slack", List.of(), "", "open the Slack client"),
             new CommandSpec("nemo", List.of(), "<question>", "open Nemo workspace and optionally ask a question"),
             new CommandSpec("lsp-restart", List.of("lsp-reload"), "", "restart the language server for the current buffer"),
-            new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
+            new CommandSpec("reload", List.of("restart"), "", "restart with the current workspace restored"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
             new CommandSpec("shell", List.of("sh"), "", "open a shell workspace"),
             new CommandSpec("vshell", List.of(), "", "open a shell in a split to the right"),
@@ -561,10 +561,13 @@ public class CommandView extends View {
             }
             break;
         case "reload":
+        case "restart":
+            Window.getInstance().saveSessionForReload();
             SwimRuntime.reload();
             break;
         case "rebuild":
         case "upgrade":
+            Window.getInstance().saveSessionForReload();
             SwimRuntime.rebuildAndReload();
             break;
         case "shell":
@@ -754,7 +757,7 @@ public class CommandView extends View {
                 "opening host communication or assistant workspaces is not allowed");
         case "shell", "sh", "vshell", "hshell", "compile", "compile-file", "compile-current", "compile-log", "compile-follow", "compile-status" -> blockEditorDriveCommand(window, rawCommand,
                 "opening shell input through drive_editor is not allowed");
-        case "reload", "rebuild", "upgrade" -> blockEditorDriveCommand(window, rawCommand,
+        case "reload", "restart", "rebuild", "upgrade" -> blockEditorDriveCommand(window, rawCommand,
                 "reload and rebuild commands require host action");
         case "lsp-restart", "lsp-reload" -> blockEditorDriveCommand(window, rawCommand,
                 "restarting language servers requires host action");
@@ -1038,7 +1041,7 @@ public class CommandView extends View {
     private void refreshChrome() {
         var window = Window.getInstance();
         if (window != null) {
-            window.refreshChromeState();
+            window.refreshCommandPromptChrome();
             if (window.getRootView() != null) {
                 window.getRootView().setNeedsRedraw();
             }
@@ -1755,7 +1758,7 @@ public class CommandView extends View {
         }
         var rootView = window.getRootView();
         rootView.setFirstResponder(this);
-        window.refreshChromeState();
+        window.refreshCommandPromptChrome();
         rootView.setNeedsRedraw();
     }
 
@@ -1787,13 +1790,13 @@ public class CommandView extends View {
         // A command may have opened a modal prompt while handling Enter.  Do
         // not steal its first-responder status when dismissing this command bar.
         if (rootView.getFirstResponder() != this) {
-            window.refreshChromeState();
+            window.refreshCommandPromptChrome();
             rootView.setNeedsRedraw();
             return;
         }
         var activeView = window.getActiveView();
         rootView.setFirstResponder(activeView != null ? activeView : window.getBufferContext().getBufferView());
-        window.refreshChromeState();
+        window.refreshCommandPromptChrome();
         rootView.setNeedsRedraw();
     }
 

@@ -253,8 +253,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                     inCodeBlock = true;
                     inDiffBlock = isDiffLanguage(language);
                     inLooseDiff = false;
-                    first = appendWrappedRows(rows, first ? prefix : continuation, continuation,
-                            codeHeader(language), width, inDiffBlock ? DisplayKind.DIFF_HEADER : DisplayKind.CODE_HEADER);
+                    // Reserve the speaker prefix for the fenced block without
+                    // adding a distracting language/header row.
+                    first = false;
                 } else {
                     inCodeBlock = false;
                     inDiffBlock = false;
@@ -312,10 +313,6 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
             lines.add(text.substring(index, Math.min(text.length(), index + width)));
         }
         return lines;
-    }
-
-    private static String codeHeader(String language) {
-        return language == null || language.isBlank() ? "code" : "code " + language.strip();
     }
 
     private static boolean isDiffLanguage(String language) {
@@ -956,6 +953,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 return Response.NO;
             }
             _responseAction = () -> {
+                // Sending a prompt is an explicit request to follow the live
+                // conversation again, even if the user was reading history.
+                scrollToBottom();
                 if (message.startsWith(":")) {
                     _onCommand.accept(message);
                 } else {
@@ -965,6 +965,8 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 _cursorOffset = 0;
                 _inputScrollLine = 0;
                 notifyCommandInputChanged();
+                scrollToBottom();
+                setNeedsRedraw();
             };
             return Response.YES;
         case Backspace:

@@ -2097,6 +2097,29 @@ class WindowTest {
     }
 
     @Test
+    void sessionSnapshotStoresCursorPositionsForEverySplitBuffer() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("session-cursor-first.txt", "first\nline\ntext");
+        Path second = writeFile("session-cursor-second.txt", "second\nline\ntext");
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            window.getBufferContext().getBuffer().getCursor().setPosition(3);
+            assertNotNull(window.splitActiveBufferHorizontally());
+            assertTrue(window.setBufferPath(second));
+            window.getBufferContext().getBuffer().getCursor().setPosition(8);
+
+            var session = (org.fisk.swim.config.EditorSession) invoke(window, "createSession", new Class<?>[0]);
+            var layout = session.workspaces().getFirst().layout();
+
+            assertEquals(3, layout.first().cursorPosition());
+            assertEquals(8, layout.second().cursorPosition());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
     void tmuxPrefixSplitsFocusesAndClosesFrames() throws Exception {
         TerminalContextTestSupport.install(60, 16);
         Path file = writeFile("tmux-frame.txt", "abc");

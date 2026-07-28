@@ -43,6 +43,22 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void submittingMessageReturnsTranscriptToBottom() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> { });
+        for (int i = 0; i < 10; i++) {
+            view.appendMessage("nemo", "message " + i);
+        }
+        int bottom = view.getStartLine();
+        dispatch(view, new KeyStroke(KeyType.ArrowUp));
+        assertTrue(view.getStartLine() < bottom);
+
+        dispatch(view, new KeyStroke('h', false, false));
+        dispatch(view, new KeyStroke(KeyType.Enter));
+
+        assertEquals(bottom, view.getStartLine());
+    }
+
+    @Test
     void shiftEnterAddsNewlineWithoutSubmitting() {
         var submitted = new AtomicReference<String>();
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
@@ -259,8 +275,8 @@ class ChatPanelViewTest {
         view.appendMessage("nemo", "Here:\n```java\nclass Demo {}\n```\nDone");
 
         var lines = view.getDisplayLines();
-        assertTrue(lines.stream().anyMatch(line -> line.contains("code java")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("class Demo {}")));
+        assertFalse(lines.stream().anyMatch(line -> line.contains("code java")));
         assertFalse(lines.stream().anyMatch(line -> line.contains("```")));
     }
 
