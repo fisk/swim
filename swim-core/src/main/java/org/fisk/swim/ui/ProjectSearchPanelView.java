@@ -2,8 +2,14 @@ package org.fisk.swim.ui;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
+import org.fisk.swim.EventThread;
 import org.fisk.swim.event.EventResponder;
+import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
@@ -47,6 +53,10 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     private final ListEventResponder _responders = new ListEventResponder();
     private final QueryCursor _cursor;
     private List<ProjectSearch.Match> _results = List.of();
+    private final AtomicLong _searchGeneration = new AtomicLong();
+    private final AtomicBoolean _resultFlushScheduled = new AtomicBoolean();
+    private final ConcurrentLinkedQueue<ProjectSearch.Match> _pendingResults = new ConcurrentLinkedQueue<>();
+    private boolean _searching;
     private int _selection;
     private int _start;
 
@@ -152,7 +162,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
 
         var header = new AttributedString();
         header.append(" project search ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        header.append(" " + _results.size() + " matches ", UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
+        header.append(" " + _results.size() + (_searching ? "+ matches " : " matches "), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, rect.getPoint(), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
         var queryLine = new AttributedString();
@@ -268,14 +278,55 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private void refreshResults() {
-        _results = _projectSearch.search(_query.toString());
-        var window = Window.getInstance();
-        if (window != null) {
-            window.setQuickfixResults("Quickfix", _results);
-        }
-        _selection = Math.max(0, Math.min(_selection, Math.max(0, _results.size() - 1)));
-        _start = Math.max(0, Math.min(_start, Math.max(0, _results.size() - 1)));
+        long generation = _searchGeneration.incrementAndGet();
+        String query = _query.toString();
+        _results = new ArrayList<>();
+        _pendingResults.clear();
+        _resultFlushScheduled.set(false);
+        _searching = !query.isBlank();
         setNeedsRedraw();
+        if (query.isBlank()) return;
+        Thread.ofVirtual().start(() -> {
+            _projectSearch.search(query, matches -> publishMatches(generation, matches),
+                    () -> generation != _searchGeneration.get());
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                if (generation != _searchGeneration.get()) return;
+                _searching = false;
+                updateQuickfix();
+                setNeedsRedraw();
+            }));
+        });
+    }
+
+    private void publishMatches(long generation, List<ProjectSearch.Match> matches) {
+        if (generation != _searchGeneration.get()) return;
+        _pendingResults.addAll(matches);
+        if (!_resultFlushScheduled.compareAndSet(false, true)) return;
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(40);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> flushPendingMatches(generation)));
+        });
+    }
+
+    private void flushPendingMatches(long generation) {
+        _resultFlushScheduled.set(false);
+        if (generation != _searchGeneration.get()) return;
+        var next = new ArrayList<>(_results);
+        for (ProjectSearch.Match match; (match = _pendingResults.poll()) != null;) next.add(match);
+        if (next.size() == _results.size()) return;
+        next.sort(java.util.Comparator.comparing(match -> match.relativePath().toString()));
+        _results = next;
+        updateQuickfix();
+        setNeedsRedraw();
+    }
+
+    private void updateQuickfix() {
+        var window = Window.getInstance();
+        if (window != null) window.setQuickfixResults("Quickfix", _results);
     }
 
     private void moveSelection(int delta) {
@@ -318,6 +369,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private void close() {
+        _searchGeneration.incrementAndGet();
         var window = Window.getInstance();
         if (window != null) {
             window.hidePanel();

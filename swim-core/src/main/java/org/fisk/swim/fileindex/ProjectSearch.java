@@ -8,6 +8,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.concurrent.Phaser;
+import java.util.stream.Stream;
 
 public final class ProjectSearch {
     public record Match(Path path, Path relativePath, int lineNumber, int columnNumber, String lineText) {
@@ -37,26 +41,41 @@ public final class ProjectSearch {
     }
 
     public List<Match> search(String query) {
+        var matches = new ArrayList<Match>();
+        search(query, batch -> matches.addAll(batch), () -> false);
+        matches.sort(Comparator.comparing(match -> match.relativePath().toString()));
+        return matches;
+    }
+
+    /** Searches files as they are discovered, without waiting to enumerate the whole project. */
+    public void search(String query, Consumer<List<Match>> onMatches, BooleanSupplier cancelled) {
         if (_root == null || query == null || query.isBlank()) {
-            return List.of();
+            return;
         }
 
         String needle = query;
         String normalizedNeedle = needle.toLowerCase(Locale.ROOT);
         boolean caseSensitive = !needle.equals(normalizedNeedle);
-        var matches = new ArrayList<Match>();
-        try {
-            var files = Files.find(_root, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())
+        Phaser tasks = new Phaser(1);
+        try (Stream<Path> files = Files.find(_root, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())) {
+            files
                     .filter(path -> _fileFilter.isIncluded(_root.relativize(path), false))
-                    .sorted(Comparator.comparing(path -> _root.relativize(path).toString()))
-                    .toList();
-            for (var path : files) {
-                matches.addAll(searchFile(path, needle, normalizedNeedle, caseSensitive));
-            }
+                    .takeWhile(path -> !cancelled.getAsBoolean())
+                    .forEach(path -> {
+                        tasks.register();
+                        Thread.ofVirtual().start(() -> {
+                            try {
+                                var matches = searchFile(path, needle, normalizedNeedle, caseSensitive);
+                                if (!matches.isEmpty() && !cancelled.getAsBoolean()) onMatches.accept(matches);
+                            } finally {
+                                tasks.arriveAndDeregister();
+                            }
+                        });
+                    });
         } catch (IOException e) {
-            return List.of();
+        } finally {
+            tasks.arriveAndAwaitAdvance();
         }
-        return matches;
     }
 
     private List<Match> searchFile(Path path, String needle, String normalizedNeedle, boolean caseSensitive) {
