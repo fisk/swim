@@ -103,6 +103,7 @@ public class CommandView extends View {
             new CommandSpec("jumps", List.of(), "", "show the jump list"),
             new CommandSpec("slack", List.of(), "", "open the Slack client"),
             new CommandSpec("nemo", List.of(), "<question>", "open Nemo workspace and optionally ask a question"),
+            new CommandSpec("lsp-restart", List.of("lsp-reload"), "", "restart the language server for the current buffer"),
             new CommandSpec("reload", List.of(), "", "reload the latest built SWIM core"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
             new CommandSpec("shell", List.of("sh"), "", "open a shell workspace"),
@@ -527,6 +528,13 @@ public class CommandView extends View {
         case "nemo":
             org.fisk.swim.nemo.NemoClient.getInstance().runWorkspace(Window.getInstance().getBufferContext(), argument);
             break;
+        case "lsp-restart":
+        case "lsp-reload":
+            var context = Window.getInstance().getBufferContext();
+            if (!context.getBuffer().getLanguageMode().restartServer(context)) {
+                _message = "The current buffer has no restartable language server";
+            }
+            break;
         case "reload":
             SwimRuntime.reload();
             break;
@@ -723,6 +731,8 @@ public class CommandView extends View {
                 "opening shell input through drive_editor is not allowed");
         case "reload", "rebuild", "upgrade" -> blockEditorDriveCommand(window, rawCommand,
                 "reload and rebuild commands require host action");
+        case "lsp-restart", "lsp-reload" -> blockEditorDriveCommand(window, rawCommand,
+                "restarting language servers requires host action");
         case "debug", "dbg" -> blockEditorDriveCommand(window, rawCommand,
                 "debugger commands are outside the editor-control sandbox");
         case "git" -> blockEditorDriveCommand(window, rawCommand,

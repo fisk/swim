@@ -151,6 +151,18 @@ public class Buffer {
         if (Objects.equals(registration, _languageModeRegistration)) {
             return;
         }
+        replaceLanguageMode(registration);
+    }
+
+    /**
+     * Recreate this buffer's language mode even when its plugin registration
+     * has not changed.  Language servers use this after an in-place restart.
+     */
+    public void reloadLanguageMode() {
+        replaceLanguageMode(LanguagePluginRegistry.find(_path));
+    }
+
+    private void replaceLanguageMode(LanguagePluginRegistry.Registration registration) {
         var previous = _languageMode;
         var next = LanguageModeProvider.getInstance().getLanguageMode(_path);
         _languageModeRegistration = registration;

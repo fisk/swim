@@ -905,6 +905,20 @@ class CommandViewTest {
         }
     }
 
+    @Test
+    void lspRestartReportsWhenCurrentBufferHasNoLanguageServer() throws Exception {
+        Path path = tempDir.resolve("lsp-restart.txt");
+        Files.writeString(path, "plain text\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+            var commandView = harness.getWindow().getCommandView();
+            invokeRunCommand(commandView, "lsp-restart");
+
+            assertEquals("The current buffer has no restartable language server",
+                    HeadlessWindowHarness.getField(commandView, "_message", String.class));
+        }
+    }
+
     private static void invokeRunCommand(CommandView commandView, String command) throws Exception {
         Method method = CommandView.class.getDeclaredMethod("runCommand", String.class);
         method.setAccessible(true);

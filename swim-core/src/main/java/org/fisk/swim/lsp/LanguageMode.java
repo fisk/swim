@@ -22,6 +22,15 @@ public interface LanguageMode {
     }
 
     /**
+     * Restart the language server backing this buffer, if it has one.
+     *
+     * @return whether a restart was started
+     */
+    default boolean restartServer(BufferContext bufferContext) {
+        return false;
+    }
+
+    /**
      * Whether saving this language should remove spaces and tabs at the end of
      * each line. Plain text deliberately keeps its whitespace unchanged.
      */

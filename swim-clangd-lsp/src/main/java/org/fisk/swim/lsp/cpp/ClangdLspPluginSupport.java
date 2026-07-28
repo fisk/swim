@@ -15,6 +15,7 @@ import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.shared.LspHelp;
+import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -65,6 +66,36 @@ public final class ClangdLspPluginSupport {
 
     public static void shutdown() {
         ClangdLspClient.shutdownInstalledInstance();
+    }
+
+    static boolean restart(BufferContext context) {
+        if (context == null || !isCppPath(context.getBuffer().getPath())) {
+            return false;
+        }
+        Path path = context.getBuffer().getPath();
+        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+            return false;
+        }
+        ClangdLspClient.shutdownInstalledInstance();
+        install();
+        var client = startClientIfNeeded(path, getClient());
+        if (!client.isReady()) {
+            return false;
+        }
+        Window window = Window.getInstance();
+        if (window != null) {
+            Path workspaceRoot = ClangdProjectRoots.findWorkspaceRoot(path);
+            for (BufferContext openContext : window.openBufferContextsSnapshot()) {
+                Path openPath = openContext.getBuffer().getPath();
+                if (isCppPath(openPath) && workspaceRoot.equals(ClangdProjectRoots.findWorkspaceRoot(openPath))) {
+                    openContext.getBuffer().reloadLanguageMode();
+                }
+            }
+            window.getCommandView().setMessage("clangd restarted; compile_commands.json reloaded");
+        } else {
+            context.getBuffer().reloadLanguageMode();
+        }
+        return true;
     }
 
     public static void preload(SwimPluginPreloadContext context) {

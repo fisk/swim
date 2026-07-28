@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.fisk.swim.fileindex.SwimProjectConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -64,6 +65,18 @@ class ClangdProjectRootsTest {
 
         assertEquals(buildDir, ClangdProjectRoots.findCompilationDatabaseRoot(file));
         assertEquals(project, ClangdProjectRoots.findWorkspaceRoot(file));
+    }
+
+    @Test
+    void swimConfigCanRemoveArgumentsFromClangdCompileCommands() throws IOException {
+        Path project = tempDir.resolve("configured");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve(".swim"), """
+                clangd.remove_compile_arguments = -fno-lifetime-dse, -Wno-unused
+                """);
+
+        assertEquals(java.util.List.of("-fno-lifetime-dse", "-Wno-unused"),
+                SwimProjectConfig.load(project).clangdRemoveCompileArguments());
     }
 
     @Test

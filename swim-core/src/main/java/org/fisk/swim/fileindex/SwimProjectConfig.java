@@ -8,11 +8,14 @@ import java.util.List;
 public final class SwimProjectConfig {
     private final Path _root;
     private final Path _compileCommandsPath;
+    private final List<String> _clangdRemoveCompileArguments;
     private final List<Path> _nemoWorkspaceWriteRoots;
 
-    private SwimProjectConfig(Path root, Path compileCommandsPath, List<Path> nemoWorkspaceWriteRoots) {
+    private SwimProjectConfig(Path root, Path compileCommandsPath, List<String> clangdRemoveCompileArguments,
+            List<Path> nemoWorkspaceWriteRoots) {
         _root = root;
         _compileCommandsPath = compileCommandsPath;
+        _clangdRemoveCompileArguments = List.copyOf(clangdRemoveCompileArguments);
         _nemoWorkspaceWriteRoots = List.copyOf(nemoWorkspaceWriteRoots);
     }
 
@@ -30,10 +33,11 @@ public final class SwimProjectConfig {
         }
         Path marker = directory.resolve(".swim");
         if (!Files.isRegularFile(marker)) {
-            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, List.of());
+            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, List.of(), List.of());
         }
         Path root = directory.toAbsolutePath().normalize();
-        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker), parseNemoWorkspaceWriteRoots(root, marker));
+        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker),
+                parseClangdRemoveCompileArguments(marker), parseNemoWorkspaceWriteRoots(root, marker));
     }
 
     public Path root() {
@@ -51,7 +55,29 @@ public final class SwimProjectConfig {
         return _compileCommandsPath.getParent();
     }
 
+    /** Arguments to remove from compile commands before clangd parses them. */
+    public List<String> clangdRemoveCompileArguments() {
+        return _clangdRemoveCompileArguments;
+    }
+
     public List<Path> nemoWorkspaceWriteRoots() { return _nemoWorkspaceWriteRoots; }
+
+    private static List<String> parseClangdRemoveCompileArguments(Path marker) {
+        try {
+            for (String line : Files.readAllLines(marker)) {
+                String[] pair = line.split("=", 2);
+                if (pair.length != 2 || !"clangd.remove_compile_arguments".equals(pair[0].trim())) {
+                    continue;
+                }
+                return java.util.Arrays.stream(pair[1].split(","))
+                        .map(String::trim)
+                        .filter(value -> !value.isEmpty())
+                        .toList();
+            }
+        } catch (IOException e) {
+        }
+        return List.of();
+    }
 
     private static List<Path> parseNemoWorkspaceWriteRoots(Path root, Path marker) {
         try {

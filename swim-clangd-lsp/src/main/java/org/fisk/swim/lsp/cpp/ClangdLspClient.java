@@ -75,6 +75,7 @@ import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.fisk.swim.EventThread;
+import org.fisk.swim.fileindex.SwimProjectConfig;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.lsp.DiagnosticAction;
 import org.fisk.swim.lsp.DiagnosticActionProvider;
@@ -138,6 +139,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     private Path _projectPath;
     private Path _workspacePath;
     private Path _compilationDatabaseRoot;
+    private List<String> _removeCompileArguments = List.of();
     private final Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
     private final AsyncLspRequestQueue _lspRequestQueue = new AsyncLspRequestQueue(
             _log,
@@ -166,6 +168,8 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     private final Map<String, AsyncSemanticTokenHighlighter.CachedSemanticTokens> _semanticTokensCache =
             _semanticTokens.cacheView();
     private final Object _completionLock = new Object();
+    private final Set<BufferContext> _openDocuments = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final AtomicBoolean _recoveryPending = new AtomicBoolean();
     private LspCompletionSession _completionSession;
     private CompletionPopupView _completionPopupView;
     private final Object _definitionLock = new Object();
@@ -299,6 +303,8 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
         _projectPath = defaultPath(ClangdProjectRoots.findWorkspaceRoot(filePath), filePath);
         _workspacePath = getWorkspacePath(_swimHomePath, _projectPath);
         _compilationDatabaseRoot = ClangdProjectRoots.findCompilationDatabaseRoot(filePath);
+        SwimProjectConfig config = SwimProjectConfig.load(_projectPath);
+        _removeCompileArguments = config == null ? List.of() : config.clangdRemoveCompileArguments();
         _launchAttempted = true;
         var thread = new Thread(this::run, "swim-clangd-lsp");
         thread.setDaemon(true);
@@ -443,6 +449,9 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        synchronized (_openDocuments) {
+            _openDocuments.remove(bufferContext);
+        }
         _features.clearDocumentContext(bufferContext);
         if (!_enabled || _server == null) {
             return;
