@@ -2,7 +2,6 @@ package org.fisk.swim.mode;
 
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
-import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.ui.Window;
@@ -20,16 +19,7 @@ public class InputMode extends Mode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
-        _rootResponder.addEventResponder("<ESC>", () -> {
-            window.allowEditorDriveAction("exit input mode");
-            var languageMode = languageMode(buffer);
-            languageMode.cancelCompletion();
-            languageMode.cancelSnippet();
-            window.appendRepeatKey(new RecordedKey(KeyType.Escape, null, false, false));
-            window.commitRepeatRecording();
-            window.switchToMode(window.getNormalMode());
-            buffer.getCursor().goLeft();
-        });
+        _rootResponder.addEventResponder("<ESC>", window::exitInputMode);
         _rootResponder.addEventResponder(new EventResponder() {
             private char _character;
 
@@ -128,6 +118,7 @@ public class InputMode extends Mode {
                 ACCEPT,
                 ACCEPT_COMMIT,
                 CANCEL,
+                EXIT,
                 TRIGGER
             }
 
@@ -187,7 +178,7 @@ public class InputMode extends Mode {
                     return Response.YES;
                 }
                 if (event.getKeyType() == KeyType.Escape && visible) {
-                    _action = CompletionAction.CANCEL;
+                    _action = CompletionAction.EXIT;
                     return Response.YES;
                 }
                 if (event.getKeyType() == KeyType.Character
@@ -264,6 +255,9 @@ public class InputMode extends Mode {
                     break;
                 case CANCEL:
                     completion.cancelCompletion();
+                    break;
+                case EXIT:
+                    window.exitInputMode();
                     break;
                 case TRIGGER:
                     completion.triggerCompletion(bufferContext);

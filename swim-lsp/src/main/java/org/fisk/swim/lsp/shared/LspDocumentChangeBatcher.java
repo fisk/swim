@@ -58,13 +58,11 @@ public final class LspDocumentChangeBatcher {
         if (uri == null || textDocument == null || contentChanges == null || contentChanges.isEmpty()) {
             return;
         }
-        for (var change : contentChanges) {
-            _localChangeObserver.didChange(uri, path, change);
-        }
         boolean scheduleFlush = false;
         synchronized (this) {
             var pending = _pendingDocumentChanges.computeIfAbsent(uri, ignored -> new PendingDocumentChanges());
             pending._textDocument = textDocument;
+            pending._path = path;
             pending._changes.addAll(contentChanges);
             if (!pending._flushScheduled) {
                 pending._flushScheduled = true;
@@ -84,6 +82,9 @@ public final class LspDocumentChangeBatcher {
         if (pending == null || pending._changes.isEmpty()) {
             return;
         }
+        for (var change : pending._changes) {
+            _localChangeObserver.didChange(uri, pending._path, change);
+        }
         TextDocumentService service = _textDocumentService.get();
         if (service == null) {
             return;
@@ -100,6 +101,7 @@ public final class LspDocumentChangeBatcher {
 
     private static final class PendingDocumentChanges {
         private VersionedTextDocumentIdentifier _textDocument;
+        private Path _path;
         private final List<TextDocumentContentChangeEvent> _changes = new ArrayList<>();
         private boolean _flushScheduled;
     }

@@ -242,12 +242,12 @@ public final class AsyncSemanticTokenHighlighter {
             return;
         }
         String uri = document.uri();
-        int version = document.version();
         synchronized (this) {
-            var cached = _semanticTokensCache.get(uri);
-            if (cached != null) {
-                _semanticTokensCache.put(uri, new CachedSemanticTokens(version, mutation.apply(cached.highlights())));
-            }
+            // Rewriting and sorting every cached token range on each keystroke is
+            // expensive for large files.  Keep the edit as a delta for the
+            // asynchronous refresh and let lexical highlighting cover the brief
+            // interval until that refresh returns.
+            _semanticTokensCache.remove(uri);
             var queuedRefresh = _semanticRefreshes.get(uri);
             if (queuedRefresh != null) {
                 queuedRefresh._mutations.add(mutation);

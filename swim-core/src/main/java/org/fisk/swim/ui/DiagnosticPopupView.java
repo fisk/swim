@@ -31,6 +31,9 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
     private Runnable _onActions = () -> {
     };
 
+    private record DisplayRow(int entryIndex, String text, boolean firstLine) {
+    }
+
     public DiagnosticPopupView(Rect bounds) {
         super(bounds);
         setBackgroundColour(UiTheme.SURFACE_ELEVATED);
@@ -137,35 +140,41 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY();
 
-        int visibleRows = Math.min(MAX_VISIBLE_ROWS, _entries.size());
-        ensureSelectionVisible(visibleRows);
+        int visibleRows = Math.min(MAX_VISIBLE_ROWS, Math.max(1, rect.getSize().getHeight() - 2));
+        List<DisplayRow> rows = displayRows(width);
+        ensureSelectionVisible(rows, visibleRows);
 
         var header = new AttributedString();
         header.append(" " + _title + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         header.append(" " + (_selection + 1) + "/" + _entries.size() + " ", UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         UiTheme.drawLine(graphics, Point.create(x, y), width, header, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
-        List<DiagnosticEntry> visible = new ArrayList<>();
+        List<DisplayRow> visible = new ArrayList<>();
         for (int i = 0; i < visibleRows; ++i) {
             int index = _scrollOffset + i;
-            if (index >= _entries.size()) {
+            if (index >= rows.size()) {
                 break;
             }
-            visible.add(_entries.get(index));
+            visible.add(rows.get(index));
         }
 
         int rowY = y + 1;
         for (int i = 0; i < visible.size(); ++i) {
-            int index = _scrollOffset + i;
-            boolean selected = index == _selection;
-            var entry = visible.get(i);
+            var row = visible.get(i);
+            boolean selected = row.entryIndex() == _selection;
+            var entry = _entries.get(row.entryIndex());
             var background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
-                    : (i % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED);
+                    : (row.entryIndex() % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED);
             UiTheme.fillRow(graphics, Point.create(x, rowY + i), width, background);
             var line = new AttributedString();
-            line.append(selected ? "▌ " : "  ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE, background);
-            line.append(" " + severityLabel(entry) + " ", UiTheme.TEXT_ON_ACCENT, severityColor(entry));
-            line.append(" " + clip(entry.message().replace('\n', ' '), Math.max(0, width - 8)),
+            line.append(selected ? "▌ " : "  ", selected ? UiTheme.PANEL_SELECTION_ACCENT : UiTheme.TEXT_SUBTLE,
+                    background);
+            if (row.firstLine()) {
+                line.append(" " + severityLabel(entry) + " ", UiTheme.TEXT_ON_ACCENT, severityColor(entry));
+            } else {
+                line.append("     ", UiTheme.TEXT_MUTED, background);
+            }
+            line.append(" " + row.text(),
                     selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
                     background);
             UiTheme.drawLine(graphics, Point.create(x, rowY + i), width, line, UiTheme.TEXT_MUTED, background);
@@ -195,11 +204,18 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
         }
     }
 
-    private void ensureSelectionVisible(int visibleRows) {
-        if (_selection < _scrollOffset) {
-            _scrollOffset = _selection;
-        } else if (_selection >= _scrollOffset + visibleRows) {
-            _scrollOffset = _selection - visibleRows + 1;
+    private void ensureSelectionVisible(List<DisplayRow> rows, int visibleRows) {
+        int selectedRow = 0;
+        for (int i = 0; i < rows.size(); ++i) {
+            if (rows.get(i).entryIndex() == _selection) {
+                selectedRow = i;
+                break;
+            }
+        }
+        if (selectedRow < _scrollOffset) {
+            _scrollOffset = selectedRow;
+        } else if (selectedRow >= _scrollOffset + visibleRows) {
+            _scrollOffset = selectedRow - visibleRows + 1;
         }
     }
 
@@ -208,7 +224,7 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
             return Rect.create(0, 0, 0, 0);
         }
         int width = Math.min(parentSize.getWidth(), preferredWidth());
-        int height = Math.min(parentSize.getHeight(), Math.min(MAX_VISIBLE_ROWS, _entries.size()) + 2);
+        int height = Math.min(parentSize.getHeight(), Math.min(MAX_VISIBLE_ROWS, displayRows(width).size()) + 2);
         int x = Math.max(0, Math.min(_anchor.getX(), parentSize.getWidth() - width));
         int belowY = _anchor.getY() + 1;
         int y = belowY + height <= parentSize.getHeight()
@@ -224,6 +240,54 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
             width = Math.max(width, 10 + entry.detail().length());
         }
         return Math.min(MAX_WIDTH, width);
+    }
+
+    private List<DisplayRow> displayRows(int width) {
+        int messageWidth = Math.max(1, width - 8);
+        var rows = new ArrayList<DisplayRow>();
+        for (int i = 0; i < _entries.size(); ++i) {
+            List<String> lines = wrapForDisplay(_entries.get(i).message(), messageWidth);
+            for (int line = 0; line < lines.size(); ++line) {
+                rows.add(new DisplayRow(i, lines.get(line), line == 0));
+            }
+        }
+        return rows;
+    }
+
+    static List<String> wrapForDisplay(String text, int width) {
+        if (text == null || text.isEmpty()) {
+            return List.of("");
+        }
+        var lines = new ArrayList<String>();
+        for (String paragraph : text.replace("\r", "").split("\n", -1)) {
+            if (paragraph.isBlank()) {
+                lines.add("");
+                continue;
+            }
+            var line = new StringBuilder();
+            for (String word : paragraph.trim().split("\\s+")) {
+                if (line.length() > 0 && line.length() + 1 + word.length() > width) {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                }
+                while (word.length() > width) {
+                    if (line.length() > 0) {
+                        lines.add(line.toString());
+                        line.setLength(0);
+                    }
+                    lines.add(word.substring(0, width));
+                    word = word.substring(width);
+                }
+                if (line.length() > 0) {
+                    line.append(' ');
+                }
+                line.append(word);
+            }
+            if (line.length() > 0) {
+                lines.add(line.toString());
+            }
+        }
+        return lines.isEmpty() ? List.of("") : List.copyOf(lines);
     }
 
     private static String severityLabel(DiagnosticEntry entry) {

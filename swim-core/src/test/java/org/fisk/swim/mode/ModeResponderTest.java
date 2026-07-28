@@ -8,9 +8,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+
+import org.eclipse.lsp4j.TextDocumentItem;
 import org.fisk.swim.copy.Copy;
+import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.text.AttributedString;
+import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.todo.TodoUiSupport;
 import org.fisk.swim.ui.ChatPanelView;
 import org.fisk.swim.ui.HeadlessWindowHarness;
@@ -60,6 +65,24 @@ class ModeResponderTest {
             HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
             assertSame(window.getNormalMode(), window.getCurrentMode());
             assertEquals(0, cursor.getPosition());
+        }
+    }
+
+    @Test
+    void escapeExitsInputModeWhenCompletionIsVisible() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("completion.txt", "alpha"), 20, 4)) {
+            Window window = harness.getWindow();
+            var completion = new CompletionLanguageMode();
+            var buffer = window.getBufferContext().getBuffer();
+            var languageMode = buffer.getClass().getDeclaredField("_languageMode");
+            languageMode.setAccessible(true);
+            languageMode.set(buffer, completion);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
+
+            assertTrue(completion.cancelled);
+            assertSame(window.getNormalMode(), window.getCurrentMode());
         }
     }
 
@@ -301,6 +324,64 @@ class Demo {
             var mode = (VisualLineMode) window.getCurrentMode();
             assertFalse(mode.isSelected(3));
             assertTrue(mode.isSelected(4));
+        }
+    }
+
+    private static final class CompletionLanguageMode implements LanguageMode {
+        private boolean cancelled;
+
+        @Override
+        public void didInsert(BufferContext bufferContext, int position, String str) {
+        }
+
+        @Override
+        public void didRemove(BufferContext bufferContext, int startPosition, int endPosition) {
+        }
+
+        @Override
+        public void willSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didSave(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didClose(BufferContext bufferContext) {
+        }
+
+        @Override
+        public void didOpen(BufferContext bufferContext) {
+        }
+
+        @Override
+        public int getIndentationLevel(BufferContext bufferContext) {
+            return 0;
+        }
+
+        @Override
+        public boolean isIndentationEnd(BufferContext bufferContext, String character) {
+            return false;
+        }
+
+        @Override
+        public TextDocumentItem getTextDocument(BufferContext bufferContext) {
+            return null;
+        }
+
+        @Override
+        public void applyColouring(BufferContext bufferContext, AttributedString str) {
+        }
+
+        @Override
+        public boolean hasCompletionSession() {
+            return !cancelled;
+        }
+
+        @Override
+        public boolean cancelCompletion() {
+            cancelled = true;
+            return true;
         }
     }
 

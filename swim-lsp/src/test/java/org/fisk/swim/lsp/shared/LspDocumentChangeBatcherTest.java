@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
@@ -16,17 +18,21 @@ import org.slf4j.LoggerFactory;
 
 class LspDocumentChangeBatcherTest {
     @Test
-    void queueNotifiesLocalChangeObserverBeforeAsyncFlush() {
+    void queueNotifiesLocalChangeObserverDuringAsyncFlush() throws Exception {
         var queue = new AsyncLspRequestQueue(
                 LoggerFactory.getLogger(LspDocumentChangeBatcherTest.class),
                 "swim-lsp-batcher-test-requests",
                 () -> true);
         var observed = new ArrayList<ObservedChange>();
+        var observedLatch = new CountDownLatch(1);
         var batcher = new LspDocumentChangeBatcher(
                 queue,
                 () -> null,
-                1_000,
-                (uri, path, change) -> observed.add(new ObservedChange(uri, path, change)));
+                1,
+                (uri, path, change) -> {
+                    observed.add(new ObservedChange(uri, path, change));
+                    observedLatch.countDown();
+                });
         String uri = "file:///tmp/Test.java";
         Path path = Path.of("Test.java");
         var change = new TextDocumentContentChangeEvent(
@@ -37,6 +43,8 @@ class LspDocumentChangeBatcherTest {
         try {
             batcher.queue(uri, path, new VersionedTextDocumentIdentifier(uri, 2), List.of(change));
 
+            assertEquals(0, observed.size());
+            org.junit.jupiter.api.Assertions.assertTrue(observedLatch.await(2, TimeUnit.SECONDS));
             assertEquals(1, observed.size());
             assertEquals(uri, observed.get(0).uri());
             assertEquals(path, observed.get(0).path());

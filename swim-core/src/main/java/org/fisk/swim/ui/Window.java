@@ -1942,6 +1942,21 @@ public class Window implements Drawable {
         refreshChromeState();
     }
 
+    public void exitInputMode() {
+        if (_currentMode != _inputMode || _bufferContext == null) {
+            return;
+        }
+        allowEditorDriveAction("exit input mode");
+        var buffer = _bufferContext.getBuffer();
+        var languageMode = buffer.getLanguageMode();
+        languageMode.cancelCompletion();
+        languageMode.cancelSnippet();
+        appendRepeatKey(new RecordedKey(KeyType.Escape, null, false, false));
+        commitRepeatRecording();
+        switchToMode(_normalMode);
+        buffer.getCursor().goLeft();
+    }
+
     public BufferContext getBufferContext() {
         ensureLayoutState();
         return _bufferContext;
@@ -3343,6 +3358,7 @@ public class Window implements Drawable {
                 _rootView.setNeedsRedraw();
             }
             refreshChromeState();
+            exitInputMode();
         });
         popup.configure(title, entries, anchor);
         _rootView.addSubview(popup);
