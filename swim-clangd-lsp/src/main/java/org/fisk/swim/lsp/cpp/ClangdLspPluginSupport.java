@@ -28,6 +28,8 @@ public final class ClangdLspPluginSupport {
     private static final List<String> H_HEADER_SOURCE_EXTENSIONS = List.of(".c", ".cpp", ".cxx", ".cc");
     private static final List<String> CPP_SOURCE_EXTENSIONS = List.of(".cpp", ".cxx", ".cc", ".c");
     private static final List<String> ALL_CPP_EXTENSIONS = List.of(".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx");
+    private static final List<String> CPP_FILE_SUFFIXES = List.of(
+            ".inline.hpp", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".c", ".h");
 
     private static final ClangdLspClient UNAVAILABLE = new ClangdLspClient(new ClangdLspProvider((Path) null));
 
@@ -156,8 +158,6 @@ public final class ClangdLspPluginSupport {
                 ClangdLspPluginSupport::showLinkedEditingRanges);
         registerCppKey(context, "<SPACE> , C", "LSP", "color presentations", "lsp-color-presentations",
                 ClangdLspPluginSupport::showColorPresentations);
-        registerCppKey(context, "g m", "C/C++", "switch header/implementation", "cpp-counterpart",
-                ClangdLspPluginSupport::switchHeaderImplementation);
     }
 
     private static ClangdLspClient startClientIfNeeded(Path path, ClangdLspClient client) {
@@ -291,15 +291,6 @@ public final class ClangdLspPluginSupport {
                 client -> client.showColorPresentations(Window.getInstance().getBufferContext()));
     }
 
-    public static void switchHeaderImplementation() {
-        Window window = Window.getInstance();
-        if (window == null || !isCppPath(currentPath(window))) {
-            return;
-        }
-        window.allowEditorDriveAction("open C/C++ counterpart");
-        switchHeaderImplementation(window);
-    }
-
     private static void registerCppKey(SwimPluginPreloadContext context, String key, String group, String summary,
             String commandName, Runnable action) {
         context.registerKeyBinding(new SwimPluginKeyBinding(key, group, summary, commandName,
@@ -315,71 +306,45 @@ public final class ClangdLspPluginSupport {
         withLoadedClient(window, action);
     }
 
-    private static void switchHeaderImplementation(Window window) {
-        Path path = window.getBufferContext().getBuffer().getPath();
-        Path counterpart = findHeaderImplementationCounterpart(path);
-        if (counterpart == null) {
-            window.getCommandView().setMessage("No C/C++ counterpart found");
-            return;
-        }
-        if (!window.setBufferPath(counterpart)) {
-            window.getCommandView().setMessage("Unable to open " + counterpart);
-        }
-    }
-
     static Path findHeaderImplementationCounterpart(Path path) {
         if (path == null || path.getFileName() == null || path.getParent() == null) {
             return null;
         }
         String fileName = path.getFileName().toString();
-        String extension = extension(fileName);
-        if (extension.isBlank()) {
+        String suffix = cppSuffix(fileName);
+        if (suffix.isBlank()) {
             return null;
         }
-        String stem = fileName.substring(0, fileName.length() - extension.length());
-        List<String> candidates = counterpartExtensions(extension);
-        if (candidates.isEmpty()) {
-            return null;
-        }
-        Path sameDirectory = findCounterpartInDirectory(path.getParent(), stem, candidates);
-        if (sameDirectory != null) {
-            return sameDirectory;
-        }
-        return findCounterpartInProject(path, stem, candidates);
+        String stem = fileName.substring(0, fileName.length() - suffix.length());
+        var candidates = findCounterparts(path, stem);
+        if (candidates.size() < 2) return null;
+        int current = candidates.indexOf(path);
+        return candidates.get((current + 1) % candidates.size());
     }
 
-    private static Path findCounterpartInDirectory(Path directory, String stem, List<String> extensions) {
-        for (String extension : extensions) {
-            Path candidate = directory.resolve(stem + extension);
-            if (Files.isRegularFile(candidate)) {
-                return candidate;
-            }
+    private static List<Path> findCounterparts(Path path, String stem) {
+        var candidates = new java.util.ArrayList<Path>();
+        for (String suffix : CPP_FILE_SUFFIXES) {
+            Path candidate = path.getParent().resolve(stem + suffix);
+            if (Files.isRegularFile(candidate)) candidates.add(candidate);
         }
-        return null;
-    }
-
-    private static Path findCounterpartInProject(Path path, String stem, List<String> extensions) {
+        if (candidates.size() > 1) return candidates;
         Path root = ProjectPaths.getProjectRootPath(path);
-        if (root == null || !Files.isDirectory(root)) {
-            return null;
-        }
-        for (String extension : extensions) {
+        if (root == null || !Files.isDirectory(root)) return candidates;
+        for (String suffix : CPP_FILE_SUFFIXES) {
             try (Stream<Path> files = Files.find(root, Integer.MAX_VALUE,
                     (candidate, attributes) -> attributes.isRegularFile()
-                            && (stem + extension).equals(candidate.getFileName().toString()))) {
+                            && (stem + suffix).equals(candidate.getFileName().toString()))) {
                 Path found = files
-                        .filter(candidate -> !candidate.equals(path))
                         .sorted(Comparator.comparing(candidate -> root.relativize(candidate).toString()))
                         .findFirst()
                         .orElse(null);
-                if (found != null) {
-                    return found;
-                }
+                if (found != null && !candidates.contains(found)) candidates.add(found);
             } catch (IOException e) {
-                return null;
+                return candidates;
             }
         }
-        return null;
+        return candidates;
     }
 
     private static List<String> counterpartExtensions(String extension) {
@@ -409,7 +374,12 @@ public final class ClangdLspPluginSupport {
         if (path == null || path.getFileName() == null) {
             return false;
         }
-        return !counterpartExtensions(extension(path.getFileName().toString())).isEmpty();
+        return !cppSuffix(path.getFileName().toString()).isBlank();
+    }
+
+    private static String cppSuffix(String fileName) {
+        String normalized = fileName.toLowerCase(Locale.ROOT);
+        return CPP_FILE_SUFFIXES.stream().filter(normalized::endsWith).findFirst().orElse("");
     }
 
     private static String extension(String fileName) {

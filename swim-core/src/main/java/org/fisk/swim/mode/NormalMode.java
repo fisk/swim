@@ -115,8 +115,8 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("<CTRL>-g c h", "Shell", "shell in split below", "hshell", () -> { startShell(window, ShellTarget.HORIZONTAL_SPLIT); });
         _rootResponder.addEventResponder(hinted(registerResponder((ignored, register) -> { allow("select register"); window.selectRegister(register); }),
                 KeyBindingHint.of("\" <CHAR>", "Registers", "select register")));
-        _rootResponder.addEventResponder(hinted(prefixCharacterResponder("g m", (ignored, mark) -> { allow("set mark"); window.setMark(mark); }),
-                KeyBindingHint.of("g m <CHAR>", "Marks", "set mark")));
+        _rootResponder.addEventResponder("g m", "Navigation", "cycle same-name files", "cycle-sibling-file",
+                allowed("cycle same-name files", () -> announceIfUnmoved(window.cycleSiblingFile(), "No sibling file found")));
         _rootResponder.addEventResponder(hinted(markJumpResponder("'", true, window),
                 KeyBindingHint.of("' <CHAR>", "Marks", "jump to line mark")));
         _rootResponder.addEventResponder(hinted(markJumpResponder("`", false, window),

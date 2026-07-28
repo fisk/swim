@@ -2,12 +2,14 @@ package org.fisk.swim.ui;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator;
 import java.util.function.Consumer;
 
 import org.fisk.swim.EventThread;
@@ -332,6 +334,28 @@ public class Window implements Drawable {
         setupModes();
         activateView(nextBufferView);
         return true;
+    }
+
+    /** Cycles through regular files in the current directory with the same basename. */
+    public boolean cycleSiblingFile() {
+        var context = getBufferContext();
+        Path path = context == null ? null : context.getBuffer().getPath();
+        if (path == null || path.getParent() == null || path.getFileName() == null) return false;
+        String name = path.getFileName().toString();
+        int dot = name.indexOf('.');
+        if (dot <= 0) return false;
+        String base = name.substring(0, dot) + ".";
+        try (var files = Files.list(path.getParent())) {
+            var siblings = files.filter(Files::isRegularFile)
+                    .filter(candidate -> candidate.getFileName().toString().startsWith(base))
+                    .sorted(Comparator.comparing(candidate -> candidate.getFileName().toString()))
+                    .toList();
+            if (siblings.size() < 2) return false;
+            int current = siblings.indexOf(path);
+            return setBufferPath(siblings.get((current + 1) % siblings.size()));
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public boolean showDirectoryBrowser(Path directory) {
@@ -817,7 +841,9 @@ public class Window implements Drawable {
     public boolean closeOtherViews() {
         ensureLayoutState();
         allowEditorDriveAction("close buffer splits");
-        var keepView = getEditableBufferView();
+        var keepView = getActiveView() instanceof BufferView activeBufferView
+                ? activeBufferView
+                : getEditableBufferView();
         if (keepView == null) {
             return false;
         }

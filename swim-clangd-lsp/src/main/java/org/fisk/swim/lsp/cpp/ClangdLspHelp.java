@@ -25,9 +25,6 @@ final class ClangdLspHelp {
                         section("Using shared LSP features in C and C++",
                                 "The shared Space-comma LSP commands are especially useful in C++ because declarations, definitions, overrides, and template instantiations often live far apart. For example, use Space-comma-D to inspect a declaration from a call site, Space-comma-d to jump to the definition, and Space-comma-u to see every reference before changing a public API.",
                                 "<SPACE> , D\n<SPACE> , d\n<SPACE> , u"),
-                        section("Switching between header and implementation",
-                                "Use g m in a C or C++ buffer to switch between related source and header files. This is useful when you are editing a declaration in a header and want the implementation, or when you are in a .cpp file and need to adjust the public signature. SWIM searches common sibling and project include/source layouts using .h, .hh, .hpp, .hxx, .c, .cc, .cpp, and .cxx names.",
-                                "gm"),
                         section("Choosing a debugger with clangd",
                                 "clangd is only the language server. To run or step through a compiled program, use the C/C++ debugger plugin with :debug cpp. A common workflow is to use clangd diagnostics and navigation while editing, build the executable, then launch :debug cpp with the path to that executable.",
                                 ":debug cpp launch build/my-program")));

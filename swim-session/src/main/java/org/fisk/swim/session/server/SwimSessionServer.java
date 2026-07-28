@@ -14,6 +14,7 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -419,10 +420,12 @@ final class SwimSessionServer {
         private final Path _workingDirectory;
         private final Path _socketPath;
         private final Object _lock = new Object();
+        private final Object _processInputLock = new Object();
         private final AtomicReference<ClientConnection> _client = new AtomicReference<>();
         private volatile Process _process;
         private volatile OutputStream _processInput;
         private volatile List<String> _launchArgs = List.of();
+        private volatile ClientRequest _launchRequest;
         private volatile SwimServerTerminalSize _terminalSize = new SwimServerTerminalSize(24, 80);
 
         private ManagedSession(String name, Path workingDirectory, Path socketPath) {
@@ -470,15 +473,7 @@ final class SwimSessionServer {
         }
 
         void writeInput(byte[] buffer, int offset, int length) {
-            OutputStream processInput = _processInput;
-            if (processInput == null) {
-                return;
-            }
-            try {
-                processInput.write(buffer, offset, length);
-                processInput.flush();
-            } catch (IOException e) {
-            }
+            writeProcessInput(buffer, offset, length, "keyboard input");
         }
 
         void resize(int rows, int columns) {
@@ -504,6 +499,7 @@ final class SwimSessionServer {
                 closeQuietly(_processInput);
                 _processInput = null;
                 _launchArgs = List.of();
+                _launchRequest = null;
             }
             if (client != null) {
                 client.close();
@@ -524,14 +520,18 @@ final class SwimSessionServer {
             if (_process != null && _process.isAlive()) {
                 return;
             }
-            _launchArgs = request.args();
-            List<String> command = appCommand(request);
+            ClientRequest launchRequest = request.args().isEmpty() && _launchRequest != null
+                    ? _launchRequest.withTerminalSize(request.rows(), request.columns())
+                    : request;
+            _launchRequest = launchRequest;
+            _launchArgs = launchRequest.args();
+            List<String> command = appCommand(launchRequest);
             ProcessBuilder builder = new ProcessBuilder(command)
-                    .directory(appWorkingDirectory(request).toFile())
+                    .directory(appWorkingDirectory(launchRequest).toFile())
                     .redirectErrorStream(true);
             Map<String, String> environment = builder.environment();
             environment.clear();
-            environment.putAll(appEnvironment(_socketPath, _name, request));
+            environment.putAll(appEnvironment(_socketPath, _name, launchRequest));
             Process process = builder.start();
             _process = process;
             _processInput = process.getOutputStream();
@@ -543,14 +543,52 @@ final class SwimSessionServer {
         }
 
         private void requestRedraw() {
-            OutputStream processInput = _processInput;
-            if (processInput == null) {
-                return;
+            writeProcessInput(new byte[] { CTRL_L }, 0, 1, "redraw request");
+        }
+
+        private void writeProcessInput(byte[] buffer, int offset, int length, String action) {
+            OutputStream processInput;
+            synchronized (_processInputLock) {
+                processInput = _processInput;
+                if (processInput == null) {
+                    return;
+                }
+                try {
+                    processInput.write(buffer, offset, length);
+                    processInput.flush();
+                    return;
+                } catch (IOException e) {
+                    failProcessInput(processInput, action, e);
+                }
             }
-            try {
-                processInput.write(CTRL_L);
-                processInput.flush();
-            } catch (IOException e) {
+        }
+
+        private void failProcessInput(OutputStream failedInput, String action, IOException error) {
+            Process process;
+            ClientConnection client;
+            synchronized (_lock) {
+                if (_processInput != failedInput) {
+                    return;
+                }
+                process = _process;
+                _process = null;
+                _processInput = null;
+                client = _client.getAndSet(null);
+            }
+            closeQuietly(failedInput);
+            String detail = error.getMessage();
+            System.err.println("SWIM session " + _name + " input failed during " + action
+                    + (detail == null || detail.isBlank() ? "" : ": " + detail));
+            if (client != null) {
+                String message = "\r\n[SWIM session input failed during " + action
+                        + (detail == null || detail.isBlank() ? "" : ": " + detail)
+                        + ". The session has stopped; reattach to restart it.]\r\n";
+                byte[] encodedMessage = message.getBytes(StandardCharsets.UTF_8);
+                client.writeOutput(encodedMessage, 0, encodedMessage.length);
+                client.close();
+            }
+            if (process != null) {
+                terminateProcessTree(process);
             }
         }
 
@@ -559,6 +597,9 @@ final class SwimSessionServer {
                 byte[] buffer = new byte[8192];
                 int read;
                 while ((read = processOutput.read(buffer)) != -1) {
+                    if (_process != process) {
+                        break;
+                    }
                     ClientConnection client = _client.get();
                     if (client == null) {
                         continue;
@@ -577,6 +618,7 @@ final class SwimSessionServer {
                         closeQuietly(_processInput);
                         _processInput = null;
                         _launchArgs = List.of();
+                        _launchRequest = null;
                         client = _client.getAndSet(null);
                         removeSession = true;
                     }

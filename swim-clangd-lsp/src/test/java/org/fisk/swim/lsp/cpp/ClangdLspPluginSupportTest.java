@@ -154,6 +154,19 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
+    void cyclesAcrossSameBaseCppFilesIncludingInlineHeaders() throws Exception {
+        Path directory = tempDir.resolve("inline-pair");
+        Files.createDirectories(directory);
+        Path source = Files.writeString(directory.resolve("widget.cpp"), "int widget() { return 0; }\n");
+        Path header = Files.writeString(directory.resolve("widget.hpp"), "#pragma once\n");
+        Path inlineHeader = Files.writeString(directory.resolve("widget.inline.hpp"), "#pragma once\n");
+
+        assertEquals(header, ClangdLspPluginSupport.findHeaderImplementationCounterpart(source));
+        assertEquals(inlineHeader, ClangdLspPluginSupport.findHeaderImplementationCounterpart(header));
+        assertEquals(source, ClangdLspPluginSupport.findHeaderImplementationCounterpart(inlineHeader));
+    }
+
+    @Test
     void findsCounterpartInProjectRootWithRelatedSourceAndIncludeDirectories() throws Exception {
         Path project = tempDir.resolve("project-pair");
         Files.createDirectories(project.resolve(".git"));
@@ -171,9 +184,9 @@ class ClangdLspPluginSupportTest {
         Path project = tempDir.resolve("normal-pair");
         Files.createDirectories(project.resolve(".git"));
         Files.createDirectories(project.resolve("src"));
-        Files.createDirectories(project.resolve("include"));
         Path source = Files.writeString(project.resolve("src").resolve("demo.cpp"), "int demo() { return 0; }\n");
-        Path header = Files.writeString(project.resolve("include").resolve("demo.hpp"), "#pragma once\n");
+        Path header = Files.writeString(project.resolve("src").resolve("demo.hpp"), "#pragma once\n");
+        Path inlineHeader = Files.writeString(project.resolve("src").resolve("demo.inline.hpp"), "#pragma once\n");
 
         ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         try (var harness = HeadlessWindowHarness.create(source, 60, 10)) {
@@ -184,6 +197,12 @@ class ClangdLspPluginSupportTest {
                     HeadlessWindowHarness.key('m'));
 
             assertEquals(header.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(),
+                    HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('m'));
+            assertEquals(inlineHeader.toAbsolutePath().normalize(),
                     window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
         }
     }

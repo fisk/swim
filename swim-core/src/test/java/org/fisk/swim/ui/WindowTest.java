@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -162,6 +163,21 @@ class WindowTest {
             assertFalse(window.closeActiveView());
             assertSame(originalView, window.getActiveView());
             assertEquals(WindowLayoutTestSupport.workspace(24, 11).toString(), absoluteBounds(originalView).toString());
+        }
+    }
+
+    @Test
+    void closeOtherViewsKeepsFocusedRightSplitAndRemovesSplitLayout() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("only-right.txt", "abc"), 40, 12)) {
+            var window = harness.getWindow();
+            var right = window.splitActiveBufferHorizontally();
+            assertNotNull(right);
+            assertSame(right, window.getActiveView());
+
+            assertTrue(window.closeOtherViews());
+
+            assertSame(right, window.getActiveView());
+            assertFalse(HeadlessWindowHarness.getField(window, "_workspaceView", View.class) instanceof SplitView);
         }
     }
 
