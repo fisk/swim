@@ -127,8 +127,14 @@ public class BufferView extends View {
         var terminalContext = TerminalContext.getInstance();
         var textGraphics = terminalContext.getGraphics();
         _log.debug("Draw buffer view");
-        var mode = Window.getInstance().getCurrentMode();
-        mode.draw(rect);
+        var window = Window.getInstance();
+        var mode = window.getCurrentMode();
+        // Modes own the active buffer context.  A split may be drawing a different
+        // buffer, where applying the active visual selection would paint its rows.
+        boolean modeApplies = _bufferContext == window.getBufferContext();
+        if (modeApplies) {
+            mode.draw(rect);
+        }
         var attrString = _bufferContext.getBuffer().getAttributedString();
         _log.debug("Attributed string length: " + attrString.length());
         var textLayout = _bufferContext.getTextLayout();
@@ -151,7 +157,9 @@ public class BufferView extends View {
                     character = AttributedString.create(glyph.getCharacter(), UiTheme.TEXT_MUTED, _backgroundColour);
                 }
                 character = applyDiagnosticBackground(glyph, character);
-                character = mode.decorate(glyph, character);
+                if (modeApplies) {
+                    character = mode.decorate(glyph, character);
+                }
                 var point = Point.create(textX + glyph.getX(), rect.getPoint().getY() + glyph.getY() - _startLine);
                 character.drawAt(point, textGraphics);
             }

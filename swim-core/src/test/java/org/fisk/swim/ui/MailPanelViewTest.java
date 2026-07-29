@@ -624,7 +624,7 @@ class MailPanelViewTest {
     }
 
     @Test
-    void replySeedsQuotedBodyInMessageBuffer() {
+    void replySeedsQuotedBodyInMessageBuffer() throws Exception {
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
             @Override
             public MailSnapshot snapshot() {
@@ -651,6 +651,13 @@ class MailPanelViewTest {
         });
         panel.attachMessageBuffer(new BufferContext(Rect.create(0, 0, 40, 20), tempDir.resolve("mail-reply-body.txt")));
 
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        MailMessageDetail selected = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
+        while ((selected == null || !"Please review\nSecond line".equals(selected.bodyText()))
+                && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+            selected = HeadlessWindowHarness.getField(panel, "_selectedMessage", MailMessageDetail.class);
+        }
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('r'));
 
         String body = HeadlessWindowHarness.getField(panel, "_messageBufferContext", BufferContext.class).getBuffer().getString();

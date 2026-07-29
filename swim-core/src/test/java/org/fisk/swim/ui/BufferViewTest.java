@@ -2,6 +2,7 @@ package org.fisk.swim.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Method;
@@ -40,6 +41,14 @@ class BufferViewTest {
     @AfterEach
     void tearDown() {
         DiagnosticService.getInstance().clearProvider(PROVIDER);
+    }
+
+    @Test
+    void diagnosticPopupWrapsLongAndMultilineMessages() {
+        assertEquals(List.of("Unknown argument:", "'-fno-lifetime-dse'"),
+                DiagnosticPopupView.wrapForDisplay("Unknown argument: '-fno-lifetime-dse'", 20));
+        assertEquals(List.of("first line", "second line"),
+                DiagnosticPopupView.wrapForDisplay("first line\nsecond line", 18));
     }
 
     @Test
@@ -264,6 +273,34 @@ class BufferViewTest {
 
             assertEquals(UiTheme.VISUAL_SELECTION_BACKGROUND, backgroundAt(terminal.drawCalls(), textX + 2, textY));
             assertEquals(UiTheme.VISUAL_SELECTION_BACKGROUND, backgroundAt(terminal.drawCalls(), textX, textY + 1));
+        }
+    }
+
+    @Test
+    void visualLineSelectionDoesNotRenderInAnotherSplitBuffer() throws Exception {
+        Path leftPath = tempDir.resolve("visual-left.txt");
+        Path rightPath = tempDir.resolve("visual-right.txt");
+        Files.writeString(leftPath, "left\nline\n");
+        Files.writeString(rightPath, "right\nline\n");
+
+        var terminal = TerminalContextTestSupport.install(80, 10);
+        try (var harness = HeadlessWindowHarness.create(leftPath, 80, 10)) {
+            var window = harness.getWindow();
+            var left = window.getBufferContext();
+            var right = new BufferContext(Rect.create(40, 2, 40, 8), rightPath);
+            left.getBufferView().setBounds(Rect.create(0, 2, 40, 8));
+            left.getBuffer().getCursor().setPosition(0);
+            window.switchToMode(window.getVisualLineMode());
+            left.getBuffer().getCursor().setPosition(left.getBuffer().getString().indexOf("line"));
+
+            left.getBufferView().draw(left.getBufferView().getBounds());
+            right.getBufferView().draw(right.getBufferView().getBounds());
+
+            int rightTextX = right.getBufferView().getBounds().getPoint().getX()
+                    + right.getBufferView().getTextColumnStart();
+            int rightTextY = right.getBufferView().getBounds().getPoint().getY();
+            assertNotEquals(UiTheme.VISUAL_SELECTION_BACKGROUND,
+                    backgroundAt(terminal.drawCalls(), rightTextX, rightTextY));
         }
     }
 

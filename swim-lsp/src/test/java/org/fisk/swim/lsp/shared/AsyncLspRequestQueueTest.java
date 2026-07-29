@@ -55,4 +55,21 @@ class AsyncLspRequestQueueTest {
 
         assertFalse(ran.get());
     }
+
+    @Test
+    void reportsRequestFailuresToRecoveryHandler() throws Exception {
+        var failureReported = new CountDownLatch(1);
+        var queue = new AsyncLspRequestQueue(
+                LoggerFactory.getLogger(AsyncLspRequestQueueTest.class),
+                "swim-lsp-test-requests",
+                () -> true,
+                ignored -> failureReported.countDown());
+
+        queue.execute("failed request", () -> {
+            throw new IllegalStateException("connection closed");
+        });
+
+        assertTrue(failureReported.await(5, TimeUnit.SECONDS));
+        queue.shutdown();
+    }
 }

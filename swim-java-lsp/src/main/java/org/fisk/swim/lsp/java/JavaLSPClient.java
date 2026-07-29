@@ -9,14 +9,18 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
@@ -149,7 +153,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     private final AsyncLspRequestQueue _lspRequestQueue = new AsyncLspRequestQueue(
             _log,
             "swim-java-lsp-requests",
-            () -> _enabled && _server != null);
+            () -> _enabled && _server != null,
+            this::recoverFromRequestFailure);
     private final LspDocumentChangeBatcher _documentChangeBatcher = new LspDocumentChangeBatcher(
             _lspRequestQueue,
             () -> _server == null ? null : _server.getTextDocumentService(),
@@ -172,6 +177,8 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             new AsyncCompletionCoordinator<>(_lspRequestQueue, this::runOnEventThread);
     private Thread _shutdownHook;
     private AutoCloseable _providerConnection;
+    private final Set<BufferContext> _openDocuments = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final AtomicBoolean _recoveryPending = new AtomicBoolean();
 
     private Path _projectPath;
     private Path _workspacePath;
@@ -382,6 +389,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             _startupError = null;
             _lock.notifyAll();
         }
+        restoreOpenDocuments();
     }
 
     private void signalStartupFailure(Throwable error) {
@@ -390,6 +398,75 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
             _startupComplete = true;
             _startupError = error;
             _lock.notifyAll();
+        }
+    }
+
+    private void recoverFromRequestFailure(Throwable error) {
+        if (!_enabled || !_recoveryPending.compareAndSet(false, true)) {
+            return;
+        }
+        var recoveryThread = new Thread(() -> {
+            try {
+                AutoCloseable connection;
+                Thread shutdownHook;
+                Path projectPath;
+                synchronized (this) {
+                    if (!_enabled || _projectPath == null) {
+                        return;
+                    }
+                    connection = _providerConnection;
+                    _providerConnection = null;
+                    shutdownHook = _shutdownHook;
+                    _shutdownHook = null;
+                    _server = null;
+                    _capabilities = null;
+                    _documentChangeBatcher.clear();
+                    clearSemanticTokensCache();
+                    synchronized (_lock) {
+                        _started = false;
+                        _startupComplete = false;
+                        _startupError = null;
+                        _launchAttempted = false;
+                    }
+                    projectPath = _projectPath;
+                }
+                if (shutdownHook != null) {
+                    try {
+                        Runtime.getRuntime().removeShutdownHook(shutdownHook);
+                    } catch (IllegalStateException ignored) {
+                    }
+                }
+                if (connection != null) {
+                    try {
+                        connection.close();
+                    } catch (Exception closeError) {
+                        _log.debug("Error closing failed Java LSP provider", closeError);
+                    }
+                }
+                _log.warn("Java LSP connection was lost; restarting it", error);
+                startServer(projectPath);
+            } finally {
+                _recoveryPending.set(false);
+            }
+        }, "swim-java-lsp-recovery");
+        recoveryThread.setDaemon(true);
+        recoveryThread.start();
+    }
+
+    private void restoreOpenDocuments() {
+        List<BufferContext> documents;
+        synchronized (_openDocuments) {
+            documents = List.copyOf(_openDocuments);
+        }
+        for (var document : documents) {
+            if (document == null || document.getBuffer() == null) {
+                continue;
+            }
+            var params = new DidOpenTextDocumentParams();
+            params.setTextDocument(document.getBuffer().getTextDocument());
+            enqueueLspRequest("restore didOpen", () -> _server.getTextDocumentService().didOpen(params));
+            scheduleSemanticHighlightRefresh(document);
+            _features.refreshDocumentContext(document);
         }
     }
 
@@ -758,6 +835,17 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                     getClientCapabilities(),
                     getInitializationOptions(),
                     configurationTimeoutSeconds());
+            // A plugin reload can call shutdown while provider.start is
+            // blocked. The session is not yet in _providerConnection then,
+            // so close this late result explicitly to avoid an orphan server.
+            if (!_enabled) {
+                try {
+                    session.closeable().close();
+                } catch (Exception closeError) {
+                    _log.debug("Error closing Java LSP started during shutdown", closeError);
+                }
+                return;
+            }
             _server = session.server();
             _capabilities = session.capabilities();
             _providerConnection = session.closeable();
@@ -2186,6 +2274,9 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     @Override
     public void didOpen(BufferContext bufferContext) {
+        synchronized (_openDocuments) {
+            _openDocuments.add(bufferContext);
+        }
         if (!_enabled || _server == null) {
             return;
         }
@@ -2200,6 +2291,9 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        synchronized (_openDocuments) {
+            _openDocuments.remove(bufferContext);
+        }
         cancelSnippet();
         _features.clearDocumentContext(bufferContext);
         if (!_enabled || _server == null) {
@@ -2335,6 +2429,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
                     _log);
         } catch (Exception e) {
             _log.debug("Semantic token request failed", e);
+            recoverFromRequestFailure(e);
             return List.of();
         }
     }

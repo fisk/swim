@@ -6,6 +6,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 
@@ -15,15 +16,25 @@ public final class AsyncLspRequestQueue implements AutoCloseable {
     private final Logger _log;
     private final String _threadName;
     private final BooleanSupplier _ready;
+    private final Consumer<Throwable> _failureHandler;
     private final Object _lock = new Object();
     private ScheduledExecutorService _executor;
     private Thread _thread;
     private boolean _closed;
 
     public AsyncLspRequestQueue(Logger log, String threadName, BooleanSupplier ready) {
+        this(log, threadName, ready, null);
+    }
+
+    public AsyncLspRequestQueue(
+            Logger log,
+            String threadName,
+            BooleanSupplier ready,
+            Consumer<Throwable> failureHandler) {
         _log = Objects.requireNonNull(log, "log");
         _threadName = threadName == null || threadName.isBlank() ? "swim-lsp-requests" : threadName;
         _ready = ready == null ? () -> true : ready;
+        _failureHandler = failureHandler == null ? ignored -> {} : failureHandler;
     }
 
     public void execute(String description, Runnable action) {
@@ -110,6 +121,7 @@ public final class AsyncLspRequestQueue implements AutoCloseable {
             action.run();
         } catch (Throwable e) {
             _log.debug("LSP request failed: " + description, e);
+            _failureHandler.accept(e);
         }
     }
 
