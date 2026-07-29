@@ -49,4 +49,30 @@ final class ClangdCompilationDatabase {
             return sourceRoot;
         }
     }
+
+    static boolean containsCommandFor(Path sourceRoot, Path file) {
+        if (sourceRoot == null || file == null) {
+            return false;
+        }
+        Path normalizedFile = file.toAbsolutePath().normalize();
+        try {
+            JsonArray entries = JsonParser.parseString(Files.readString(sourceRoot.resolve("compile_commands.json")))
+                    .getAsJsonArray();
+            for (var entry : entries) {
+                if (!entry.isJsonObject()) continue;
+                var command = entry.getAsJsonObject();
+                if (!command.has("file")) continue;
+                Path entryFile = Path.of(command.get("file").getAsString());
+                if (!entryFile.isAbsolute() && command.has("directory")) {
+                    entryFile = Path.of(command.get("directory").getAsString()).resolve(entryFile);
+                }
+                if (normalizedFile.equals(entryFile.toAbsolutePath().normalize())) {
+                    return true;
+                }
+            }
+        } catch (IOException | IllegalStateException | com.google.gson.JsonParseException e) {
+            return false;
+        }
+        return false;
+    }
 }

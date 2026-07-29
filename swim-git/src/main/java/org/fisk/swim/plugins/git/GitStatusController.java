@@ -11,6 +11,7 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanelLine;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.api.SwimMergeResolution;
 import org.fisk.swim.api.SwimTextSpan;
 
 final class GitStatusController {
@@ -108,7 +109,7 @@ final class GitStatusController {
     private Path _currentPath;
     private GitStatusSnapshot _snapshot = GitStatusSnapshot.noRepository();
     private Mode _mode = Mode.STATUS;
-    private final EnumSet<GitSection> _collapsed = EnumSet.noneOf(GitSection.class);
+    private final EnumSet<GitSection> _collapsed = EnumSet.of(GitSection.STASHES);
     private int _selection;
     private int _scroll;
     private GitFileChange _diffChange;
@@ -2289,8 +2290,9 @@ final class GitStatusController {
         }
         try {
             _resolverState = GitConflictResolverState.parse(change.absolutePath());
-            _mode = Mode.RESOLVER;
-            return SwimPanelResult.success();
+            return SwimPanelResult.openMergeResolution(new SwimMergeResolution(change.absolutePath(),
+                    _resolverState.oursDocument(), _resolverState.theirsDocument(), _resolverState.oursRanges(),
+                    _resolverState.theirsRanges()));
         } catch (IOException e) {
             return actionFailed();
         }

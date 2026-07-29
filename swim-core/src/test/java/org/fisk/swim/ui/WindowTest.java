@@ -1330,6 +1330,27 @@ class WindowTest {
     }
 
     @Test
+    void compilationOutputOnlyHidesWhileItIsFocused() throws Exception {
+        Path file = writeFile("compile-focus.txt", "abc");
+        try (var harness = HeadlessWindowHarness.create(file, 32, 11)) {
+            var window = harness.getWindow();
+            var fileView = window.getActiveBufferView();
+            invoke(window, "startCompilation", new Class<?>[] { Path.class, String.class }, tempDir, "printf done");
+
+            var compilationOutput = window.getPanelView();
+            assertNotNull(compilationOutput);
+            window.activateView(fileView);
+
+            assertFalse(window.hideCompilationOutput());
+            assertSame(compilationOutput, window.getPanelView());
+
+            window.activateView(compilationOutput);
+            assertTrue(window.hideCompilationOutput());
+            assertFalse(window.isShowingPanel());
+        }
+    }
+
+    @Test
     void searchActivationUpdatesTopMenuContext() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 24, 11)) {
             var window = harness.getWindow();

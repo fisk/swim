@@ -6,6 +6,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.fisk.swim.api.SwimTextRange;
+
 final class GitConflictResolverState {
     private sealed interface Segment permits TextSegment, ConflictSegment {
     }
@@ -181,6 +183,14 @@ final class GitConflictResolverState {
         return renderDocument(GitConflictBlock::theirs);
     }
 
+    List<SwimTextRange> oursRanges() {
+        return conflictRanges(GitConflictBlock::ours);
+    }
+
+    List<SwimTextRange> theirsRanges() {
+        return conflictRanges(GitConflictBlock::theirs);
+    }
+
     String proposedDocument() {
         return renderDocument(GitConflictBlock::result);
     }
@@ -204,4 +214,21 @@ final class GitConflictResolverState {
         }
         return text;
     }
+
+    private List<SwimTextRange> conflictRanges(java.util.function.Function<GitConflictBlock, List<String>> conflictContents) {
+        var ranges = new ArrayList<SwimTextRange>();
+        int position = 0;
+        for (Segment segment : _segments) {
+            List<String> lines = segment instanceof TextSegment textSegment ? textSegment.lines()
+                    : conflictContents.apply(((ConflictSegment) segment).block());
+            int length = String.join("\n", lines).length();
+            if (segment instanceof ConflictSegment && length > 0) {
+                ranges.add(new SwimTextRange(position, position + length));
+            }
+            position += length;
+            if (!lines.isEmpty()) position++;
+        }
+        return ranges;
+    }
+
 }

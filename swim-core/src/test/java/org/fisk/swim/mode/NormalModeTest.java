@@ -765,12 +765,12 @@ class NormalModeTest {
         try (var harness = HeadlessWindowHarness.create(current, 60, 16)) {
             var window = harness.getWindow();
 
-            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
                     HeadlessWindowHarness.key('f'));
             assertTrue(window.isShowingList());
             window.hidePanel();
 
-            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
                     HeadlessWindowHarness.key('/'));
             assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
         }

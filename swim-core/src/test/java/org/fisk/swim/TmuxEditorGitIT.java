@@ -225,7 +225,7 @@ class TmuxEditorGitIT {
 
     @Test
     @Timeout(60)
-    void installedLauncherBinaryCanOpenResolverModeAndApplyBothSides() throws Exception {
+    void installedLauncherBinaryOpensThreePaneMergeWorkspace() throws Exception {
         InstalledSwimDriver.assumePluginAvailable("swim-git-0.0.1-SNAPSHOT.jar");
 
         Path repo = initRepository("resolver-project");
@@ -263,23 +263,15 @@ class TmuxEditorGitIT {
             session.sendLiteral("j");
             session.sendLiteral("j");
             session.sendLiteral("m");
-            session.waitForText("Git Merge Resolver:", UI_TIMEOUT);
-            session.waitForText("OURS", UI_TIMEOUT);
-            session.sendLiteral("b");
-            session.sendLiteral("a");
-            session.waitForText("Applied resolver result", UI_TIMEOUT);
-            session.sendLiteral("q");
+            session.waitForText("OURS (read-only)", UI_TIMEOUT);
+            session.waitForText("THEIRS (read-only)", UI_TIMEOUT);
             session.waitForText("ours", UI_TIMEOUT);
             session.waitForText("theirs", UI_TIMEOUT);
             session.runCommand("q");
             session.waitForExit(Duration.ofSeconds(10));
         }
 
-        assertEquals("""
-                ours
-                theirs
-                
-                """, Files.readString(file));
+        assertTrue(Files.readString(file).contains("<<<<<<<"));
     }
 
     @Test

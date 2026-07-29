@@ -132,6 +132,14 @@ public class NormalMode extends Mode {
         _rootResponder.addEventResponder("g }", "Diagnostics", "next error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(true, true); }));
         _rootResponder.addEventResponder("g {", "Diagnostics", "previous error", allowed("diagnostic navigation", () -> { window.navigateDiagnostic(false, true); }));
         _rootResponder.addEventResponder("g x", "Diagnostics", "show diagnostics", allowed("diagnostic popup", () -> { window.showDiagnosticsForCurrentLine(true); }));
+        _rootResponder.addEventResponder("c ]", "Conflicts", "next conflict", allowed("conflict navigation",
+                () -> { announceIfUnmoved(window.navigateMergeConflict(true), "No next conflict"); }));
+        _rootResponder.addEventResponder("c [", "Conflicts", "previous conflict", allowed("conflict navigation",
+                () -> { announceIfUnmoved(window.navigateMergeConflict(false), "No previous conflict"); }));
+        _rootResponder.addEventResponder("c o", "Conflicts", "choose ours", allowed("resolve conflict",
+                () -> { announceIfUnmoved(window.resolveMergeConflict(false), "No conflict at cursor"); }));
+        _rootResponder.addEventResponder("c t", "Conflicts", "choose theirs", allowed("resolve conflict",
+                () -> { announceIfUnmoved(window.resolveMergeConflict(true), "No conflict at cursor"); }));
         _rootResponder.addEventResponder("g a", "Code", "suggested fixes", allowed("code actions", () -> { window.showCodeActionsForCurrentLine(); }));
         _rootResponder.addEventResponder(hinted(prefixCharacterResponder("@", (ignored, register) -> {
             if (window.blockEditorDriveAction("macro playback", "macros are outside the editor-control sandbox")) {
@@ -513,7 +521,7 @@ public class NormalMode extends Mode {
     }
 
     private void installLeaderWorkspaceBindings(Window window, String leader) {
-        _rootResponder.addEventResponder(leader + " f", "Workspace", "project files", () -> {
+        _rootResponder.addEventResponder("g f", "Workspace", "project files", () -> {
             allow("project file list");
             if (window.isShowingList()) {
                 window.hideList();
@@ -521,7 +529,7 @@ public class NormalMode extends Mode {
                 window.showList(FileIndex.createFileList(), "Project Files");
             }
         });
-        _rootResponder.addEventResponder(leader + " /", "Search", "project grep", "grep", () -> {
+        _rootResponder.addEventResponder("g /", "Search", "project grep", "grep", () -> {
             allow("project search panel");
             ProjectSearchUiSupport.toggle(window);
         });

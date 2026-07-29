@@ -15,6 +15,7 @@ import java.util.function.Consumer;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimPanel;
+import org.fisk.swim.api.SwimMergeResolution;
 import org.fisk.swim.config.EditorConfig;
 import org.fisk.swim.config.EditorConfigStore;
 import org.fisk.swim.config.EditorPaths;
@@ -57,6 +58,7 @@ import org.slf4j.Logger;
 
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
+import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.screen.Screen.RefreshType;
@@ -569,6 +571,103 @@ public class Window implements Drawable {
         return openPluginWorkspace(pluginId, panel);
     }
 
+    /** Opens a dedicated merge workspace: read-only ours/theirs above the editable worktree file. */
+    public boolean showMergeResolution(SwimMergeResolution resolution) {
+        if (resolution == null || resolution.path() == null) {
+            return false;
+        }
+        ensureLayoutState();
+        var workspace = new WorkspaceState();
+        workspace._kind = WorkspaceKind.BUFFER;
+        var ours = new BufferContext(Rect.create(0, 0, 0, 0), "OURS (read-only)\n\n" + resolution.ours(), true);
+        var theirs = new BufferContext(Rect.create(0, 0, 0, 0), "THEIRS (read-only)\n\n" + resolution.theirs(), true);
+        ours.getBuffer().setFormatOverlays(mergeFormatRanges(resolution.oursRanges(), "OURS (read-only)\n\n".length(),
+                UiTheme.DIFF_ADDED_BACKGROUND));
+        theirs.getBuffer().setFormatOverlays(mergeFormatRanges(resolution.theirsRanges(), "THEIRS (read-only)\n\n".length(),
+                UiTheme.DIFF_REMOVED_BACKGROUND));
+        var result = new BufferContext(Rect.create(0, 0, 0, 0), resolution.path());
+        var comparisons = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.HORIZONTAL,
+                ours.getBufferView(), theirs.getBufferView(), 0.5);
+        workspace._workspaceView = new SplitView(Rect.create(0, 0, 0, 0), SplitView.Orientation.VERTICAL,
+                comparisons, result.getBufferView(), 0.5);
+        workspace._activeView = result.getBufferView();
+        workspace._activeBufferView = result.getBufferView();
+        workspace._bufferContext = result;
+        workspace._bufferContextsByView = new IdentityHashMap<>();
+        workspace._bufferContextsByView.put(ours.getBufferView(), ours);
+        workspace._bufferContextsByView.put(theirs.getBufferView(), theirs);
+        workspace._bufferContextsByView.put(result.getBufferView(), result);
+        workspace._bufferViewCounts = new IdentityHashMap<>();
+        workspace._bufferViewCounts.put(ours, 1);
+        workspace._bufferViewCounts.put(theirs, 1);
+        workspace._bufferViewCounts.put(result, 1);
+        initializeBufferWorkspaceModes(workspace);
+        trackWorkspace(workspace, true);
+        return activateWorkspace(workspace);
+    }
+
+    private static List<AttributedString.FormatRange> mergeFormatRanges(List<org.fisk.swim.api.SwimTextRange> ranges,
+            int offset, TextColor background) {
+        if (ranges == null || ranges.isEmpty()) return List.of();
+        return ranges.stream().map(range -> new AttributedString.FormatRange(offset + range.start(), offset + range.end(),
+                UiTheme.TEXT_PRIMARY, background)).toList();
+    }
+
+    /** Moves through conflict markers and keeps merge comparison buffers aligned. */
+    public boolean navigateMergeConflict(boolean forward) {
+        if (_bufferContext == null) return false;
+        var buffer = _bufferContext.getBuffer();
+        String text = buffer.getString();
+        int cursor = buffer.getCursor().getPosition();
+        int target = forward ? text.indexOf("<<<<<<<", Math.min(text.length(), cursor + 1))
+                : text.lastIndexOf("<<<<<<<", Math.max(0, cursor - 1));
+        if (target < 0) return false;
+        buffer.getCursor().setPosition(target);
+        _bufferContext.getBufferView().alignCursorLine(BufferView.ViewportAnchor.MIDDLE);
+        int conflict = 1;
+        for (int index = text.indexOf("<<<<<<<"); index >= 0 && index < target; index = text.indexOf("<<<<<<<", index + 1)) {
+            conflict++;
+        }
+        for (var entry : _bufferContextsByView.entrySet()) {
+            BufferContext comparison = entry.getValue();
+            if (comparison == _bufferContext) continue;
+            var overlays = comparison.getBuffer().getFormatOverlays();
+            int markerPosition = conflict <= overlays.size() ? overlays.get(conflict - 1).start() : -1;
+            if (markerPosition >= 0) {
+                comparison.getBuffer().getCursor().setPosition(markerPosition);
+                comparison.getBufferView().alignCursorLine(BufferView.ViewportAnchor.MIDDLE);
+            }
+        }
+        return true;
+    }
+
+    /** Replaces the conflict under the cursor with its ours or theirs side. */
+    public boolean resolveMergeConflict(boolean theirs) {
+        if (_bufferContext == null || _bufferContext.getBuffer().isReadOnly()) return false;
+        var buffer = _bufferContext.getBuffer();
+        String text = buffer.getString();
+        int cursor = buffer.getCursor().getPosition();
+        int start = text.lastIndexOf("<<<<<<<", Math.min(cursor, text.length()));
+        if (start < 0) return false;
+        int contentStart = text.indexOf('\n', start);
+        int separator = text.indexOf("=======", start);
+        int endMarker = separator < 0 ? -1 : text.indexOf(">>>>>>>", separator);
+        if (contentStart < 0 || separator < 0 || endMarker < 0) return false;
+        int baseMarker = text.indexOf("|||||||", contentStart);
+        if (baseMarker >= separator) baseMarker = -1;
+        int oursEnd = baseMarker >= 0 ? baseMarker : separator;
+        int theirsStart = text.indexOf('\n', separator);
+        if (theirsStart < 0) return false;
+        theirsStart++;
+        int end = text.indexOf('\n', endMarker);
+        end = end < 0 ? text.length() : end + 1;
+        String replacement = theirs ? text.substring(theirsStart, endMarker) : text.substring(contentStart + 1, oursEnd);
+        buffer.remove(start, end);
+        buffer.insert(replacement);
+        buffer.getUndoLog().commit();
+        return true;
+    }
+
     public boolean showShellWorkspace() {
         if (blockEditorDriveAction("shell workspace", "opening shell input through drive_editor is not allowed")) {
             return false;
@@ -839,7 +938,8 @@ public class Window implements Drawable {
 
     /** Hides the modal compilation buffer without interrupting its process. */
     public boolean hideCompilationOutput() {
-        if (_compileOutputContext == null || _panelView != _compileOutputContext.getBufferView()) {
+        if (_compileOutputContext == null || _panelView != _compileOutputContext.getBufferView()
+                || _activeView != _compileOutputContext.getBufferView()) {
             return false;
         }
         hidePanel();

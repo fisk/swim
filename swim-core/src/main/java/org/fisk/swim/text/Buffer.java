@@ -53,6 +53,7 @@ public class Buffer {
     private boolean _readOnly;
     private volatile AttributedString _attributedStringCache;
     private volatile int _attributedStringCacheVersion = -1;
+    private List<AttributedString.FormatRange> _formatOverlays = List.of();
     private static Logger _log = LogFactory.createLog();
     private final List<Fold> _folds = new ArrayList<>();
 
@@ -2000,6 +2001,16 @@ public class Buffer {
         _attributedStringCache = null;
     }
 
+    /** Applies view-specific formatting after syntax colouring. */
+    public void setFormatOverlays(List<AttributedString.FormatRange> overlays) {
+        _formatOverlays = overlays == null ? List.of() : List.copyOf(overlays);
+        invalidateAttributedStringCache();
+    }
+
+    public List<AttributedString.FormatRange> getFormatOverlays() {
+        return _formatOverlays;
+    }
+
     public AttributedString getAttributedString() {
         var mode = languageMode();
         int version = _version;
@@ -2009,9 +2020,30 @@ public class Buffer {
         }
         var str = AttributedString.create(_string.toString(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_BACKGROUND);
         mode.applyColouring(_bufferContext, str);
+        str.format(_formatOverlays);
+        applyConflictMarkerColouring(str);
         _attributedStringCache = AttributedString.create(str);
         _attributedStringCacheVersion = version;
         return str;
+    }
+
+    private void applyConflictMarkerColouring(AttributedString str) {
+        String text = _string.toString();
+        var ranges = new ArrayList<AttributedString.FormatRange>();
+        int start = 0;
+        while ((start = text.indexOf("<<<<<<<", start)) >= 0) {
+            int ours = text.indexOf('\n', start);
+            int separator = ours < 0 ? -1 : text.indexOf("=======", ours);
+            int theirs = separator < 0 ? -1 : text.indexOf('\n', separator);
+            int end = theirs < 0 ? -1 : text.indexOf(">>>>>>>", theirs);
+            if (ours < 0 || separator < 0 || theirs < 0 || end < 0) break;
+            ranges.add(new AttributedString.FormatRange(ours + 1, separator, UiTheme.TEXT_PRIMARY,
+                    UiTheme.DIFF_ADDED_BACKGROUND));
+            ranges.add(new AttributedString.FormatRange(theirs + 1, end, UiTheme.TEXT_PRIMARY,
+                    UiTheme.DIFF_REMOVED_BACKGROUND));
+            start = end + 7;
+        }
+        str.format(ranges);
     }
 
     public TextDocumentItem getTextDocument() {

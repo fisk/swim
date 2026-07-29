@@ -230,8 +230,9 @@ class ClangdLspPluginSupportTest {
     void createWindowStartsClangdForCppFileWhenProjectHasCompilationDatabase() throws Exception {
         Path project = tempDir.resolve("demo");
         Files.createDirectories(project.resolve("build"));
-        Files.writeString(project.resolve("build").resolve("compile_commands.json"), "[]");
         Path file = Files.writeString(project.resolve("demo.cpp"), "int main() { return 0; }\n");
+        Files.writeString(project.resolve("build").resolve("compile_commands.json"),
+                "[{\"directory\":\"" + project + "\",\"file\":\"demo.cpp\",\"command\":\"clang++ -c demo.cpp\"}]");
 
         var client = new RecordingClangdLspClient();
         ClangdLspClient.installInstance(client);
@@ -241,6 +242,7 @@ class ClangdLspPluginSupportTest {
         invoke(createDefaultBindings(), "createWindow", new Class<?>[] { Path.class }, file);
 
         assertEquals(1, client.startCalls);
+        assertEquals(0, client.ensureInitCalls);
         assertEquals(file.toAbsolutePath().normalize(), client.startedPath);
     }
 
@@ -249,8 +251,9 @@ class ClangdLspPluginSupportTest {
         Path initialFile = Files.writeString(tempDir.resolve("notes.txt"), "plain\n");
         Path project = tempDir.resolve("engine");
         Files.createDirectories(project.resolve("build"));
-        Files.writeString(project.resolve("build").resolve("compile_commands.json"), "[]");
         Path discoveredFile = Files.writeString(project.resolve("engine.cpp"), "int engine() { return 0; }\n");
+        Files.writeString(project.resolve("build").resolve("compile_commands.json"),
+                "[{\"directory\":\"" + project + "\",\"file\":\"engine.cpp\",\"command\":\"clang++ -c engine.cpp\"}]");
 
         var client = new RecordingClangdLspClient();
         ClangdLspClient.installInstance(client);
@@ -263,6 +266,23 @@ class ClangdLspPluginSupportTest {
         assertTrue(Window.getInstance().setBufferPath(discoveredFile));
         assertEquals(1, client.startCalls);
         assertEquals(discoveredFile.toAbsolutePath().normalize(), client.startedPath);
+    }
+
+    @Test
+    void cppFileWithoutCompileCommandUsesPlainEditingMode() throws Exception {
+        Path project = tempDir.resolve("partial-database");
+        Files.createDirectories(project.resolve("build"));
+        Path missingFile = Files.writeString(project.resolve("not-built.cpp"), "int helper() { return 1; }\n");
+        Files.writeString(project.resolve("build").resolve("compile_commands.json"), "[]");
+
+        var client = new RecordingClangdLspClient();
+        ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        TerminalContextTestSupport.install(80, 24);
+
+        invoke(createDefaultBindings(), "createWindow", new Class<?>[] { Path.class }, missingFile);
+
+        assertEquals(0, client.startCalls);
     }
 
     private static Object createDefaultBindings() throws Exception {
@@ -280,6 +300,7 @@ class ClangdLspPluginSupportTest {
 
     private static final class RecordingClangdLspClient extends ClangdLspClient {
         private int startCalls;
+        private int ensureInitCalls;
         private int hoverCalls;
         private Path startedPath;
         private boolean started;
@@ -307,6 +328,7 @@ class ClangdLspPluginSupportTest {
 
         @Override
         public void ensureInit() {
+            ensureInitCalls++;
         }
 
         @Override

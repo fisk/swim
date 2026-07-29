@@ -2,7 +2,10 @@ package org.fisk.swim.api;
 
 import java.nio.file.Path;
 
-public record SwimPanelResult(boolean handled, Path openFile, String message) {
+public record SwimPanelResult(boolean handled, Path openFile, String message, SwimMergeResolution mergeResolution) {
+    public SwimPanelResult(boolean handled, Path openFile, String message) {
+        this(handled, openFile, message, null);
+    }
     public static SwimPanelResult ignored() {
         return new SwimPanelResult(false, null, null);
     }
@@ -17,5 +20,9 @@ public record SwimPanelResult(boolean handled, Path openFile, String message) {
 
     public static SwimPanelResult successMessage(String message) {
         return new SwimPanelResult(true, null, message);
+    }
+
+    public static SwimPanelResult openMergeResolution(SwimMergeResolution mergeResolution) {
+        return new SwimPanelResult(true, null, null, mergeResolution);
     }
 }

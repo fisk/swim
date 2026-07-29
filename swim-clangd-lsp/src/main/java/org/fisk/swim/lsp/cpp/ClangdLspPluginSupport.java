@@ -46,7 +46,8 @@ public final class ClangdLspPluginSupport {
     }
 
     public static void ensureStartedForProject(Path path) {
-        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+        Path compilationDatabase = ClangdProjectRoots.findCompilationDatabaseRoot(path);
+        if (!hasCompileCommand(compilationDatabase, path)) {
             return;
         }
         ensureLoaded(path);
@@ -54,11 +55,26 @@ public final class ClangdLspPluginSupport {
     }
 
     public static LanguageMode createLanguageMode(Path path) {
-        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+        Path compilationDatabase = ClangdProjectRoots.findCompilationDatabaseRoot(path);
+        if (compilationDatabase == null) {
+            // Keep C++-specific local editing behavior (such as indentation)
+            // even in projects that have no compilation database at all.
             return getClient();
         }
+        if (!hasCompileCommand(compilationDatabase, path)) {
+            // A C++ file outside compile_commands.json remains fully editable;
+            // returning null makes the core use its plain, non-LSP mode.
+            return null;
+        }
         ensureLoaded(path);
-        var client = startClientIfNeeded(path, getClient());
+        // Buffer construction also happens while restoring a saved workspace.
+        // Do not hold startup (and therefore the freshly reloaded UI) behind
+        // clangd's initialize request. didOpen records those buffers and the
+        // client replays them after initialization completes.
+        var client = getClient();
+        if (client.isEnabled() && !client.isReady()) {
+            client.startServer(path);
+        }
         return client;
     }
 
@@ -75,7 +91,7 @@ public final class ClangdLspPluginSupport {
             return false;
         }
         Path path = context.getBuffer().getPath();
-        if (ClangdProjectRoots.findCompilationDatabaseRoot(path) == null) {
+        if (!hasCompileCommand(ClangdProjectRoots.findCompilationDatabaseRoot(path), path)) {
             return false;
         }
         ClangdLspClient.shutdownInstalledInstance();
@@ -171,6 +187,10 @@ public final class ClangdLspPluginSupport {
             }
         }
         return client;
+    }
+
+    private static boolean hasCompileCommand(Path compilationDatabase, Path path) {
+        return ClangdCompilationDatabase.containsCommandFor(compilationDatabase, path);
     }
 
     private static void withLoadedClient(Window window, java.util.function.Consumer<ClangdLspClient> action) {

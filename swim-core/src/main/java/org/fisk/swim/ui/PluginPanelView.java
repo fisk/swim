@@ -118,6 +118,10 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
             } else {
                 Window.getInstance().getCommandView().setMessage("Failed to open file");
             }
+        } else if (result.mergeResolution() != null) {
+            if (!Window.getInstance().showMergeResolution(result.mergeResolution())) {
+                Window.getInstance().getCommandView().setMessage("Failed to open merge resolver");
+            }
         } else if (result.message() != null && !result.message().isBlank()) {
             Window.getInstance().getCommandView().setMessage(result.message());
         }
