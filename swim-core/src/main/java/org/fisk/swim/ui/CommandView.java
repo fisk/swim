@@ -61,7 +61,7 @@ public class CommandView extends View {
             new CommandSpec("q", List.of(), "", "close current window; exit on last tab"),
             new CommandSpec("e", List.of(), "<path>", "open or create a file"),
             new CommandSpec("debug", List.of("dbg"), "[providers|open|stop|continue|next|step|out|break|<provider> ...]",
-                    "open the debugger or run debugger commands"),
+                    "choose and run the project's debugger command, or run debugger commands"),
             new CommandSpec("git", List.of(), "[status]", "open the Git workspace"),
             new CommandSpec("split", List.of("sp"), "", "split the active pane below"),
             new CommandSpec("vsplit", List.of("vs"), "", "split the active pane to the right"),
@@ -128,6 +128,7 @@ public class CommandView extends View {
     private String _message = null;
     private String _prompt = null;
     private StringBuilder _command = null;
+    private int _commandCursorIndex;
     private int _commandSelection;
     private String _lastCommand = null;
     private boolean _editorDriveOwned;
@@ -164,10 +165,40 @@ public class CommandView extends View {
         });
         _responders.addEventResponder("<BACKSPACE>", () -> {
             allowEditorDrivePromptAction("edit prompt");
-            if (_command.length() > 0) {
-                _command.delete(_command.length() - 1, _command.length());
+            if (_commandCursorIndex > 0) {
+                _command.deleteCharAt(--_commandCursorIndex);
                 resetCommandSelection();
                 syncLiveGrepPreview();
+                refreshChrome();
+            }
+        });
+        _responders.addEventResponder("<LEFT>", () -> moveCommandCursor(-1));
+        _responders.addEventResponder("<RIGHT>", () -> moveCommandCursor(1));
+        _responders.addEventResponder(new EventResponder() {
+            private KeyType _keyType;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                if (events.remaining() != 0 || _command == null) return Response.NO;
+                _keyType = events.current().getKeyType();
+                return switch (_keyType) {
+                case Home, End, Delete -> Response.YES;
+                default -> Response.NO;
+                };
+            }
+
+            @Override
+            public void respond() {
+                allowEditorDrivePromptAction("edit prompt");
+                if (_keyType == KeyType.Home) {
+                    _commandCursorIndex = 0;
+                } else if (_keyType == KeyType.End) {
+                    _commandCursorIndex = _command.length();
+                } else if (_keyType == KeyType.Delete && _commandCursorIndex < _command.length()) {
+                    _command.deleteCharAt(_commandCursorIndex);
+                    resetCommandSelection();
+                    syncLiveGrepPreview();
+                }
                 refreshChrome();
             }
         });
@@ -230,7 +261,7 @@ public class CommandView extends View {
             @Override
             public void respond() {
                 allowEditorDrivePromptAction("edit prompt");
-                _command.append(_character);
+                _command.insert(_commandCursorIndex++, _character);
                 resetCommandSelection();
                 syncLiveGrepPreview();
                 refreshChrome();
@@ -633,6 +664,7 @@ public class CommandView extends View {
     private void applyCommandSpec(CommandSpec spec) {
         if (spec.replaceEntireInput()) {
             _command = new StringBuilder(spec.replacement());
+            _commandCursorIndex = _command.length();
             syncLiveGrepPreview();
             return;
         }
@@ -653,6 +685,7 @@ public class CommandView extends View {
             replacement += " ";
         }
         _command = new StringBuilder(before).append(replacement).append(after);
+        _commandCursorIndex = before.length() + replacement.length();
         syncLiveGrepPreview();
     }
 
@@ -985,6 +1018,13 @@ public class CommandView extends View {
         _commandSelection = 0;
     }
 
+    private void moveCommandCursor(int delta) {
+        allowEditorDrivePromptAction("edit prompt");
+        if (_command == null) return;
+        _commandCursorIndex = Math.max(0, Math.min(_command.length(), _commandCursorIndex + delta));
+        refreshChrome();
+    }
+
     private int normalizeSelection(int size) {
         if (size <= 0) {
             return 0;
@@ -1086,7 +1126,11 @@ public class CommandView extends View {
             _message = "Debugger unavailable";
             return;
         }
-        if (argument == null || argument.isBlank() || "open".equals(argument)) {
+        if (argument == null || argument.isBlank()) {
+            window.debugProject();
+            return;
+        }
+        if ("open".equals(argument)) {
             DebuggerUiSupport.open(window);
             return;
         }
@@ -1117,10 +1161,7 @@ public class CommandView extends View {
                 DebuggerManager.toggleBreakpointAtCursor();
                 break;
             default:
-                DebuggerManager.launchFromCommand(verb,
-                        window.getBufferContext() == null ? null : window.getBufferContext().getBuffer().getPath(),
-                        rest);
-                DebuggerUiSupport.open(window);
+                window.debugProject(argument);
                 break;
             }
         } catch (Exception e) {
@@ -1676,8 +1717,8 @@ public class CommandView extends View {
         Point origin = absoluteOrigin();
         int width = Math.max(1, getBounds().getSize().getWidth());
         String label = isSearch() ? " search " : " command ";
-        int commandLength = _command == null ? 0 : _command.length();
-        int x = Math.min(width - 1, label.length() + 1 + (_prompt == null ? 0 : _prompt.length()) + commandLength);
+        int cursorIndex = _command == null ? 0 : _commandCursorIndex;
+        int x = Math.min(width - 1, label.length() + 1 + (_prompt == null ? 0 : _prompt.length()) + cursorIndex);
         return Point.create(origin.getX() + Math.max(0, x), origin.getY());
     }
 
@@ -1749,6 +1790,7 @@ public class CommandView extends View {
         _message = null;
         _prompt = prompt;
         _command = new StringBuilder(initialText == null ? "" : initialText);
+        _commandCursorIndex = _command.length();
         clearLiveGrepPreview();
         resetCommandSelection();
         var window = Window.getInstance();
@@ -1779,6 +1821,7 @@ public class CommandView extends View {
             cancelLiveGrepPreview();
         }
         _command = null;
+        _commandCursorIndex = 0;
         _prompt = null;
         _editorDriveOwned = false;
         resetCommandSelection();

@@ -9,14 +9,16 @@ public final class SwimProjectConfig {
     private final Path _root;
     private final Path _compileCommandsPath;
     private final String _compileCommand;
+    private final String _debugCommand;
     private final List<String> _clangdRemoveCompileArguments;
     private final List<Path> _nemoWorkspaceWriteRoots;
 
-    private SwimProjectConfig(Path root, Path compileCommandsPath, String compileCommand, List<String> clangdRemoveCompileArguments,
+    private SwimProjectConfig(Path root, Path compileCommandsPath, String compileCommand, String debugCommand, List<String> clangdRemoveCompileArguments,
             List<Path> nemoWorkspaceWriteRoots) {
         _root = root;
         _compileCommandsPath = compileCommandsPath;
         _compileCommand = compileCommand;
+        _debugCommand = debugCommand;
         _clangdRemoveCompileArguments = List.copyOf(clangdRemoveCompileArguments);
         _nemoWorkspaceWriteRoots = List.copyOf(nemoWorkspaceWriteRoots);
     }
@@ -35,10 +37,10 @@ public final class SwimProjectConfig {
         }
         Path marker = directory.resolve(".swim");
         if (!Files.isRegularFile(marker)) {
-            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, null, List.of(), List.of());
+            return new SwimProjectConfig(directory.toAbsolutePath().normalize(), null, null, null, List.of(), List.of());
         }
         Path root = directory.toAbsolutePath().normalize();
-        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker), parseCompileCommand(marker),
+        return new SwimProjectConfig(root, parseCompileCommandsPath(root, marker), parseCompileCommand(marker), parseDebugCommand(marker),
                 parseClangdRemoveCompileArguments(marker), parseNemoWorkspaceWriteRoots(root, marker));
     }
 
@@ -53,7 +55,18 @@ public final class SwimProjectConfig {
     /** The project build command, when configured in a regular .swim file. */
     public String compileCommand() { return _compileCommand; }
 
+    /** The project debugger command, when configured in a regular .swim file. */
+    public String debugCommand() { return _debugCommand; }
+
     public static void saveCompileCommand(Path root, String command) throws IOException {
+        saveCommand(root, "compile.command", command);
+    }
+
+    public static void saveDebugCommand(Path root, String command) throws IOException {
+        saveCommand(root, "debug.command", command);
+    }
+
+    private static void saveCommand(Path root, String key, String command) throws IOException {
         if (root == null || command == null || command.isBlank()) {
             return;
         }
@@ -64,9 +77,9 @@ public final class SwimProjectConfig {
         var lines = new java.util.ArrayList<>(Files.readAllLines(marker));
         lines.removeIf(line -> {
             String[] pair = line.split("=", 2);
-            return pair.length == 2 && "compile.command".equals(pair[0].trim());
+            return pair.length == 2 && key.equals(pair[0].trim());
         });
-        lines.add("compile.command = " + command);
+        lines.add(key + " = " + command);
         Files.write(marker, lines);
     }
 
@@ -102,10 +115,18 @@ public final class SwimProjectConfig {
     }
 
     private static String parseCompileCommand(Path marker) {
+        return parseCommand(marker, "compile.command");
+    }
+
+    private static String parseDebugCommand(Path marker) {
+        return parseCommand(marker, "debug.command");
+    }
+
+    private static String parseCommand(Path marker, String key) {
         try {
             for (String line : Files.readAllLines(marker)) {
                 String[] pair = line.split("=", 2);
-                if (pair.length == 2 && "compile.command".equals(pair[0].trim()) && !pair[1].trim().isEmpty()) {
+                if (pair.length == 2 && key.equals(pair[0].trim()) && !pair[1].trim().isEmpty()) {
                     return pair[1].trim();
                 }
             }

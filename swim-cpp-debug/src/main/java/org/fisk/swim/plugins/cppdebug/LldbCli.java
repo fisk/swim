@@ -27,7 +27,7 @@ final class LldbCli implements AutoCloseable {
         _readerThread = Thread.ofVirtual().name("swim-lldb-reader").start(this::readLoop);
     }
 
-    static LldbCli launch(Path executable, List<String> args) throws Exception {
+    static LldbCli launch(Path executable, Path workingDirectory, List<String> args) throws Exception {
         var command = new ArrayList<String>();
         if (java.nio.file.Files.isExecutable(Path.of("/usr/bin/script"))) {
             command.add("/usr/bin/script");
@@ -41,9 +41,9 @@ final class LldbCli implements AutoCloseable {
             command.add("--");
             command.addAll(args);
         }
-        var process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
+        var builder = new ProcessBuilder(command).redirectErrorStream(true);
+        if (workingDirectory != null) builder.directory(workingDirectory.toFile());
+        var process = builder.start();
         var cli = new LldbCli(process);
         cli.awaitResponse(Duration.ofSeconds(5), INITIAL_PROMPT);
         cli.execute("settings set prompt " + PROMPT);

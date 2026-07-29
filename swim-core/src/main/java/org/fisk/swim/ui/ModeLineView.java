@@ -223,11 +223,13 @@ public class ModeLineView extends View {
         if (name != null && !name.isBlank()) {
             UiTheme.appendSegment(str, name, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
             UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ACCENT,
-                    context == null || context.isBlank() ? trailingBackground : UiTheme.SURFACE_ELEVATED);
+                    context == null || context.isBlank()
+                            ? diagnosticBackground(counts, trailingBackground)
+                            : UiTheme.SURFACE_ELEVATED);
         }
         if (context != null && !context.isBlank()) {
             UiTheme.appendSegment(str, context, UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ELEVATED);
-            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ELEVATED, trailingBackground);
+            UiTheme.appendRightSeparator(str, UiTheme.SURFACE_ELEVATED, diagnosticBackground(counts, trailingBackground));
         }
         appendDiagnosticCounts(str, counts, trailingBackground);
         if (line != null && !line.isBlank()) {
@@ -257,7 +259,7 @@ public class ModeLineView extends View {
             currentBackground = UiTheme.ACCENT_GREEN;
         }
         String branch = getBranch();
-        if (!branch.equals("")) {
+        if (branch != null && !branch.isEmpty()) {
             UiTheme.appendLeftSeparator(str, UiTheme.SURFACE_ACCENT, currentBackground);
             UiTheme.appendSegment(str, Powerline.SYMBOL_BRANCH + " " + branch, UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
             currentBackground = UiTheme.SURFACE_ACCENT;
@@ -337,12 +339,19 @@ public class ModeLineView extends View {
         }
         if (counts.errors() > 0) {
             UiTheme.appendSegment(str, "E " + counts.errors(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_RED);
-            UiTheme.appendRightSeparator(str, UiTheme.ACCENT_RED, counts.warnings() > 0 ? UiTheme.ACCENT_GOLD : trailingBackground);
+            UiTheme.appendRightSeparator(str, UiTheme.ACCENT_RED,
+                    counts.warnings() > 0 ? UiTheme.ACCENT_GOLD : trailingBackground);
         }
         if (counts.warnings() > 0) {
             UiTheme.appendSegment(str, "W " + counts.warnings(), UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
             UiTheme.appendRightSeparator(str, UiTheme.ACCENT_GOLD, trailingBackground);
         }
+    }
+
+    private static TextColor diagnosticBackground(DiagnosticCounts counts, TextColor fallback) {
+        if (counts != null && counts.errors() > 0) return UiTheme.ACCENT_RED;
+        if (counts != null && counts.warnings() > 0) return UiTheme.ACCENT_GOLD;
+        return fallback;
     }
 
     static String frameName(View view) {

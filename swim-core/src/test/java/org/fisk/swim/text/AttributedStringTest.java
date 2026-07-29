@@ -53,6 +53,15 @@ class AttributedStringTest {
     }
 
     @Test
+    void formatClipsStaleRangesToTheCurrentText() {
+        var string = AttributedString.create("short", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
+
+        string.format(2282, 2290, TextColor.ANSI.RED, TextColor.ANSI.BLACK);
+
+        assertEquals("short", string.toString());
+    }
+
+    @Test
     void insertSplitsExistingFragment() {
         var string = AttributedString.create("heo", TextColor.ANSI.DEFAULT, TextColor.ANSI.BLACK);
 

@@ -1,5 +1,6 @@
 package org.fisk.swim.lsp.shared;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.util.List;
@@ -37,6 +38,14 @@ class AsyncSemanticTokenHighlighterTest {
         } finally {
             queue.shutdown();
         }
+    }
+
+    @Test
+    void clampsStaleHighlightsToTheCurrentDocument() {
+        var highlights = AsyncSemanticTokenHighlighter.clampHighlights(
+                List.of(new AsyncSemanticTokenHighlighter.Highlight(7095, 7104, TextColor.ANSI.BLUE)), 313);
+
+        assertEquals(List.of(), highlights);
     }
 
     private record TestDocument(String uri, int version, String text) implements AsyncSemanticTokenHighlighter.Document {

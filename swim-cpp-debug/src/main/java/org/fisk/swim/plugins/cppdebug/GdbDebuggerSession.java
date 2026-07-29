@@ -33,8 +33,8 @@ final class GdbDebuggerSession implements DebuggerSession {
         _sourceRoot = sourceRoot;
     }
 
-    static GdbDebuggerSession launch(Path executable, Path sourceRoot, List<String> args) throws Exception {
-        return new GdbDebuggerSession(GdbMiCli.launch(executable, args), sourceRoot);
+    static GdbDebuggerSession launch(Path executable, Path sourceRoot, Path workingDirectory, List<String> args) throws Exception {
+        return new GdbDebuggerSession(GdbMiCli.launch(executable, workingDirectory, args), sourceRoot);
     }
 
     @Override

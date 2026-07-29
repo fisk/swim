@@ -189,6 +189,14 @@ public class AttributedString {
     }
     
     public void format(int start, int end, TextColor foregroundColour, TextColor backgroundColour) {
+        // Decorations can arrive after a buffer has been replaced during a
+        // reload.  Formatting is cosmetic, so stale ranges must be clipped to
+        // the current string instead of taking down the event thread.
+        start = Math.max(0, Math.min(start, _length));
+        end = Math.max(start, Math.min(end, _length));
+        if (start == end) {
+            return;
+        }
         var newAttr = new AttributeSet(foregroundColour, backgroundColour);
         var oldFragments = _fragments;
         int currentX = 0;

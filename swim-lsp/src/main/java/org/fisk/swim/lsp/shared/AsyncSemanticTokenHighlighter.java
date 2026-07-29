@@ -129,10 +129,10 @@ public final class AsyncSemanticTokenHighlighter {
         synchronized (this) {
             var cached = _semanticTokensCache.get(uri);
             if (cached != null && cached.version() == version) {
-                return cached.highlights();
+                return clampHighlights(cached.highlights(), document.text().length());
             }
             if (cached != null) {
-                staleHighlights = cached.highlights();
+                staleHighlights = clampHighlights(cached.highlights(), document.text().length());
             }
         }
         scheduleRefresh(document);
@@ -209,7 +209,8 @@ public final class AsyncSemanticTokenHighlighter {
                     highlights = mutation.apply(highlights);
                 }
                 int currentVersion = document.version();
-                _semanticTokensCache.put(snapshot.uri(), new CachedSemanticTokens(currentVersion, highlights));
+                _semanticTokensCache.put(snapshot.uri(), new CachedSemanticTokens(currentVersion,
+                        clampHighlights(highlights, document.text().length())));
                 reschedule = queuedRefresh._reschedule && currentVersion != snapshot.version();
                 _semanticRefreshes.remove(snapshot.uri());
             }
@@ -389,6 +390,27 @@ public final class AsyncSemanticTokenHighlighter {
             merged.add(highlight);
         }
         return List.copyOf(merged);
+    }
+
+    /**
+     * Semantic replies can outlive their source buffer during a reload.  Keep
+     * stale ranges from escaping the current document before they reach the
+     * attributed-string formatter.
+     */
+    public static List<Highlight> clampHighlights(List<Highlight> highlights, int textLength) {
+        if (highlights == null || highlights.isEmpty() || textLength <= 0) {
+            return List.of();
+        }
+        var clamped = new ArrayList<Highlight>(highlights.size());
+        for (var highlight : highlights) {
+            if (highlight == null) continue;
+            int start = Math.max(0, Math.min(highlight.start(), textLength));
+            int end = Math.max(start, Math.min(highlight.end(), textLength));
+            if (end > start) {
+                clamped.add(new Highlight(start, end, highlight.foregroundColor()));
+            }
+        }
+        return merge(clamped);
     }
 
     private static TextColor adjacentSemanticColour(List<Highlight> highlights, int position) {

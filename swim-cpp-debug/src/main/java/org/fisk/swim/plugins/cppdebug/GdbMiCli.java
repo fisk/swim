@@ -26,15 +26,15 @@ final class GdbMiCli implements AutoCloseable {
         _readerThread = Thread.ofVirtual().name("swim-gdb-reader").start(this::readLoop);
     }
 
-    static GdbMiCli launch(Path executable, List<String> args) throws Exception {
+    static GdbMiCli launch(Path executable, Path workingDirectory, List<String> args) throws Exception {
         var command = new ArrayList<String>();
         command.add("gdb");
         command.add("--quiet");
         command.add("--interpreter=mi2");
         command.add(executable.toString());
-        var process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
+        var builder = new ProcessBuilder(command).redirectErrorStream(true);
+        if (workingDirectory != null) builder.directory(workingDirectory.toFile());
+        var process = builder.start();
         var cli = new GdbMiCli(process);
         cli.awaitResponse(Duration.ofSeconds(5));
         if (!args.isEmpty()) {

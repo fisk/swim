@@ -320,7 +320,10 @@ final class GitStatusService {
     }
 
     static void continueRebase(Path repositoryRoot) throws IOException {
-        gitOutput(repositoryRoot, "rebase", "--continue");
+        // A rebase normally opens $GIT_EDITOR to confirm its existing commit
+        // message.  The Git panel has no terminal connected to that editor,
+        // which otherwise leaves the action appearing to do nothing.
+        gitOutput(repositoryRoot, env("GIT_EDITOR", "true"), "rebase", "--continue");
     }
 
     static void abortRebase(Path repositoryRoot) throws IOException {

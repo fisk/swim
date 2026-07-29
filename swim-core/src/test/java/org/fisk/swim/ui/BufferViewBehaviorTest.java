@@ -49,6 +49,17 @@ class BufferViewBehaviorTest {
         assertEquals(0, view.getStartLine());
     }
 
+    @Test
+    void restoringCursorBeforeLayoutDoesNotScrollAZeroHeightViewport() throws IOException {
+        Path path = tempDir.resolve("restore-cursor.txt");
+        Files.writeString(path, "one\ntwo\nthree\nfour");
+        var context = new BufferContext(Rect.create(0, 0, 0, 0), path);
+
+        context.getBuffer().getCursor().restorePosition(context.getBuffer().getLength());
+
+        assertEquals(0, context.getBufferView().getStartLine());
+    }
+
     private BufferContext createContext(String text, int width, int height) throws IOException {
         Path path = tempDir.resolve("buffer-view-" + text.hashCode() + ".txt");
         Files.writeString(path, text);

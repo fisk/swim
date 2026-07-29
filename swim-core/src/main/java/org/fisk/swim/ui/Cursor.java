@@ -260,6 +260,17 @@ public class Cursor {
         _bufferContext.getBufferView().adaptViewToCursor();
     }
 
+    /**
+     * Restores a persisted position before the buffer view has a real
+     * viewport.  Calling {@link #setPosition(int)} at that point treats a
+     * zero-height view as off-screen and scrolls it past the cursor.
+     */
+    public void restorePosition(int position) {
+        _position = position;
+        calculate();
+        _lastX = _x;
+    }
+
     public Line getPhysicalLine() {
         var textLayout = _bufferContext.getTextLayout();
         return textLayout.getPhysicalLineAt(_position);

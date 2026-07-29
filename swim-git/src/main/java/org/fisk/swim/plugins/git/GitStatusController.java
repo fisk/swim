@@ -2220,6 +2220,10 @@ final class GitStatusController {
 
     private SwimPanelResult continueCurrentOperation() {
         try {
+            // Conflict resolution can happen through a different view or an
+            // external command. Refresh before deciding whether C applies so
+            // a stale status snapshot cannot turn the key into a no-op.
+            refresh();
             if (_snapshot.operationState().rebaseInProgress()) {
                 GitStatusService.continueRebase(_snapshot.repositoryRoot());
                 refresh();
@@ -2230,7 +2234,7 @@ final class GitStatusController {
                 refresh();
                 return SwimPanelResult.successMessage("Continued cherry-pick");
             }
-            return SwimPanelResult.ignored();
+            return SwimPanelResult.successMessage("No rebase or cherry-pick is active");
         } catch (IOException e) {
             refresh();
             return SwimPanelResult.successMessage(e.getMessage());

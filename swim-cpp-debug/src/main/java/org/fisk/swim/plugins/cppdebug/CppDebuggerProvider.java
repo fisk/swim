@@ -21,7 +21,7 @@ final class CppDebuggerProvider implements DebuggerProvider {
 
     @Override
     public String usage() {
-        return ":debug cpp [launch|gdb|lldb] <executable> [source-root] [program-args...]";
+        return ":debug cpp [launch|gdb|lldb] <executable> [source-root] [--cwd <directory>] [program-args...]";
     }
 
     @Override
@@ -39,14 +39,26 @@ final class CppDebuggerProvider implements DebuggerProvider {
         if (args.isEmpty()) {
             throw new IllegalArgumentException(usage());
         }
-        Path executable = Path.of(args.removeFirst()).toAbsolutePath().normalize();
-        Path sourceRoot = args.isEmpty()
-                ? (request.currentPath() == null || request.currentPath().getParent() == null ? executable.getParent()
-                        : request.currentPath().getParent())
-                : Path.of(args.removeFirst()).toAbsolutePath().normalize();
+        Path executable = pathFromCommand(args.removeFirst());
+        Path sourceRoot = request.currentPath() == null || request.currentPath().getParent() == null
+                ? executable.getParent() : request.currentPath().getParent();
+        if (!args.isEmpty() && !"--cwd".equals(args.getFirst())) {
+            sourceRoot = pathFromCommand(args.removeFirst());
+        }
+        Path workingDirectory = null;
+        if (!args.isEmpty() && "--cwd".equals(args.getFirst())) {
+            args.removeFirst();
+            if (args.isEmpty()) {
+                throw new IllegalArgumentException("Missing directory after --cwd");
+            }
+            workingDirectory = pathFromCommand(args.removeFirst());
+            if (!Files.isDirectory(workingDirectory)) {
+                throw new IllegalArgumentException("Debug working directory does not exist: " + workingDirectory);
+            }
+        }
         return switch (resolveBackend(backend)) {
-        case "gdb" -> GdbDebuggerSession.launch(executable, sourceRoot, args);
-        case "lldb" -> CppDebuggerSession.launch(executable, sourceRoot, args);
+        case "gdb" -> GdbDebuggerSession.launch(executable, sourceRoot, workingDirectory, args);
+        case "lldb" -> CppDebuggerSession.launch(executable, sourceRoot, workingDirectory, args);
         default -> throw new IllegalStateException("No C/C++ debugger backend available");
         };
     }
@@ -62,6 +74,16 @@ final class CppDebuggerProvider implements DebuggerProvider {
             return "lldb";
         }
         return "";
+    }
+
+    private static Path pathFromCommand(String value) {
+        if ("~".equals(value)) {
+            return Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        }
+        if (value.startsWith("~/")) {
+            return Path.of(System.getProperty("user.home"), value.substring(2)).toAbsolutePath().normalize();
+        }
+        return Path.of(value).toAbsolutePath().normalize();
     }
 
     private static boolean gdbAvailable() {

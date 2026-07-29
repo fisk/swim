@@ -33,8 +33,8 @@ final class CppDebuggerSession implements DebuggerSession {
         _sourceRoot = sourceRoot;
     }
 
-    static CppDebuggerSession launch(Path executable, Path sourceRoot, List<String> args) throws Exception {
-        return new CppDebuggerSession(LldbCli.launch(executable, args), sourceRoot);
+    static CppDebuggerSession launch(Path executable, Path sourceRoot, Path workingDirectory, List<String> args) throws Exception {
+        return new CppDebuggerSession(LldbCli.launch(executable, workingDirectory, args), sourceRoot);
     }
 
     @Override

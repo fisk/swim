@@ -23,6 +23,8 @@ import org.fisk.swim.config.EditorSession;
 import org.fisk.swim.config.NormalModeRemap;
 import org.fisk.swim.config.SessionLayoutNode;
 import org.fisk.swim.config.SessionWorkspace;
+import org.fisk.swim.debug.DebuggerManager;
+import org.fisk.swim.debug.DebuggerUiSupport;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
@@ -932,6 +934,41 @@ public class Window implements Drawable {
         }
     }
 
+    /** Prompts for and runs the project's saved debugger command. */
+    public void debugProject() {
+        if (blockEditorDriveAction("launch debugger", "running debugger commands requires host action")) return;
+        Path root = debugProjectRoot();
+        if (root == null) {
+            _commandView.setMessage("No project root for the current buffer");
+            return;
+        }
+        if (DebuggerManager.hasSession()) {
+            showBottomInputPrompt("Debugger active", "restart [r] / continue [c]", "c", choice -> {
+                String normalized = choice.trim().toLowerCase(java.util.Locale.ROOT);
+                if (normalized.equals("r") || normalized.equals("restart")) {
+                    showDebugCommandPrompt(root);
+                } else if (normalized.equals("c") || normalized.equals("continue")) {
+                    DebuggerUiSupport.open(this);
+                } else {
+                    _commandView.setMessage("Debugger continues (enter r to restart or c to show it)");
+                }
+            });
+            return;
+        }
+        showDebugCommandPrompt(root);
+    }
+
+    /** Launches an explicitly supplied debugger command and saves it for this project. */
+    public void debugProject(String command) {
+        if (blockEditorDriveAction("launch debugger", "running debugger commands requires host action")) return;
+        Path root = debugProjectRoot();
+        if (root == null) {
+            _commandView.setMessage("No project root for the current buffer");
+            return;
+        }
+        startDebugger(root, command);
+    }
+
     public void showCompilationLog() {
         if (!showCompilationPanel() && _commandView != null) _commandView.setMessage("No compilation log is available");
     }
@@ -973,9 +1010,45 @@ public class Window implements Drawable {
         return ProjectPaths.getProjectRootPath(context.getBuffer().getPath());
     }
 
+    private Path debugProjectRoot() {
+        Path projectRoot = compileProjectRoot();
+        if (projectRoot != null) return projectRoot;
+        var context = getBufferContext();
+        Path currentPath = context == null ? null : context.getBuffer().getPath();
+        return currentPath == null ? null : currentPath.toAbsolutePath().getParent();
+    }
+
     private String configuredCompileCommand(Path root) {
         var config = org.fisk.swim.fileindex.SwimProjectConfig.load(root);
         return config == null || config.compileCommand() == null ? "make" : config.compileCommand();
+    }
+
+    private String configuredDebugCommand(Path root) {
+        var config = org.fisk.swim.fileindex.SwimProjectConfig.load(root);
+        return config == null || config.debugCommand() == null ? "cpp gdb " : config.debugCommand();
+    }
+
+    private void showDebugCommandPrompt(Path root) {
+        showBottomInputPrompt("Debug", "command", configuredDebugCommand(root), command -> startDebugger(root, command));
+    }
+
+    private void startDebugger(Path root, String command) {
+        if (command == null || command.isBlank()) {
+            _commandView.setMessage("Debugger command is empty");
+            return;
+        }
+        int separator = command.indexOf(' ');
+        String provider = separator < 0 ? command.trim() : command.substring(0, separator).trim();
+        String arguments = separator < 0 ? "" : command.substring(separator + 1).trim();
+        try {
+            DebuggerManager.launchFromCommand(provider,
+                    getBufferContext() == null ? null : getBufferContext().getBuffer().getPath(), arguments);
+            org.fisk.swim.fileindex.SwimProjectConfig.saveDebugCommand(root, command);
+            DebuggerUiSupport.open(this);
+        } catch (Exception e) {
+            _commandView.setMessage(e.getMessage() == null || e.getMessage().isBlank()
+                    ? "Debugger command failed" : e.getMessage());
+        }
     }
 
     private void startCompilation(Path root, String command) {
@@ -3077,7 +3150,7 @@ public class Window implements Drawable {
         }
         if (node.path() != null) {
             BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), Path.of(node.path()));
-            context.getBuffer().getCursor().setPosition(Math.max(0,
+            context.getBuffer().getCursor().restorePosition(Math.max(0,
                     Math.min(node.cursorPosition(), context.getBuffer().getLength())));
             var contexts = new IdentityHashMap<BufferView, BufferContext>();
             contexts.put(context.getBufferView(), context);

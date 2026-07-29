@@ -31,4 +31,16 @@ class SwimProjectConfigTest {
 
         assertNull(SwimProjectConfig.load(tempDir));
     }
+
+    @Test
+    void savesDebugCommandWithoutDiscardingProjectSettings() throws Exception {
+        Path marker = tempDir.resolve(".swim");
+        Files.writeString(marker, "compile_commands = build/compile_commands.json\n");
+
+        SwimProjectConfig.saveDebugCommand(tempDir, "cpp gdb build/bin/app --cwd ~/benchmarks");
+
+        assertEquals("cpp gdb build/bin/app --cwd ~/benchmarks", SwimProjectConfig.load(tempDir).debugCommand());
+        assertEquals("compile_commands = build/compile_commands.json\n"
+                + "debug.command = cpp gdb build/bin/app --cwd ~/benchmarks\n", Files.readString(marker));
+    }
 }

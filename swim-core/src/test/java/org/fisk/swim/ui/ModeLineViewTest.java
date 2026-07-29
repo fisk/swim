@@ -284,6 +284,8 @@ class ModeLineViewTest {
             assertTrue(left.toString().contains("W 1"));
             assertTrue(right.toString().contains("E 1"));
             assertTrue(right.toString().contains("W 1"));
+            int warningIndex = indexOfFragment(left, "W 1");
+            assertEquals(UiTheme.ACCENT_GOLD, background(left, warningIndex - 1));
         } finally {
             DiagnosticService.getInstance().clearProvider(DIAGNOSTIC_PROVIDER);
         }
@@ -313,6 +315,13 @@ class ModeLineViewTest {
 
     private static String fragmentText(AttributedString line, int fragmentIndex) {
         return line.getFragments().get(fragmentIndex).toString();
+    }
+
+    private static int indexOfFragment(AttributedString line, String text) {
+        for (int index = 0; index < line.getFragments().size(); index++) {
+            if (fragmentText(line, index).contains(text)) return index;
+        }
+        throw new AssertionError("Missing fragment: " + text);
     }
 
     private static TextColor foreground(AttributedString line, int fragmentIndex) throws Exception {
