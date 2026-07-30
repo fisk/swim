@@ -483,6 +483,20 @@ class BufferTest {
     }
 
     @Test
+    void tracksAndResolvesAnExternalChangeWithoutDiscardingLocalEdits() throws IOException {
+        var buffer = createBuffer("local", 80);
+        buffer.getCursor().setPosition(buffer.getLength());
+        buffer.insert(" edit");
+
+        buffer.noteExternalChange("disk version");
+
+        assertTrue(buffer.hasPendingExternalChange());
+        assertEquals("local edit", buffer.getString());
+        assertEquals("disk version", buffer.consumePendingExternalChange());
+        assertFalse(buffer.hasPendingExternalChange());
+    }
+
+    @Test
     void undoRecalculatesLayoutBetweenBatchedChangesBeforeNotifyingLanguageMode() throws Exception {
         var mode = new LayoutRecordingLanguageMode();
         try (var ignored = LanguagePluginRegistry.register("undoevents", "buffer-undo-events", path -> mode)) {

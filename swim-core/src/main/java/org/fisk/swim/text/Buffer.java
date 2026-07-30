@@ -50,6 +50,7 @@ public class Buffer {
     private UndoLog _undoLog;
     private int _version = 1;
     private int _savedVersion = 1;
+    private String _pendingExternalContents;
     private boolean _readOnly;
     private volatile AttributedString _attributedStringCache;
     private volatile int _attributedStringCacheVersion = -1;
@@ -191,6 +192,24 @@ public class Buffer {
         _savedVersion = _version;
     }
 
+    public boolean hasPendingExternalChange() {
+        return _pendingExternalContents != null;
+    }
+
+    public void noteExternalChange(String content) {
+        _pendingExternalContents = content == null ? "" : content;
+    }
+
+    public String consumePendingExternalChange() {
+        String content = _pendingExternalContents;
+        _pendingExternalContents = null;
+        return content;
+    }
+
+    public void discardPendingExternalChange() {
+        _pendingExternalContents = null;
+    }
+
     /**
      * Replaces this buffer after an external tool changed its backing file.
      * This is deliberately not expressed as a remove/insert edit: language
@@ -207,6 +226,7 @@ public class Buffer {
         _folds.clear();
         _version++;
         _savedVersion = _version;
+        _pendingExternalContents = null;
         _undoLog.clear();
         invalidateAttributedStringCache();
         _bufferContext.getTextLayout().calculate();

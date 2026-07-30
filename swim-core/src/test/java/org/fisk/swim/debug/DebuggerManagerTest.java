@@ -13,7 +13,30 @@ class DebuggerManagerTest {
     @AfterEach
     void tearDown() throws Exception {
         DebuggerProviderRegistry.unregisterPlugin("test-debugger");
+        DebuggerCommandExtensionRegistry.unregisterPlugin("test-debugger");
         DebuggerManager.closeCurrentSession();
+    }
+
+    @Test
+    void routesRegisteredDebuggerCommandsBeforeTheBackend() throws Exception {
+        var session = new RecordingSession();
+        DebuggerProviderRegistry.register("fake", "test-debugger", new DebuggerProvider() {
+            @Override public String id() { return "fake"; }
+            @Override public String displayName() { return "Fake"; }
+            @Override public String usage() { return "fake launch"; }
+            @Override public DebuggerSession launch(DebugLaunchRequest request) { return session; }
+        });
+        DebuggerCommandExtensionRegistry.register("test-debugger", new DebuggerCommandExtension() {
+            @Override public String id() { return "special"; }
+            @Override public String description() { return "special"; }
+            @Override public boolean handles(String command) { return command.equals("special"); }
+            @Override public String execute(String command, DebuggerCommandContext context) throws Exception {
+                return "extension " + context.executeBackendCommand("backend-query");
+            }
+        });
+
+        DebuggerManager.launch("fake", Path.of("/tmp/Main.java"), List.of());
+        assertEquals("extension backend-query", DebuggerManager.executeCommand("special"));
     }
 
     @Test
@@ -116,6 +139,11 @@ class DebuggerManagerTest {
         @Override
         public void toggleBreakpoint(DebugSourceLocation location) {
             assertEquals(3, location.line());
+        }
+
+        @Override
+        public String executeCommand(String command) {
+            return command;
         }
 
         @Override

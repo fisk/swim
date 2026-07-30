@@ -60,6 +60,20 @@ class BufferViewBehaviorTest {
         assertEquals(0, context.getBufferView().getStartLine());
     }
 
+    @Test
+    void restoringCursorBeforeLayoutRecalculatesItsVisualRowAtRealWidth() throws IOException {
+        Path path = tempDir.resolve("restore-wrap-width.txt");
+        Files.writeString(path, "abcdefghijklmnopqrstuvwxyz\nsecond line");
+        var context = new BufferContext(Rect.create(0, 0, 0, 0), path);
+
+        context.getBuffer().getCursor().restorePosition(27);
+        assertEquals(26, context.getBuffer().getCursor().getYAbsolute());
+
+        context.getBufferView().setBounds(Rect.create(0, 0, 80, 8));
+
+        assertEquals(1, context.getBuffer().getCursor().getYAbsolute());
+    }
+
     private BufferContext createContext(String text, int width, int height) throws IOException {
         Path path = tempDir.resolve("buffer-view-" + text.hashCode() + ".txt");
         Files.writeString(path, text);

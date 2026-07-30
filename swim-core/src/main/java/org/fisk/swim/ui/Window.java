@@ -194,6 +194,8 @@ public class Window implements Drawable {
     private boolean _replayingRemap;
     private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
     private SearchLocationList _locationList = SearchLocationList.empty("Location");
+    private final OpenBufferFileWatcher _openBufferFileWatcher;
+    private final IdentityHashMap<BufferContext, Boolean> _externalChangePrompts = new IdentityHashMap<>();
 
     public static Window getInstance() {
         return _instance;
@@ -212,6 +214,12 @@ public class Window implements Drawable {
     }
 
     public Window(List<Path> paths) {
+        try {
+            _openBufferFileWatcher = new OpenBufferFileWatcher((path, content) -> EventThread.getInstance()
+                    .enqueue(new RunnableEvent(() -> handleWatchedFileChange(path, content))));
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to watch open buffers", e);
+        }
         boolean restoreOnReload = Boolean.getBoolean("swim.session.restore_on_reload");
         List<Path> launchPaths = paths == null ? List.of() : List.copyOf(paths);
         Path path = launchPaths.isEmpty() ? null : launchPaths.getFirst();
@@ -1329,6 +1337,9 @@ public class Window implements Drawable {
             moveWorkspaceToFront(_currentWorkspace);
         }
         refreshChromeState();
+        if (view instanceof BufferView && _bufferContext != null) {
+            promptForPendingExternalChange(_bufferContext);
+        }
     }
 
     public CommandView getCommandView() {
@@ -2536,6 +2547,28 @@ public class Window implements Drawable {
         return refreshed;
     }
 
+    private void handleWatchedFileChange(Path path, String content) {
+        if (path == null) return;
+        Path normalized = path.toAbsolutePath().normalize();
+        boolean changed = false;
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (!bufferPathEquals(context, normalized)) continue;
+            var buffer = context.getBuffer();
+            String external = content == null ? "" : content;
+            if (external.equals(buffer.getString())) {
+                buffer.discardPendingExternalChange();
+                continue;
+            }
+            if (buffer.isModified()) {
+                buffer.noteExternalChange(external);
+            } else {
+                replaceBufferContents(context, external);
+            }
+            changed = true;
+        }
+        if (changed && _rootView != null) _rootView.setNeedsRedraw();
+    }
+
     public void showBufferList() {
         var items = new ArrayList<ListView.ListItem>();
         for (OpenBufferEntry entry : openBuffers()) {
@@ -3026,7 +3059,8 @@ public class Window implements Drawable {
             String activePath = workspace._bufferContext == null || workspace._bufferContext.getBuffer().getPath() == null
                     ? null
                     : workspace._bufferContext.getBuffer().getPath().toAbsolutePath().normalize().toString();
-            SessionLayoutNode layout = snapshotLayout(workspace._workspaceView, workspace._bufferContextsByView);
+            SessionLayoutNode layout = snapshotLayout(workspace._workspaceView, workspace._bufferContextsByView,
+                    workspace._activeBufferView);
             yield new SessionWorkspace("BUFFER", activePath, activePath, layout, workspace._customTabLabel);
         }
         case DIRECTORY -> {
@@ -3039,7 +3073,8 @@ public class Window implements Drawable {
         };
     }
 
-    private SessionLayoutNode snapshotLayout(View view, IdentityHashMap<BufferView, BufferContext> contextsByView) {
+    private SessionLayoutNode snapshotLayout(View view, IdentityHashMap<BufferView, BufferContext> contextsByView,
+            BufferView activeBufferView) {
         if (view instanceof SplitView splitView) {
             return toSessionLayout(splitView.snapshot(leaf -> {
                 if (leaf instanceof BufferView bufferView) {
@@ -3055,7 +3090,7 @@ public class Window implements Drawable {
                 if (!(leaf instanceof BufferView bufferView)) return 0;
                 BufferContext context = bufferContextForSnapshot(contextsByView, bufferView);
                 return context == null ? 0 : context.getBuffer().getCursor().getPosition();
-            }));
+            }, leaf -> leaf == activeBufferView));
         }
         if (view instanceof BufferView bufferView) {
             BufferContext context = bufferContextForSnapshot(contextsByView, bufferView);
@@ -3064,7 +3099,8 @@ public class Window implements Drawable {
             }
             Path path = context.getBuffer().getPath();
             return path == null ? null : new SessionLayoutNode(null, 0.0, null, null,
-                    path.toAbsolutePath().normalize().toString(), context.getBuffer().getCursor().getPosition());
+                    path.toAbsolutePath().normalize().toString(), context.getBuffer().getCursor().getPosition(),
+                    bufferView == activeBufferView);
         }
         return null;
     }
@@ -3087,7 +3123,7 @@ public class Window implements Drawable {
                 node.ratio(),
                 toSessionLayout(node.first()),
                 toSessionLayout(node.second()),
-                node.leafId(), node.cursorPosition());
+                node.leafId(), node.cursorPosition(), node.active());
     }
 
     private void restoreSessionWorkspaces(EditorSession session) {
@@ -3128,7 +3164,7 @@ public class Window implements Drawable {
         if (workspace.layout() == null) {
             return workspace.path() == null ? null : createBufferWorkspace(Path.of(workspace.path()));
         }
-        BufferLayoutResult result = restoreBufferLayout(workspace.layout(), workspace.activePath());
+        BufferLayoutResult result = restoreBufferLayout(workspace.layout(), workspace.activePath(), hasActiveLeaf(workspace.layout()));
         if (result == null) {
             return workspace.path() == null ? null : createBufferWorkspace(Path.of(workspace.path()));
         }
@@ -3144,25 +3180,29 @@ public class Window implements Drawable {
         return restored;
     }
 
-    private BufferLayoutResult restoreBufferLayout(SessionLayoutNode node, String activePath) {
+    private BufferLayoutResult restoreBufferLayout(SessionLayoutNode node, String activePath, boolean hasActiveLeaf) {
         if (node == null) {
             return null;
         }
         if (node.path() != null) {
             BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), Path.of(node.path()));
+            if (_openBufferFileWatcher != null) _openBufferFileWatcher.watch(context.getBuffer().getPath());
             context.getBuffer().getCursor().restorePosition(Math.max(0,
                     Math.min(node.cursorPosition(), context.getBuffer().getLength())));
             var contexts = new IdentityHashMap<BufferView, BufferContext>();
             contexts.put(context.getBufferView(), context);
             var counts = new IdentityHashMap<BufferContext, Integer>();
             counts.put(context, 1);
-            boolean active = activePath != null && activePath.equals(node.path());
+            // The active marker identifies a split, whereas activePath was
+            // ambiguous when the same buffer occupied multiple splits. Keep
+            // the path fallback for sessions written before the marker.
+            boolean active = node.active() || (!hasActiveLeaf && activePath != null && activePath.equals(node.path()));
             return new BufferLayoutResult(context.getBufferView(), contexts, counts,
                     active ? context.getBufferView() : null,
                     active ? context : null);
         }
-        BufferLayoutResult first = restoreBufferLayout(node.first(), activePath);
-        BufferLayoutResult second = restoreBufferLayout(node.second(), activePath);
+        BufferLayoutResult first = restoreBufferLayout(node.first(), activePath, hasActiveLeaf);
+        BufferLayoutResult second = restoreBufferLayout(node.second(), activePath, hasActiveLeaf);
         if (first == null || second == null) {
             return first != null ? first : second;
         }
@@ -3180,6 +3220,10 @@ public class Window implements Drawable {
         return new BufferLayoutResult(split, contexts, counts,
                 first.activeView() != null ? first.activeView() : second.activeView(),
                 first.activeContext() != null ? first.activeContext() : second.activeContext());
+    }
+
+    private static boolean hasActiveLeaf(SessionLayoutNode node) {
+        return node != null && (node.active() || hasActiveLeaf(node.first()) || hasActiveLeaf(node.second()));
     }
 
     public ModeLineView getModeLineView() {
@@ -3214,6 +3258,10 @@ public class Window implements Drawable {
         }
         MailStatusService.shutdownInstance();
         TodoUiSupport.shutdownInstance();
+        try {
+            if (_openBufferFileWatcher != null) _openBufferFileWatcher.close();
+        } catch (IOException ignored) {
+        }
         _instance = null;
     }
 
@@ -3644,15 +3692,19 @@ public class Window implements Drawable {
             _log.debug("Relayout not needed");
             return;
         }
+        // Bounds are real only after applyLayout. Restore the active cursor's
+        // viewport before painting, otherwise the first frame is drawn at the
+        // old scroll position while the terminal cursor is placed for the
+        // restored position.
+        if (_activeView instanceof BufferView bufferView) {
+            bufferView.adaptViewToCursor();
+        }
         AttributedString.clearRenderedClickRanges();
         if (completeRedraw) {
             screen.clear();
         }
         _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
         _size = size;
-        if (_activeView instanceof BufferView bufferView) {
-            bufferView.adaptViewToCursor();
-        }
         var cursor = _rootView.getCursor();
         TerminalCursorShape shape = TerminalCursorShape.BLOCK;
         if (cursor != null) {
@@ -3765,15 +3817,33 @@ public class Window implements Drawable {
     }
 
     public void showInputPrompt(String title, String label, String initialValue, Consumer<String> onSubmit) {
-        showInputPrompt(title, label, initialValue, false, onSubmit);
+        showInputPrompt(title, label, initialValue, false, onSubmit, null);
     }
 
     public void showBottomInputPrompt(String title, String label, String initialValue, Consumer<String> onSubmit) {
-        showInputPrompt(title, label, initialValue, true, onSubmit);
+        showInputPrompt(title, label, initialValue, true, onSubmit, null);
+    }
+
+    private void promptForPendingExternalChange(BufferContext context) {
+        var buffer = context.getBuffer();
+        if (!buffer.hasPendingExternalChange() || _externalChangePrompts.put(context, Boolean.TRUE) != null) return;
+        Consumer<String> decide = choice -> {
+            try {
+                String external = buffer.consumePendingExternalChange();
+                if (choice != null && (choice.trim().equalsIgnoreCase("r") || choice.trim().equalsIgnoreCase("reload"))
+                        && external != null) {
+                    replaceBufferContents(context, external);
+                }
+            } finally {
+                _externalChangePrompts.remove(context);
+            }
+        };
+        showInputPrompt("File changed on disk", "reload [r] / keep [k]", "k", true, decide,
+                () -> decide.accept("k"));
     }
 
     private void showInputPrompt(String title, String label, String initialValue, boolean bottomFullWidth,
-            Consumer<String> onSubmit) {
+            Consumer<String> onSubmit, Runnable onCancel) {
         if (_rootView == null) {
             return;
         }
@@ -3793,7 +3863,10 @@ public class Window implements Drawable {
                 onSubmit.accept(value);
             }
         });
-        prompt.setOnCancel(close);
+        prompt.setOnCancel(() -> {
+            close.run();
+            if (onCancel != null) onCancel.run();
+        });
         _rootView.addSubview(prompt);
         prompt.syncBounds();
         _rootView.setFirstResponder(prompt);
@@ -4785,6 +4858,7 @@ public class Window implements Drawable {
         }
         _bufferContextsByView.put(bufferView, bufferContext);
         _bufferViewCounts.merge(bufferContext, 1, Integer::sum);
+        if (_openBufferFileWatcher != null) _openBufferFileWatcher.watch(bufferContext.getBuffer().getPath());
     }
 
     private void unregisterBufferView(BufferView bufferView) {
@@ -5018,6 +5092,9 @@ public class Window implements Drawable {
             _rootView.setNeedsRedraw();
         }
         refreshChromeState();
+        if (_activeView instanceof BufferView && _bufferContext != null) {
+            promptForPendingExternalChange(_bufferContext);
+        }
         return true;
     }
 
@@ -5025,6 +5102,7 @@ public class Window implements Drawable {
         var workspace = new WorkspaceState();
         workspace._kind = WorkspaceKind.BUFFER;
         BufferContext context = new BufferContext(Rect.create(0, 0, 0, 0), path);
+        if (_openBufferFileWatcher != null) _openBufferFileWatcher.watch(context.getBuffer().getPath());
         workspace._bufferContext = context;
         workspace._workspaceView = context.getBufferView();
         workspace._activeView = context.getBufferView();

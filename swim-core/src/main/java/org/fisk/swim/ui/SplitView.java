@@ -27,7 +27,8 @@ public class SplitView extends View {
             SessionNode first,
             SessionNode second,
             String leafId,
-            int cursorPosition) {
+            int cursorPosition,
+            boolean active) {
     }
 
     private sealed interface Node permits LeafNode, BranchNode {
@@ -211,7 +212,12 @@ public class SplitView extends View {
     }
 
     public SessionNode snapshot(Function<View, String> leafIdProvider, java.util.function.ToIntFunction<View> cursorPositionProvider) {
-        return snapshotNode(_root, leafIdProvider, cursorPositionProvider);
+        return snapshot(leafIdProvider, cursorPositionProvider, ignored -> false);
+    }
+
+    public SessionNode snapshot(Function<View, String> leafIdProvider, java.util.function.ToIntFunction<View> cursorPositionProvider,
+            java.util.function.Predicate<View> activeProvider) {
+        return snapshotNode(_root, leafIdProvider, cursorPositionProvider, activeProvider);
     }
 
     @Override
@@ -621,17 +627,17 @@ public class SplitView extends View {
     }
 
     private static SessionNode snapshotNode(Node node, Function<View, String> leafIdProvider,
-            java.util.function.ToIntFunction<View> cursorPositionProvider) {
+            java.util.function.ToIntFunction<View> cursorPositionProvider, java.util.function.Predicate<View> activeProvider) {
         if (node instanceof LeafNode leaf) {
             return new SessionNode(null, 0.0, null, null, leafIdProvider.apply(leaf._view),
-                    cursorPositionProvider.applyAsInt(leaf._view));
+                    cursorPositionProvider.applyAsInt(leaf._view), activeProvider.test(leaf._view));
         }
         var branch = (BranchNode) node;
         return new SessionNode(
                 branch._orientation.name(),
                 branch._ratio,
-                snapshotNode(branch._first, leafIdProvider, cursorPositionProvider),
-                snapshotNode(branch._second, leafIdProvider, cursorPositionProvider),
-                null, 0);
+                snapshotNode(branch._first, leafIdProvider, cursorPositionProvider, activeProvider),
+                snapshotNode(branch._second, leafIdProvider, cursorPositionProvider, activeProvider),
+                null, 0, false);
     }
 }

@@ -24,11 +24,15 @@ public final class ClangdProjectRoots {
                 return buildDir;
             }
             if (config != null) {
-                return null;
+                return findCachedCompilationDatabaseRoot(start);
             }
             current = current.getParent();
         }
-        return null;
+        // The configured database can temporarily disappear while a build
+        // directory is being regenerated. Keep clangd usable from SWIM's
+        // last filtered copy until the source database returns. This is also
+        // the database clangd was using immediately before that regeneration.
+        return findCachedCompilationDatabaseRoot(start);
     }
 
     public static Path findWorkspaceRoot(Path start) {
@@ -61,5 +65,19 @@ public final class ClangdProjectRoots {
         }
         Path normalized = path.toAbsolutePath().normalize();
         return Files.isDirectory(normalized) ? normalized : normalized.getParent();
+    }
+
+    static Path findCachedCompilationDatabaseRoot(Path start, Path swimHome) {
+        Path workspaceRoot = findWorkspaceRoot(start);
+        if (workspaceRoot == null) {
+            return null;
+        }
+        Path cached = ClangdLspClient.getWorkspacePath(swimHome, workspaceRoot)
+                .resolve("compile_commands.json");
+        return Files.isRegularFile(cached) ? cached.getParent() : null;
+    }
+
+    private static Path findCachedCompilationDatabaseRoot(Path start) {
+        return findCachedCompilationDatabaseRoot(start, Path.of(System.getProperty("user.home"), ".swim"));
     }
 }

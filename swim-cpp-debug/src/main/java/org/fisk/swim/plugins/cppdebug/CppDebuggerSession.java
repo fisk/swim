@@ -123,6 +123,16 @@ final class CppDebuggerSession implements DebuggerSession {
     }
 
     @Override
+    public String executeCommand(String command) throws Exception {
+        String response = _cli.execute(command);
+        if (response.contains("error:")) {
+            throw new java.io.IOException(response.strip());
+        }
+        refreshSnapshot("LLDB: " + command);
+        return response;
+    }
+
+    @Override
     public void close() throws Exception {
         _terminated = true;
         _cli.close();

@@ -66,6 +66,7 @@ public final class DebuggerPanelView extends View {
         case "o" -> runAction(DebuggerManager::stepOut);
         case "s" -> runAction(DebuggerManager::stop);
         case "b", "B" -> runAction(DebuggerManager::toggleBreakpointAtCursor);
+        case ":" -> this::promptForDebuggerCommand;
         case "enter" -> actionForRow(rows.isEmpty() ? null : rows.get(Math.max(0, Math.min(_selection, rows.size() - 1))));
         case "q", "esc" -> () -> org.fisk.swim.ui.Window.getInstance().hidePanel();
         default -> null;
@@ -164,6 +165,20 @@ public final class DebuggerPanelView extends View {
                 }
             }
         };
+    }
+
+    private void promptForDebuggerCommand() {
+        var window = org.fisk.swim.ui.Window.getInstance();
+        if (window == null) return;
+        window.showBottomInputPrompt("Debugger", "command", "", command -> {
+            try {
+                String result = DebuggerManager.executeCommand(command);
+                window.getCommandView().setMessage(result == null || result.isBlank() ? "Debugger command sent" : result.strip());
+            } catch (Exception e) {
+                window.getCommandView().setMessage(e.getMessage() == null ? "Debugger command failed" : e.getMessage());
+            }
+            setNeedsRedraw();
+        });
     }
 
     private void clampSelection(int size) {

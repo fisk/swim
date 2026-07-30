@@ -17,6 +17,7 @@ build
 /swim-clangd-lsp/target/
 /swim-java-debug/target/
 /swim-cpp-debug/target/
+/swim-hotspot-zgc-debug/target/
 /swim-tree-view/target/
 /swim-email/target/
 /swim-git/target/

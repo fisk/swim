@@ -24,6 +24,7 @@
     <module>swim-clangd-lsp</module>
     <module>swim-java-debug</module>
     <module>swim-cpp-debug</module>
+    <module>swim-hotspot-zgc-debug</module>
     <module>swim-tree-view</module>
     <module>swim-email</module>
     <module>swim-git</module>

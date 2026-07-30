@@ -2135,6 +2135,9 @@ class WindowTest {
 
             assertEquals(3, layout.first().cursorPosition());
             assertEquals(8, layout.second().cursorPosition());
+            assertTrue(layout.second().active());
+            assertFalse(layout.first().active());
+            assertEquals(second.toAbsolutePath().normalize().toString(), session.workspaces().getFirst().activePath());
         } finally {
             shutdownRealWindow();
         }

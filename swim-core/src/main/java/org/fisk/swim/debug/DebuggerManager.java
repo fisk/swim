@@ -90,6 +90,29 @@ public final class DebuggerManager {
         requireSession().selectFrame(frameIndex);
     }
 
+    public static String executeCommand(String command) throws Exception {
+        if (command == null || command.isBlank()) {
+            throw new IllegalArgumentException("Debugger command is empty");
+        }
+        String normalized = command.trim();
+        DebuggerSession session = requireSession();
+        DebuggerCommandExtension extension = DebuggerCommandExtensionRegistry.find(normalized);
+        if (extension == null) {
+            return session.executeCommand(normalized);
+        }
+        return extension.execute(normalized, new DebuggerCommandContext() {
+            @Override
+            public DebugSnapshot snapshot() {
+                return DebuggerManager.snapshot();
+            }
+
+            @Override
+            public String executeBackendCommand(String backendCommand) throws Exception {
+                return session.executeCommand(backendCommand);
+            }
+        });
+    }
+
     public static String providersSummary() {
         return DebuggerProviderRegistry.list().stream()
                 .map(registration -> registration.providerId() + " (" + registration.provider().displayName() + ")")

@@ -271,6 +271,12 @@ public class Cursor {
         _lastX = _x;
     }
 
+    /** Recompute screen coordinates after a buffer view receives its real width. */
+    public void refreshForLayout() {
+        calculate();
+        _lastX = _x;
+    }
+
     public Line getPhysicalLine() {
         var textLayout = _bufferContext.getTextLayout();
         return textLayout.getPhysicalLineAt(_position);

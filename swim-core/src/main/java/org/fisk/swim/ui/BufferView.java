@@ -116,6 +116,11 @@ public class BufferView extends View {
         var textLayout = _bufferContext.getTextLayout();
         if (textLayout != null) {
             textLayout.calculate();
+            // A session cursor may have been restored while this view had its
+            // placeholder one-column width. Recalculate it after the text
+            // layout has the real wrapping width, before any viewport/cursor
+            // placement uses its visual row.
+            _bufferContext.getBuffer().getCursor().refreshForLayout();
             int maxStartLine = maxStartLine(textLayout);
             _startLine = Math.max(0, Math.min(_startLine, maxStartLine));
         }

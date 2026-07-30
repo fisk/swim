@@ -247,6 +247,27 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
+    void createWindowStartsClangdForHeaderWithCompiledSibling() throws Exception {
+        Path project = tempDir.resolve("header-sibling");
+        Files.createDirectories(project.resolve("build"));
+        Path source = Files.writeString(project.resolve("engine.cpp"), "int engine() { return 0; }\n");
+        Path header = Files.writeString(project.resolve("engine.inline.hpp"), "int engine();\n");
+        Files.writeString(project.resolve("build").resolve("compile_commands.json"),
+                "[{\"directory\":\"" + project + "\",\"file\":\"" + source.getFileName()
+                        + "\",\"command\":\"clang++ -c engine.cpp\"}]");
+
+        var client = new RecordingClangdLspClient();
+        ClangdLspClient.installInstance(client);
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        TerminalContextTestSupport.install(80, 24);
+
+        invoke(createDefaultBindings(), "createWindow", new Class<?>[] { Path.class }, header);
+
+        assertEquals(1, client.startCalls);
+        assertEquals(header.toAbsolutePath().normalize(), client.startedPath);
+    }
+
+    @Test
     void switchingToCppBufferStartsClangdWhenCompilationDatabaseIsDiscovered() throws Exception {
         Path initialFile = Files.writeString(tempDir.resolve("notes.txt"), "plain\n");
         Path project = tempDir.resolve("engine");

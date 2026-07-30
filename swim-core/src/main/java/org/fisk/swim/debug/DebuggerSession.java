@@ -14,6 +14,11 @@ public interface DebuggerSession extends AutoCloseable {
     void selectThread(int threadIndex) throws Exception;
     void selectFrame(int frameIndex) throws Exception;
 
+    /** Sends a backend-native debugger command, such as a GDB console command. */
+    default String executeCommand(String command) throws Exception {
+        throw new UnsupportedOperationException("Debugger commands are not supported by " + displayName());
+    }
+
     @Override
     void close() throws Exception;
 }

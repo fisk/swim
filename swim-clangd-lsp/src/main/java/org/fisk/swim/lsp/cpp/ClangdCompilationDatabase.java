@@ -12,6 +12,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonParser;
 
 final class ClangdCompilationDatabase {
+    private static final List<String> CPP_SUFFIXES = List.of(
+            ".inline.hpp", ".cpp", ".cxx", ".cc", ".c", ".hpp", ".hxx", ".hh", ".h");
+
     private ClangdCompilationDatabase() {
     }
 
@@ -62,17 +65,52 @@ final class ClangdCompilationDatabase {
                 if (!entry.isJsonObject()) continue;
                 var command = entry.getAsJsonObject();
                 if (!command.has("file")) continue;
-                Path entryFile = Path.of(command.get("file").getAsString());
-                if (!entryFile.isAbsolute() && command.has("directory")) {
-                    entryFile = Path.of(command.get("directory").getAsString()).resolve(entryFile);
-                }
-                if (normalizedFile.equals(entryFile.toAbsolutePath().normalize())) {
+                Path entryFile = entryFile(command);
+                if (entryFile != null && normalizedFile.equals(entryFile)) {
                     return true;
                 }
+            }
+            // clangd uses a nearby translation unit's flags for headers. Do
+            // the same at the eligibility boundary: a header/sibling is valid
+            // when its same-basename file in the same directory has a compile
+            // command, even though headers do not normally appear in the DB.
+            for (var entry : entries) {
+                if (!entry.isJsonObject()) continue;
+                Path entryFile = entryFile(entry.getAsJsonObject());
+                if (isSameBasenameSibling(normalizedFile, entryFile)) return true;
             }
         } catch (IOException | IllegalStateException | com.google.gson.JsonParseException e) {
             return false;
         }
         return false;
+    }
+
+    private static Path entryFile(com.google.gson.JsonObject command) {
+        if (command == null || !command.has("file")) return null;
+        Path entryFile = Path.of(command.get("file").getAsString());
+        if (!entryFile.isAbsolute() && command.has("directory")) {
+            entryFile = Path.of(command.get("directory").getAsString()).resolve(entryFile);
+        }
+        return entryFile.toAbsolutePath().normalize();
+    }
+
+    private static boolean isSameBasenameSibling(Path requestedFile, Path commandFile) {
+        if (requestedFile == null || commandFile == null || !java.util.Objects.equals(requestedFile.getParent(), commandFile.getParent())) {
+            return false;
+        }
+        String requested = requestedFile.getFileName().toString();
+        String command = commandFile.getFileName().toString();
+        return !requested.equals(command) && baseName(requested).equals(baseName(command));
+    }
+
+    private static String baseName(String fileName) {
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        for (String suffix : CPP_SUFFIXES) {
+            if (lower.endsWith(suffix)) {
+                return fileName.substring(0, fileName.length() - suffix.length());
+            }
+        }
+        int dot = fileName.lastIndexOf('.');
+        return dot < 0 ? fileName : fileName.substring(0, dot);
     }
 }

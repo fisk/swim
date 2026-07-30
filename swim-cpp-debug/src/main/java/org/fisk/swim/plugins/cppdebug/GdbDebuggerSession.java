@@ -124,6 +124,17 @@ final class GdbDebuggerSession implements DebuggerSession {
     }
 
     @Override
+    public String executeCommand(String command) throws Exception {
+        String escaped = command.replace("\\", "\\\\").replace("\"", "\\\"");
+        String response = _cli.execute("-interpreter-exec console \"" + escaped + "\"");
+        if (response.contains("^error")) {
+            throw new java.io.IOException(extractError(response));
+        }
+        refreshSnapshot("GDB: " + command);
+        return response;
+    }
+
+    @Override
     public void close() throws Exception {
         stop();
     }

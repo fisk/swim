@@ -92,4 +92,18 @@ class ClangdProjectRootsTest {
         assertNull(ClangdProjectRoots.findCompilationDatabaseRoot(file));
         assertEquals(child, ClangdProjectRoots.findWorkspaceRoot(file));
     }
+
+    @Test
+    void usesCachedDatabaseWhenConfiguredDatabaseIsTemporarilyMissing() throws IOException {
+        Path project = tempDir.resolve("configured");
+        Path swimHome = tempDir.resolve("swim-home");
+        Files.createDirectories(project.resolve("src"));
+        Files.writeString(project.resolve(".swim"), "compile_commands = build/compile_commands.json\n");
+        Path file = Files.writeString(project.resolve("src").resolve("main.cpp"), "int main() {}\n");
+        Path cache = ClangdLspClient.getWorkspacePath(swimHome, project);
+        Files.createDirectories(cache);
+        Files.writeString(cache.resolve("compile_commands.json"), "[]");
+
+        assertEquals(cache, ClangdProjectRoots.findCachedCompilationDatabaseRoot(file, swimHome));
+    }
 }
