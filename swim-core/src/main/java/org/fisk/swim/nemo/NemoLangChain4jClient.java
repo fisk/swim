@@ -446,9 +446,9 @@ final class NemoLangChain4jClient {
                 JsonObjectSchema.builder().addStringProperty("path", "Workspace-relative source file path.")
                         .required(List.of("path")).additionalProperties(false).build()));
         tools.add(tool("lsp_query",
-                "Run a read-only LSP analysis command against an analysis_handle. Supported commands depend on language backend; C/C++ provides definition and references, while the editor also exposes declaration and implementation navigation through clangd.",
+                "Run a read-only LSP analysis command against an analysis_handle. C/C++ provides definition, references, and rename_preview (pass the new name as query); use the editor's g R to apply a reviewed clangd rename.",
                 JsonObjectSchema.builder().addStringProperty("handle", "Handle returned by analyze_open_file.")
-                        .addStringProperty("command", "LSP command, such as definition or references.")
+                        .addStringProperty("command", "LSP command: definition, references, or rename_preview for C/C++.")
                         .addIntegerProperty("line", "1-based line.").addIntegerProperty("column", "1-based column.")
                         .addStringProperty("query", "Optional command query.").required(List.of("handle", "command"))
                         .additionalProperties(false).build()));
@@ -482,7 +482,7 @@ final class NemoLangChain4jClient {
         }
         if (configuration.toolReadFile()) {
             tools.add(tool("read_file",
-                    "Read a file from the workspace. Use start_line and end_line to limit output.",
+                    "Read a file from the workspace with stable 1-based line numbers. Use start_line and end_line to limit output.",
                     JsonObjectSchema.builder()
                             .addStringProperty("path", "Path relative to the workspace root.")
                             .addIntegerProperty("start_line", "Optional 1-based start line.")
@@ -504,6 +504,14 @@ final class NemoLangChain4jClient {
                             .build()));
         }
         if (configuration.toolRunCommand() && NemoClient.isToolAllowedByPermission(configuration, "run_command")) {
+            tools.add(tool("compile_translation_unit",
+                    "Look up the exact compile_commands.json invocation for one source file. By default this only reports the owning directory and command; set run true to run that single translation-unit compile as targeted validation.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("path", "Workspace-relative C/C++ translation-unit path.")
+                            .addBooleanProperty("run", "Run the looked-up command. Defaults to false.")
+                            .required(List.of("path"))
+                            .additionalProperties(false)
+                            .build()));
             tools.add(tool("run_command",
                     "Run a simple workspace command and return exit code, stdout, and stderr. Restricted mode blocks shell control operators and high-risk executables. Nemo applies an OS filesystem-write sandbox outside full-access mode when available.",
                     JsonObjectSchema.builder()
@@ -582,6 +590,40 @@ final class NemoLangChain4jClient {
                             .build()));
         }
         if (configuration.toolWriteFile() && NemoClient.isToolAllowedByPermission(configuration, "write_file")) {
+            tools.add(tool("edit_intent_checkpoint",
+                    "Persist a project-local edit intent checkpoint. preserve strings must remain present; remove strings must be absent when verified. This records the requested constraint before edits.",
+                    JsonObjectSchema.builder().addStringProperty("name", "Stable checkpoint name.")
+                            .addStringProperty("intent", "Human-readable editing constraint.")
+                            .addProperty("preserve", JsonArraySchema.builder().items(JsonStringSchema.builder().build()).build())
+                            .addProperty("remove", JsonArraySchema.builder().items(JsonStringSchema.builder().build()).build())
+                            .required(List.of("name", "intent")).additionalProperties(false).build()));
+            tools.add(tool("edit_intent_verify",
+                    "Mechanically verify a persisted edit intent checkpoint against the current workspace contents and return its current git diff with line context.",
+                    JsonObjectSchema.builder().addStringProperty("name", "Checkpoint name.").required(List.of("name"))
+                            .additionalProperties(false).build()));
+            tools.add(tool("replace_lines_if_unchanged",
+                    "Atomically replace inclusive 1-based lines only if their exact current text equals expected. Set preview true to return a numbered patch without writing. This refuses shifted or changed lines.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("path", "Workspace-relative file path.")
+                            .addIntegerProperty("start_line", "First inclusive 1-based line.")
+                            .addIntegerProperty("end_line", "Last inclusive 1-based line.")
+                            .addStringProperty("expected", "Exact current contents of the selected lines, joined by newline.")
+                            .addStringProperty("replacement", "Replacement text for the selected lines.")
+                            .addBooleanProperty("preview", "Return the numbered patch without writing. Defaults to false.")
+                            .required(List.of("path", "start_line", "end_line", "expected", "replacement"))
+                            .additionalProperties(false)
+                            .build()));
+            tools.add(tool("replace_function_body_if_unchanged",
+                    "Atomically replace a uniquely named C/C++ function body only if its exact current body equals expected_body. Set preview true to inspect the numbered patch without writing.",
+                    JsonObjectSchema.builder()
+                            .addStringProperty("path", "Workspace-relative source path.")
+                            .addStringProperty("function", "Unique function name or signature anchor.")
+                            .addStringProperty("expected_body", "Exact text inside the current outer function braces.")
+                            .addStringProperty("replacement", "New text inside the outer function braces.")
+                            .addBooleanProperty("preview", "Return the numbered patch without writing. Defaults to false.")
+                            .required(List.of("path", "function", "expected_body", "replacement"))
+                            .additionalProperties(false)
+                            .build()));
             tools.add(tool("write_file",
                     "Create or overwrite a real file in the workspace using full file contents. Successful writes are saved to disk and persist across Nemo/editor runs.",
                     JsonObjectSchema.builder()

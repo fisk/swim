@@ -44,6 +44,7 @@ import org.eclipse.jgit.diff.RawTextComparator;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.fileindex.ProjectPaths;
+import org.fisk.swim.fileindex.CompileCommandLookup;
 import org.fisk.swim.help.HelpDocument;
 import org.fisk.swim.api.SwimNemoToolDescriptor;
 import org.fisk.swim.api.SwimNemoToolInvocation;
@@ -1865,6 +1866,8 @@ public class NemoClient {
         case "mvn" -> withOutputStatus(mvnSummary(call.arguments()), output);
         case "write_file" -> writeFileSummary(call.arguments());
         case "search_replace" -> searchReplaceSummary(call.arguments());
+        case "replace_lines_if_unchanged" -> argumentSummary(call.arguments(), "path", "start_line", "end_line", "preview");
+        case "replace_function_body_if_unchanged" -> argumentSummary(call.arguments(), "path", "function", "preview");
         case "apply_patch" -> "patch=" + stringArgument(call.arguments(), "patch", "").length() + " chars";
         case "git" -> gitSummary(call.arguments());
         case "git_status", "git_diff" -> argumentSummary(call.arguments(), "path");
@@ -2114,6 +2117,7 @@ public class NemoClient {
         case "lsp_query" -> new ToolExecutionResult(_instance.queryLspAnalysis(call.arguments(), executionSession));
         case "analyze_close_file" -> new ToolExecutionResult(_instance.closeLspAnalysis(call.arguments(), executionSession));
         case "search_files" -> new ToolExecutionResult(searchFiles(configuration, context, call.arguments()));
+        case "compile_translation_unit" -> new ToolExecutionResult(compileTranslationUnit(configuration, context, call.arguments(), executionSession));
         case "run_command" -> new ToolExecutionResult(runCommand(configuration, context, call.arguments(), executionSession));
         case "shell_start" -> new ToolExecutionResult(shellStart(configuration, context, call.arguments(), executionSession));
         case "shell_poll" -> new ToolExecutionResult(_instance.shellPoll(configuration, call.arguments()));
@@ -2124,8 +2128,12 @@ public class NemoClient {
         case "shell_list" -> new ToolExecutionResult(_instance.shellList(configuration, context));
         case "shell_run" -> new ToolExecutionResult(_instance.shellRun(configuration, context, call.arguments(), executionSession));
         case "mvn" -> new ToolExecutionResult(mvn(configuration, context, call.arguments(), executionSession));
+        case "edit_intent_checkpoint" -> new ToolExecutionResult(saveEditIntent(configuration, context, call.arguments()));
+        case "edit_intent_verify" -> new ToolExecutionResult(verifyEditIntent(configuration, context, call.arguments()));
         case "write_file" -> writeFileDetailed(configuration, context, call.arguments());
         case "search_replace" -> searchReplaceDetailed(configuration, context, call.arguments());
+        case "replace_lines_if_unchanged" -> conditionalEditDetailed(configuration, context, call.arguments(), false);
+        case "replace_function_body_if_unchanged" -> conditionalEditDetailed(configuration, context, call.arguments(), true);
         case "apply_patch" -> applyPatchDetailed(configuration, context, call.arguments(), executionSession);
         case "git" -> new ToolExecutionResult(git(configuration, context, call.arguments()));
         case "git_status" -> new ToolExecutionResult(gitStatus(configuration, context, call.arguments()));
@@ -2164,7 +2172,8 @@ public class NemoClient {
     }
 
     private static boolean requiresActionApproval(String toolName) {
-        return List.of("run_command", "shell_start", "mvn", "write_file", "search_replace", "apply_patch")
+        return List.of("run_command", "shell_start", "mvn", "compile_translation_unit", "edit_intent_checkpoint", "edit_intent_verify", "write_file", "search_replace", "replace_lines_if_unchanged",
+                "replace_function_body_if_unchanged", "apply_patch")
                 .contains(toolName);
     }
 
@@ -2180,17 +2189,23 @@ public class NemoClient {
     private static String actionApprovalSummary(ToolCall call) {
         return switch (call.name()) {
         case "run_command" -> "run command: " + stringArgument(call.arguments(), "command", "");
+        case "compile_translation_unit" -> "compile translation unit " + stringArgument(call.arguments(), "path", "");
         case "shell_start" -> "start async shell command: " + stringArgument(call.arguments(), "command", "");
         case "mvn" -> {
             MavenInvocation invocation = mavenInvocation(call.arguments());
             yield "run Maven in " + mavenDisplayDirectory(invocation.directory())
                     + ": mvn " + String.join(" ", invocation.arguments());
         }
+        case "edit_intent_checkpoint" -> "save edit intent " + stringArgument(call.arguments(), "name", "");
         case "write_file" -> "write " + stringArgument(call.arguments(), "content", "").length()
                 + " chars to " + stringArgument(call.arguments(), "path", "");
         case "search_replace" -> "replace " + compactArgumentValue(call.arguments().get("search"))
                 + " with " + compactArgumentValue(call.arguments().get("replace"))
                 + " in " + searchReplaceDisplayPath(call.arguments());
+        case "replace_lines_if_unchanged" -> "replace verified lines " + intArgument(call.arguments(), "start_line", 0)
+                + "-" + intArgument(call.arguments(), "end_line", 0) + " in " + stringArgument(call.arguments(), "path", "");
+        case "replace_function_body_if_unchanged" -> "replace verified function body "
+                + stringArgument(call.arguments(), "function", "") + " in " + stringArgument(call.arguments(), "path", "");
         case "apply_patch" -> "apply patch (" + stringArgument(call.arguments(), "patch", "").length() + " chars)";
         case "git_add" -> "stage changes: " + gitAddSummary(call.arguments());
         case "git_commit" -> "commit changes: " + stringArgument(call.arguments(), "message", "");
@@ -2222,7 +2237,7 @@ public class NemoClient {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode does not allow plugin tools "
                     + "unless the plugin marks them read-only. Use :permissions workspace-write to allow plugin tools.";
         }
-        if (List.of("run_command", "shell_start", "shell_poll", "shell_stop", "shells", "shell_delete", "shell_save", "shell_list", "shell_run", "mvn", "write_file", "search_replace", "apply_patch", "git_add", "git_commit", "drive_editor")
+        if (List.of("run_command", "shell_start", "shell_poll", "shell_stop", "shells", "shell_delete", "shell_save", "shell_list", "shell_run", "mvn", "compile_translation_unit", "edit_intent_checkpoint", "edit_intent_verify", "write_file", "search_replace", "replace_lines_if_unchanged", "replace_function_body_if_unchanged", "apply_patch", "git_add", "git_commit", "drive_editor")
                 .contains(toolName)) {
             return "Tool " + toolName + " blocked by Nemo permissions: read_only mode allows inspection only. "
                     + "Use :permissions workspace-write to allow workspace changes.";
@@ -3253,6 +3268,82 @@ public class NemoClient {
         return runShellCommand(configuration, root, cwd, command, executionSession);
     }
 
+    private static String compileTranslationUnit(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path source = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        if (!Files.isRegularFile(source)) throw new IOException("Not a source file: " + source);
+        Path projectRoot = ProjectPaths.getProjectRootPath(source);
+        if (projectRoot == null) projectRoot = root;
+        SwimProjectConfig config = SwimProjectConfig.load(projectRoot);
+        Path database = config == null ? projectRoot.resolve("compile_commands.json") : config.compileCommandsPath();
+        if (database == null) database = projectRoot.resolve("compile_commands.json");
+        CompileCommandLookup.Entry entry = CompileCommandLookup.find(database, source);
+        if (entry == null) return "No compile command for " + root.relativize(source) + " in " + database;
+        String description = "compile command for " + root.relativize(source) + "\ncwd: " + entry.directory()
+                + "\ncommand: " + entry.command();
+        if (!booleanArgument(arguments, "run", false)) return description;
+        return description + "\n\n" + runShellCommand(configuration, root, entry.directory(), entry.command(), executionSession);
+    }
+
+    private static Path editIntentPath(Path root) { return root.resolve(".nemo").resolve("edit-intents.json"); }
+
+    private static String saveEditIntent(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String name = stringArgument(arguments, "name", "").trim();
+        if (name.isBlank()) throw new IOException("name is required");
+        Path path = editIntentPath(root);
+        JsonObject document = Files.isRegularFile(path) ? parseJsonObject(Files.readString(path, StandardCharsets.UTF_8)) : new JsonObject();
+        JsonObject checkpoint = new JsonObject();
+        checkpoint.addProperty("intent", stringArgument(arguments, "intent", ""));
+        checkpoint.add("preserve", _gson.toJsonTree(stringArrayArgument(arguments, "preserve")));
+        checkpoint.add("remove", _gson.toJsonTree(stringArrayArgument(arguments, "remove")));
+        checkpoint.addProperty("created_at", System.currentTimeMillis());
+        document.add(name, checkpoint);
+        Files.createDirectories(path.getParent());
+        Files.writeString(path, _gson.toJson(document), StandardCharsets.UTF_8);
+        return "saved edit intent checkpoint '" + name + "' at " + root.relativize(path);
+    }
+
+    private static String verifyEditIntent(Configuration configuration, BufferContext context, JsonObject arguments) throws IOException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        String name = stringArgument(arguments, "name", "").trim();
+        Path path = editIntentPath(root);
+        JsonObject document = Files.isRegularFile(path) ? parseJsonObject(Files.readString(path, StandardCharsets.UTF_8)) : new JsonObject();
+        if (!document.has(name) || !document.get(name).isJsonObject()) return "Unknown edit intent checkpoint: " + name;
+        JsonObject checkpoint = document.getAsJsonObject(name);
+        String workspace;
+        try (Stream<Path> paths = Files.walk(root)) {
+            workspace = paths.filter(Files::isRegularFile)
+                    .filter(candidate -> !candidate.startsWith(root.resolve(".git")) && !candidate.equals(path))
+                    .map(candidate -> { try { return Files.readString(candidate, StandardCharsets.UTF_8); } catch (IOException e) { return ""; } })
+                    .collect(Collectors.joining("\n"));
+        }
+        var failures = new ArrayList<String>();
+        for (String text : stringArrayArgument(checkpoint, "preserve")) if (!workspace.contains(text)) failures.add("missing preserved text: " + text);
+        for (String text : stringArrayArgument(checkpoint, "remove")) if (workspace.contains(text)) failures.add("still present removed text: " + text);
+        String diff = runGit(root, List.of("diff", "--unified=3"));
+        String result = failures.isEmpty() ? "edit intent '" + name + "' verified" : "edit intent '" + name + "' failed:\n" + String.join("\n", failures);
+        return result + "\n\nDiff with context:\n" + (diff.isBlank() ? "(no uncommitted diff)" : diff);
+    }
+
+    private static String runGit(Path root, List<String> arguments) throws IOException {
+        var command = new ArrayList<String>();
+        command.add("git");
+        command.addAll(arguments);
+        Process process = new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start();
+        try {
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            process.waitFor(10, TimeUnit.SECONDS);
+            return output.strip();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "git diff interrupted";
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
     private static String shellStart(Configuration configuration, BufferContext context, JsonObject arguments,
             ToolExecutionSession executionSession) throws IOException, InterruptedException {
         Path root = resolveWorkspaceRoot(configuration, context);
@@ -3915,6 +4006,42 @@ public class NemoClient {
         String output = truncateOutput(configuration, "replaced " + count + " " + noun + " in " + relativePath);
         String displayPatch = unifiedDiff(relativePath, before, after, true, true);
         return new ToolExecutionResult(output, truncateOutput(configuration, displayPatch));
+    }
+
+    private static ToolExecutionResult conditionalEditDetailed(Configuration configuration, BufferContext context,
+            JsonObject arguments, boolean functionBody) throws IOException, InterruptedException {
+        Path root = resolveWorkspaceRoot(configuration, context);
+        Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
+        if (!Files.isRegularFile(path)) throw new IOException("Not a file: " + path);
+        String before = readFileForDisplayDiff(context, path);
+        NemoConditionalEdit.Change change = functionBody
+                ? NemoConditionalEdit.replaceFunctionBody(before, stringArgument(arguments, "function", ""),
+                        stringArgument(arguments, "expected_body", ""), stringArgument(arguments, "replacement", ""))
+                : NemoConditionalEdit.replaceLines(before, intArgument(arguments, "start_line", 0),
+                        intArgument(arguments, "end_line", 0), stringArgument(arguments, "expected", ""),
+                        stringArgument(arguments, "replacement", ""));
+        Path relative = root.relativize(path);
+        String preview = numberedPatch(relative, change.before(), change.after());
+        if (booleanArgument(arguments, "preview", false)) {
+            return new ToolExecutionResult("preview: " + relative + " lines " + change.startLine() + "-" + change.endLine(),
+                    truncateOutput(configuration, preview));
+        }
+        Files.writeString(path, change.after(), StandardCharsets.UTF_8);
+        boolean refreshed = refreshOpenBuffersForPath(path, change.after());
+        if (!refreshed && isCurrentBufferPath(context, path)) writeOpenBuffer(context, change.after());
+        return new ToolExecutionResult("replaced " + relative + " lines " + change.startLine() + "-" + change.endLine()
+                + " after exact-content verification", truncateOutput(configuration, preview));
+    }
+
+    private static String numberedPatch(Path path, String before, String after) {
+        String diff = unifiedDiff(path, before, after, true, true);
+        if (diff.isBlank()) return "(no changes)";
+        var numbered = new StringBuilder();
+        int lineNumber = 1;
+        for (String line : diff.split("\\R", -1)) {
+            numbered.append(String.format("%4d | %s%n", lineNumber++, line));
+        }
+        return numbered.toString().stripTrailing();
     }
 
     private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments,

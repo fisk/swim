@@ -871,7 +871,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(33, tools.size());
+        assertEquals(38, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -887,6 +887,10 @@ class NemoClientTest {
         assertEquals("analyze_open_file", tools.get(12).name());
         assertEquals("lsp_query", tools.get(13).name());
         assertEquals("analyze_close_file", tools.get(14).name());
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("replace_lines_if_unchanged")));
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("replace_function_body_if_unchanged")));
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("compile_translation_unit")));
+        assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("edit_intent_checkpoint")));
     }
 
     @Test

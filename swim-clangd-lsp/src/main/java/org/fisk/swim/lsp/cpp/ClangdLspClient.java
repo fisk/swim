@@ -53,6 +53,7 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ReferenceContext;
 import org.eclipse.lsp4j.ReferenceParams;
+import org.eclipse.lsp4j.RenameParams;
 import org.eclipse.lsp4j.RegistrationParams;
 import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensCapabilities;
@@ -779,11 +780,31 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
             return switch (command) {
             case "definition" -> formatNemoLocations(workspaceRoot, requestDefinitionEntries(bufferContext, position));
             case "references" -> formatNemoLocations(workspaceRoot, requestReferenceEntries(bufferContext, position));
+            case "rename_preview" -> previewRename(workspaceRoot, bufferContext, position, query);
             default -> "Unsupported clangd analysis command: " + command;
             };
         } catch (Exception e) {
             return "clangd " + command + " failed: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
+    }
+
+    private String previewRename(Path workspaceRoot, BufferContext context, int position, String newName) throws Exception {
+        if (newName == null || newName.isBlank()) return "rename_preview requires query to contain the new symbol name.";
+        Position lspPosition = getPosition(context, position);
+        var params = new RenameParams(context.getBuffer().getTextDocumentID(), lspPosition, newName);
+        WorkspaceEdit edit = _server.getTextDocumentService().rename(params).get(configurationTimeoutSeconds(), TimeUnit.SECONDS);
+        if (edit == null || edit.getChanges() == null || edit.getChanges().isEmpty()) return "clangd produced no rename edits.";
+        var lines = new ArrayList<String>();
+        for (var entry : edit.getChanges().entrySet()) {
+            Path path = Path.of(URI.create(entry.getKey())).toAbsolutePath().normalize();
+            if (!path.startsWith(workspaceRoot)) continue;
+            for (TextEdit textEdit : entry.getValue()) {
+                Range range = textEdit.getRange();
+                lines.add(path + ":" + (range.getStart().getLine() + 1) + ":" + (range.getStart().getCharacter() + 1)
+                        + " -> " + textEdit.getNewText());
+            }
+        }
+        return lines.isEmpty() ? "No project-local rename edits." : "Rename preview (apply with editor g R after review):\n" + String.join("\n", lines);
     }
 
     private static String formatNemoLocations(Path workspaceRoot, List<LspLocationMenuSession.Entry> entries) {
