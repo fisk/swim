@@ -24,6 +24,8 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.input.KeyType;
 
 public class ProjectSearchPanelView extends View implements KeyBindingHintProvider {
+    private static final int MAX_RESULTS = ProjectSearch.MAX_MATCHES;
+    private static final int MAX_FLUSH_MATCHES = 512;
     private static final class QueryCursor extends Cursor {
         private final ProjectSearchPanelView _owner;
 
@@ -55,6 +57,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     private List<ProjectSearch.Match> _results = List.of();
     private final AtomicLong _searchGeneration = new AtomicLong();
     private final AtomicBoolean _resultFlushScheduled = new AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger _acceptedResults = new java.util.concurrent.atomic.AtomicInteger();
     private final ConcurrentLinkedQueue<ProjectSearch.Match> _pendingResults = new ConcurrentLinkedQueue<>();
     private boolean _searching;
     private int _selection;
@@ -282,6 +285,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         String query = _query.toString();
         _results = new ArrayList<>();
         _pendingResults.clear();
+        _acceptedResults.set(0);
         _resultFlushScheduled.set(false);
         _searching = !query.isBlank();
         setNeedsRedraw();
@@ -300,7 +304,22 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
 
     private void publishMatches(long generation, List<ProjectSearch.Match> matches) {
         if (generation != _searchGeneration.get()) return;
-        _pendingResults.addAll(matches);
+        for (ProjectSearch.Match match : matches) {
+            if (generation != _searchGeneration.get()) return;
+            if (!reserveResultSlot()) break;
+            _pendingResults.add(match);
+        }
+        schedulePendingFlush(generation);
+    }
+
+    private boolean reserveResultSlot() {
+        for (int current; (current = _acceptedResults.get()) < MAX_RESULTS;) {
+            if (_acceptedResults.compareAndSet(current, current + 1)) return true;
+        }
+        return false;
+    }
+
+    private void schedulePendingFlush(long generation) {
         if (!_resultFlushScheduled.compareAndSet(false, true)) return;
         Thread.ofVirtual().start(() -> {
             try {
@@ -316,12 +335,17 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         _resultFlushScheduled.set(false);
         if (generation != _searchGeneration.get()) return;
         var next = new ArrayList<>(_results);
-        for (ProjectSearch.Match match; (match = _pendingResults.poll()) != null;) next.add(match);
+        for (int count = 0; count < MAX_FLUSH_MATCHES && next.size() < MAX_RESULTS; count++) {
+            ProjectSearch.Match match = _pendingResults.poll();
+            if (match == null) break;
+            next.add(match);
+        }
         if (next.size() == _results.size()) return;
         next.sort(java.util.Comparator.comparing(match -> match.relativePath().toString()));
         _results = next;
         updateQuickfix();
         setNeedsRedraw();
+        if (!_pendingResults.isEmpty()) schedulePendingFlush(generation);
     }
 
     private void updateQuickfix() {

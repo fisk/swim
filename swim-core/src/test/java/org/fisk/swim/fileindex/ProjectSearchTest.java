@@ -76,4 +76,26 @@ class ProjectSearchTest {
                 List.of("logs/keep.log:1:1  needle in kept log", "src/App.java:1:1  needle in source"),
                 search.search("needle").stream().map(ProjectSearch.Match::displayString).toList());
     }
+
+    @Test
+    void boundsStoredMatchesForAFileWithManyHits() throws IOException {
+        Path root = tempDir.resolve("workspace-many-matches");
+        Files.createDirectories(root.resolve(".git"));
+        Path file = root.resolve("matches.txt");
+        Files.writeString(file, "needle\n".repeat(ProjectSearch.MAX_MATCHES + 100));
+
+        var search = new ProjectSearch(file);
+
+        assertEquals(ProjectSearch.MAX_MATCHES, search.search("needle").size());
+    }
+
+    @Test
+    void skipsOversizedFilesInsteadOfRetainingLargeContents() throws IOException {
+        Path root = tempDir.resolve("workspace-large-file");
+        Files.createDirectories(root.resolve(".git"));
+        Path file = root.resolve("large.txt");
+        Files.writeString(file, "needle" + " ".repeat((int) ProjectSearch.MAX_FILE_BYTES));
+
+        assertEquals(0, new ProjectSearch(file).search("needle").size());
+    }
 }

@@ -92,6 +92,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private final PromptStyle _promptStyle;
     private final ChatCursor _cursor;
     private final List<ChatMessage> _messages = new ArrayList<>();
+    // Rewrapping and syntax-classifying a long transcript is proportional to
+    // its complete size. Scrolling must only move an index, not rebuild it.
+    private List<DisplayLine> _cachedTranscriptRows = List.of();
+    private int _cachedTranscriptWidth = -1;
+    private boolean _transcriptRowsDirty = true;
     private final StringBuilder _input = new StringBuilder();
     private int _cursorOffset;
     private int _inputScrollLine;
@@ -227,11 +232,16 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     private List<DisplayLine> getDisplayRows() {
-        var rows = new ArrayList<DisplayLine>();
         int width = Math.max(1, getBounds().getSize().getWidth());
-        for (var message : _messages) {
-            appendMessageRows(rows, message, width);
+        if (_transcriptRowsDirty || _cachedTranscriptWidth != width) {
+            var rows = new ArrayList<DisplayLine>();
+            for (var message : _messages) appendMessageRows(rows, message, width);
+            _cachedTranscriptRows = List.copyOf(rows);
+            _cachedTranscriptWidth = width;
+            _transcriptRowsDirty = false;
         }
+        if (!_pending) return _cachedTranscriptRows;
+        var rows = new ArrayList<DisplayLine>(_cachedTranscriptRows);
         if (_pending) {
             rows.add(new DisplayLine(NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL));
         }
@@ -362,6 +372,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     public void appendMessage(String speaker, String text) {
         boolean followTranscript = isAtBottom();
         _messages.add(new ChatMessage(speaker, text));
+        _transcriptRowsDirty = true;
         if (followTranscript) {
             scrollToBottom();
         }
@@ -381,6 +392,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         boolean followTranscript = isAtBottom();
         _messages.clear();
         _messages.addAll(messages);
+        _transcriptRowsDirty = true;
         if (followTranscript) {
             scrollToBottom();
         } else {
@@ -786,19 +798,19 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void scrollToBottom() {
-        _startLine = Math.max(0, getDisplayLines().size() - bodyHeight());
+        _startLine = Math.max(0, getDisplayRows().size() - bodyHeight());
     }
 
     private boolean isAtBottom() {
-        return _startLine >= Math.max(0, getDisplayLines().size() - bodyHeight());
+        return _startLine >= Math.max(0, getDisplayRows().size() - bodyHeight());
     }
 
     private void clampStartLine() {
-        _startLine = Math.max(0, Math.min(_startLine, getDisplayLines().size() - bodyHeight()));
+        _startLine = Math.max(0, Math.min(_startLine, getDisplayRows().size() - bodyHeight()));
     }
 
     private void scrollDown(int amount) {
-        int maxStart = Math.max(0, getDisplayLines().size() - bodyHeight());
+        int maxStart = Math.max(0, getDisplayRows().size() - bodyHeight());
         _startLine = Math.min(maxStart, _startLine + amount);
         setNeedsRedraw();
     }

@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.fisk.swim.EventThread;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -40,6 +41,7 @@ class ProjectSearchPanelViewTest {
             HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('l'));
             HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('e'));
 
+            awaitResults(panel, 2);
             assertEquals(2, panel.getResults().size());
 
             HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.down());
@@ -63,6 +65,7 @@ class ProjectSearchPanelViewTest {
 
         var panel = ProjectSearchPanelView.create(Rect.create(0, 0, 0, 0), current);
         panel.setQuery("needle");
+        awaitResults(panel, 1);
 
         var row = panel.buildResultRowForTest(80, 0, false);
 
@@ -75,4 +78,19 @@ class ProjectSearchPanelViewTest {
                 .anyMatch(fragment -> fragment.toString().equals("needle")
                         && UiTheme.ACCENT_GREEN.equals(fragment.getAttributes().foregroundColour())));
     }
+
+    private static void awaitResults(ProjectSearchPanelView panel, int expected) {
+        EventThread eventThread = EventThread.getInstance();
+        if (eventThread.getState() == Thread.State.NEW) eventThread.start();
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+        while (panel.getResults().size() < expected && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
 }

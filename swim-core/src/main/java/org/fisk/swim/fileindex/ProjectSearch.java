@@ -1,5 +1,6 @@
 package org.fisk.swim.fileindex;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,10 +11,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.Phaser;
 import java.util.stream.Stream;
 
 public final class ProjectSearch {
+    /** Bounds file buffers and virtual-thread objects on very large trees. */
+    static final int MAX_IN_FLIGHT_FILES = 16;
+    /** Avoid retaining pathological minified/generated lines in result previews. */
+    static final long MAX_FILE_BYTES = 4L * 1024 * 1024;
+    /** A result list must remain inexpensive to render, sort, and navigate. */
+    public static final int MAX_MATCHES = 10_000;
     public record Match(Path path, Path relativePath, int lineNumber, int columnNumber, String lineText) {
         public String displayString() {
             return relativePath + ":" + lineNumber + ":" + columnNumber + "  " + previewText();
@@ -42,7 +51,11 @@ public final class ProjectSearch {
 
     public List<Match> search(String query) {
         var matches = new ArrayList<Match>();
-        search(query, batch -> matches.addAll(batch), () -> false);
+        search(query, batch -> {
+            synchronized (matches) {
+                matches.addAll(batch);
+            }
+        }, () -> false);
         matches.sort(Comparator.comparing(match -> match.relativePath().toString()));
         return matches;
     }
@@ -56,18 +69,22 @@ public final class ProjectSearch {
         String needle = query;
         String normalizedNeedle = needle.toLowerCase(Locale.ROOT);
         boolean caseSensitive = !needle.equals(normalizedNeedle);
+        var matchBudget = new AtomicInteger(MAX_MATCHES);
+        var filePermits = new Semaphore(MAX_IN_FLIGHT_FILES);
         Phaser tasks = new Phaser(1);
         try (Stream<Path> files = Files.find(_root, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())) {
             files
                     .filter(path -> _fileFilter.isIncluded(_root.relativize(path), false))
-                    .takeWhile(path -> !cancelled.getAsBoolean())
+                    .takeWhile(path -> !cancelled.getAsBoolean() && matchBudget.get() > 0)
                     .forEach(path -> {
+                        if (!acquireFilePermit(filePermits, cancelled)) return;
                         tasks.register();
                         Thread.ofVirtual().start(() -> {
                             try {
-                                var matches = searchFile(path, needle, normalizedNeedle, caseSensitive);
-                                if (!matches.isEmpty() && !cancelled.getAsBoolean()) onMatches.accept(matches);
+                                searchFile(path, needle, normalizedNeedle, caseSensitive, matchBudget, cancelled,
+                                        matches -> { if (!matches.isEmpty()) onMatches.accept(matches); });
                             } finally {
+                                filePermits.release();
                                 tasks.arriveAndDeregister();
                             }
                         });
@@ -78,27 +95,50 @@ public final class ProjectSearch {
         }
     }
 
-    private List<Match> searchFile(Path path, String needle, String normalizedNeedle, boolean caseSensitive) {
-        var matches = new ArrayList<Match>();
-        List<String> lines;
+    private void searchFile(Path path, String needle, String normalizedNeedle, boolean caseSensitive,
+            AtomicInteger matchBudget, BooleanSupplier cancelled, Consumer<List<Match>> onMatches) {
         try {
-            lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            if (Files.size(path) > MAX_FILE_BYTES) return;
         } catch (IOException e) {
-            return matches;
+            return;
         }
-
         Path relativePath = _root.relativize(path);
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
-            int start = caseSensitive
-                    ? line.indexOf(needle)
-                    : line.toLowerCase(Locale.ROOT).indexOf(normalizedNeedle);
-            if (start < 0) {
-                continue;
+        var batch = new ArrayList<Match>(64);
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            for (int lineNumber = 1; !cancelled.getAsBoolean() && matchBudget.get() > 0; lineNumber++) {
+                String line = reader.readLine();
+                if (line == null) break;
+                int start = caseSensitive ? line.indexOf(needle) : line.toLowerCase(Locale.ROOT).indexOf(normalizedNeedle);
+                if (start < 0 || !reserveMatch(matchBudget)) continue;
+                batch.add(new Match(path, relativePath, lineNumber, start + 1, line));
+                if (batch.size() == 64) {
+                    onMatches.accept(List.copyOf(batch));
+                    batch.clear();
+                }
             }
-            matches.add(new Match(path, relativePath, i + 1, start + 1, line));
+        } catch (IOException e) {
+            return;
         }
-        return matches;
+        if (!batch.isEmpty() && !cancelled.getAsBoolean()) onMatches.accept(List.copyOf(batch));
+    }
+
+    private static boolean reserveMatch(AtomicInteger budget) {
+        for (int remaining; (remaining = budget.get()) > 0;) {
+            if (budget.compareAndSet(remaining, remaining - 1)) return true;
+        }
+        return false;
+    }
+
+    private static boolean acquireFilePermit(Semaphore permits, BooleanSupplier cancelled) {
+        while (!cancelled.getAsBoolean()) {
+            try {
+                if (permits.tryAcquire(25, java.util.concurrent.TimeUnit.MILLISECONDS)) return true;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
     }
 
 }
