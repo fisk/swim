@@ -867,6 +867,9 @@ class WindowTest {
             assertTrue(state.visible());
             assertEquals("s", state.prefix());
             assertEquals("sessions", state.matches().get(0).primaryName());
+            var menuBounds = window.getCommandMenuView().getBounds();
+            assertEquals(chat.getBounds().getPoint().getY() + chat.getBounds().getSize().getHeight() - 1,
+                    menuBounds.getPoint().getY() + menuBounds.getSize().getHeight());
         }
     }
 

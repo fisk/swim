@@ -451,6 +451,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         return _input.toString().startsWith(":");
     }
 
+    /** Rows at the bottom of this panel that must remain clear for its prompt. */
+    int commandMenuReservedInputRows() {
+        return visibleInputHeight();
+    }
+
     public boolean openCommandInputIfEmpty() {
         if (_input.length() > 0) {
             if (isCommandInputActive()) {

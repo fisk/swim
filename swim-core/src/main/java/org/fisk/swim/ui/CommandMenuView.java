@@ -13,6 +13,7 @@ public class CommandMenuView extends View {
 
     private CommandView.CommandMenuState _state = CommandView.CommandMenuState.hidden();
     private int _bottomInsetRows;
+    private int _additionalBottomInsetRows;
 
     public CommandMenuView(Rect bounds) {
         super(bounds);
@@ -40,6 +41,17 @@ public class CommandMenuView extends View {
             return;
         }
         _bottomInsetRows = next;
+        syncBounds();
+        setNeedsRedraw();
+    }
+
+    /** Reserves input rows owned by an overlay such as the Nemo chat prompt. */
+    void setAdditionalBottomInsetRows(int additionalBottomInsetRows) {
+        int next = Math.max(0, additionalBottomInsetRows);
+        if (_additionalBottomInsetRows == next) {
+            return;
+        }
+        _additionalBottomInsetRows = next;
         syncBounds();
         setNeedsRedraw();
     }
@@ -208,7 +220,7 @@ public class CommandMenuView extends View {
         }
 
         int width = Math.max(MIN_WIDTH, parentSize.getWidth());
-        int availableHeight = Math.max(0, parentSize.getHeight() - _bottomInsetRows);
+        int availableHeight = Math.max(0, parentSize.getHeight() - _bottomInsetRows - _additionalBottomInsetRows);
         if (availableHeight == 0) {
             return Rect.create(0, 0, width, 0);
         }

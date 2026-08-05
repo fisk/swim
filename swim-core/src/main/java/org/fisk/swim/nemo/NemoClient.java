@@ -355,6 +355,8 @@ public class NemoClient {
         private long _updatedAtMillis;
         private BufferContext _context;
         private Configuration _configuration;
+        private String _modelOverride = "";
+        private String _reasoningEffortOverride = "";
         private ChatPanelView _panelView;
         private boolean _pending;
         private long _pendingStartedAtMillis;
@@ -429,6 +431,7 @@ public class NemoClient {
         private final String _provider;
         private final String _apiKey;
         private final String _model;
+        private final List<String> _modelOptions;
         private final String _baseUrl;
         private final boolean _baseUrlExplicit;
         private final String _organization;
@@ -444,6 +447,7 @@ public class NemoClient {
         private final Double _temperature;
         private final Double _topP;
         private final String _reasoningEffort;
+        private final List<String> _reasoningEffortOptions;
         private final int _timeoutSeconds;
         private final int _maxRetries;
         private final boolean _logRequests;
@@ -525,6 +529,7 @@ public class NemoClient {
             _provider = builder._provider;
             _apiKey = builder._apiKey;
             _model = builder._model;
+            _modelOptions = List.copyOf(builder._modelOptions);
             _baseUrl = builder._baseUrl;
             _baseUrlExplicit = builder._baseUrlExplicit;
             _organization = builder._organization;
@@ -540,6 +545,7 @@ public class NemoClient {
             _temperature = builder._temperature;
             _topP = builder._topP;
             _reasoningEffort = builder._reasoningEffort;
+            _reasoningEffortOptions = List.copyOf(builder._reasoningEffortOptions);
             _timeoutSeconds = builder._timeoutSeconds;
             _maxRetries = builder._maxRetries;
             _logRequests = builder._logRequests;
@@ -585,6 +591,14 @@ public class NemoClient {
                     .build();
         }
 
+        Configuration withModel(String model) {
+            return new Builder(this).model(model).build();
+        }
+
+        Configuration withReasoningEffort(String reasoningEffort) {
+            return new Builder(this).reasoningEffort(reasoningEffort).build();
+        }
+
         Configuration withToolOsSandbox(String toolOsSandbox) {
             return new Builder(this)
                     .toolOsSandbox(toolOsSandbox)
@@ -607,6 +621,7 @@ public class NemoClient {
             private String _provider = _defaultProvider;
             private String _apiKey = "";
             private String _model = _defaultModel;
+            private List<String> _modelOptions = List.of();
             private String _baseUrl = _defaultBaseUrl;
             private boolean _baseUrlExplicit;
             private String _organization = "";
@@ -622,6 +637,7 @@ public class NemoClient {
             private Double _temperature;
             private Double _topP;
             private String _reasoningEffort = "";
+            private List<String> _reasoningEffortOptions = List.of();
             private int _timeoutSeconds = _defaultTimeoutSeconds;
             private int _maxRetries = _defaultMaxRetries;
             private boolean _logRequests;
@@ -663,6 +679,7 @@ public class NemoClient {
                 _provider = source._provider;
                 _apiKey = source._apiKey;
                 _model = source._model;
+                _modelOptions = new ArrayList<>(source._modelOptions);
                 _baseUrl = source._baseUrl;
                 _baseUrlExplicit = source._baseUrlExplicit;
                 _organization = source._organization;
@@ -678,6 +695,7 @@ public class NemoClient {
                 _temperature = source._temperature;
                 _topP = source._topP;
                 _reasoningEffort = source._reasoningEffort;
+                _reasoningEffortOptions = new ArrayList<>(source._reasoningEffortOptions);
                 _timeoutSeconds = source._timeoutSeconds;
                 _maxRetries = source._maxRetries;
                 _logRequests = source._logRequests;
@@ -727,6 +745,11 @@ public class NemoClient {
                 if (model != null && !model.isBlank()) {
                     _model = model.trim();
                 }
+                return this;
+            }
+
+            Builder modelOptions(List<String> modelOptions) {
+                _modelOptions = normalizeOptionList(modelOptions);
                 return this;
             }
 
@@ -802,6 +825,11 @@ public class NemoClient {
 
             Builder reasoningEffort(String reasoningEffort) {
                 _reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
+                return this;
+            }
+
+            Builder reasoningEffortOptions(List<String> reasoningEffortOptions) {
+                _reasoningEffortOptions = normalizeOptionList(reasoningEffortOptions);
                 return this;
             }
 
@@ -986,6 +1014,7 @@ public class NemoClient {
         String provider() { return _provider; }
         String apiKey() { return _apiKey; }
         String model() { return _model; }
+        List<String> modelOptions() { return _modelOptions; }
         String baseUrl() { return _baseUrl; }
         boolean isZaiProvider() { return "zai".equals(_provider); }
         boolean isGeminiProvider() { return "gemini".equals(_provider); }
@@ -1002,6 +1031,7 @@ public class NemoClient {
         Double temperature() { return _temperature; }
         Double topP() { return _topP; }
         String reasoningEffort() { return _reasoningEffort; }
+        List<String> reasoningEffortOptions() { return _reasoningEffortOptions; }
         int timeoutSeconds() { return _timeoutSeconds; }
         int maxRetries() { return _maxRetries; }
         boolean logRequests() { return _logRequests; }
@@ -1253,6 +1283,7 @@ public class NemoClient {
                 .provider(property(properties, "provider"))
                 .apiKey(apiKey)
                 .model(property(properties, "model"))
+                .modelOptions(optionList(property(properties, "model_options"), property(properties, "models")))
                 .baseUrl(firstNonBlank(
                         property(properties, "base_url"),
                         baseUrlFromResponsesUrl(property(properties, "responses_url"))))
@@ -1266,6 +1297,8 @@ public class NemoClient {
                 .temperature(nullableDoubleProperty(properties, "temperature"))
                 .topP(nullableDoubleProperty(properties, "top_p"))
                 .reasoningEffort(property(properties, "reasoning_effort"))
+                .reasoningEffortOptions(optionList(property(properties, "reasoning_effort_options"),
+                        property(properties, "reasoning_options")))
                 .timeoutSeconds(intProperty(properties, "timeout_seconds", _defaultTimeoutSeconds))
                 .maxRetries(intProperty(properties, "max_retries", _defaultMaxRetries))
                 .logRequests(booleanProperty(properties, "log_requests", false))
@@ -1317,6 +1350,7 @@ public class NemoClient {
                         firstNonBlank(stringMember(root, "apiKeyEnv"), stringMember(root, "api_key_env")),
                         firstNonBlank(stringMember(root, "apiKeyCommand"), stringMember(root, "api_key_command"))))
                 .model(stringMember(root, "model"))
+                .modelOptions(stringArrayMember(root, "modelOptions", "model_options", "models"))
                 .baseUrl(firstNonBlank(
                         stringMember(root, "baseUrl"),
                         stringMember(root, "base_url"),
@@ -1331,6 +1365,8 @@ public class NemoClient {
                 .temperature(doubleMember(root, "temperature"))
                 .topP(doubleMember(root, "topP", "top_p"))
                 .reasoningEffort(firstNonBlank(stringMember(root, "reasoningEffort"), stringMember(root, "reasoning_effort")))
+                .reasoningEffortOptions(stringArrayMember(root, "reasoningEffortOptions", "reasoning_effort_options",
+                        "reasoningOptions", "reasoning_options"))
                 .timeoutSeconds(firstNonNull(integerMember(root, "timeoutSeconds", "timeout_seconds"), _defaultTimeoutSeconds))
                 .maxRetries(firstNonNull(integerMember(root, "maxRetries", "max_retries"), _defaultMaxRetries))
                 .logRequests(booleanMember(root, false, "logRequests", "log_requests"))
@@ -1611,6 +1647,33 @@ public class NemoClient {
             }
         }
         return "";
+    }
+
+    private static List<String> optionList(String... values) {
+        var result = new ArrayList<String>();
+        for (String value : values) {
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            for (String option : value.split("[,\\s]+")) {
+                if (!option.isBlank()) {
+                    result.add(option);
+                }
+            }
+        }
+        return normalizeOptionList(result);
+    }
+
+    private static List<String> normalizeOptionList(List<String> values) {
+        var result = new LinkedHashSet<String>();
+        if (values != null) {
+            for (String value : values) {
+                if (value != null && !value.isBlank()) {
+                    result.add(value.trim());
+                }
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static String baseUrlFromResponsesUrl(String responsesUrl) {
@@ -4886,6 +4949,13 @@ public class NemoClient {
                             Path.of(workspaceRoot).toAbsolutePath().normalize(),
                             createdAtMillis,
                             updatedAtMillis);
+                    if (sessionObject.has("model_override")) {
+                        conversation._modelOverride = compactRawBody(sessionObject.get("model_override").getAsString());
+                    }
+                    if (sessionObject.has("reasoning_effort_override")) {
+                        conversation._reasoningEffortOverride = compactRawBody(
+                                sessionObject.get("reasoning_effort_override").getAsString());
+                    }
                     JsonArray turns = sessionObject.getAsJsonArray("turns");
                     if (turns != null) {
                         for (JsonElement turnElement : turns) {
@@ -4940,6 +5010,12 @@ public class NemoClient {
             session.addProperty("workspace_root", conversation._workspaceRoot.toString());
             session.addProperty("created_at_millis", conversation._createdAtMillis);
             session.addProperty("updated_at_millis", conversation._updatedAtMillis);
+            if (!conversation._modelOverride.isBlank()) {
+                session.addProperty("model_override", conversation._modelOverride);
+            }
+            if (!conversation._reasoningEffortOverride.isBlank()) {
+                session.addProperty("reasoning_effort_override", conversation._reasoningEffortOverride);
+            }
 
             var turns = new JsonArray();
             for (var turn : conversation._turns) {
@@ -5399,6 +5475,12 @@ public class NemoClient {
 
     private void bindConversation(Conversation conversation, BufferContext context, Configuration configuration) {
         conversation._context = context;
+        if (!conversation._modelOverride.isBlank()) {
+            configuration = configuration.withModel(conversation._modelOverride);
+        }
+        if (!conversation._reasoningEffortOverride.isBlank()) {
+            configuration = configuration.withReasoningEffort(conversation._reasoningEffortOverride);
+        }
         conversation._configuration = configuration;
     }
 
@@ -5596,6 +5678,9 @@ public class NemoClient {
             new CommandSpec("delete", List.of(), "[conversation-id]", "delete a Nemo conversation"),
             new CommandSpec("shells", List.of(), "", "list Nemo asynchronous shells"),
             new CommandSpec("shell_delete", List.of(), "<shell-id>", "delete a Nemo asynchronous shell"),
+            new CommandSpec("model", List.of(), "[name]", "show or select the model for this conversation"),
+            new CommandSpec("reasoning", List.of("reasoning-effort"), "[level]",
+                    "show or select the reasoning effort for this conversation"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
             new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<conversation-id> <message>", "send a message to a worker without switching"),
@@ -5738,6 +5823,13 @@ public class NemoClient {
         case ":shell_delete":
             handleShellDeleteCommand(conversation, argument);
             return;
+        case ":model":
+            handleModelCommand(conversation, argument);
+            return;
+        case ":reasoning":
+        case ":reasoning-effort":
+            handleReasoningCommand(conversation, argument);
+            return;
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
@@ -5764,7 +5856,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :model [name], :reasoning [level], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -5777,6 +5869,66 @@ public class NemoClient {
         default:
             appendAssistantNote(conversation, "Unknown command: " + trimmed);
         }
+    }
+
+    private void handleModelCommand(Conversation conversation, String argument) {
+        handleRuntimeOptionCommand(conversation, argument, "model", conversation._configuration.model(),
+                conversation._configuration.modelOptions(), value -> {
+                    conversation._modelOverride = value;
+                    conversation._configuration = conversation._configuration.withModel(value);
+                });
+    }
+
+    private void handleReasoningCommand(Conversation conversation, String argument) {
+        handleRuntimeOptionCommand(conversation, argument, "reasoning effort", conversation._configuration.reasoningEffort(),
+                conversation._configuration.reasoningEffortOptions(), value -> {
+                    conversation._reasoningEffortOverride = value;
+                    conversation._configuration = conversation._configuration.withReasoningEffort(value);
+                });
+    }
+
+    private void handleRuntimeOptionCommand(Conversation conversation, String argument, String label, String current,
+            List<String> configuredOptions, java.util.function.Consumer<String> select) {
+        String requested = argument.trim();
+        if (requested.isBlank()) {
+            appendAssistantNote(conversation, formatRuntimeOptions(label, current, configuredOptions));
+            return;
+        }
+        if (requested.contains(" ")) {
+            appendAssistantNote(conversation, "Usage: :" + ("model".equals(label) ? "model" : "reasoning") + " <"
+                    + ("model".equals(label) ? "name" : "level") + ">\n\n"
+                    + formatRuntimeOptions(label, current, configuredOptions));
+            return;
+        }
+        if (!configuredOptions.isEmpty() && !configuredOptions.contains(requested)) {
+            appendAssistantNote(conversation, "Unavailable " + label + ": " + requested + "\n\n"
+                    + formatRuntimeOptions(label, current, configuredOptions));
+            return;
+        }
+        select.accept(requested);
+        persistSessions();
+        appendAssistantNote(conversation, "Using " + label + ": " + requested
+                + ". This applies to the next Nemo request in this conversation.");
+    }
+
+    private static String formatRuntimeOptions(String label, String current, List<String> configuredOptions) {
+        String displayCurrent = current == null || current.isBlank() ? "default" : current;
+        var lines = new ArrayList<String>();
+        lines.add("Current " + label + ": " + displayCurrent);
+        if (configuredOptions == null || configuredOptions.isEmpty()) {
+            lines.add("Available " + label + " options are not configured.");
+            lines.add("Set any provider-supported value with :"
+                    + ("model".equals(label) ? "model" : "reasoning") + " <"
+                    + ("model".equals(label) ? "name" : "level") + ">.");
+            lines.add("To restrict and list choices, set "
+                    + ("model".equals(label) ? "model_options" : "reasoning_effort_options") + " in nemo.conf.");
+            return String.join("\n", lines);
+        }
+        lines.add("Available " + label + (configuredOptions.size() == 1 ? ":" : " options:"));
+        for (String option : configuredOptions) {
+            lines.add(option.equals(displayCurrent) ? "[" + option + "]" : option);
+        }
+        return String.join("\n", lines);
     }
 
     private void handlePermissionsCommand(Conversation conversation, String argument) {

@@ -1342,6 +1342,55 @@ class NemoChatIT {
         }
     }
 
+    @Test
+    @Timeout(15)
+    void modelAndReasoningCommandsListAndSelectConfiguredConversationOptions() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), """
+                model=gpt-5.6-terra
+                model_options=gpt-5.6-terra,gpt-5.6-sol
+                reasoning_effort=medium
+                reasoning_effort_options=low,medium,high
+                """);
+        Path file = writeFile("model-options.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":model");
+                waitForLine(panel, "Current model: gpt-5.6-terra");
+                waitForLine(panel, "Available model options:");
+                waitForLine(panel, "[gpt-5.6-terra]");
+                waitForLine(panel, "gpt-5.6-sol");
+
+                submit(panel, ":model gpt-5.6-sol");
+                waitForLine(panel, "Using model: gpt-5.6-sol.");
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                submit(panel, ":model");
+                waitForLine(panel, "Current model: gpt-5.6-sol");
+
+                submit(panel, ":reasoning");
+                waitForLine(panel, "Current reasoning effort: medium");
+                waitForLine(panel, "Available reasoning effort options:");
+
+                submit(panel, ":reasoning high");
+                waitForLine(panel, "Using reasoning effort: high.");
+
+                submit(panel, ":model unsupported");
+                waitForLine(panel, "Unavailable model: unsupported");
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
     private HttpServer startServer(AtomicInteger requestCount, List<JsonObject> responses) throws IOException {
         return startServer(requestCount, 0, responses);
     }

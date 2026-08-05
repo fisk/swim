@@ -3328,10 +3328,13 @@ public class Window implements Drawable {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
             if (responder instanceof ChatPanelView chatPanelView && chatPanelView.isCommandInputActive()) {
                 _commandMenuView.setState(chatPanelView.getCommandMenuState());
+                _commandMenuView.setAdditionalBottomInsetRows(chatPanelView.commandMenuReservedInputRows());
             } else if (responder instanceof ShellPanelView shellPanelView && shellPanelView.isCommandInputActive()) {
                 _commandMenuView.setState(shellPanelView.getCommandMenuState());
+                _commandMenuView.setAdditionalBottomInsetRows(0);
             } else {
                 _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
+                _commandMenuView.setAdditionalBottomInsetRows(0);
             }
         }
         if (_modeLineView != null) {
@@ -3366,6 +3369,7 @@ public class Window implements Drawable {
         }
         if (_commandMenuView != null) {
             _commandMenuView.setState(_commandView == null ? CommandView.CommandMenuState.hidden() : _commandView.getMenuState());
+            _commandMenuView.setAdditionalBottomInsetRows(0);
         }
         if (_commandView != null) {
             _commandView.setNeedsRedraw();
