@@ -71,6 +71,8 @@ public class Window implements Drawable {
     // A terminal refresh may block on a remote terminal. Coalesce key-repeat
     // redraws into a steady frame cadence while continuing to consume input.
     private static final long REDRAW_INTERVAL_NANOS = 25_000_000L;
+    /** Deliberate pacing for Nemo editor-control input so each step is observable. */
+    private static final long EDITOR_DRIVE_STEP_MILLIS = 100L;
 
     private enum WorkspaceKind {
         BUFFER,
@@ -1472,11 +1474,20 @@ public class Window implements Drawable {
     }
 
     public EditorDriveResult driveEditorInput(String input, int maxEvents) {
-        return driveEditorInput(input, maxEvents, currentEditorDriveWorkspaceRoot(), true);
+        return driveEditorInput(input, maxEvents, currentEditorDriveWorkspaceRoot(), true, false);
     }
 
     public EditorDriveResult driveEditorInput(String input, int maxEvents, Path workspaceRoot,
             boolean sandboxCommands) {
+        return driveEditorInput(input, maxEvents, workspaceRoot, sandboxCommands, false);
+    }
+
+    /**
+     * Drives editor input, optionally painting each key and pausing before the next one.
+     * The paced mode is reserved for Nemo's host-approved editor-control session.
+     */
+    public EditorDriveResult driveEditorInput(String input, int maxEvents, Path workspaceRoot,
+            boolean sandboxCommands, boolean paceForObservation) {
         ensureLayoutState();
         boolean previousActive = _editorDriveInputActive;
         boolean previousSandboxActive = _editorDriveCommandSandboxActive;
@@ -1534,6 +1545,20 @@ public class Window implements Drawable {
                 if (_rootView != null) {
                     _rootView.setNeedsRedraw();
                 }
+                if (paceForObservation) {
+                    // drive_editor runs inside one editor event. Paint here rather than waiting
+                    // for the event loop's post-event hook, which would otherwise run only once
+                    // after the entire key stream has completed.
+                    // Headless callers intentionally have no terminal. Do not create one
+                    // merely to animate an editor-control test or integration harness.
+                    if (TerminalContext.isInitialized()) {
+                        forceRedraw();
+                    }
+                    if (processed < strokes.size() && !waitForEditorDriveStep()) {
+                        return new EditorDriveResult(false, "Editor control input was interrupted.", processed, before,
+                                guestScreenSnapshot());
+                    }
+                }
                 String postBlock = editorDrivePostEventBlock(handled);
                 if (postBlock != null) {
                     return new EditorDriveResult(false, postBlock, processed, before, guestScreenSnapshot());
@@ -1553,6 +1578,16 @@ public class Window implements Drawable {
             _editorDriveCommandBlock = previousCommandBlock;
             _editorDriveActionAllowed = previousActionAllowed;
             _editorDriveActionLabel = previousActionLabel;
+        }
+    }
+
+    private static boolean waitForEditorDriveStep() {
+        try {
+            Thread.sleep(EDITOR_DRIVE_STEP_MILLIS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 

@@ -71,6 +71,11 @@ public class TerminalContext {
         return instance;
     }
 
+    /** Whether a terminal screen has already been installed without creating one. */
+    public static boolean isInitialized() {
+        return _instance != null;
+    }
+
     public static boolean isTerminalSizeFrozen() {
         return Boolean.getBoolean(FREEZE_SIZE_PROPERTY);
     }

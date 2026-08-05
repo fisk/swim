@@ -2461,7 +2461,7 @@ public class NemoClient {
             Window window = Window.getInstance();
             return window == null
                     ? new Window.EditorDriveResult(false, "No active editor window.", 0, "", "")
-                    : window.driveEditorInput(input, maxEvents, root, true);
+                    : window.driveEditorInput(input, maxEvents, root, true, true);
         }, new Window.EditorDriveResult(false, "No active editor window.", 0, "", ""));
         return truncateOutput(configuration, formatEditorDriveResult(result));
     }
