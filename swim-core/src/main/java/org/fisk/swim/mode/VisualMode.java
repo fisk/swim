@@ -45,6 +45,7 @@ public class VisualMode extends Mode {
         var bufferContext = window.getBufferContext();
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
+        installRegisterSelectionResponder();
         _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
         _rootResponder.addEventResponder("o", () -> {
             allow("visual selection");

@@ -272,6 +272,13 @@ public class NormalMode extends Mode {
             allow("buffer edit");
             var cursor = window.getBufferContext().getBuffer().getCursor();
             var activeBuffer = window.getBufferContext().getBuffer();
+            // Extra cursors are normally temporary (for example after a
+            // visual-block insertion).  Do not let a normal-mode open-line
+            // command make otherwise invisible edits at each of them.
+            if (activeBuffer.getCursors().size() > 1) {
+                activeBuffer.clearCursors();
+                window.getCommandView().setMessage("Cleared additional cursors before opening line");
+            }
             window.beginRepeatRecording("o");
             cursor.goEndOfLine();
             window.switchToMode(window.getInputMode());

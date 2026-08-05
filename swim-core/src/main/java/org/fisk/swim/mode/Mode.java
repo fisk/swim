@@ -151,6 +151,48 @@ public class Mode implements EventResponder, Drawable, KeyBindingHintProvider {
         _window.allowEditorDriveAction(action);
     }
 
+    /** Installs the one-shot "<register> prefix used by buffer-edit commands. */
+    protected void installRegisterSelectionResponder() {
+        _rootResponder.addEventResponder(new EventResponder() {
+            private Character _register;
+
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                _register = null;
+                var sequence = new java.util.ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                for (var keyStroke : events) {
+                    sequence.add(keyStroke);
+                }
+                if (sequence.isEmpty()) {
+                    return Response.NO;
+                }
+                var prefix = sequence.getFirst();
+                if (prefix.getKeyType() != com.googlecode.lanterna.input.KeyType.Character
+                        || prefix.getCharacter() != '"' || prefix.isCtrlDown() || prefix.isAltDown()) {
+                    return Response.NO;
+                }
+                if (sequence.size() == 1) {
+                    return Response.MAYBE;
+                }
+                var register = sequence.get(1);
+                if (register.getKeyType() != com.googlecode.lanterna.input.KeyType.Character
+                        || register.isCtrlDown() || register.isAltDown()) {
+                    return Response.NO;
+                }
+                _register = register.getCharacter();
+                return sequence.size() == 2 ? Response.YES : Response.NO;
+            }
+
+            @Override
+            public void respond() {
+                if (_register != null) {
+                    allow("select register");
+                    _window.selectRegister(_register);
+                }
+            }
+        });
+    }
+
     public void activate() {
     }
 

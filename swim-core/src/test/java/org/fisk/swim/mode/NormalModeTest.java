@@ -129,6 +129,105 @@ class NormalModeTest {
     }
 
     @Test
+    void namedDeleteRegisterSurvivesLaterUnnamedCharacterDeletes() throws Exception {
+        Path path = tempDir.resolve("named-delete-register.txt");
+        Files.writeString(path, "alpha beta\n");
+        Copy.getInstance().clear();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('"'),
+                    HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('d'),
+                    HeadlessWindowHarness.key('w'));
+            assertEquals("alpha ", Copy.getInstance().getText('a'));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('x'));
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('x'));
+            assertEquals("e", Copy.getInstance().getText());
+            assertEquals("alpha ", Copy.getInstance().getText('a'));
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('"'),
+                    HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('p'));
+
+            assertTrue(buffer.getString().contains("alpha "));
+            assertEquals("alpha ", Copy.getInstance().getText('a'));
+        }
+    }
+
+    @Test
+    void visualDeleteHonorsNamedRegisterBeforeLaterCharacterDeletes() throws Exception {
+        Path path = tempDir.resolve("visual-named-delete-register.txt");
+        Files.writeString(path, "alpha beta\n");
+        Copy.getInstance().clear();
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            window.switchToMode(window.getVisualMode());
+            buffer.getCursor().setPosition(0);
+            buffer.getCursors().get(1).setPosition(4);
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('"'),
+                    HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('d'));
+            assertEquals("alpha", Copy.getInstance().getText('a'));
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('x'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('x'));
+            assertEquals("b", Copy.getInstance().getText());
+
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('"'),
+                    HeadlessWindowHarness.key('a'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('p'));
+
+            assertTrue(buffer.getString().contains("alpha"));
+            assertEquals("alpha", Copy.getInstance().getText('a'));
+        }
+    }
+
+    @Test
+    void openBelowDiscardsStaleAdditionalCursors() throws Exception {
+        Path path = tempDir.resolve("open-below-multicursor.txt");
+        Files.writeString(path, "alpha\nalpha\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('n'));
+            assertEquals(2, buffer.getCursors().size());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('o'));
+
+            assertEquals(1, buffer.getCursors().size());
+            assertEquals("alpha\n\nalpha\n", buffer.getString());
+        }
+    }
+
+    @Test
+    void leavingInputModeDiscardsAdditionalCursors() throws Exception {
+        Path path = tempDir.resolve("input-exit-multicursor.txt");
+        Files.writeString(path, "alpha\nalpha\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 16)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('n'));
+            assertEquals(2, buffer.getCursors().size());
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('i'));
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.escape());
+
+            assertEquals(1, buffer.getCursors().size());
+        }
+    }
+
+    @Test
     void textObjectDeleteInsideParensWorks() throws Exception {
         Path path = tempDir.resolve("text-object.txt");
         Files.writeString(path, "call(alpha, beta)\n");

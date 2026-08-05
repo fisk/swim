@@ -1892,6 +1892,31 @@ class WindowTest {
     }
 
     @Test
+    void cyclingToSiblingAlreadyVisibleInAnotherSplitKeepsBothFramesAttached() throws Exception {
+        Path source = writeFile("pair.cpp", "int value;\n");
+        Path header = writeFile("pair.hpp", "int value();\n");
+
+        try (var harness = HeadlessWindowHarness.create(source, 60, 14)) {
+            var window = harness.getWindow();
+            window.splitActiveBufferHorizontally();
+            assertTrue(window.setBufferPath(header));
+            assertTrue(window.focusView(Window.Direction.LEFT));
+            assertEquals(source.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+
+            assertTrue(window.cycleSiblingFile());
+
+            assertEquals(2, leafViews(window).size());
+            assertTrue(leafViews(window).stream().allMatch(BufferView.class::isInstance));
+            assertEquals(header.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+            assertTrue(window.focusView(Window.Direction.RIGHT));
+            assertEquals(header.toAbsolutePath().normalize(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath().normalize());
+        }
+    }
+
+    @Test
     void reopeningAnOpenFilePreservesUnsavedEditsAndCursor() throws Exception {
         Path first = writeFile("reopen-first.txt", "first\n");
         Path second = writeFile("reopen-second.txt", "second\n");

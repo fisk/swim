@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Comparator;
 import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
@@ -67,6 +68,9 @@ import com.googlecode.lanterna.screen.Screen.RefreshType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
+    // A terminal refresh may block on a remote terminal. Coalesce key-repeat
+    // redraws into a steady frame cadence while continuing to consume input.
+    private static final long REDRAW_INTERVAL_NANOS = 25_000_000L;
 
     private enum WorkspaceKind {
         BUFFER,
@@ -192,6 +196,8 @@ public class Window implements Drawable {
     private List<KeyBindingHint> _globalNormalModeHints = List.of();
     private List<KeyBindingHint> _cachedNormalModeHints = List.of();
     private boolean _replayingRemap;
+    private long _lastTerminalRefreshNanos;
+    private AtomicBoolean _deferredRedrawScheduled = new AtomicBoolean();
     private SearchLocationList _quickfixList = SearchLocationList.empty("Quickfix");
     private SearchLocationList _locationList = SearchLocationList.empty("Location");
     private final OpenBufferFileWatcher _openBufferFileWatcher;
@@ -332,6 +338,15 @@ public class Window implements Drawable {
         nextBufferContext = findRegisteredBufferContext(normalizedPath);
         if (nextBufferContext != null) {
             nextBufferView = nextBufferContext.getBufferView();
+            // A BufferView has a single parent.  Reusing the view that is
+            // already displayed in another split detaches it from that split
+            // and leaves one of the frames blank.  Keep the split-local
+            // context/view model used by split creation instead.
+            if (nextBufferView != currentBufferView && isViewInWorkspaceLayout(nextBufferView)) {
+                nextBufferContext = copyBufferContext(nextBufferContext);
+                nextBufferView = nextBufferContext.getBufferView();
+                registerBufferView(nextBufferContext, nextBufferView);
+            }
         } else {
             try {
                 nextBufferContext = new BufferContext(currentBufferView.getBounds(), path);
@@ -2324,6 +2339,10 @@ public class Window implements Drawable {
         appendRepeatKey(new RecordedKey(KeyType.Escape, null, false, false));
         commitRepeatRecording();
         switchToMode(_normalMode);
+        // Visual-block insertion creates temporary cursors.  Retaining them
+        // after returning to normal mode makes later ordinary edits apply at
+        // locations the user can no longer see.
+        buffer.clearCursors();
         buffer.getCursor().goLeft();
     }
 
@@ -3692,6 +3711,9 @@ public class Window implements Drawable {
             _log.debug("Relayout not needed");
             return;
         }
+        if (!forced && deferRedrawForFramePacing()) {
+            return;
+        }
         // Bounds are real only after applyLayout. Restore the active cursor's
         // viewport before painting, otherwise the first frame is drawn at the
         // old scroll position while the terminal cursor is placed for the
@@ -3715,7 +3737,36 @@ public class Window implements Drawable {
             screen.refresh(completeRedraw ? RefreshType.COMPLETE : RefreshType.DELTA);
         } catch (IOException e) {
         }
+        _lastTerminalRefreshNanos = System.nanoTime();
         terminalContext.setCursorShape(shape);
+    }
+
+    private boolean deferRedrawForFramePacing() {
+        if (!(Thread.currentThread() instanceof EventThread)) {
+            return false;
+        }
+        long elapsed = System.nanoTime() - _lastTerminalRefreshNanos;
+        if (_lastTerminalRefreshNanos == 0 || elapsed >= REDRAW_INTERVAL_NANOS) {
+            return false;
+        }
+        // Some lightweight UI harnesses allocate Window without running its
+        // constructor; initialize lazily for that path as well.
+        if (_deferredRedrawScheduled == null) _deferredRedrawScheduled = new AtomicBoolean();
+        if (_deferredRedrawScheduled.compareAndSet(false, true)) {
+            long delayNanos = REDRAW_INTERVAL_NANOS - elapsed;
+            Thread.ofVirtual().start(() -> {
+                try {
+                    Thread.sleep(delayNanos / 1_000_000L, (int) (delayNanos % 1_000_000L));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                    _deferredRedrawScheduled.set(false);
+                    update(false);
+                }));
+            });
+        }
+        return true;
     }
 
     public void forceRedraw() {
@@ -4792,6 +4843,16 @@ public class Window implements Drawable {
         if (_rootView != null) {
             _rootView.setNeedsRedraw();
         }
+    }
+
+    private boolean isViewInWorkspaceLayout(View view) {
+        if (view == null || _workspaceView == null) {
+            return false;
+        }
+        if (_workspaceView == view) {
+            return true;
+        }
+        return _workspaceView instanceof SplitView splitView && splitView.containsLeaf(view);
     }
 
     private void applyLayout(Size size) {
