@@ -132,19 +132,19 @@ public final class ClangdLspPluginSupport {
                 ClangdLspPluginSupport::showSignatureHelp);
         registerCppKey(context, "<SPACE> , d", "LSP", "go to definition", "lsp-definition",
                 ClangdLspPluginSupport::goToDefinition);
-        registerCppKey(context, "<SPACE> , D", "LSP", "go to declaration", "lsp-declaration",
+        registerCppKey(context, "g D", "LSP", "go to declaration", "lsp-declaration",
                 ClangdLspPluginSupport::goToDeclaration);
-        registerCppKey(context, "<SPACE> , y", "LSP", "go to type definition", "lsp-type-definition",
+        registerCppKey(context, "g y", "LSP", "go to type definition", "lsp-type-definition",
                 ClangdLspPluginSupport::goToTypeDefinition);
-        registerCppKey(context, "<SPACE> , i", "LSP", "go to implementation", "lsp-implementation",
+        registerCppKey(context, "g i", "LSP", "go to implementation", "lsp-implementation",
                 ClangdLspPluginSupport::goToImplementation);
         registerCppKey(context, "<SPACE> , u", "LSP", "find references", "lsp-references",
                 ClangdLspPluginSupport::findReferences);
         registerCppKey(context, "<SPACE> , H", "LSP", "document highlights", "lsp-document-highlights",
                 ClangdLspPluginSupport::showDocumentHighlights);
-        registerCppKey(context, "<SPACE> , s", "LSP", "document symbols", "lsp-document-symbols",
+        registerCppKey(context, "g s", "LSP", "document symbols", "lsp-document-symbols",
                 ClangdLspPluginSupport::showDocumentSymbols);
-        registerCppKey(context, "<SPACE> , S", "LSP", "workspace symbols", "lsp-workspace-symbols",
+        registerCppKey(context, "g S", "LSP", "workspace symbols", "lsp-workspace-symbols",
                 ClangdLspPluginSupport::promptWorkspaceSymbols);
         registerCppKey(context, "<SPACE> , a", "LSP", "code actions", "lsp-code-actions",
                 ClangdLspPluginSupport::showCodeActions);
@@ -166,7 +166,7 @@ public final class ClangdLspPluginSupport {
                 ClangdLspPluginSupport::showSelectionRanges);
         registerCppKey(context, "<SPACE> , c", "LSP", "call hierarchy", "lsp-call-hierarchy",
                 ClangdLspPluginSupport::showCallHierarchy);
-        registerCppKey(context, "<SPACE> , T", "LSP", "type hierarchy", "lsp-type-hierarchy",
+        registerCppKey(context, "g T", "LSP", "type hierarchy", "lsp-type-hierarchy",
                 ClangdLspPluginSupport::showTypeHierarchy);
         registerCppKey(context, "<SPACE> , m", "LSP", "document links", "lsp-document-links",
                 ClangdLspPluginSupport::showDocumentLinks);

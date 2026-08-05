@@ -59,19 +59,19 @@ public final class JavaLspPluginSupport {
                 JavaLspPluginSupport::showSignatureHelp);
         registerJavaKey(context, "<SPACE> , d", "go to definition", "lsp-definition",
                 JavaLspPluginSupport::goToDefinition);
-        registerJavaKey(context, "<SPACE> , D", "go to declaration", "lsp-declaration",
+        registerJavaKey(context, "g D", "go to declaration", "lsp-declaration",
                 JavaLspPluginSupport::goToDeclaration);
-        registerJavaKey(context, "<SPACE> , y", "go to type definition", "lsp-type-definition",
+        registerJavaKey(context, "g y", "go to type definition", "lsp-type-definition",
                 JavaLspPluginSupport::goToTypeDefinition);
-        registerJavaKey(context, "<SPACE> , i", "go to implementation", "lsp-implementation",
+        registerJavaKey(context, "g i", "go to implementation", "lsp-implementation",
                 JavaLspPluginSupport::goToImplementation);
         registerJavaKey(context, "<SPACE> , u", "find references", "lsp-references",
                 JavaLspPluginSupport::findReferences);
         registerJavaKey(context, "<SPACE> , H", "document highlights", "lsp-document-highlights",
                 JavaLspPluginSupport::showDocumentHighlights);
-        registerJavaKey(context, "<SPACE> , s", "document symbols", "lsp-document-symbols",
+        registerJavaKey(context, "g s", "document symbols", "lsp-document-symbols",
                 JavaLspPluginSupport::showDocumentSymbols);
-        registerJavaKey(context, "<SPACE> , S", "workspace symbols", "lsp-workspace-symbols",
+        registerJavaKey(context, "g S", "workspace symbols", "lsp-workspace-symbols",
                 JavaLspPluginSupport::promptWorkspaceSymbols);
         registerJavaKey(context, "<SPACE> , a", "code actions", "lsp-code-actions",
                 JavaLspPluginSupport::showCodeActions);
@@ -91,7 +91,7 @@ public final class JavaLspPluginSupport {
                 JavaLspPluginSupport::showSelectionRanges);
         registerJavaKey(context, "<SPACE> , c", "call hierarchy", "lsp-call-hierarchy",
                 JavaLspPluginSupport::showCallHierarchy);
-        registerJavaKey(context, "<SPACE> , T", "type hierarchy", "lsp-type-hierarchy",
+        registerJavaKey(context, "g T", "type hierarchy", "lsp-type-hierarchy",
                 JavaLspPluginSupport::showTypeHierarchy);
         registerJavaKey(context, "<SPACE> , m", "document links", "lsp-document-links",
                 JavaLspPluginSupport::showDocumentLinks);

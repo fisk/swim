@@ -36,7 +36,7 @@ class JavaLspPluginSupportTest {
     }
 
     @Test
-    void preloadRegistersStandardLeaderCommaLspBindings() {
+    void preloadRegistersStandardLspBindings() {
         JavaLspPluginSupport.preload(() -> JavaLspPluginSupport.PLUGIN_ID);
 
         var keys = SwimPluginKeyBindingRegistry.listBindings().stream()
@@ -48,13 +48,13 @@ class JavaLspPluginSupportTest {
                 "<SPACE> , h",
                 "<SPACE> , p",
                 "<SPACE> , d",
-                "<SPACE> , D",
-                "<SPACE> , y",
-                "<SPACE> , i",
+                "g D",
+                "g y",
+                "g i",
                 "<SPACE> , u",
                 "<SPACE> , H",
-                "<SPACE> , s",
-                "<SPACE> , S",
+                "g s",
+                "g S",
                 "<SPACE> , a",
                 "<SPACE> , l",
                 "<SPACE> , f",
@@ -65,7 +65,7 @@ class JavaLspPluginSupportTest {
                 "<SPACE> , z",
                 "<SPACE> , v",
                 "<SPACE> , c",
-                "<SPACE> , T",
+                "g T",
                 "<SPACE> , m",
                 "<SPACE> , k",
                 "<SPACE> , C",

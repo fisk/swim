@@ -47,7 +47,7 @@ class ClangdLspPluginSupportTest {
     }
 
     @Test
-    void preloadRegistersStandardLeaderCommaLspBindings() {
+    void preloadRegistersStandardLspBindings() {
         ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
 
         var keys = SwimPluginKeyBindingRegistry.listBindings().stream()
@@ -59,13 +59,13 @@ class ClangdLspPluginSupportTest {
                 "<SPACE> , h",
                 "<SPACE> , p",
                 "<SPACE> , d",
-                "<SPACE> , D",
-                "<SPACE> , y",
-                "<SPACE> , i",
+                "g D",
+                "g y",
+                "g i",
                 "<SPACE> , u",
                 "<SPACE> , H",
-                "<SPACE> , s",
-                "<SPACE> , S",
+                "g s",
+                "g S",
                 "<SPACE> , a",
                 "<SPACE> , l",
                 "<SPACE> , f",
@@ -76,7 +76,7 @@ class ClangdLspPluginSupportTest {
                 "<SPACE> , z",
                 "<SPACE> , v",
                 "<SPACE> , c",
-                "<SPACE> , T",
+                "g T",
                 "<SPACE> , m",
                 "<SPACE> , k",
                 "<SPACE> , C")));
