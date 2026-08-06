@@ -82,8 +82,16 @@ final class NemoLangChain4jClient {
                 text = "Nemo returned no text.";
             }
             return new NemoClient.ResponseResult(text, contextUsagePercent(configuration, cumulativeUsage),
-                    List.copyOf(toolTraces));
+                    List.copyOf(toolTraces), tokenCount(cumulativeUsage, true), tokenCount(cumulativeUsage, false));
         }
+    }
+
+    private static long tokenCount(TokenUsage usage, boolean input) {
+        if (usage == null) {
+            return 0;
+        }
+        Integer count = input ? usage.inputTokenCount() : usage.outputTokenCount();
+        return count == null ? 0 : Math.max(0, count.longValue());
     }
 
     private ChatModel createModel(NemoClient.Configuration configuration) {

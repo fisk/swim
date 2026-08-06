@@ -21,6 +21,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -122,6 +123,7 @@ public class NemoClient {
             .build();
     private static final AtomicReference<OsSandboxBackend> _osSandboxBackend = new AtomicReference<>();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
+    private final Map<String, DailyTokenUsage> _dailyTokenUsage = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
     private final Map<String, AsyncShell> _asyncShells = new LinkedHashMap<>();
@@ -152,6 +154,7 @@ public class NemoClient {
         _mcpClient.shutdownAll();
         resetMacOsSandboxAvailabilityForTests();
         _conversations.clear();
+        _dailyTokenUsage.clear();
         _workspaceSessionIds.clear();
         _pendingApprovals.clear();
         stopAsyncShellsForTests();
@@ -204,9 +207,21 @@ public class NemoClient {
     record ToolProgress(ToolTrace startTrace, boolean reported) {
     }
 
-    record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
+    record DailyTokenUsage(long inputTokens, long outputTokens) {
+        DailyTokenUsage add(long inputTokens, long outputTokens) {
+            return new DailyTokenUsage(Math.max(0, this.inputTokens + inputTokens),
+                    Math.max(0, this.outputTokens + outputTokens));
+        }
+    }
+
+    record ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces,
+            long inputTokens, long outputTokens) {
         ResponseResult(String text, Integer contextUsagePercent) {
-            this(text, contextUsagePercent, List.of());
+            this(text, contextUsagePercent, List.of(), 0, 0);
+        }
+
+        ResponseResult(String text, Integer contextUsagePercent, List<ToolTrace> toolTraces) {
+            this(text, contextUsagePercent, toolTraces, 0, 0);
         }
     }
 
@@ -4903,6 +4918,7 @@ public class NemoClient {
 
         _sessionsLoaded = true;
         _conversations.clear();
+        _dailyTokenUsage.clear();
         _workspaceSessionIds.clear();
         _activeSessionId = null;
         _nextSessionNumber = 1;
@@ -4925,6 +4941,19 @@ public class NemoClient {
             if (workspaceSessions != null) {
                 for (String key : workspaceSessions.keySet()) {
                     _workspaceSessionIds.put(key, workspaceSessions.get(key).getAsString());
+                }
+            }
+
+            JsonObject dailyTokenUsage = root.getAsJsonObject("daily_token_usage");
+            if (dailyTokenUsage != null) {
+                for (String date : dailyTokenUsage.keySet()) {
+                    JsonObject totals = dailyTokenUsage.getAsJsonObject(date);
+                    if (totals == null) {
+                        continue;
+                    }
+                    long inputTokens = totals.has("input_tokens") ? Math.max(0, totals.get("input_tokens").getAsLong()) : 0;
+                    long outputTokens = totals.has("output_tokens") ? Math.max(0, totals.get("output_tokens").getAsLong()) : 0;
+                    _dailyTokenUsage.put(date, new DailyTokenUsage(inputTokens, outputTokens));
                 }
             }
 
@@ -4981,6 +5010,7 @@ public class NemoClient {
         } catch (Exception e) {
             _log.error("Unable to load Nemo sessions from {}", statePath, e);
             _conversations.clear();
+            _dailyTokenUsage.clear();
             _workspaceSessionIds.clear();
             _activeSessionId = null;
             _nextSessionNumber = 1;
@@ -5001,6 +5031,15 @@ public class NemoClient {
             }
         }
         root.add("workspace_sessions", workspaceSessions);
+
+        var dailyTokenUsage = new JsonObject();
+        for (var entry : _dailyTokenUsage.entrySet()) {
+            var totals = new JsonObject();
+            totals.addProperty("input_tokens", entry.getValue().inputTokens());
+            totals.addProperty("output_tokens", entry.getValue().outputTokens());
+            dailyTokenUsage.add(entry.getKey(), totals);
+        }
+        root.add("daily_token_usage", dailyTokenUsage);
 
         var sessions = new JsonArray();
         for (var conversation : _conversations.values()) {
@@ -5550,7 +5589,48 @@ public class NemoClient {
             conversation._panelView.setPending(false);
         }
         conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
+        conversation._panelView.setDailyTokenUsage(compactDailyTokenUsage());
         conversation._panelView.activatePrompt();
+    }
+
+    private void recordDailyTokenUsage(long inputTokens, long outputTokens) {
+        if (inputTokens <= 0 && outputTokens <= 0) {
+            return;
+        }
+        String date = LocalDate.now().toString();
+        _dailyTokenUsage.merge(date, new DailyTokenUsage(Math.max(0, inputTokens), Math.max(0, outputTokens)),
+                (current, added) -> current.add(added.inputTokens(), added.outputTokens()));
+    }
+
+    private String compactDailyTokenUsage() {
+        DailyTokenUsage usage = _dailyTokenUsage.get(LocalDate.now().toString());
+        if (usage == null || (usage.inputTokens() == 0 && usage.outputTokens() == 0)) {
+            return "today 0 in / 0 out";
+        }
+        return "today " + formatTokenCount(usage.inputTokens()) + " in / "
+                + formatTokenCount(usage.outputTokens()) + " out";
+    }
+
+    private String formatDailyTokenUsage() {
+        DailyTokenUsage usage = _dailyTokenUsage.get(LocalDate.now().toString());
+        long inputTokens = usage == null ? 0 : usage.inputTokens();
+        long outputTokens = usage == null ? 0 : usage.outputTokens();
+        return "Today’s Nemo usage\n\n"
+                + "Input: " + formatTokenCount(inputTokens) + " tokens\n"
+                + "Output: " + formatTokenCount(outputTokens) + " tokens\n"
+                + "Total: " + formatTokenCount(inputTokens + outputTokens) + " tokens\n\n"
+                + "These are provider-reported token counts across all Nemo conversations and workers today. "
+                + "Pricing varies by provider, model, and account; use them with your provider’s current rates for a cost estimate.";
+    }
+
+    private static String formatTokenCount(long tokens) {
+        if (tokens >= 1_000_000) {
+            return String.format(java.util.Locale.ROOT, "%.2fM", tokens / 1_000_000.0);
+        }
+        if (tokens >= 1_000) {
+            return String.format(java.util.Locale.ROOT, "%.1fk", tokens / 1_000.0);
+        }
+        return Long.toString(tokens);
     }
 
     private List<ChatPanelView.ChatMessage> mapTurnsToMessages(Conversation conversation) {
@@ -5678,6 +5758,7 @@ public class NemoClient {
             new CommandSpec("delete", List.of(), "[conversation-id]", "delete a Nemo conversation"),
             new CommandSpec("shells", List.of(), "", "list Nemo asynchronous shells"),
             new CommandSpec("shell_delete", List.of(), "<shell-id>", "delete a Nemo asynchronous shell"),
+            new CommandSpec("usage", List.of("tokens"), "", "show today's Nemo input and output token usage"),
             new CommandSpec("model", List.of(), "[name]", "show or select the model for this conversation"),
             new CommandSpec("reasoning", List.of("reasoning-effort"), "[level]",
                     "show or select the reasoning effort for this conversation"),
@@ -5823,6 +5904,10 @@ public class NemoClient {
         case ":shell_delete":
             handleShellDeleteCommand(conversation, argument);
             return;
+        case ":usage":
+        case ":tokens":
+            appendAssistantNote(conversation, formatDailyTokenUsage());
+            return;
         case ":model":
             handleModelCommand(conversation, argument);
             return;
@@ -5856,7 +5941,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :model [name], :reasoning [level], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :usage, :model [name], :reasoning [level], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -6525,6 +6610,7 @@ public class NemoClient {
         conversation._pending = false;
         conversation._pendingStartedAtMillis = 0;
         conversation._contextUsagePercent = response.contextUsagePercent();
+        recordDailyTokenUsage(response.inputTokens(), response.outputTokens());
         conversation._activeRequestId = 0;
         conversation._worker = null;
         clearStuck(conversation);
@@ -6535,6 +6621,7 @@ public class NemoClient {
         if (isPanelVisible(conversation)) {
             conversation._panelView.setPending(false);
             conversation._panelView.setContextUsagePercent(response.contextUsagePercent());
+            conversation._panelView.setDailyTokenUsage(compactDailyTokenUsage());
         }
         if (!queuedTurns.isEmpty()) {
             startRequest(conversation, List.of(new ChatTurn("me", queuedWorkerMessage(queuedTurns))));

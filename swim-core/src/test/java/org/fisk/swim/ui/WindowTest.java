@@ -1554,6 +1554,24 @@ class WindowTest {
     }
 
     @Test
+    void refreshingOpenBufferWithIdenticalContentsPreservesEveryCursor() throws Exception {
+        Path file = writeFile("nemo-refresh-identical.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalContext = window.getBufferContext();
+            originalContext.getBuffer().getCursor().setPosition(7);
+            window.splitActiveBufferHorizontally();
+            var splitContext = window.getBufferContext();
+            splitContext.getBuffer().getCursor().setPosition(10);
+
+            assertFalse(window.refreshOpenBuffersForPath(file, "alpha\nbeta\n"));
+            assertEquals(7, originalContext.getBuffer().getCursor().getPosition());
+            assertEquals(10, splitContext.getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
     void clickingSplitFrameBarActivatesThatBufferFrame() throws Exception {
         Path file = writeFile("click-split-frame.txt", "alpha\nbeta\n");
 

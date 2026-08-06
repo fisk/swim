@@ -2582,12 +2582,18 @@ public class Window implements Drawable {
         }
         ensureLayoutState();
         Path normalized = path.toAbsolutePath().normalize();
+        String refreshedContents = content == null ? "" : content;
         boolean refreshed = false;
         for (BufferContext context : openBufferContextsSnapshot()) {
             if (!bufferPathEquals(context, normalized)) {
                 continue;
             }
-            replaceBufferContents(context, content == null ? "" : content);
+            var buffer = context.getBuffer();
+            if (refreshedContents.equals(buffer.getString())) {
+                buffer.discardPendingExternalChange();
+                continue;
+            }
+            replaceBufferContents(context, refreshedContents);
             refreshed = true;
         }
         if (refreshed) {

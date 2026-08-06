@@ -4,11 +4,15 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
@@ -1934,13 +1938,49 @@ public class Buffer {
             trimTrailingWhitespace();
         }
         mode.willSave(_bufferContext);
-        Files.writeString(_path, _string.toString());
+        writeAtomically(_path, _string.toString());
         _savedVersion = _version;
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {
             window.getCommandView().setMessage("Saved file");
         }
         mode.didSave(_bufferContext);
+    }
+
+    /**
+     * Makes a completed file visible in one replacement operation. Besides making saves
+     * crash-safe, this prevents the open-buffer watcher from ever reloading a transient
+     * truncated version of a file SWIM is writing itself.
+     */
+    private static void writeAtomically(Path path, String contents) throws IOException {
+        Path absolutePath = path.toAbsolutePath().normalize();
+        Path directory = absolutePath.getParent();
+        if (directory == null) {
+            Files.writeString(absolutePath, contents);
+            return;
+        }
+        Set<PosixFilePermission> permissions = null;
+        if (Files.exists(absolutePath)
+                && Files.getFileStore(absolutePath).supportsFileAttributeView(PosixFileAttributeView.class)) {
+            permissions = Files.getPosixFilePermissions(absolutePath);
+        }
+        Path temporaryPath = Files.createTempFile(directory, "." + absolutePath.getFileName() + ".", ".swim-save");
+        try {
+            Files.writeString(temporaryPath, contents);
+            if (permissions != null) {
+                Files.setPosixFilePermissions(temporaryPath, permissions);
+            }
+            try {
+                Files.move(temporaryPath, absolutePath, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                // Moving within the same directory still gives the filesystem its strongest
+                // available replacement semantics when atomic moves are unavailable.
+                Files.move(temporaryPath, absolutePath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporaryPath);
+        }
     }
 
     private void trimTrailingWhitespace() {

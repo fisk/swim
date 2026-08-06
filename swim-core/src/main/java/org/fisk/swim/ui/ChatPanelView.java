@@ -106,6 +106,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private boolean _bracketedPasteActive;
     private long _pendingStartedAtMillis;
     private Integer _contextUsagePercent;
+    private String _dailyTokenUsage = "";
     private long _pendingRefreshGeneration;
     private Runnable _responseAction;
 
@@ -429,6 +430,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         } else {
             _contextUsagePercent = Math.max(0, Math.min(100, contextUsagePercent));
         }
+        setNeedsRedraw();
+    }
+
+    public void setDailyTokenUsage(String dailyTokenUsage) {
+        _dailyTokenUsage = dailyTokenUsage == null ? "" : dailyTokenUsage.trim();
         setNeedsRedraw();
     }
 
@@ -1185,6 +1191,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         if (_contextUsagePercent != null) {
             title.append(" ctx " + _contextUsagePercent + "% ", contextUsageColour(_contextUsagePercent),
                     UiTheme.SURFACE_ACCENT);
+        }
+        if (!_dailyTokenUsage.isBlank()) {
+            title.append(" " + _dailyTokenUsage + " ", UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
         }
         UiTheme.drawLine(graphics, rect.getPoint(), width, title, UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
