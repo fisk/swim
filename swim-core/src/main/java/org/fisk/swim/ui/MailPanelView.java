@@ -176,6 +176,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private final MailClient _client;
+    private final EventThread _eventThread = EventThread.getInstance();
     private final MailCursor _cursor = new MailCursor(this);
     private MailSnapshot _snapshot;
     private List<SidebarRow> _sidebarRows = List.of();
@@ -228,6 +229,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     private boolean _awaitingOAuthCompletion;
     private long _oauthPollGeneration;
     private BufferContext _messageBufferContext;
+    private volatile boolean _disposed;
 
     public MailPanelView(Rect bounds, MailClient client) {
         super(bounds);
@@ -247,6 +249,28 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
     boolean isComposeActive() {
         return _mode == Mode.COMPOSE;
+    }
+
+    /** Stops accepting asynchronous callbacks from a window that is being unloaded. */
+    void disposeForReload() {
+        _disposed = true;
+        _awaitingOAuthCompletion = false;
+        _oauthPollGeneration++;
+        _messageLoadGeneration.incrementAndGet();
+        _unreadCountLoadGeneration.incrementAndGet();
+        _snapshot = null;
+        _threads = List.of();
+        _threadRows = List.of();
+        _threadMessagesByThreadId.clear();
+    }
+
+    private void enqueueUi(Runnable runnable) {
+        if (_disposed) return;
+        if (!_eventThread.isAlive()) {
+            runnable.run();
+            return;
+        }
+        _eventThread.enqueue(new RunnableEvent(() -> { if (!_disposed) runnable.run(); }));
     }
 
     @Override
@@ -1109,7 +1133,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 _composeInReplyToMessageId);
         Thread thread = new Thread(() -> {
             MailSendResult result = _client.sendDraft(draft);
-            EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            enqueueUi(() -> {
                 _sendInFlight.set(false);
                 _statusMessage = result.message();
                 if (result.success()) {
@@ -1125,7 +1149,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 } else {
                     announce(result.message());
                 }
-            }));
+            });
         }, "mail-send");
         thread.setDaemon(true);
         thread.start();
@@ -1501,12 +1525,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                     }
                 }
             };
-            var eventThread = EventThread.getInstance();
-            if (eventThread.isAlive()) {
-                eventThread.enqueue(new RunnableEvent(finish));
-            } else {
-                finish.run();
-            }
+            enqueueUi(finish);
         }, "mail-unread-counts");
         worker.setDaemon(true);
         worker.start();
@@ -1582,12 +1601,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 markDisplayedMessageRead(safeRow, loaded);
                 setNeedsRedraw();
             };
-            var eventThread = EventThread.getInstance();
-            if (eventThread.isAlive()) {
-                eventThread.enqueue(new RunnableEvent(applyLoadedMessage));
-            } else {
-                applyLoadedMessage.run();
-            }
+            enqueueUi(applyLoadedMessage);
         }, "mail-load-message");
         worker.setDaemon(true);
         worker.start();
@@ -1835,13 +1849,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         _unreadCountLoadGeneration.incrementAndGet();
         Thread worker = new Thread(() -> {
             _client.markMessageRead(messageId);
-            var eventThread = EventThread.getInstance();
             Runnable apply = () -> applyLocalReadState(threadId, messageId, accountId, tags, addressedToAccount, wasUnread);
-            if (eventThread.isAlive()) {
-                eventThread.enqueue(new RunnableEvent(apply));
-            } else {
-                apply.run();
-            }
+            enqueueUi(apply);
         }, "mail-mark-read");
         worker.setDaemon(true);
         worker.start();
@@ -2384,7 +2393,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         Thread thread = new Thread(() -> {
             try {
                 _client.refresh();
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                enqueueUi(() -> {
                     _refreshInFlight.set(false);
                     reload();
                     String actionableStatus = actionableSnapshotStatus();
@@ -2394,12 +2403,12 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                         _statusMessage = _snapshot.statusMessage();
                     }
                     setNeedsRedraw();
-                }));
+                });
             } catch (RuntimeException e) {
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                enqueueUi(() -> {
                     _refreshInFlight.set(false);
                     announce("Mail refresh failed: " + rootMessage(e));
-                }));
+                });
             }
         }, "mail-refresh");
         thread.setDaemon(true);
@@ -2419,11 +2428,11 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 if (!_awaitingOAuthCompletion || _oauthPollGeneration != generation) {
                     return;
                 }
-                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                enqueueUi(() -> {
                     if (_awaitingOAuthCompletion && _oauthPollGeneration == generation && !_refreshInFlight.get()) {
                         refreshClientAsync("Checking sign-in...");
                     }
-                }));
+                });
             }
         }, "mail-oauth-poll");
         thread.setDaemon(true);

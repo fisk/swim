@@ -21,7 +21,7 @@ final class EmailPluginSupport {
             _client = new H2MailClient(EmailPaths.fromUserHome(),
                     new DefaultMailSyncAdapterFactory(),
                     new SmtpMailSupport(EmailPaths.fromUserHome()),
-                    false);
+                    false, context.workers());
             MailPluginRegistry.register(_client);
         } catch (IOException | SQLException e) {
             LOG.error("Failed to initialize mail plugin", e);

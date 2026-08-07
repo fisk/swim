@@ -220,7 +220,7 @@ public class View implements Drawable, EventResponder {
             return;
         }
         if (view instanceof BufferView || view instanceof ChatPanelView || view instanceof ShellPanelView || view instanceof ListView
-                || view instanceof ProjectSearchPanelView || view instanceof TextPanelView
+                || view instanceof ProjectSearchPanelView || view instanceof LiveSearchPanelView || view instanceof TextPanelView
                 || view instanceof PluginPanelView || view instanceof HelpWorkspaceView) {
             window.activateView(view);
         }

@@ -127,6 +127,7 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.text.Settings;
 import org.fisk.swim.ui.LspFeaturePopupView;
+import org.fisk.swim.ui.LiveSearchPanelView;
 import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.UiTheme;
@@ -360,11 +361,37 @@ public final class LspFeatureSupport {
     }
 
     public void promptWorkspaceSymbols(BufferContext context) {
+        if (!supported(_client.capabilities() == null ? null : _client.capabilities().getWorkspaceSymbolProvider())) {
+            status(_client.displayName() + " workspace symbols are not supported");
+            return;
+        }
         Window window = Window.getInstance();
         if (window == null) {
             return;
         }
-        window.showInputPrompt("Workspace Symbols", "query", "", query -> showWorkspaceSymbols(context, query));
+        if (window.isShowingPanel()) {
+            window.hidePanel();
+        }
+        var panel = new LiveSearchPanelView(org.fisk.swim.ui.Rect.create(0, 0, 0, 0), "Workspace Symbols",
+                "type to search project symbols");
+        panel.setOnQueryChanged((query, generation) -> requestWorkspaceSymbolResults(panel, context, query, generation));
+        window.showPanel(panel);
+        if (window.getPanelView() != panel) {
+            status("Unable to open workspace symbol search");
+        }
+    }
+
+    private void requestWorkspaceSymbolResults(LiveSearchPanelView panel, BufferContext context,
+            String query, long generation) {
+        if (query == null || query.isBlank()) {
+            panel.setResults(generation, List.of());
+            return;
+        }
+        request("workspace symbols", context,
+                snapshot -> _client.server().getWorkspaceService()
+                        .symbol(new WorkspaceSymbolParams(query))
+                        .get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS),
+                (snapshot, response) -> panel.setResults(generation, workspaceSymbolSearchEntries(snapshot, response)));
     }
 
     public void showWorkspaceSymbols(BufferContext context, String query) {
@@ -802,6 +829,38 @@ public final class LspFeatureSupport {
             }
         }
         showEntries(snapshot, "Workspace Symbols", entries, "No workspace symbols");
+    }
+
+    private List<LiveSearchPanelView.Entry> workspaceSymbolSearchEntries(Snapshot snapshot,
+            Either<List<? extends SymbolInformation>, List<? extends WorkspaceSymbol>> response) {
+        if (response == null) {
+            return List.of();
+        }
+        var entries = new ArrayList<LiveSearchPanelView.Entry>();
+        if (response.isLeft()) {
+            for (var info : response.getLeft()) {
+                if (info == null || info.getLocation() == null) continue;
+                var target = locationTarget(info.getLocation().getUri(), info.getLocation().getRange().getStart());
+                if (target != null) {
+                    entries.add(new LiveSearchPanelView.Entry(symbolKind(info.getKind()), info.getName(),
+                            (info.getContainerName() == null || info.getContainerName().isBlank() ? ""
+                                    : info.getContainerName() + "  ") + target.label(), symbolAccent(info.getKind()),
+                            () -> jumpToTarget(target)));
+                }
+            }
+        } else {
+            for (var symbol : response.getRight()) {
+                if (symbol == null || symbol.getLocation() == null) continue;
+                var target = workspaceSymbolTarget(symbol.getLocation());
+                if (target != null) {
+                    entries.add(new LiveSearchPanelView.Entry(symbolKind(symbol.getKind()), symbol.getName(),
+                            (symbol.getContainerName() == null || symbol.getContainerName().isBlank() ? ""
+                                    : symbol.getContainerName() + "  ") + target.label(), symbolAccent(symbol.getKind()),
+                            () -> jumpToTarget(target)));
+                }
+            }
+        }
+        return entries;
     }
 
     private void showCodeActions(Snapshot snapshot, List<Either<Command, CodeAction>> actions) {

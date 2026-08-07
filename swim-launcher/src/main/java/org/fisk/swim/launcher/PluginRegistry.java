@@ -13,6 +13,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
@@ -22,6 +24,7 @@ import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.api.SwimPluginPreloadContext;
 import org.fisk.swim.api.SwimPluginPreloadRegistry;
+import org.fisk.swim.api.SwimPluginWorkers;
 
 final class PluginRegistry implements Main.PluginController {
     private static final String CORE_MODULE = "org.fisk.swim.core";
@@ -405,6 +408,7 @@ final class PluginRegistry implements Main.PluginController {
         private final SwimHost _host;
         private final List<Path> _initialPaths;
         private final Supplier<Path> _currentPathSupplier;
+        private final PluginWorkers _workers = new PluginWorkers();
 
         private DefaultPluginContext(String pluginId, SwimHost host, List<Path> initialPaths, Supplier<Path> currentPathSupplier) {
             _pluginId = pluginId;
@@ -437,6 +441,45 @@ final class PluginRegistry implements Main.PluginController {
         public Path getCurrentPath() {
             Path currentPath = _currentPathSupplier.get();
             return currentPath == null ? getInitialPath() : currentPath;
+        }
+
+        @Override
+        public SwimPluginWorkers workers() {
+            return _workers;
+        }
+
+        void closeWorkers() {
+            _workers.close();
+        }
+    }
+
+    private static final class PluginWorkers implements SwimPluginWorkers {
+        private static final long JOIN_MILLIS = 2_000L;
+        private final Set<Thread> _threads = ConcurrentHashMap.newKeySet();
+        private volatile boolean _closed;
+
+        @Override public Thread start(Runnable task) {
+            if (_closed) throw new IllegalStateException("Plugin has been unloaded");
+            Thread thread = new Thread(() -> { try { task.run(); } finally { _threads.remove(Thread.currentThread()); } });
+            thread.setDaemon(true);
+            _threads.add(thread);
+            thread.start();
+            return thread;
+        }
+        @Override public boolean isClosed() { return _closed; }
+        @Override public void close() {
+            _closed = true;
+            var workers = List.copyOf(_threads);
+            for (Thread thread : workers) thread.interrupt();
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(JOIN_MILLIS);
+            for (Thread thread : workers) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) break;
+                try { thread.join(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            }
+            _threads.removeIf(thread -> !thread.isAlive());
+            if (!_threads.isEmpty()) throw new IllegalStateException("Plugin worker did not stop: " + _threads.iterator().next());
         }
     }
 
@@ -520,6 +563,7 @@ final class PluginRegistry implements Main.PluginController {
         private SwimPlugin _instance;
         private boolean _loaded;
         private boolean _preloaded;
+        private DefaultPluginContext _context;
 
         private ExtensionPluginBinding(
                 String id,
@@ -578,8 +622,10 @@ final class PluginRegistry implements Main.PluginController {
             try {
                 plugin.load(context);
                 _instance = plugin;
+                _context = context;
                 _loaded = true;
             } catch (RuntimeException | Error e) {
+                context.closeWorkers();
                 _instance = null;
                 _loaded = false;
                 SwimNemoToolRegistry.unregisterPlugin(_id);
@@ -598,7 +644,12 @@ final class PluginRegistry implements Main.PluginController {
             try {
                 plugin.close();
             } finally {
-                SwimNemoToolRegistry.unregisterPlugin(_id);
+                try {
+                    if (_context != null) _context.closeWorkers();
+                } finally {
+                    _context = null;
+                    SwimNemoToolRegistry.unregisterPlugin(_id);
+                }
             }
         }
 

@@ -378,6 +378,9 @@ public class ModeLineView extends View {
         if (view instanceof ProjectSearchPanelView projectSearchPanelView) {
             return projectSearchPanelView.getTitle();
         }
+        if (view instanceof LiveSearchPanelView searchPanelView) {
+            return searchPanelView.getTitle();
+        }
         if (view instanceof TextPanelView textPanelView) {
             return textPanelView.getTitle();
         }

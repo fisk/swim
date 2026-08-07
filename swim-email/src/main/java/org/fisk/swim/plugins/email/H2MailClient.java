@@ -22,6 +22,7 @@ import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailSendResult;
 import org.fisk.swim.mail.MailThreadFilter;
 import org.fisk.swim.mail.MailThreadPage;
+import org.fisk.swim.api.SwimPluginWorkers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,28 +40,36 @@ final class H2MailClient implements MailClient {
     private final MailSyncAdapterFactory _adapterFactory;
     private final MailSyncEngine _syncEngine;
     private final MailDeliveryService _deliveryService;
+    private final SwimPluginWorkers _workers;
     private final Object _readLock = new Object();
     private final Object _writeLock = new Object();
     private final AtomicBoolean _refreshInFlight = new AtomicBoolean();
     private final AtomicBoolean _backfillInFlight = new AtomicBoolean();
     private final AtomicLong _refreshGeneration = new AtomicLong();
     private volatile boolean _closed;
+    private volatile Thread _backfillThread;
 
     H2MailClient(EmailPaths paths) throws SQLException, IOException {
-        this(paths, new DefaultMailSyncAdapterFactory(), new SmtpMailSupport(paths), true);
+        this(paths, new DefaultMailSyncAdapterFactory(), new SmtpMailSupport(paths), true, SwimPluginWorkers.unmanaged());
     }
 
     H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory) throws SQLException, IOException {
-        this(paths, adapterFactory, new SmtpMailSupport(paths), true);
+        this(paths, adapterFactory, new SmtpMailSupport(paths), true, SwimPluginWorkers.unmanaged());
     }
 
     H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService)
             throws SQLException, IOException {
-        this(paths, adapterFactory, deliveryService, true);
+        this(paths, adapterFactory, deliveryService, true, SwimPluginWorkers.unmanaged());
     }
 
     H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService,
             boolean initialRefresh)
+            throws SQLException, IOException {
+        this(paths, adapterFactory, deliveryService, initialRefresh, SwimPluginWorkers.unmanaged());
+    }
+
+    H2MailClient(EmailPaths paths, MailSyncAdapterFactory adapterFactory, MailDeliveryService deliveryService,
+            boolean initialRefresh, SwimPluginWorkers workers)
             throws SQLException, IOException {
         _paths = paths;
         EmailConfigStore.ensureDefaultFiles(paths);
@@ -68,6 +77,7 @@ final class H2MailClient implements MailClient {
         _adapterFactory = adapterFactory;
         _syncEngine = new MailSyncEngine(adapterFactory);
         _deliveryService = deliveryService;
+        _workers = workers == null ? SwimPluginWorkers.unmanaged() : workers;
         Connection writeConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
         Connection readConnection = null;
         _writeConnection = writeConnection;
@@ -285,6 +295,11 @@ final class H2MailClient implements MailClient {
     public void close() {
         _closed = true;
         _refreshGeneration.incrementAndGet();
+        Thread backfill = _backfillThread;
+        if (backfill != null) {
+            backfill.interrupt();
+            try { backfill.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
         synchronized (_writeLock) {
             try {
                 _writeConnection.close();
@@ -328,9 +343,7 @@ final class H2MailClient implements MailClient {
         if (!hasBackfill || !_backfillInFlight.compareAndSet(false, true)) {
             return;
         }
-        Thread thread = new Thread(() -> runBackfill(plan, generation), "mail-backfill");
-        thread.setDaemon(true);
-        thread.start();
+        _backfillThread = _workers.start(() -> runBackfill(plan, generation));
     }
 
     private void runBackfill(MailSyncEngine.RefreshPlan plan, long generation) {
@@ -358,6 +371,7 @@ final class H2MailClient implements MailClient {
             }
         } finally {
             _backfillInFlight.set(false);
+            _backfillThread = null;
         }
     }
 

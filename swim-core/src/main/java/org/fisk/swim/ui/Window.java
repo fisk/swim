@@ -3296,6 +3296,8 @@ public class Window implements Drawable {
 
     public void dispose() {
         ensureLayoutState();
+        disposeMailPanels(_workspaceView);
+        disposeMailPanels(_panelView);
         if (_editorConfig != null && Boolean.getBoolean("swim.session.restore_on_reload")) {
             saveSessionForReload();
         }
@@ -3323,6 +3325,15 @@ public class Window implements Drawable {
         } catch (IOException ignored) {
         }
         _instance = null;
+    }
+
+    private static void disposeMailPanels(View view) {
+        if (view instanceof MailPanelView mailPanel) {
+            mailPanel.disposeForReload();
+        }
+        if (view instanceof SplitView split) {
+            for (View leaf : split.leafViews()) disposeMailPanels(leaf);
+        }
     }
 
     public void saveSessionForReload() {
@@ -3564,6 +3575,9 @@ public class Window implements Drawable {
         if (responder instanceof ProjectSearchPanelView) {
             return KeyMenuView.FocusContext.SEARCH_PANEL;
         }
+        if (responder instanceof LiveSearchPanelView) {
+            return KeyMenuView.FocusContext.SEARCH_PANEL;
+        }
         if (responder instanceof TextPanelView) {
             return KeyMenuView.FocusContext.TEXT_PANEL;
         }
@@ -3617,6 +3631,9 @@ public class Window implements Drawable {
             return captureView.getTitle();
         }
         if (responder instanceof ProjectSearchPanelView searchPanelView) {
+            return searchPanelView.getTitle();
+        }
+        if (responder instanceof LiveSearchPanelView searchPanelView) {
             return searchPanelView.getTitle();
         }
         if (responder instanceof DirectoryBrowserView directoryBrowserView) {

@@ -14,6 +14,10 @@ public interface SwimPluginContext {
 
     Path getCurrentPath();
 
+    default SwimPluginWorkers workers() {
+        return SwimPluginWorkers.unmanaged();
+    }
+
     default String getPluginId() {
         return getClass().getName();
     }
