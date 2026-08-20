@@ -9,10 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
@@ -38,6 +41,8 @@ import org.fisk.swim.mail.MailPluginRegistry;
 import org.fisk.swim.mail.MailSnapshot;
 import org.fisk.swim.mail.MailThreadSummary;
 import org.fisk.swim.slack.FakeSlackClient;
+import org.fisk.swim.lsp.LanguageMode;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.SlackPluginRegistry;
 import org.fisk.swim.terminal.TerminalContext;
@@ -916,6 +921,42 @@ class CommandViewTest {
 
             assertEquals("The current buffer has no restartable language server",
                     HeadlessWindowHarness.getField(commandView, "_message", String.class));
+        }
+    }
+
+    @Test
+    void lspRestartReloadsLanguageModeAfterProjectConfigurationIsFixed() throws Exception {
+        Path path = tempDir.resolve("lsp-restart.lsprestart");
+        Files.writeString(path, "source\n");
+        var configurationFixed = new AtomicBoolean();
+        var restartCalls = new AtomicInteger();
+        try (AutoCloseable ignored = LanguagePluginRegistry.register("lsprestart", "test-lsp", ignoredPath -> {
+            if (!configurationFixed.get()) {
+                return null;
+            }
+            return (LanguageMode) Proxy.newProxyInstance(
+                    LanguageMode.class.getClassLoader(),
+                    new Class<?>[] {LanguageMode.class},
+                    (proxy, method, args) -> {
+                        if ("restartServer".equals(method.getName())) {
+                            restartCalls.incrementAndGet();
+                            return true;
+                        }
+                        if (method.getReturnType() == boolean.class) {
+                            return false;
+                        }
+                        if (method.getReturnType() == int.class) {
+                            return 0;
+                        }
+                        return null;
+                    });
+        })) {
+            try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
+                configurationFixed.set(true);
+                invokeRunCommand(harness.getWindow().getCommandView(), "lsp-restart");
+
+                assertEquals(1, restartCalls.get());
+            }
         }
     }
 

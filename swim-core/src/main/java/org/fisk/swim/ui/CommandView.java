@@ -588,7 +588,14 @@ public class CommandView extends View {
         case "lsp-reload":
             var context = Window.getInstance().getBufferContext();
             if (!context.getBuffer().getLanguageMode().restartServer(context)) {
-                _message = "The current buffer has no restartable language server";
+                // A language plugin may have deliberately left this buffer in
+                // plain mode because its project configuration was incomplete
+                // when the buffer opened. Recreate the mode before giving up so
+                // :lsp-restart can pick up a newly fixed configuration.
+                context.getBuffer().reloadLanguageMode();
+                if (!context.getBuffer().getLanguageMode().restartServer(context)) {
+                    _message = "The current buffer has no restartable language server";
+                }
             }
             break;
         case "reload":
