@@ -11,6 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import com.google.gson.JsonParser;
+
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHelpRegistry;
@@ -250,11 +252,13 @@ class ClangdLspPluginSupportTest {
     void createWindowStartsClangdForHeaderWithCompiledSibling() throws Exception {
         Path project = tempDir.resolve("header-sibling");
         Files.createDirectories(project.resolve("build"));
-        Path source = Files.writeString(project.resolve("engine.cpp"), "int engine() { return 0; }\n");
-        Path header = Files.writeString(project.resolve("engine.inline.hpp"), "int engine();\n");
+        // g m groups these by the prefix before the first dot. Keep LSP
+        // eligibility aligned, including a compound source suffix.
+        Path source = Files.writeString(project.resolve("engine.inline.cpp"), "int engine() { return 0; }\n");
+        Path header = Files.writeString(project.resolve("engine.hpp"), "int engine();\n");
         Files.writeString(project.resolve("build").resolve("compile_commands.json"),
                 "[{\"directory\":\"" + project + "\",\"file\":\"" + source.getFileName()
-                        + "\",\"command\":\"clang++ -c engine.cpp\"}]");
+                        + "\",\"command\":\"clang++ -c engine.inline.cpp\"}]");
 
         var client = new RecordingClangdLspClient();
         ClangdLspClient.installInstance(client);
@@ -265,6 +269,31 @@ class ClangdLspPluginSupportTest {
 
         assertEquals(1, client.startCalls);
         assertEquals(header.toAbsolutePath().normalize(), client.startedPath);
+    }
+
+    @Test
+    void loneHeaderUsesNearestCompilationCommand() throws Exception {
+        Path project = tempDir.resolve("lone-header");
+        Path sourceDirectory = project.resolve("share/gc/z");
+        Path build = project.resolve("build");
+        Files.createDirectories(sourceDirectory);
+        Files.createDirectories(build);
+        Path source = Files.writeString(sourceDirectory.resolve("z_driver.cpp"), "void z_driver() {}\n");
+        Path header = Files.writeString(sourceDirectory.resolve("z_globals.hpp"), "#pragma once\n");
+        Files.writeString(build.resolve("compile_commands.json"),
+                "[{\"directory\":\"" + project + "\",\"file\":\"" + source
+                        + "\",\"arguments\":[\"clang++\",\"-c\",\"" + source + "\"]}]");
+
+        assertTrue(ClangdCompilationDatabase.containsCommandFor(build, header));
+        Path workspace = tempDir.resolve("workspace");
+        Path filtered = ClangdCompilationDatabase.filteredRoot(build, workspace, List.of(), header);
+
+        assertEquals(workspace, filtered);
+        assertTrue(JsonParser.parseString(Files.readString(workspace.resolve("compile_commands.json")))
+                .getAsJsonArray().asList().stream()
+                .filter(entry -> entry.isJsonObject())
+                .map(entry -> entry.getAsJsonObject().get("file").getAsString())
+                .anyMatch(file -> header.toAbsolutePath().normalize().toString().equals(file)));
     }
 
     @Test

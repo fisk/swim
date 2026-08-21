@@ -144,6 +144,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     private Path _projectPath;
     private Path _workspacePath;
     private Path _compilationDatabaseRoot;
+    private Path _startupPath;
     private List<String> _removeCompileArguments = List.of();
     private final Path _swimHomePath = Paths.get(System.getProperty("user.home"), ".swim");
     private final AsyncLspRequestQueue _lspRequestQueue = new AsyncLspRequestQueue(
@@ -309,6 +310,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
         _projectPath = defaultPath(ClangdProjectRoots.findWorkspaceRoot(filePath), filePath);
         _workspacePath = getWorkspacePath(_swimHomePath, _projectPath);
         _compilationDatabaseRoot = ClangdProjectRoots.findCompilationDatabaseRoot(filePath);
+        _startupPath = filePath == null ? null : filePath.toAbsolutePath().normalize();
         SwimProjectConfig config = SwimProjectConfig.load(_projectPath);
         _removeCompileArguments = config == null ? List.of() : config.clangdRemoveCompileArguments();
         _launchAttempted = true;
@@ -1516,7 +1518,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
         try {
             Files.createDirectories(_workspacePath);
             Path compilationDatabaseRoot = ClangdCompilationDatabase.filteredRoot(
-                    _compilationDatabaseRoot, _workspacePath, _removeCompileArguments);
+                    _compilationDatabaseRoot, _workspacePath, _removeCompileArguments, _startupPath);
             var session = _provider.start(
                     _projectPath,
                     _workspacePath,
