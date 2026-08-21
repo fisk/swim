@@ -4,18 +4,24 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.EventThread;
 import org.fisk.swim.api.SwimPluginKeyBinding;
 import org.fisk.swim.api.SwimPluginPreloadContext;
+import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.shared.LspHelp;
 import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.treesitter.TreeSitterBundledGrammars;
+import org.fisk.swim.treesitter.TreeSitterBufferSyntaxBridge;
+import org.fisk.swim.treesitter.TreeSitterGrammarKeywordBridge;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -32,6 +38,8 @@ public final class ClangdLspPluginSupport {
             ".inline.hpp", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".c", ".h");
 
     private static final ClangdLspClient UNAVAILABLE = new ClangdLspClient(new ClangdLspProvider((Path) null));
+    private static final IdentityHashMap<BufferContext, TreeSitterGrammarKeywordBridge.Registration> TREE_SITTER_ATTACHMENTS = new IdentityHashMap<>();
+    private static TreeSitterGrammarKeywordBridge _treeSitter;
 
     private ClangdLspPluginSupport() {
     }
@@ -78,12 +86,45 @@ public final class ClangdLspPluginSupport {
         return client;
     }
 
-    public static void install() {
+    public static void install(SwimPluginContext context) {
         ClangdLspClient.installInstance(new ClangdLspClient());
+        _treeSitter = new TreeSitterGrammarKeywordBridge(context.workers(),
+                TreeSitterBufferSyntaxBridge.onEventThread(EventThread.getInstance()),
+                TreeSitterBundledGrammars.load("cpp"));
     }
 
     public static void shutdown() {
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            TREE_SITTER_ATTACHMENTS.values().forEach(ClangdLspPluginSupport::close);
+            TREE_SITTER_ATTACHMENTS.clear();
+        }
+        close(_treeSitter);
+        _treeSitter = null;
         ClangdLspClient.shutdownInstalledInstance();
+    }
+
+    static void attachTreeSitter(BufferContext context) {
+        if (context == null || _treeSitter == null) return;
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            TREE_SITTER_ATTACHMENTS.computeIfAbsent(context, ignored -> _treeSitter.attach(context.getBuffer()));
+        }
+    }
+
+    static void detachTreeSitter(BufferContext context) {
+        if (context == null) return;
+        TreeSitterGrammarKeywordBridge.Registration attachment;
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            attachment = TREE_SITTER_ATTACHMENTS.remove(context);
+        }
+        close(attachment);
+    }
+
+    private static void close(AutoCloseable closeable) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
     }
 
     static boolean restart(BufferContext context) {
@@ -95,7 +136,7 @@ public final class ClangdLspPluginSupport {
             return false;
         }
         ClangdLspClient.shutdownInstalledInstance();
-        install();
+        ClangdLspClient.installInstance(new ClangdLspClient());
         var client = startClientIfNeeded(path, getClient());
         if (!client.isReady()) {
             return false;

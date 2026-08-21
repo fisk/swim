@@ -218,6 +218,23 @@ class TerminalContextTest {
     }
 
     @Test
+    void serverStreamTerminalDecodesModifiedShiftEnter() throws Exception {
+        for (String sequence : java.util.List.of("\u001b[27;2;13~", "\u001b[13;2u")) {
+            Terminal terminal = TerminalContext.createServerStreamTerminal(
+                    new ByteArrayInputStream(sequence.getBytes(StandardCharsets.UTF_8)),
+                    new ByteArrayOutputStream(),
+                    () -> new TerminalSize(80, 24));
+            try {
+                var input = terminal.readInput();
+                assertEquals(KeyType.Enter, input.getKeyType());
+                assertTrue(input.isShiftDown());
+            } finally {
+                terminal.close();
+            }
+        }
+    }
+
+    @Test
     void serverStreamTerminalLeavesPrivateModeRestoreToLauncherClient() throws Exception {
         var output = new ByteArrayOutputStream();
         Terminal terminal = TerminalContext.createServerStreamTerminal(
@@ -261,7 +278,7 @@ class TerminalContextTest {
         wrapped.exitPrivateMode();
 
         assertEquals(java.util.Arrays.asList(MouseCaptureMode.CLICK_RELEASE_DRAG, null), modes);
-        assertEquals(java.util.Arrays.asList("\u001b[?2004h", "\u001b[?1006h", "\u001b[?1006l", "\u001b[?2004l"),
+        assertEquals(java.util.Arrays.asList("\u001b[?2004h", "\u001b[?1006h", "\u001b[>4;2m", "\u001b[?1006l", "\u001b[?2004l", "\u001b[>4m"),
                 writes);
     }
 
@@ -288,6 +305,7 @@ class TerminalContextTest {
                 "\u001b[6 q",
                 "\u001b[?1006l",
                 "\u001b[?2004l",
+                "\u001b[>4m",
                 "\u001b[?25h",
                 "\u001b[?1049l",
                 "\u001b[0m",

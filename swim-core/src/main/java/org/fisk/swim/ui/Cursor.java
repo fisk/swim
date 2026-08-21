@@ -20,6 +20,10 @@ public class Cursor {
         _x = point.getX();
         _y = point.getY();
         _bufferContext.getBufferView().setNeedsRedraw();
+        var window = Window.getInstance();
+        if (window != null) {
+            window.requestLinkedCursorRedraw(_bufferContext);
+        }
     }
 
     public Cursor(BufferContext bufferContext) {

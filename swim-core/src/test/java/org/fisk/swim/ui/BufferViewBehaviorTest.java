@@ -23,14 +23,17 @@ class BufferViewBehaviorTest {
     }
 
     @Test
-    void scrollDownHonorsViewportHeightWhenBufferIsShort() throws IOException {
+    void scrollDownAllowsBlankRowsBelowEofButStopsAtTheFinalLine() throws IOException {
         var context = createContext("one\ntwo", 10, 3);
         HeadlessWindowHarness.installForBufferContext(context);
         var view = context.getBufferView();
 
-        view.scrollDown();
+        for (int i = 0; i < 10; i++) {
+            view.scrollDown();
+        }
 
-        assertEquals(0, view.getStartLine());
+        assertEquals(1, view.getStartLine());
+        assertEquals(1, context.getBuffer().getCursor().getYAbsolute());
     }
 
     @Test

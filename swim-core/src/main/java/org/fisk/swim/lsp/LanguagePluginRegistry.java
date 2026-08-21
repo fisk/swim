@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.fisk.swim.text.AttributedString;
+
 public final class LanguagePluginRegistry {
     @FunctionalInterface
     public interface LanguageModeFactory {
@@ -52,7 +54,27 @@ public final class LanguagePluginRegistry {
         return REGISTRATIONS.get(normalizeExtension(fileName.substring(index + 1)));
     }
 
+    /** Applies lexical plugin colouring to standalone text, without a buffer or LSP document. */
+    public static boolean applySnippetColouring(String language, AttributedString text) {
+        if (language == null || language.isBlank() || text == null) return false;
+        String extension = normalizeSnippetLanguage(language);
+        Registration registration = REGISTRATIONS.get(extension);
+        if (registration == null) return false;
+        LanguageMode mode = registration.factory().create(Path.of("snippet." + registration.extension()));
+        if (mode == null) return false;
+        mode.applyColouring(null, text);
+        return true;
+    }
+
     private static String normalizeExtension(String extension) {
         return Objects.requireNonNull(extension, "extension").toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String normalizeSnippetLanguage(String language) {
+        return switch (normalizeExtension(language)) {
+        case "c++", "cxx" -> "cpp";
+        case "c#" -> "cs";
+        default -> normalizeExtension(language);
+        };
     }
 }

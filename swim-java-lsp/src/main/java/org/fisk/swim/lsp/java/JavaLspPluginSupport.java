@@ -1,16 +1,23 @@
 package org.fisk.swim.lsp.java;
 
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
 import java.util.Locale;
 import java.util.function.Consumer;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.EventThread;
 import org.fisk.swim.api.SwimPluginKeyBinding;
 import org.fisk.swim.api.SwimPluginPreloadContext;
+import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.LanguageMode;
 import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.lsp.shared.LspHelp;
+import org.fisk.swim.text.BufferContext;
+import org.fisk.swim.treesitter.TreeSitterBundledGrammars;
+import org.fisk.swim.treesitter.TreeSitterBufferSyntaxBridge;
+import org.fisk.swim.treesitter.TreeSitterGrammarKeywordBridge;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 
@@ -34,6 +41,8 @@ public final class JavaLspPluginSupport {
             throw new UnsupportedOperationException();
         }
     });
+    private static final IdentityHashMap<BufferContext, TreeSitterGrammarKeywordBridge.Registration> TREE_SITTER_ATTACHMENTS = new IdentityHashMap<>();
+    private static TreeSitterGrammarKeywordBridge _treeSitter;
 
     private JavaLspPluginSupport() {
     }
@@ -126,12 +135,45 @@ public final class JavaLspPluginSupport {
         return lsp;
     }
 
-    public static void install() {
+    public static void install(SwimPluginContext context) {
         JavaLSPClient.installInstance(new JavaLSPClient());
+        _treeSitter = new TreeSitterGrammarKeywordBridge(context.workers(),
+                TreeSitterBufferSyntaxBridge.onEventThread(EventThread.getInstance()),
+                TreeSitterBundledGrammars.load("java"));
     }
 
     public static void shutdown() {
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            TREE_SITTER_ATTACHMENTS.values().forEach(JavaLspPluginSupport::close);
+            TREE_SITTER_ATTACHMENTS.clear();
+        }
+        close(_treeSitter);
+        _treeSitter = null;
         JavaLSPClient.shutdownInstalledInstance();
+    }
+
+    static void attachTreeSitter(BufferContext context) {
+        if (context == null || _treeSitter == null) return;
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            TREE_SITTER_ATTACHMENTS.computeIfAbsent(context, ignored -> _treeSitter.attach(context.getBuffer()));
+        }
+    }
+
+    static void detachTreeSitter(BufferContext context) {
+        if (context == null) return;
+        TreeSitterGrammarKeywordBridge.Registration attachment;
+        synchronized (TREE_SITTER_ATTACHMENTS) {
+            attachment = TREE_SITTER_ATTACHMENTS.remove(context);
+        }
+        close(attachment);
+    }
+
+    private static void close(AutoCloseable closeable) {
+        if (closeable == null) return;
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
     }
 
     public static void goToDefinition() {

@@ -14,7 +14,8 @@ public class VisualBlockMode extends VisualMode {
         super(window);
     }
 
-    private List<Range> getSelection() {
+    @Override
+    public List<Range> selectionRanges() {
         var selection = new ArrayList<Range>();
         var minLine = minCursor().getPhysicalLine();
         var maxLine = maxCursor().getPhysicalLine();
@@ -51,6 +52,8 @@ public class VisualBlockMode extends VisualMode {
         var cursor = buffer.getCursor();
         installRegisterSelectionResponder();
         _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
+        _rootResponder.addEventResponder(":", "Commands", "substitute selection",
+                allowed("open command prompt", () -> window.getCommandView().activate(":")));
         _rootResponder.addEventResponder("o", () -> {
             allow("visual selection");
             var position = cursor.getPosition();
@@ -76,7 +79,7 @@ public class VisualBlockMode extends VisualMode {
         });
         _rootResponder.addEventResponder("I", () -> {
             allow("buffer edit");
-            var selection = getSelection();
+            var selection = selectionRanges();
             if (selection.isEmpty()) {
                 return;
             }
@@ -99,7 +102,7 @@ public class VisualBlockMode extends VisualMode {
     }
 
     public boolean isSelected(int position) {
-        for (var range: getSelection()) {
+        for (var range: selectionRanges()) {
             if (position >= range.getStart() && position < range.getEnd()) {
                 return true;
             }

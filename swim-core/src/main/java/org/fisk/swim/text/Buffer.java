@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
@@ -36,6 +37,11 @@ import com.googlecode.lanterna.TextColor;
 public class Buffer {
     private static final AtomicLong UNTITLED_COUNTER = new AtomicLong();
 
+    @FunctionalInterface
+    public interface ContentChangeListener {
+        void contentChanged(Buffer buffer);
+    }
+
     private static final class InsertPlan {
         private final String _text;
         private final int _cursorAdvance;
@@ -58,6 +64,7 @@ public class Buffer {
     private boolean _readOnly;
     private volatile AttributedString _attributedStringCache;
     private volatile int _attributedStringCacheVersion = -1;
+    private List<AttributedString.FormatRange> _syntaxFormatOverlays = List.of();
     private List<AttributedString.FormatRange> _formatOverlays = List.of();
     private static Logger _log = LogFactory.createLog();
     private final List<Fold> _folds = new ArrayList<>();
@@ -105,6 +112,7 @@ public class Buffer {
     private LanguageMode _languageMode;
     private LanguagePluginRegistry.Registration _languageModeRegistration;
     private boolean _open;
+    private final List<ContentChangeListener> _contentChangeListeners = new CopyOnWriteArrayList<>();
 
     public Buffer(Path path, BufferContext bufferContext) {
         this(path, bufferContext, null, false);
@@ -174,6 +182,11 @@ public class Buffer {
         _languageModeRegistration = registration;
         _languageMode = next;
         invalidateAttributedStringCache();
+        // A language-mode replacement changes presentation without necessarily
+        // changing the buffer version.  In particular, an LSP restart replaces
+        // the mode for an already visible buffer.  Do not wait for a later edit
+        // or viewport movement to make the view discover the fresh colouring.
+        _bufferContext.getBufferView().setNeedsRedraw();
         if (_open) {
             previous.didClose(_bufferContext);
             next.didOpen(_bufferContext);
@@ -240,6 +253,27 @@ public class Buffer {
         if (notifyLanguageMode) {
             mode.didOpen(_bufferContext);
         }
+        notifyContentChanged();
+    }
+
+    /**
+     * Applies a change made through another view of the same logical file.
+     * The source view already notified its language server, so this only keeps
+     * the local presentation and document version in sync.
+     */
+    public void replaceContentsFromLinkedBuffer(String content, int version, boolean modified) {
+        _string = new StringBuilder(content == null ? "" : content);
+        _folds.clear();
+        _version = Math.max(1, version);
+        _savedVersion = modified ? Math.max(0, _version - 1) : _version;
+        _pendingExternalContents = null;
+        _undoLog.clear();
+        invalidateAttributedStringCache();
+        _bufferContext.getTextLayout().calculate();
+        for (Cursor cursor : _cursors) {
+            cursor.setPosition(Math.min(cursor.getPosition(), _string.length()));
+        }
+        _bufferContext.getBufferView().setNeedsRedraw();
     }
 
     public void undo() {
@@ -283,6 +317,7 @@ public class Buffer {
         }
         mode.didInsert(_bufferContext, position, str);
         _bufferContext.getTextLayout().didInsert(position, str);
+        notifyContentChanged();
     }
 
     public void rawRemove(int startPosition, int endPosition) {
@@ -300,6 +335,7 @@ public class Buffer {
         }
         mode.didRemove(_bufferContext, startPosition, endPosition);
         _bufferContext.getTextLayout().didRemove(startPosition, endPosition, removedText);
+        notifyContentChanged();
     }
 
     private boolean updateAttributedStringCacheForInsert(LanguageMode mode, int position, String str) {
@@ -1599,6 +1635,43 @@ public class Buffer {
         return matches;
     }
 
+    /** Substitute independently within each exclusive source range, from end to start. */
+    public int substitute(Pattern pattern, String replacement, boolean global, List<Range> ranges) {
+        if (_readOnly || pattern == null || ranges == null || ranges.isEmpty()) {
+            return 0;
+        }
+        var ordered = new ArrayList<Range>(ranges);
+        ordered.sort((left, right) -> Integer.compare(right.getStart(), left.getStart()));
+        int matches = 0;
+        for (Range range : ordered) {
+            int start = Math.max(0, Math.min(range.getStart(), getLength()));
+            int end = Math.max(start, Math.min(range.getEnd(), getLength()));
+            String source = getSubstring(start, end);
+            var matcher = pattern.matcher(source);
+            int found = 0;
+            while (matcher.find()) {
+                found++;
+                if (!global) break;
+            }
+            if (found == 0) continue;
+            String replaced = global ? pattern.matcher(source).replaceAll(replacement)
+                    : pattern.matcher(source).replaceFirst(replacement);
+            _undoLog.recordRemove(start, end);
+            rawRemove(start, end);
+            if (!replaced.isEmpty()) {
+                _undoLog.recordInsert(start, replaced);
+                rawInsert(start, replaced);
+            }
+            matches += found;
+        }
+        if (matches > 0) {
+            _bufferContext.getTextLayout().calculate();
+            getCursor().setPosition(Math.min(getCursor().getPosition(), getLength()));
+            _bufferContext.getBufferView().adaptViewToCursor();
+        }
+        return matches;
+    }
+
     public int deleteMatchingLines(Pattern pattern, boolean invert) {
         if (_readOnly || pattern == null) {
             return 0;
@@ -1940,6 +2013,7 @@ public class Buffer {
         mode.willSave(_bufferContext);
         writeAtomically(_path, _string.toString());
         _savedVersion = _version;
+        notifyContentChanged();
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {
             window.getCommandView().setMessage("Saved file");
@@ -2061,6 +2135,21 @@ public class Buffer {
         _attributedStringCache = null;
     }
 
+    /**
+     * Applies parser-provided syntax formatting below language-mode and view-specific formatting.
+     * The expected version prevents a delayed analysis result from colouring newer buffer contents.
+     */
+    public boolean setSyntaxFormatOverlays(int expectedVersion, List<AttributedString.FormatRange> overlays) {
+        if (_version != expectedVersion) return false;
+        _syntaxFormatOverlays = overlays == null ? List.of() : List.copyOf(overlays);
+        invalidateAttributedStringCache();
+        return true;
+    }
+
+    public List<AttributedString.FormatRange> getSyntaxFormatOverlays() {
+        return _syntaxFormatOverlays;
+    }
+
     /** Applies view-specific formatting after syntax colouring. */
     public void setFormatOverlays(List<AttributedString.FormatRange> overlays) {
         _formatOverlays = overlays == null ? List.of() : List.copyOf(overlays);
@@ -2079,6 +2168,7 @@ public class Buffer {
             return AttributedString.create(cached);
         }
         var str = AttributedString.create(_string.toString(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_BACKGROUND);
+        str.format(_syntaxFormatOverlays);
         mode.applyColouring(_bufferContext, str);
         str.format(_formatOverlays);
         applyConflictMarkerColouring(str);
@@ -2118,8 +2208,24 @@ public class Buffer {
         return new VersionedTextDocumentIdentifier(_uri.toString(), _version);
     }
 
-    int getVersion() {
+    public int getVersion() {
         return _version;
+    }
+
+    public void addContentChangeListener(ContentChangeListener listener) {
+        if (listener != null) {
+            _contentChangeListeners.add(listener);
+        }
+    }
+
+    public void removeContentChangeListener(ContentChangeListener listener) {
+        _contentChangeListeners.remove(listener);
+    }
+
+    private void notifyContentChanged() {
+        for (ContentChangeListener listener : _contentChangeListeners) {
+            listener.contentChanged(this);
+        }
     }
 
     public Path getPath() {

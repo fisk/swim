@@ -1535,6 +1535,49 @@ class WindowTest {
     }
 
     @Test
+    void editingOneSplitImmediatelySynchronizesOtherViewsOfTheSameFile() throws Exception {
+        Path file = writeFile("linked-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalContext = window.getBufferContext();
+            originalContext.getBuffer().getCursor().setPosition(5);
+            window.splitActiveBufferHorizontally();
+            var splitContext = window.getBufferContext();
+            splitContext.getBuffer().getCursor().setPosition(0);
+
+            originalContext.getBuffer().insert("!");
+
+            assertEquals("alpha!\nbeta\n", originalContext.getBuffer().getString());
+            assertEquals("alpha!\nbeta\n", splitContext.getBuffer().getString());
+            assertTrue(originalContext.getBuffer().isModified());
+            assertTrue(splitContext.getBuffer().isModified());
+            assertEquals(6, originalContext.getBuffer().getCursor().getPosition());
+            assertEquals(0, splitContext.getBuffer().getCursor().getPosition());
+        }
+    }
+
+    @Test
+    void inactiveSplitShowsEveryActiveCursorForTheSameFile() throws Exception {
+        Path file = writeFile("linked-cursor-split.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var originalContext = window.getBufferContext();
+            var originalView = originalContext.getBufferView();
+            window.splitActiveBufferHorizontally();
+            var splitContext = window.getBufferContext();
+
+            window.activateView(originalView);
+            originalContext.getBuffer().getCursor().setPosition(3);
+
+            assertTrue(window.hasActiveLinkedCursorAt(splitContext, 3));
+            assertFalse(window.hasActiveLinkedCursorAt(splitContext, 2));
+            assertFalse(window.hasActiveLinkedCursorAt(originalContext, 3));
+        }
+    }
+
+    @Test
     void refreshingOpenBuffersForPathUpdatesEverySplitBufferView() throws Exception {
         Path file = writeFile("nemo-refresh-split.txt", "alpha\nbeta\n");
 

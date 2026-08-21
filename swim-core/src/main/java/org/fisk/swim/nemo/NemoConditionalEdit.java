@@ -8,6 +8,16 @@ import java.util.List;
 final class NemoConditionalEdit {
     record Change(String before, String after, int startLine, int endLine) { }
 
+    /**
+     * The source changed after Nemo inspected it.  This is an expected
+     * optimistic-concurrency outcome, rather than a broken edit operation.
+     */
+    static final class PreconditionFailedException extends IOException {
+        PreconditionFailedException(String message) {
+            super(message);
+        }
+    }
+
     private NemoConditionalEdit() { }
 
     static Change replaceLines(String text, int startLine, int endLine, String expected, String replacement)
@@ -16,7 +26,7 @@ final class NemoConditionalEdit {
         List<String> lines = splitLines(text);
         if (endLine > lines.size()) throw new IOException("Line range exceeds file length (" + lines.size() + ")");
         String actual = String.join("\n", lines.subList(startLine - 1, endLine));
-        if (!actual.equals(expected)) throw new IOException("Conditional edit refused: expected text no longer matches lines "
+        if (!actual.equals(expected)) throw new PreconditionFailedException("expected text no longer matches lines "
                 + startLine + "-" + endLine);
         List<String> changed = new ArrayList<>(lines.subList(0, startLine - 1));
         changed.addAll(splitReplacement(replacement));
@@ -44,7 +54,9 @@ final class NemoConditionalEdit {
         int close = matchingBrace(text, open);
         if (close < 0) throw new IOException("Function anchor has an unmatched body brace: " + function);
         String actual = text.substring(open + 1, close);
-        if (!actual.equals(expectedBody)) throw new IOException("Conditional edit refused: expected body no longer matches " + function);
+        if (!actual.equals(expectedBody)) {
+            throw new PreconditionFailedException("expected body no longer matches " + function);
+        }
         String after = text.substring(0, open + 1) + replacement + text.substring(close);
         int start = lineAt(text, open + 1);
         int end = lineAt(text, close);

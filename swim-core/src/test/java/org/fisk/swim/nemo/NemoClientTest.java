@@ -2235,6 +2235,31 @@ class NemoClientTest {
     }
 
     @Test
+    void conditionalEditMismatchIsReportedWithoutThrowingOrWriting() throws Exception {
+        Path project = tempDir.resolve("conditional-edit-mismatch");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "current\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder()
+                .workspaceRoot(project)
+                .build();
+        var call = new NemoClient.ToolCall("conditional", "replace_lines_if_unchanged", json(Map.of(
+                "path", "note.txt",
+                "start_line", 1,
+                "end_line", 1,
+                "expected", "stale",
+                "replacement", "replacement")));
+
+        NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(configuration, context, call, null);
+
+        assertEquals("current\n", Files.readString(file));
+        assertTrue(result.output().startsWith("Edit not applied: expected text no longer matches lines 1-1."));
+        assertTrue(result.output().contains("Re-read the file and retry"));
+        assertTrue(result.displayPatch().isBlank());
+    }
+
+    @Test
     void searchReplaceEditsScopedFileAndReturnsDisplayPatch() throws Exception {
         Path project = tempDir.resolve("replace-workspace");
         Path file = project.resolve("src/note.txt");

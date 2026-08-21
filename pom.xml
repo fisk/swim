@@ -20,6 +20,7 @@
     <module>swim-launcher</module>
     <module>swim-lsp</module>
     <module>swim-core</module>
+    <module>swim-treesitter</module>
     <module>swim-java-lsp</module>
     <module>swim-clangd-lsp</module>
     <module>swim-java-debug</module>

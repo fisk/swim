@@ -1,6 +1,7 @@
 package org.fisk.swim.mode;
 
 import org.fisk.swim.copy.Copy;
+import java.util.List;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
@@ -41,6 +42,8 @@ public class VisualLineMode extends VisualMode {
         var cursor = buffer.getCursor();
         installRegisterSelectionResponder();
         _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
+        _rootResponder.addEventResponder(":", "Commands", "substitute selection",
+                allowed("open command prompt", () -> window.getCommandView().activate(":")));
         _rootResponder.addEventResponder("o", () -> {
             allow("visual selection");
             var position = cursor.getPosition();
@@ -110,5 +113,10 @@ public class VisualLineMode extends VisualMode {
         int minPosition = minCursor().getPhysicalLine().getStartPosition();
         int maxPosition = maxCursor().getPhysicalLine().getEndPosition(true);
         return position >= minPosition && position < maxPosition;
+    }
+
+    @Override
+    public List<Range> selectionRanges() {
+        return List.of(getSelection());
     }
 }

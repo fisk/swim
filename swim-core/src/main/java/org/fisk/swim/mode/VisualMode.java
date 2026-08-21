@@ -1,6 +1,7 @@
 package org.fisk.swim.mode;
 
 import org.fisk.swim.copy.Copy;
+import java.util.List;
 import org.fisk.swim.event.FancyJumpResponder;
 import org.fisk.swim.event.MotionResponder;
 import org.fisk.swim.terminal.TerminalContext;
@@ -47,6 +48,8 @@ public class VisualMode extends Mode {
         var cursor = buffer.getCursor();
         installRegisterSelectionResponder();
         _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
+        _rootResponder.addEventResponder(":", "Commands", "substitute selection",
+                allowed("open command prompt", () -> window.getCommandView().activate(":")));
         _rootResponder.addEventResponder("o", () -> {
             allow("visual selection");
             var position = cursor.getPosition();
@@ -174,6 +177,11 @@ public class VisualMode extends Mode {
         var minCursor = cursor.getPosition() < getOtherCursor().getPosition() ? cursor : getOtherCursor();
         var maxCursor = cursor.getPosition() >= getOtherCursor().getPosition() ? cursor : getOtherCursor();
         return position >= minCursor.getPosition() && position <= maxCursor.getPosition();
+    }
+
+    /** Selected source ranges, with an exclusive end, for range-aware commands. */
+    public List<org.fisk.swim.ui.Range> selectionRanges() {
+        return List.of(org.fisk.swim.ui.Range.create(minCursor().getPosition(), maxCursor().getPosition() + 1));
     }
     
     @Override

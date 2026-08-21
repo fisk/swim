@@ -1,0 +1,5 @@
+{
+  "language": "java",
+  "upstream": "tree-sitter/tree-sitter-java",
+  "missingLiteralKeywords": []
+}

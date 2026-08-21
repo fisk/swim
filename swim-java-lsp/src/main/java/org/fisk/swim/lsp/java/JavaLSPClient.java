@@ -2274,6 +2274,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     @Override
     public void didOpen(BufferContext bufferContext) {
+        JavaLspPluginSupport.attachTreeSitter(bufferContext);
         synchronized (_openDocuments) {
             _openDocuments.add(bufferContext);
         }
@@ -2291,6 +2292,7 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        JavaLspPluginSupport.detachTreeSitter(bufferContext);
         synchronized (_openDocuments) {
             _openDocuments.remove(bufferContext);
         }

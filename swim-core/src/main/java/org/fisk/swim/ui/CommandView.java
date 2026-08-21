@@ -21,6 +21,7 @@ import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.ListEventResponder;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailUiSupport;
+import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.slack.SlackUiSupport;
 import org.fisk.swim.session.SwimServerSession;
 import org.fisk.swim.session.SwimServerSessions;
@@ -699,8 +700,10 @@ public class CommandView extends View {
     private void syncLiveGrepPreview() {
         var window = Window.getInstance();
         if (window == null || _command == null || !isCommandPrompt()) {
+            clearLiveSubstitutePreview();
             return;
         }
+        syncLiveSubstitutePreview();
         LiveGrepCommand liveGrep = parseLiveGrepCommand(_command.toString());
         if (liveGrep == null) {
             cancelLiveGrepPreview();
@@ -736,6 +739,50 @@ public class CommandView extends View {
     private void clearLiveGrepPreview() {
         _liveGrepPreviewPanel = null;
         _liveGrepPreviewOwned = false;
+    }
+
+    private void syncLiveSubstitutePreview() {
+        var window = Window.getInstance();
+        if (window == null || _command == null || !(window.getCurrentMode() instanceof VisualMode visualMode)) {
+            clearLiveSubstitutePreview();
+            return;
+        }
+        SubstituteCommand command;
+        try {
+            command = parseSubstitute(_command.toString());
+        } catch (IllegalArgumentException e) {
+            clearLiveSubstitutePreview();
+            return;
+        }
+        if (command == null || command.wholeBuffer()
+                || (command.rangePrefix() != null && !command.rangePrefix().isBlank())) {
+            clearLiveSubstitutePreview();
+            return;
+        }
+        try {
+            Pattern pattern = Pattern.compile(command.pattern());
+            var buffer = window.getBufferContext().getBuffer();
+            var matches = new ArrayList<Range>();
+            for (Range selection : visualMode.selectionRanges()) {
+                int start = Math.max(0, Math.min(selection.getStart(), buffer.getLength()));
+                int end = Math.max(start, Math.min(selection.getEnd(), buffer.getLength()));
+                var matcher = pattern.matcher(buffer.getSubstring(start, end));
+                while (matcher.find()) {
+                    matches.add(Range.create(start + matcher.start(), start + matcher.end()));
+                    if (!command.global()) break;
+                }
+            }
+            window.setLiveSubstitutePreview(window.getBufferContext(), matches);
+        } catch (RuntimeException e) {
+            clearLiveSubstitutePreview();
+        }
+    }
+
+    private void clearLiveSubstitutePreview() {
+        var window = Window.getInstance();
+        if (window != null) {
+            window.setLiveSubstitutePreview(null, List.of());
+        }
     }
 
     private static LiveGrepCommand parseLiveGrepCommand(String text) {
@@ -1205,6 +1252,9 @@ public class CommandView extends View {
             int matches;
             if (command.wholeBuffer()) {
                 matches = buffer.substitute(pattern, command.replacement(), command.global(), true);
+            } else if (window.getCurrentMode() instanceof VisualMode visualMode
+                    && (command.rangePrefix() == null || command.rangePrefix().isBlank())) {
+                matches = buffer.substitute(pattern, command.replacement(), command.global(), visualMode.selectionRanges());
             } else if (command.rangePrefix() != null && !command.rangePrefix().isBlank()) {
                 LineRange range = resolveLineRange(buffer, command.rangePrefix());
                 matches = buffer.substitute(pattern, command.replacement(), command.global(), range.startLine(), range.endLine());
@@ -1216,6 +1266,9 @@ public class CommandView extends View {
                 return;
             }
             window.getBufferContext().getBuffer().getUndoLog().commit();
+            if (window.getCurrentMode() instanceof VisualMode) {
+                window.switchToMode(window.getNormalMode());
+            }
             _message = "Substituted " + matches + " match" + (matches == 1 ? "" : "es");
         } catch (Exception e) {
             _message = e.getMessage() == null || e.getMessage().isBlank() ? "Invalid substitute command" : e.getMessage();
@@ -1460,10 +1513,10 @@ public class CommandView extends View {
             current.append(character);
         }
         parts.add(current.toString());
-        if (parts.size() < 3) {
+        if (parts.size() < 2) {
             throw new IllegalArgumentException("Usage: " + (wholeBuffer ? ":%s" : ":s") + "/pattern/replacement/[g]");
         }
-        String options = parts.get(2);
+        String options = parts.size() > 2 ? parts.get(2) : "";
         return new SubstituteCommand(wholeBuffer, rangePrefix, parts.get(0), parts.get(1), options.contains("g"));
     }
 
@@ -1799,6 +1852,7 @@ public class CommandView extends View {
         _command = new StringBuilder(initialText == null ? "" : initialText);
         _commandCursorIndex = _command.length();
         clearLiveGrepPreview();
+        clearLiveSubstitutePreview();
         resetCommandSelection();
         var window = Window.getInstance();
         _editorDriveOwned = window != null && window.isEditorDriveInputActive();
@@ -1827,6 +1881,7 @@ public class CommandView extends View {
         } else {
             cancelLiveGrepPreview();
         }
+        clearLiveSubstitutePreview();
         _command = null;
         _commandCursorIndex = 0;
         _prompt = null;

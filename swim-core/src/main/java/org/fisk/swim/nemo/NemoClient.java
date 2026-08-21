@@ -4092,12 +4092,21 @@ public class NemoClient {
         Path path = resolvePathInsideWorkspace(root, stringArgument(arguments, "path", ""));
         if (!Files.isRegularFile(path)) throw new IOException("Not a file: " + path);
         String before = readFileForDisplayDiff(context, path);
-        NemoConditionalEdit.Change change = functionBody
-                ? NemoConditionalEdit.replaceFunctionBody(before, stringArgument(arguments, "function", ""),
-                        stringArgument(arguments, "expected_body", ""), stringArgument(arguments, "replacement", ""))
-                : NemoConditionalEdit.replaceLines(before, intArgument(arguments, "start_line", 0),
-                        intArgument(arguments, "end_line", 0), stringArgument(arguments, "expected", ""),
-                        stringArgument(arguments, "replacement", ""));
+        NemoConditionalEdit.Change change;
+        try {
+            change = functionBody
+                    ? NemoConditionalEdit.replaceFunctionBody(before, stringArgument(arguments, "function", ""),
+                            stringArgument(arguments, "expected_body", ""), stringArgument(arguments, "replacement", ""))
+                    : NemoConditionalEdit.replaceLines(before, intArgument(arguments, "start_line", 0),
+                            intArgument(arguments, "end_line", 0), stringArgument(arguments, "expected", ""),
+                            stringArgument(arguments, "replacement", ""));
+        } catch (NemoConditionalEdit.PreconditionFailedException e) {
+            // Exact-content verification is optimistic concurrency control, so
+            // a mismatch is a normal tool result.  Returning it directly keeps
+            // the editor responsive and tells Nemo to obtain a fresh snapshot.
+            return new ToolExecutionResult("Edit not applied: " + e.getMessage()
+                    + ". Re-read the file and retry with fresh expected content.");
+        }
         Path relative = root.relativize(path);
         String preview = numberedPatch(relative, change.before(), change.after());
         if (booleanArgument(arguments, "preview", false)) {

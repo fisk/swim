@@ -11,6 +11,7 @@ build
 /bin/
 /swim-session/target/
 /swim-lsp/target/
+/swim-treesitter/target/
 /swim-core/target/
 /swim-launcher/target/
 /swim-java-lsp/target/

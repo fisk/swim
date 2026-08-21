@@ -10,6 +10,7 @@ import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
@@ -45,7 +46,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         DIFF_CONTEXT
     }
 
-    private record DisplayLine(String text, DisplayKind kind) {
+    private record DisplayLine(String text, DisplayKind kind, String language) {
     }
 
     private static final class ChatCursor extends Cursor {
@@ -244,7 +245,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         if (!_pending) return _cachedTranscriptRows;
         var rows = new ArrayList<DisplayLine>(_cachedTranscriptRows);
         if (_pending) {
-            rows.add(new DisplayLine(NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL));
+            rows.add(new DisplayLine(NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL, ""));
         }
         return rows;
     }
@@ -254,6 +255,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         String continuation = " ".repeat(prefix.length());
         boolean first = true;
         boolean inCodeBlock = false;
+        String codeLanguage = "";
         boolean inDiffBlock = false;
         boolean inLooseDiff = false;
         for (String rawLine : message.text().split("\\R", -1)) {
@@ -262,6 +264,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 String language = trimmed.substring(Math.min(3, trimmed.length())).trim();
                 if (!inCodeBlock) {
                     inCodeBlock = true;
+                    codeLanguage = language;
                     inDiffBlock = isDiffLanguage(language);
                     inLooseDiff = false;
                     // Reserve the speaker prefix for the fenced block without
@@ -269,6 +272,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                     first = false;
                 } else {
                     inCodeBlock = false;
+                    codeLanguage = "";
                     inDiffBlock = false;
                 }
                 continue;
@@ -280,35 +284,35 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 inLooseDiff = true;
             }
             boolean codeLike = inCodeBlock || kind != DisplayKind.NORMAL;
-            first = appendWrappedRows(rows, first ? prefix : continuation, continuation, rawLine, width, kind, codeLike);
+            first = appendWrappedRows(rows, first ? prefix : continuation, continuation, rawLine, width, kind, codeLike, codeLanguage);
         }
     }
 
     private boolean appendWrappedRows(List<DisplayLine> rows, String prefix, String continuation,
             String text, int width, DisplayKind kind) {
-        return appendWrappedRows(rows, prefix, continuation, text, width, kind, false);
+        return appendWrappedRows(rows, prefix, continuation, text, width, kind, false, "");
     }
 
     private boolean appendWrappedRows(List<DisplayLine> rows, String prefix, String continuation,
-            String text, int width, DisplayKind kind, boolean fixedWidth) {
+            String text, int width, DisplayKind kind, boolean fixedWidth, String language) {
         int firstWidth = Math.max(1, width - prefix.length());
         int laterWidth = Math.max(1, width - continuation.length());
         List<String> wrapped = fixedWidth ? wrapFixed(text, firstWidth) : TextPanelView.wrapText(text, firstWidth);
         if (wrapped.isEmpty()) {
-            rows.add(new DisplayLine(prefix, kind));
+            rows.add(new DisplayLine(prefix, kind, language));
             return false;
         }
-        rows.add(new DisplayLine(prefix + wrapped.get(0), kind));
+        rows.add(new DisplayLine(prefix + wrapped.get(0), kind, language));
         for (int i = 1; i < wrapped.size(); i++) {
             List<String> continuationWrapped = fixedWidth
                     ? wrapFixed(wrapped.get(i), laterWidth)
                     : TextPanelView.wrapText(wrapped.get(i), laterWidth);
             if (continuationWrapped.isEmpty()) {
-                rows.add(new DisplayLine(continuation, kind));
+                rows.add(new DisplayLine(continuation, kind, language));
                 continue;
             }
             for (String line : continuationWrapped) {
-                rows.add(new DisplayLine(continuation + line, kind));
+                rows.add(new DisplayLine(continuation + line, kind, language));
             }
         }
         return false;
@@ -539,7 +543,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         return switch (line.kind()) {
         case NORMAL -> renderLine(line.text(), background);
         case CODE_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
-        case CODE -> renderCodeLine(line.text(), background);
+        case CODE -> renderCodeLine(line.text(), line.language(), background);
         case DIFF_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         case DIFF_HUNK -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GOLD, background);
         case DIFF_ADDED -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GREEN, background);
@@ -560,8 +564,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         return AttributedString.create(line, textColour, background);
     }
 
-    private AttributedString renderCodeLine(String line, TextColor background) {
+    private AttributedString renderCodeLine(String line, String language, TextColor background) {
         var result = AttributedString.create(line, UiTheme.TEXT_PRIMARY, background);
+        if (LanguagePluginRegistry.applySnippetColouring(language, result)) return result;
         formatCodeKeywords(result, line, background);
         formatQuotedStrings(result, line, background);
         formatCodeComment(result, line, background);

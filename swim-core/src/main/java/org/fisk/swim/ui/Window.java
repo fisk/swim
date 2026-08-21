@@ -52,6 +52,7 @@ import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
+import org.fisk.swim.text.Buffer;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.todo.TodoStore;
 import org.fisk.swim.todo.TodoUiSupport;
@@ -204,6 +205,10 @@ public class Window implements Drawable {
     private SearchLocationList _locationList = SearchLocationList.empty("Location");
     private final OpenBufferFileWatcher _openBufferFileWatcher;
     private final IdentityHashMap<BufferContext, Boolean> _externalChangePrompts = new IdentityHashMap<>();
+    private IdentityHashMap<Buffer, Buffer.ContentChangeListener> _linkedBufferListeners = new IdentityHashMap<>();
+    private boolean _synchronizingLinkedBuffers;
+    private BufferContext _liveSubstitutePreviewContext;
+    private List<Range> _liveSubstitutePreviewRanges = List.of();
 
     public static Window getInstance() {
         return _instance;
@@ -276,10 +281,16 @@ public class Window implements Drawable {
         if (_bufferViewCounts == null) {
             _bufferViewCounts = new IdentityHashMap<>();
         }
+        if (_linkedBufferListeners == null) {
+            _linkedBufferListeners = new IdentityHashMap<>();
+        }
         if (_bufferContext != null && _bufferContext.getBufferView() != null
                 && !_bufferContextsByView.containsKey(_bufferContext.getBufferView())) {
             _bufferContextsByView.put(_bufferContext.getBufferView(), _bufferContext);
             _bufferViewCounts.put(_bufferContext, Math.max(1, _bufferViewCounts.getOrDefault(_bufferContext, 0)));
+        }
+        for (BufferContext context : _bufferContextsByView.values()) {
+            observeLinkedBuffer(context.getBuffer());
         }
         if (_workspaceView == null && _bufferContext != null) {
             _workspaceView = _bufferContext.getBufferView();
@@ -4981,7 +4992,91 @@ public class Window implements Drawable {
         }
         _bufferContextsByView.put(bufferView, bufferContext);
         _bufferViewCounts.merge(bufferContext, 1, Integer::sum);
+        observeLinkedBuffer(bufferContext.getBuffer());
         if (_openBufferFileWatcher != null) _openBufferFileWatcher.watch(bufferContext.getBuffer().getPath());
+    }
+
+    private void observeLinkedBuffer(Buffer buffer) {
+        if (buffer == null || _linkedBufferListeners.containsKey(buffer)) {
+            return;
+        }
+        Buffer.ContentChangeListener listener = this::synchronizeLinkedBuffers;
+        _linkedBufferListeners.put(buffer, listener);
+        buffer.addContentChangeListener(listener);
+    }
+
+    private void stopObservingLinkedBuffer(Buffer buffer) {
+        Buffer.ContentChangeListener listener = _linkedBufferListeners.remove(buffer);
+        if (listener != null) {
+            buffer.removeContentChangeListener(listener);
+        }
+    }
+
+    private void synchronizeLinkedBuffers(Buffer source) {
+        if (_synchronizingLinkedBuffers || source == null || source.getPath() == null) {
+            return;
+        }
+        _synchronizingLinkedBuffers = true;
+        try {
+            Path path = source.getPath().toAbsolutePath().normalize();
+            for (BufferContext context : openBufferContextsSnapshot()) {
+                Buffer target = context.getBuffer();
+                if (target == source || target == null || target.getPath() == null
+                        || !path.equals(target.getPath().toAbsolutePath().normalize())) {
+                    continue;
+                }
+                target.replaceContentsFromLinkedBuffer(source.getString(), source.getVersion(), source.isModified());
+            }
+            if (_rootView != null) {
+                _rootView.setNeedsRedraw();
+            }
+        } finally {
+            _synchronizingLinkedBuffers = false;
+        }
+    }
+
+    boolean hasActiveLinkedCursorAt(BufferContext target, int position) {
+        BufferContext active = _bufferContext;
+        if (target == null || active == null || target == active || position < 0
+                || target.getBuffer() == null || active.getBuffer() == null
+                || target.getBuffer().getPath() == null || active.getBuffer().getPath() == null
+                || !target.getBuffer().getPath().toAbsolutePath().normalize()
+                        .equals(active.getBuffer().getPath().toAbsolutePath().normalize())) {
+            return false;
+        }
+        for (Cursor cursor : active.getBuffer().getCursors()) {
+            if (cursor.getPosition() == position) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void requestLinkedCursorRedraw(BufferContext source) {
+        if (source == null || source != _bufferContext || source.getBuffer() == null
+                || source.getBuffer().getPath() == null) {
+            return;
+        }
+        Path path = source.getBuffer().getPath().toAbsolutePath().normalize();
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (context != source && bufferPathEquals(context, path)) {
+                context.getBufferView().setNeedsRedraw();
+            }
+        }
+    }
+
+    public void setLiveSubstitutePreview(BufferContext context, List<Range> ranges) {
+        _liveSubstitutePreviewContext = context;
+        _liveSubstitutePreviewRanges = ranges == null ? List.of() : List.copyOf(ranges);
+        if (_rootView != null) _rootView.setNeedsRedraw();
+    }
+
+    public boolean isLiveSubstitutePreviewMatch(BufferContext context, int position) {
+        if (context == null || context != _liveSubstitutePreviewContext || position < 0) return false;
+        for (Range range : _liveSubstitutePreviewRanges) {
+            if (position >= range.getStart() && position < range.getEnd()) return true;
+        }
+        return false;
     }
 
     private void unregisterBufferView(BufferView bufferView) {
@@ -4993,6 +5088,7 @@ public class Window implements Drawable {
         Integer count = _bufferViewCounts.get(bufferContext);
         if (count == null || count <= 1) {
             _bufferViewCounts.remove(bufferContext);
+            stopObservingLinkedBuffer(bufferContext.getBuffer());
             bufferContext.getBuffer().close();
             return;
         }

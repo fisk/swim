@@ -23,7 +23,7 @@ public final class JavaLspPlugin implements SwimPlugin {
 
     @Override
     public void load(SwimPluginContext context) {
-        JavaLspPluginSupport.install();
+        JavaLspPluginSupport.install(context);
     }
 
     @Override

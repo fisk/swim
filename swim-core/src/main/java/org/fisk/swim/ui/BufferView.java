@@ -164,6 +164,14 @@ public class BufferView extends View {
                 character = applyDiagnosticBackground(glyph, character);
                 if (modeApplies) {
                     character = mode.decorate(glyph, character);
+                } else if (window.hasActiveLinkedCursorAt(_bufferContext, glyph.getPosition())) {
+                    var attributes = character.attributesAt(0);
+                    character.format(0, character.length(), attributes.foregroundColour(),
+                            UiTheme.PANEL_SELECTION_BACKGROUND);
+                }
+                if (window.isLiveSubstitutePreviewMatch(_bufferContext, glyph.getPosition())) {
+                    character = AttributedString.create(glyph.getCharacter(), UiTheme.DIFF_ADDED_FOREGROUND,
+                            UiTheme.DIFF_ADDED_BACKGROUND);
                 }
                 var point = Point.create(textX + glyph.getX(), rect.getPoint().getY() + glyph.getY() - _startLine);
                 character.drawAt(point, textGraphics);
@@ -440,7 +448,11 @@ public class BufferView extends View {
     }
 
     private int maxStartLine(org.fisk.swim.text.TextLayout textLayout) {
-        return Math.max(0, textLayout.getLogicalLineCount() - getViewportHeight());
+        // Permit the viewport to travel beyond the final screenful, leaving
+        // blank rows below EOF, but stop once the final logical line reaches
+        // the top row.  This keeps a growing file comfortably scrollable
+        // without allowing an unbounded empty viewport.
+        return Math.max(0, textLayout.getLogicalLineCount() - 1);
     }
 
     private int getScrollbarWidth() {
@@ -520,7 +532,7 @@ public class BufferView extends View {
         int totalLines = Math.max(1, textLayout.getLogicalLineCount());
         int visibleLines = Math.min(height, totalLines);
         int thumbHeight = totalLines <= height ? height : Math.max(1, (int) Math.round((visibleLines * (double) height) / totalLines));
-        int maxStart = Math.max(0, totalLines - height);
+        int maxStart = maxStartLine(textLayout);
         int thumbStart = maxStart == 0 ? 0
                 : (int) Math.round((_startLine * (double) Math.max(0, height - thumbHeight)) / maxStart);
         int x = rect.getPoint().getX() + getTextColumnStart() + getTextWidth();

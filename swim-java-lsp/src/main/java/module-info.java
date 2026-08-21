@@ -7,6 +7,7 @@ module org.fisk.swim.java.lsp {
     requires org.fisk.swim.core;
     requires org.fisk.swim.launcher;
     requires org.fisk.swim.lsp;
+    requires org.fisk.swim.treesitter;
     requires org.slf4j;
 
     opens org.fisk.swim.lsp.java to org.eclipse.lsp4j.jsonrpc;

@@ -456,12 +456,18 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
             flushPendingDocumentChanges(uri);
             _server.getTextDocumentService().didSave(params);
         });
+        // Saving can trim whitespace without producing a complete semantic
+        // response immediately.  Rebuild the lexical colouring now instead of
+        // leaving a version-keyed attributed-string cache on screen until the
+        // next edit happens to invalidate it.
+        requestSemanticRedraw(bufferContext);
         scheduleSemanticHighlightRefresh(bufferContext);
         _features.refreshDocumentContext(bufferContext);
     }
 
     @Override
     public void didClose(BufferContext bufferContext) {
+        ClangdLspPluginSupport.detachTreeSitter(bufferContext);
         synchronized (_openDocuments) {
             _openDocuments.remove(bufferContext);
         }
@@ -483,6 +489,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
 
     @Override
     public void didOpen(BufferContext bufferContext) {
+        ClangdLspPluginSupport.attachTreeSitter(bufferContext);
         synchronized (_openDocuments) {
             _openDocuments.add(bufferContext);
         }
@@ -490,6 +497,12 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
             return;
         }
         clearSemanticTokensCache(bufferContext.getBuffer().getURI().toString());
+        // The cache is keyed only by text version.  Reopening the same text
+        // after clangd restarts therefore must explicitly invalidate it: the
+        // old attributed string may have been built while this buffer was using
+        // the plain fallback mode.  Request a repaint now for lexical C++
+        // colouring; semantic tokens will trigger a second repaint when ready.
+        requestSemanticRedraw(bufferContext);
         var params = new DidOpenTextDocumentParams();
         params.setTextDocument(bufferContext.getBuffer().getTextDocument());
         enqueueLspRequest("didOpen", () -> _server.getTextDocumentService().didOpen(params));

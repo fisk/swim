@@ -1,0 +1,12 @@
+{
+  "name": "cpp",
+  "word": "identifier",
+  "rules": {
+    "translation_unit": {"type": "REPEAT", "content": {"type": "SYMBOL", "name": "declaration"}},
+    "cast_expression": {"type": "SEQ", "members": [
+      {"type": "CHOICE", "members": [{"type": "STRING", "value": "static_cast"}, {"type": "STRING", "value": "reinterpret_cast"}]},
+      {"type": "FIELD", "name": "type", "content": {"type": "SYMBOL", "name": "type_descriptor"}}
+    ]}
+  },
+  "conflicts": [["type_descriptor", "expression"]]
+}

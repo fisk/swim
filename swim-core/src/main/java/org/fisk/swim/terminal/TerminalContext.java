@@ -38,6 +38,9 @@ public class TerminalContext {
     private static final String DISABLE_BRACKETED_PASTE = "\u001b[?2004l";
     private static final String ENABLE_SGR_MOUSE = "\u001b[?1006h";
     private static final String DISABLE_SGR_MOUSE = "\u001b[?1006l";
+    // xterm modifyOtherKeys level 2 makes Shift-Enter distinguishable from Enter.
+    private static final String ENABLE_MODIFY_OTHER_KEYS = "\u001b[>4;2m";
+    private static final String DISABLE_MODIFY_OTHER_KEYS = "\u001b[>4m";
     private static final String EXIT_ALTERNATE_SCREEN = "\u001b[?1049l";
     private static final String SHOW_CURSOR = "\u001b[?25h";
     private static final String RESET_ATTRIBUTES = "\u001b[0m";
@@ -214,6 +217,13 @@ public class TerminalContext {
         KeyDecodingProfile profile = () -> List.of(
                 new BasicCharacterPattern(new KeyStroke(KeyType.Enter), '\r'),
                 new BasicCharacterPattern(new KeyStroke(KeyType.Enter), '\n'),
+                // xterm modifyOtherKeys and the CSI-u/Kitty keyboard protocol,
+                // respectively. Both represent Shift-Enter without changing the
+                // ordinary Enter decoding above.
+                new BasicCharacterPattern(new KeyStroke(KeyType.Enter, false, false, true),
+                        '\u001b', '[', '2', '7', ';', '2', ';', '1', '3', '~'),
+                new BasicCharacterPattern(new KeyStroke(KeyType.Enter, false, false, true),
+                        '\u001b', '[', '1', '3', ';', '2', 'u'),
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_START_KEY),
                         '\u001b', '[', '2', '0', '0', '~'),
                 new BasicCharacterPattern(new KeyStroke(BRACKETED_PASTE_END_KEY),
@@ -254,6 +264,7 @@ public class TerminalContext {
         try {
             writeShutdownSequence(DISABLE_SGR_MOUSE);
             writeShutdownSequence(DISABLE_BRACKETED_PASTE);
+            writeShutdownSequence(DISABLE_MODIFY_OTHER_KEYS);
             writeShutdownSequence(SHOW_CURSOR);
             writeShutdownSequence(EXIT_ALTERNATE_SCREEN);
             writeShutdownSequence(RESET_ATTRIBUTES);
@@ -657,6 +668,7 @@ public class TerminalContext {
             }
             setBracketedPasteMode(true);
             setMouseCaptureMode(true);
+            setModifyOtherKeysMode(true);
         }
 
         @Override
@@ -666,6 +678,7 @@ public class TerminalContext {
             }
             setMouseCaptureMode(false);
             setBracketedPasteMode(false);
+            setModifyOtherKeysMode(false);
             _delegate.exitPrivateMode();
         }
 
@@ -678,6 +691,10 @@ public class TerminalContext {
                 extendedTerminal.setMouseCaptureMode(enabled ? MouseCaptureMode.CLICK_RELEASE_DRAG : null);
             }
             writeControlSequence(enabled ? ENABLE_SGR_MOUSE : DISABLE_SGR_MOUSE);
+        }
+
+        private void setModifyOtherKeysMode(boolean enabled) throws IOException {
+            writeControlSequence(enabled ? ENABLE_MODIFY_OTHER_KEYS : DISABLE_MODIFY_OTHER_KEYS);
         }
 
         @Override

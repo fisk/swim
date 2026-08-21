@@ -23,7 +23,7 @@ public final class ClangdLspPlugin implements SwimPlugin {
 
     @Override
     public void load(SwimPluginContext context) {
-        ClangdLspPluginSupport.install();
+        ClangdLspPluginSupport.install(context);
     }
 
     @Override
