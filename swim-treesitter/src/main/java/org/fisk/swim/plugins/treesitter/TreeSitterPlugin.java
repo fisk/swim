@@ -7,6 +7,7 @@ import org.fisk.swim.api.SwimHelpSection;
 import org.fisk.swim.api.SwimPlugin;
 import org.fisk.swim.api.SwimPluginContext;
 import org.fisk.swim.api.SwimPluginPreloadContext;
+import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.treesitter.TreeSitterPluginSupport;
 
 /** Phase-one Java-only Tree-sitter grammar exploration plugin. */
@@ -23,6 +24,10 @@ public final class TreeSitterPlugin implements SwimPlugin {
 
     @Override
     public void preload(SwimPluginPreloadContext context) {
+        for (String extension : new String[] {"md", "markdown", "mdown"}) {
+            context.registerPreloadResource(LanguagePluginRegistry.register(extension, getId(),
+                    ignored -> TreeSitterPluginSupport.createMarkdownLanguageMode()));
+        }
         context.registerHelpChapter(new SwimHelpChapter("tree-sitter", "Tree-sitter grammar explorer",
                 "Inspect generated Tree-sitter grammar.json files without loading native parser libraries.",
                 List.of(new SwimHelpSection("Portable grammar snapshots",

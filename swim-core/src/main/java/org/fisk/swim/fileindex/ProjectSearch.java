@@ -2,6 +2,7 @@ package org.fisk.swim.fileindex;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -89,7 +90,10 @@ public final class ProjectSearch {
                             }
                         });
                     });
-        } catch (IOException e) {
+        } catch (IOException | UncheckedIOException e) {
+            // A project can disappear while an asynchronous panel search is
+            // walking it (notably while a workspace is closing). Treat that
+            // as a cancelled/incomplete search rather than leaking a worker.
         } finally {
             tasks.arriveAndAwaitAdvance();
         }

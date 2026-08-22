@@ -14,6 +14,7 @@ final class SwimJavaCommand {
     private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
+            "-XX:+UseStringDeduplication",
             "-Xmx4G",
             "-XX:SoftMaxHeapSize=1G",
             "--sun-misc-unsafe-memory-access=allow");

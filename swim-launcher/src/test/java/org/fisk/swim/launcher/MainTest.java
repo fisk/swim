@@ -280,7 +280,7 @@ class MainTest {
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
         assertTrue(content.contains("private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = \"--illegal-final-field-mutation=allow\""));
-        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+UseStringDeduplication\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final Path EMBEDDED_JAVA = Path.of(\"" + embeddedJava + "\")"));
         assertFalse(content.contains("launcher.getParent().resolve(\"java\")"));

@@ -30,6 +30,7 @@ public final class LauncherImageInstaller {
             "-Xmx128M");
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
+            "-XX:+UseStringDeduplication",
             "-Xmx4G",
             "-XX:SoftMaxHeapSize=1G",
             "--sun-misc-unsafe-memory-access=allow");

@@ -19,6 +19,20 @@ public final class TreeSitterBundledGrammars {
         return CACHE.computeIfAbsent(language, TreeSitterBundledGrammars::read);
     }
 
+    /** Returns an upstream bundled query such as {@code highlights.scm} or {@code injections.scm}. */
+    public static String queryText(String language, String query) {
+        if (language == null || language.isBlank() || query == null || query.isBlank()) {
+            throw new IllegalArgumentException("language and query are required");
+        }
+        String resource = "/org/fisk/swim/treesitter/grammars/" + language + "/queries/" + query;
+        try (InputStream input = TreeSitterBundledGrammars.class.getResourceAsStream(resource)) {
+            if (input == null) throw new IllegalArgumentException("No bundled Tree-sitter query " + query + " for " + language);
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read bundled Tree-sitter query for " + language, e);
+        }
+    }
+
     private static TreeSitterGrammar read(String language) {
         String resource = "/org/fisk/swim/treesitter/grammars/" + language + "/grammar.json";
         try (InputStream input = TreeSitterBundledGrammars.class.getResourceAsStream(resource)) {

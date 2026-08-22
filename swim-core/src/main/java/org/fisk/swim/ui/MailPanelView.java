@@ -1863,6 +1863,9 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
             List<String> tags,
             boolean addressedToAccount,
             boolean wasUnread) {
+        // The asynchronous mark-read completion can arrive before reload()
+        // has installed its first snapshot, or after disposal.
+        if (_disposed || _snapshot == null) return;
         boolean changed = false;
         var updatedRows = new ArrayList<ThreadRow>(_threadRows.size());
         var threadUnread = new HashMap<Long, Boolean>();

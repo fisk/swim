@@ -1,6 +1,7 @@
 package org.fisk.swim.treesitter;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -25,5 +26,18 @@ class TreeSitterGrammarKeywordHighlighterTest {
         assertTrue(highlighter.keywords().contains("record"));
         assertTrue(highlighter.highlight("public class Example {}").stream()
                 .anyMatch(span -> span.start() == 7 && span.end() == 12));
+    }
+
+    @Test
+    void bundledMarkdownGrammarsExposeBlockAndInlineAssets() {
+        var block = TreeSitterBundledGrammars.load("markdown");
+        var inline = TreeSitterBundledGrammars.load("markdown_inline");
+
+        assertEquals("markdown", block.name());
+        assertEquals("markdown_inline", inline.name());
+        assertFalse(block.rules().isEmpty());
+        assertFalse(inline.rules().isEmpty());
+        assertTrue(TreeSitterBundledGrammars.queryText("markdown", "highlights.scm").contains("@text.title"));
+        assertTrue(TreeSitterBundledGrammars.queryText("markdown", "injections.scm").contains("@injection.content"));
     }
 }

@@ -229,7 +229,7 @@ class CommandViewTest {
     }
 
     @Test
-    void grepCommandTypingUpdatesProjectSearchPanelForEachCharacter() throws IOException {
+    void grepCommandTypingUpdatesProjectSearchPanelForEachCharacter() throws Exception {
         Path root = tempDir.resolve("live-grep-workspace");
         Files.createDirectories(root.resolve(".git"));
         Files.createDirectories(root.resolve("src"));
@@ -251,12 +251,14 @@ class CommandViewTest {
 
             assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
             var panel = (ProjectSearchPanelView) window.getPanelView();
+            assertTrue(panel.awaitSearchCompletionForTests(2_000));
             assertEquals("n", panel.getQuery());
             assertEquals(2, panel.getResults().size());
             assertFalse(window.getCommandMenuView().getState().visible());
             assertSame(commandView, HeadlessWindowHarness.getField(window.getRootView(), "_firstResponder"));
 
             HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('e'));
+            assertTrue(panel.awaitSearchCompletionForTests(2_000));
             assertEquals("ne", panel.getQuery());
             assertEquals(2, panel.getResults().size());
         }

@@ -51,8 +51,9 @@ and query execution remain the route for that case.
 ## Upstream grammar dependencies
 
 The grammar sources are pinned Git submodules under `third_party/` from the
-official Tree-sitter organization: `tree-sitter-c`, `tree-sitter-cpp`, and
-`tree-sitter-java`. Builds package their generated `grammar.json`, queries, and
+official Tree-sitter organization: `tree-sitter-c`, `tree-sitter-cpp`,
+`tree-sitter-java`, and the maintained split-parser `tree-sitter-markdown`.
+Builds package their generated `grammar.json`, queries, and
 parser tables directly from those revisions. To deliberately advance a grammar,
 run `git submodule update --remote third_party/tree-sitter-cpp` (or the matching
 language), review the generated-asset tests, and commit the new submodule SHA.

@@ -29,6 +29,10 @@
       <artifactId>lanterna</artifactId>
     </dependency>
     <dependency>
+      <groupId>org.eclipse.lsp4j</groupId>
+      <artifactId>org.eclipse.lsp4j</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
@@ -41,42 +45,62 @@
         <directory>src/main/resources</directory>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-c/src</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-c/src</directory>
         <includes><include>grammar.json</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/c</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-c/queries</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-c/queries</directory>
         <includes><include>highlights.scm</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/c/queries</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-cpp/src</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-cpp/src</directory>
         <includes><include>grammar.json</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/cpp</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-cpp/queries</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-cpp/queries</directory>
         <includes><include>highlights.scm</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/cpp/queries</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-java/src</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-java/src</directory>
         <includes><include>grammar.json</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/java</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-java/queries</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-java/queries</directory>
         <includes><include>highlights.scm</include></includes>
         <targetPath>org/fisk/swim/treesitter/grammars/java/queries</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-cpp/src</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-markdown/tree-sitter-markdown/src</directory>
+        <includes><include>grammar.json</include></includes>
+        <targetPath>org/fisk/swim/treesitter/grammars/markdown</targetPath>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../third_party/tree-sitter-markdown/tree-sitter-markdown/queries</directory>
+        <includes><include>highlights.scm</include><include>injections.scm</include></includes>
+        <targetPath>org/fisk/swim/treesitter/grammars/markdown/queries</targetPath>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../third_party/tree-sitter-markdown/tree-sitter-markdown-inline/src</directory>
+        <includes><include>grammar.json</include></includes>
+        <targetPath>org/fisk/swim/treesitter/grammars/markdown_inline</targetPath>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../third_party/tree-sitter-markdown/tree-sitter-markdown-inline/queries</directory>
+        <includes><include>highlights.scm</include><include>injections.scm</include></includes>
+        <targetPath>org/fisk/swim/treesitter/grammars/markdown_inline/queries</targetPath>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../third_party/tree-sitter-cpp/src</directory>
         <includes><include>parser.c</include></includes>
         <targetPath>org/fisk/swim/treesitter/parsers/cpp</targetPath>
       </resource>
       <resource>
-        <directory>${project.parent.basedir}/third_party/tree-sitter-java/src</directory>
+        <directory>${project.basedir}/../third_party/tree-sitter-java/src</directory>
         <includes><include>parser.c</include></includes>
         <targetPath>org/fisk/swim/treesitter/parsers/java</targetPath>
       </resource>
@@ -102,7 +126,7 @@
             <phase>package</phase>
             <goals><goal>copy-resources</goal></goals>
             <configuration>
-              <outputDirectory>${project.parent.basedir}/plugins</outputDirectory>
+              <outputDirectory>${project.basedir}/../plugins</outputDirectory>
               <resources>
                 <resource>
                   <directory>${project.build.directory}</directory>

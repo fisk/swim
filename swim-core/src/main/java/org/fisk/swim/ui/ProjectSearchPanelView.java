@@ -56,10 +56,11 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     private final QueryCursor _cursor;
     private List<ProjectSearch.Match> _results = List.of();
     private final AtomicLong _searchGeneration = new AtomicLong();
+    private final AtomicBoolean _closed = new AtomicBoolean();
     private final AtomicBoolean _resultFlushScheduled = new AtomicBoolean();
     private final java.util.concurrent.atomic.AtomicInteger _acceptedResults = new java.util.concurrent.atomic.AtomicInteger();
     private final ConcurrentLinkedQueue<ProjectSearch.Match> _pendingResults = new ConcurrentLinkedQueue<>();
-    private boolean _searching;
+    private volatile boolean _searching;
     private int _selection;
     private int _start;
 
@@ -137,6 +138,14 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
 
     List<ProjectSearch.Match> getResults() {
         return _results;
+    }
+
+    /** Test-only synchronization point for the asynchronous/debounced search pipeline. */
+    boolean awaitSearchCompletionForTests(long timeoutMillis) throws InterruptedException {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (_pendingResults.isEmpty() && _searching && System.nanoTime() < deadline) Thread.sleep(5);
+        flushPendingMatches(_searchGeneration.get());
+        return !_results.isEmpty() || !_searching;
     }
 
     public void setQuery(String query) {
@@ -281,6 +290,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private void refreshResults() {
+        if (_closed.get()) return;
         long generation = _searchGeneration.incrementAndGet();
         String query = _query.toString();
         _results = new ArrayList<>();
@@ -292,7 +302,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         if (query.isBlank()) return;
         Thread.ofVirtual().start(() -> {
             _projectSearch.search(query, matches -> publishMatches(generation, matches),
-                    () -> generation != _searchGeneration.get());
+                    () -> _closed.get() || generation != _searchGeneration.get());
             EventThread.getInstance().enqueue(new RunnableEvent(() -> {
                 if (generation != _searchGeneration.get()) return;
                 _searching = false;
@@ -393,6 +403,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private void close() {
+        _closed.set(true);
         _searchGeneration.incrementAndGet();
         var window = Window.getInstance();
         if (window != null) {

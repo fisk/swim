@@ -17,6 +17,7 @@ public final class TreeSitterPluginSupport {
     public static final String PLUGIN_ID = "tree-sitter";
     private static volatile TreeSitterGrammarAnalysisService _analysis;
     private static volatile AutoCloseable _toolRegistration;
+    private static volatile org.fisk.swim.api.SwimPluginWorkers _workers;
 
     private TreeSitterPluginSupport() {
     }
@@ -27,16 +28,22 @@ public final class TreeSitterPluginSupport {
         }
         shutdown();
         _analysis = new TreeSitterGrammarAnalysisService(context.workers());
+        _workers = context.workers();
         _toolRegistration = context.registerNemoTool(new GrammarInspectorTool());
     }
 
     public static synchronized void shutdown() {
         close(_toolRegistration);
         _toolRegistration = null;
+        _workers = null;
         if (_analysis != null) {
             _analysis.close();
             _analysis = null;
         }
+    }
+
+    public static MarkdownLanguageMode createMarkdownLanguageMode() {
+        return new MarkdownLanguageMode(_workers);
     }
 
     private static void close(AutoCloseable value) {

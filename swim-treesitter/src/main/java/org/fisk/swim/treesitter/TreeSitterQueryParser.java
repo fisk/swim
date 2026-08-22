@@ -63,6 +63,12 @@ public final class TreeSitterQueryParser {
                 children.add(alternatives());
             } else {
                 String value = next().value();
+                // A dot anchors the adjacent child to the first/last named
+                // child. The flat portable span model has no sibling order
+                // constraint yet, but must preserve the surrounding pattern.
+                if (".".equals(value)) {
+                    continue;
+                }
                 if (peek(":")) {
                     next();
                     if (!peek("(")) {
