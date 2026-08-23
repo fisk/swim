@@ -4,9 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.fisk.swim.event.EventResponder;
@@ -130,7 +130,7 @@ public class BufferView extends View {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var textGraphics = terminalContext.getGraphics();
+        var textGraphics = terminalContext.getTerminalGraphics();
         _log.debug("Draw buffer view");
         var window = Window.getInstance();
         var mode = window.getCurrentMode();
@@ -483,7 +483,7 @@ public class BufferView extends View {
         return digitCount(Math.max(1, lineCount)) + 1;
     }
 
-    private void drawLineNumberGutter(Rect rect, com.googlecode.lanterna.graphics.TextGraphics graphics,
+    private void drawLineNumberGutter(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,
             org.fisk.swim.text.TextLayout textLayout,
             java.util.List<org.fisk.swim.text.TextLayout.Line> visibleLines) {
         int gutterWidth = getLineNumberGutterWidth();
@@ -522,7 +522,7 @@ public class BufferView extends View {
         return gutter;
     }
 
-    private void drawScrollbar(Rect rect, com.googlecode.lanterna.graphics.TextGraphics graphics,
+    private void drawScrollbar(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,
             org.fisk.swim.text.TextLayout textLayout) {
         int scrollbarWidth = getScrollbarWidth();
         if (scrollbarWidth <= 0) {

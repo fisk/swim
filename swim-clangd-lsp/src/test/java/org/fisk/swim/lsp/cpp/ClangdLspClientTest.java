@@ -25,7 +25,7 @@ import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 class ClangdLspClientTest {
     @TempDir

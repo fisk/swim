@@ -11,8 +11,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public class TodoQuickCaptureView extends View implements KeyBindingHintProvider {
     private static final class CaptureCursor extends Cursor {
@@ -133,7 +133,7 @@ public class TodoQuickCaptureView extends View implements KeyBindingHintProvider
         rect = getBounds();
         super.draw(rect);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         int x = rect.getPoint().getX();
@@ -216,7 +216,7 @@ public class TodoQuickCaptureView extends View implements KeyBindingHintProvider
         _onSubmit.accept(value);
     }
 
-    private com.googlecode.lanterna.TextColor footerColour() {
+    private org.fisk.swim.terminal.TextColor footerColour() {
         return _message == null || _message.isBlank() ? UiTheme.TEXT_MUTED : UiTheme.ACCENT_GOLD;
     }
 

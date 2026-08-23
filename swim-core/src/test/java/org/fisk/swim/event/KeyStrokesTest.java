@@ -9,7 +9,7 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 class KeyStrokesTest {
     @Test

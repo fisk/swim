@@ -9,8 +9,8 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class SplitView extends View {
     private static final int DIVIDER_THICKNESS = 1;
@@ -357,7 +357,7 @@ public class SplitView extends View {
     }
 
     private void drawHorizontalSegments(List<HorizontalSegment> horizontals) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         for (var horizontal : horizontals) {
             UiTheme.drawLine(graphics, Point.create(horizontal.x(), horizontal.y()), horizontal.width(),
                     AttributedString.create(UiTheme.repeat("─", horizontal.width()), UiTheme.TEXT_MUTED,
@@ -367,7 +367,7 @@ public class SplitView extends View {
     }
 
     private void drawVerticalDividers(List<DividerSegment> dividers, List<HorizontalSegment> horizontals) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         for (var divider : dividers) {
             int startY = divider.y();
             int endExclusive = divider.y() + divider.height();
@@ -432,7 +432,7 @@ public class SplitView extends View {
         if (line.length() > width) {
             line = line.slice(0, width);
         }
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(),
+        UiTheme.drawLine(TerminalContext.getInstance().getTerminalGraphics(),
                 Point.create(origin.getX() + frame.getPoint().getX(),
                         origin.getY() + frame.getPoint().getY() + frame.getSize().getHeight() - 1),
                 width,

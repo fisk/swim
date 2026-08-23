@@ -126,7 +126,7 @@ final class EditorState {
         return enqueueKeys(_lastRepeat, count);
     }
 
-    void observeKeyStroke(com.googlecode.lanterna.input.KeyStroke keyStroke) {
+    void observeKeyStroke(org.fisk.swim.event.KeyStroke keyStroke) {
         if (_playingKeys || keyStroke == null) {
             return;
         }

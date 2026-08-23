@@ -60,12 +60,9 @@ import org.fisk.swim.ui.ListView.ListItem;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.screen.Screen.RefreshType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
@@ -3757,19 +3754,18 @@ public class Window implements Drawable {
     public void update(boolean forced) {
         ensureLayoutState();
         _log.debug("Maybe relayout");
-        var screen = TerminalContext.getInstance().getScreen();
         var terminalContext = TerminalContext.getInstance();
-        var terminalSize = terminalContext.getTerminalSize();
-        var resizedSize = TerminalContext.isTerminalSizeFrozen() ? null : screen.doResizeIfNecessary();
+        var terminalSize = terminalContext.getTerminalDimensions();
+        var resizedSize = terminalContext.resizeIfNeeded();
         if (resizedSize != null) {
             terminalSize = resizedSize;
         }
         if (terminalSize == null) {
-            terminalSize = new TerminalSize(_rootView.getBounds().getSize().getWidth(),
+            terminalSize = new org.fisk.swim.terminal.TerminalDimensions(_rootView.getBounds().getSize().getWidth(),
                     _rootView.getBounds().getSize().getHeight());
         }
-        _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
-        var size = Size.create(terminalSize.getColumns(), terminalSize.getRows());
+        _log.debug("Terminal size: " + terminalSize.columns() + ", " + terminalSize.rows());
+        var size = Size.create(terminalSize.columns(), terminalSize.rows());
         boolean needsRelayout = _size == null || !_size.equals(size) || keyMenuNeedsRelayout(size);
         boolean completeRedraw = forced || needsRelayout;
         if (needsRelayout) {
@@ -3796,18 +3792,18 @@ public class Window implements Drawable {
         }
         AttributedString.clearRenderedClickRanges();
         if (completeRedraw) {
-            screen.clear();
+            terminalContext.clear();
         }
-        _rootView.update(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()), forced);
+        _rootView.update(Rect.create(0, 0, terminalSize.columns(), terminalSize.rows()), forced);
         _size = size;
         var cursor = _rootView.getCursor();
         TerminalCursorShape shape = TerminalCursorShape.BLOCK;
         if (cursor != null) {
-            screen.setCursorPosition(new TerminalPosition(cursor.getXOnScreen(), cursor.getYOnScreen()));
+            terminalContext.setCursorPosition(cursor.getXOnScreen(), cursor.getYOnScreen());
             shape = cursorShape(cursor);
         }
         try {
-            screen.refresh(completeRedraw ? RefreshType.COMPLETE : RefreshType.DELTA);
+            terminalContext.refresh(completeRedraw);
         } catch (IOException e) {
         }
         _lastTerminalRefreshNanos = System.nanoTime();
@@ -4242,22 +4238,22 @@ public class Window implements Drawable {
     private void setupViews(Path path) {
         ensureLayoutState();
         var terminalContext = TerminalContext.getInstance();
-        var terminalSize = terminalContext.getTerminalSize();
+        var terminalSize = terminalContext.getTerminalDimensions();
 
-        _log.debug("Terminal size: " + terminalSize.getColumns() + ", " + terminalSize.getRows());
+        _log.debug("Terminal size: " + terminalSize.columns() + ", " + terminalSize.rows());
 
-        int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.getRows());
-        Rect bufferBounds = Rect.create(0, initialMenuHeight, terminalSize.getColumns(),
-                Math.max(0, terminalSize.getRows() - initialMenuHeight - 3));
+        int initialMenuHeight = Math.min(MIN_TOP_MENU_HEIGHT, terminalSize.rows());
+        Rect bufferBounds = Rect.create(0, initialMenuHeight, terminalSize.columns(),
+                Math.max(0, terminalSize.rows() - initialMenuHeight - 3));
         _bufferContext = new BufferContext(bufferBounds, path);
         registerBufferView(_bufferContext, _bufferContext.getBufferView());
         trackBufferContext(_bufferContext);
 
-        _rootView = new RootView(Rect.create(0, 0, terminalSize.getColumns(), terminalSize.getRows()));
+        _rootView = new RootView(Rect.create(0, 0, terminalSize.columns(), terminalSize.rows()));
         _rootView.setBackgroundColour(UiTheme.ROOT_BACKGROUND);
 
-        _keyMenuView = new KeyMenuView(Rect.create(0, 0, terminalSize.getColumns(), Math.min(MIN_TOP_MENU_HEIGHT,
-                terminalSize.getRows())));
+        _keyMenuView = new KeyMenuView(Rect.create(0, 0, terminalSize.columns(), Math.min(MIN_TOP_MENU_HEIGHT,
+                terminalSize.rows())));
         _keyMenuView.setResizeMask(View.RESIZE_MASK_TOP | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
                 | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_keyMenuView);
@@ -4267,19 +4263,19 @@ public class Window implements Drawable {
         _activeBufferView = _bufferContext.getBufferView();
         attachWorkspaceView();
 
-        _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.getRows() - 3), terminalSize.getColumns(),
-                terminalSize.getRows() >= 3 ? 1 : 0));
+        _modeLineView = new ModeLineView(Rect.create(0, Math.max(0, terminalSize.rows() - 3), terminalSize.columns(),
+                terminalSize.rows() >= 3 ? 1 : 0));
         _modeLineView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_modeLineView);
 
-        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.getRows() - 1), terminalSize.getColumns(),
-                terminalSize.getRows() >= 2 ? 1 : 0));
+        _tabBarView = new TabBarView(Rect.create(0, Math.max(0, terminalSize.rows() - 1), terminalSize.columns(),
+                terminalSize.rows() >= 2 ? 1 : 0));
         _tabBarView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT
                 | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_tabBarView);
 
-        _commandView = new CommandView(Rect.create(0, Math.max(0, terminalSize.getRows() - 2), terminalSize.getColumns(),
-                terminalSize.getRows() >= 1 ? 1 : 0));
+        _commandView = new CommandView(Rect.create(0, Math.max(0, terminalSize.rows() - 2), terminalSize.columns(),
+                terminalSize.rows() >= 1 ? 1 : 0));
         _commandView.setResizeMask(View.RESIZE_MASK_BOTTOM | View.RESIZE_MASK_LEFT | View.RESIZE_MASK_RIGHT | View.RESIZE_MASK_HEIGHT);
         _rootView.addSubview(_commandView);
 
@@ -4333,7 +4329,7 @@ public class Window implements Drawable {
                         || _currentMode != _normalMode) {
                     return Response.NO;
                 }
-                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -4415,7 +4411,7 @@ public class Window implements Drawable {
                 if (_rootView == null || _rootView.getFirstResponder() != _activeBufferView || _currentMode != _normalMode) {
                     return Response.NO;
                 }
-                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -4582,7 +4578,7 @@ public class Window implements Drawable {
             @Override
             public Response processEvent(KeyStrokes events) {
                 _tabIndex = null;
-                var sequence = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -4630,7 +4626,7 @@ public class Window implements Drawable {
         });
     }
 
-    private static boolean isCtrlB(com.googlecode.lanterna.input.KeyStroke stroke) {
+    private static boolean isCtrlB(org.fisk.swim.event.KeyStroke stroke) {
         if (stroke == null || stroke.getKeyType() != KeyType.Character) {
             return false;
         }

@@ -17,12 +17,11 @@ import org.fisk.swim.text.AttributedString;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class ChatPanelViewTest {
     @TempDir
@@ -308,11 +307,11 @@ class ChatPanelViewTest {
         }
         int bottom = view.getStartLine();
 
-        dispatch(view, new MouseAction(MouseActionType.SCROLL_UP, 5, new TerminalPosition(1, 1)));
+        dispatch(view, new MouseAction(MouseActionType.SCROLL_UP, 5, new MouseAction.Position(1, 1)));
 
         assertTrue(view.getStartLine() < bottom);
 
-        dispatch(view, new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(1, 1)));
+        dispatch(view, new MouseAction(MouseActionType.SCROLL_DOWN, 5, new MouseAction.Position(1, 1)));
 
         assertEquals(bottom, view.getStartLine());
     }
@@ -324,7 +323,7 @@ class ChatPanelViewTest {
         dispatch(view, new KeyStroke('b', false, false));
         dispatch(view, new KeyStroke('c', false, false));
 
-        dispatch(view, new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(3, 4)));
+        dispatch(view, new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(3, 4)));
         dispatch(view, new KeyStroke('x', false, false));
 
         assertEquals("xabc", view.getInputText());

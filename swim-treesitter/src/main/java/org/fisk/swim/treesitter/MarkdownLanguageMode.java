@@ -12,7 +12,7 @@ import org.fisk.swim.EventThread;
 import org.fisk.swim.api.SwimPluginWorkers;
 import org.fisk.swim.ui.UiTheme;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 /** Markdown editing mode backed by bundled Tree-sitter Markdown grammar assets. */
 public final class MarkdownLanguageMode implements LanguageMode {

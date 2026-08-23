@@ -5,7 +5,6 @@ module org.fisk.swim.core {
     requires langchain4j.http.client.jdk;
     requires langchain4j.open.ai;
     requires com.google.gson;
-    requires com.googlecode.lanterna;
     requires com.h2database;
     requires static java.compiler;
     requires java.management;
@@ -31,6 +30,7 @@ module org.fisk.swim.core {
     exports org.fisk.swim.slack;
     exports org.fisk.swim.debug;
     exports org.fisk.swim.text;
+    exports org.fisk.swim.terminal;
     exports org.fisk.swim.ui;
     exports org.fisk.swim.utils;
     opens org.fisk.swim.config to com.google.gson;

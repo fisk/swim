@@ -9,8 +9,8 @@ import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class FancyJumpResponder implements EventResponder, KeyBindingHintProvider {
     private static final String HINT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

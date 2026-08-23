@@ -9,7 +9,7 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 class TabBarViewTest {
     @Test

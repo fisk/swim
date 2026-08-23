@@ -36,7 +36,7 @@ public final class MailNotificationView extends View {
         }
         syncBounds();
         rect = getBounds();
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         UiTheme.drawLine(graphics, rect.getPoint(), rect.getSize().getWidth(),
                 AttributedString.create(" " + UiTheme.fit(notification.heading(), rect.getSize().getWidth() - 2),
                         UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_HEADER_BACKGROUND),

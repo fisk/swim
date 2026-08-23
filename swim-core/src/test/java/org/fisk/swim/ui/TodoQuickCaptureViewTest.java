@@ -77,7 +77,7 @@ class TodoQuickCaptureViewTest {
         assertEquals(0, cancelled.get());
     }
 
-    private static void dispatch(TodoQuickCaptureView view, com.googlecode.lanterna.input.KeyStroke key) {
+    private static void dispatch(TodoQuickCaptureView view, org.fisk.swim.event.KeyStroke key) {
         HeadlessWindowHarness.dispatch(view, key);
     }
 }

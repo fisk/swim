@@ -8,7 +8,7 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.UiTheme;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class LatexLSPClient implements LanguageMode {
 

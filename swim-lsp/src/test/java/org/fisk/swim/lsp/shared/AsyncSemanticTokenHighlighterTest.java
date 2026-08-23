@@ -8,7 +8,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 class AsyncSemanticTokenHighlighterTest {
     @Test

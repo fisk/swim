@@ -73,7 +73,7 @@ public class CommandMenuView extends View {
         }
         super.draw(rect);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         List<AttributedString> headerLines = headerLines(rect.getSize().getWidth());
         for (int i = 0; i < headerLines.size() && i < rect.getSize().getHeight(); i++) {
             UiTheme.drawLine(graphics,
@@ -158,7 +158,7 @@ public class CommandMenuView extends View {
             CommandView.CommandSpec match,
             boolean selected) {
         AttributedString row = matchRow(width, labelWidth, shortcutWidth, match, selected);
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), point, width, row,
+        UiTheme.drawLine(TerminalContext.getInstance().getTerminalGraphics(), point, width, row,
                 selected ? UiTheme.PANEL_SELECTION_FOREGROUND : UiTheme.TEXT_PRIMARY,
                 selected ? UiTheme.PANEL_SELECTION_BACKGROUND : UiTheme.SURFACE_ELEVATED);
     }

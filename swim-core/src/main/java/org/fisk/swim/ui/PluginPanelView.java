@@ -15,8 +15,8 @@ import org.fisk.swim.text.AttributedString;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class PluginPanelView extends View implements KeyBindingHintProvider {
     private static final Logger LOG = LoggerFactory.getLogger(PluginPanelView.class);
@@ -149,7 +149,7 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
                     SwimPanelLine.plain("Render failed: " + errorSummary(e)),
                     SwimPanelLine.plain("Press q or <esc> to close this panel."));
         }
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         for (int row = 0; row < height; ++row) {

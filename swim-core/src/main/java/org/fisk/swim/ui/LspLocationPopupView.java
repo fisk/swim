@@ -107,7 +107,7 @@ public class LspLocationPopupView extends View implements KeyBindingHintProvider
         session.ensureSelectionVisible(visibleRows);
         List<LspLocationMenuSession.Entry> visible = session.visibleEntries(visibleRows);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY();

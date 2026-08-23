@@ -30,16 +30,14 @@ import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.slack.FakeSlackClient;
 import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalContextTestSupport;
+import org.fisk.swim.terminal.TerminalDimensions;
 import org.fisk.swim.todo.TodoSnapshot;
 import org.fisk.swim.todo.TodoStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
-import com.googlecode.lanterna.screen.Screen.RefreshType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class WindowTest {
     @TempDir
@@ -108,7 +106,7 @@ class WindowTest {
             Rect helpBounds = absoluteScreenBounds(help);
             HeadlessWindowHarness.dispatch(help,
                     new MouseAction(MouseActionType.CLICK_DOWN, 1,
-                            new TerminalPosition(helpBounds.getPoint().getX() + 2, helpBounds.getPoint().getY() + 4)));
+                            new MouseAction.Position(helpBounds.getPoint().getX() + 2, helpBounds.getPoint().getY() + 4)));
             assertEquals("start", help.selectedChapterId());
             assertTrue(help.articleStartLine() > 0);
 
@@ -129,7 +127,7 @@ class WindowTest {
             assertEquals("movement", help.selectedChapterId());
             assertEquals(0, help.articleStartLine());
 
-            HeadlessWindowHarness.dispatch(help, new com.googlecode.lanterna.input.KeyStroke(com.googlecode.lanterna.input.KeyType.PageDown));
+            HeadlessWindowHarness.dispatch(help, new org.fisk.swim.event.KeyStroke(org.fisk.swim.event.KeyType.PageDown));
             assertTrue(help.articleStartLine() > 0);
 
             HeadlessWindowHarness.dispatch(help, HeadlessWindowHarness.key('q'));
@@ -288,7 +286,7 @@ class WindowTest {
 
     @Test
     void terminalResizeRelayoutsAndRedrawsEvenWhenViewTreeIsClean() throws Exception {
-        var terminalSize = new AtomicReference<>(new TerminalSize(40, 12));
+        var terminalSize = new AtomicReference<>(new TerminalDimensions(40, 12));
         var installed = TerminalContextTestSupport.install(40, 12, null, terminalSize::get);
         try (var harness = HeadlessWindowHarness.create(writeFile("resize-redraw.txt", "abc"), 40, 12)) {
             var window = harness.getWindow();
@@ -297,16 +295,16 @@ class WindowTest {
             installed.drawCalls().clear();
             installed.refreshCalls().clear();
 
-            terminalSize.set(new TerminalSize(66, 18));
+            terminalSize.set(new TerminalDimensions(66, 18));
             window.update(false);
 
             assertEquals(1, installed.resizeCalls().get());
-            assertEquals(new TerminalSize(66, 18), installed.screenSize().get());
+            assertEquals(new TerminalDimensions(66, 18), installed.screenSize().get());
             assertEquals(66, window.getRootView().getBounds().getSize().getWidth());
             assertEquals(18, window.getRootView().getBounds().getSize().getHeight());
             assertEquals(2, window.getBufferContext().getBufferView().getBounds().getPoint().getY());
             assertFalse(installed.drawCalls().isEmpty());
-            assertEquals(List.of(RefreshType.COMPLETE), installed.refreshCalls());
+            assertEquals(List.of(Boolean.TRUE), installed.refreshCalls());
             assertEquals(clearCalls + 1, installed.clearCalls().get());
         } finally {
             EventThread.shutdownInstance();
@@ -1855,7 +1853,7 @@ class WindowTest {
             assertTrue(window.showDirectoryBrowser(directory));
             assertTrue(window.switchToRecentWindow(2));
             var responder = EventThread.getInstance().getResponder();
-            var pending = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+            var pending = new ArrayList<org.fisk.swim.event.KeyStroke>();
 
             assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key('w')));
             assertEquals(Response.MAYBE, processSequenceStep(responder, pending, HeadlessWindowHarness.key('2')));
@@ -2408,7 +2406,7 @@ class WindowTest {
 
     private static void click(Window window, int x, int y) {
         HeadlessWindowHarness.dispatch(window.getRootView(),
-                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(x, y)));
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(x, y)));
     }
 
     private static ListView.ListItem item(String label) {
@@ -2503,8 +2501,8 @@ class WindowTest {
     }
 
     private static Response processSequenceStep(org.fisk.swim.event.EventResponder responder,
-            ArrayList<com.googlecode.lanterna.input.KeyStroke> pending,
-            com.googlecode.lanterna.input.KeyStroke next) {
+            ArrayList<org.fisk.swim.event.KeyStroke> pending,
+            org.fisk.swim.event.KeyStroke next) {
         pending.add(next);
         var response = responder.processEvent(new KeyStrokes(List.copyOf(pending)));
         if (response == Response.YES) {

@@ -32,7 +32,7 @@ import org.fisk.swim.undo.UndoLog;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class Buffer {
     private static final AtomicLong UNTITLED_COUNTER = new AtomicLong();

@@ -113,7 +113,7 @@ class TodoQuickCaptureWindowTest {
         }
     }
 
-    private static Response dispatch(EventResponder responder, com.googlecode.lanterna.input.KeyStroke key) {
+    private static Response dispatch(EventResponder responder, org.fisk.swim.event.KeyStroke key) {
         var response = responder.processEvent(new KeyStrokes(List.of(key)));
         if (response == Response.YES) {
             responder.respond();

@@ -29,7 +29,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 class JavaNormalModeBindingsIntegrationTest {
     @TempDir

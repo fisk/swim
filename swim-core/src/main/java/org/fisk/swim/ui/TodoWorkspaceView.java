@@ -18,9 +18,9 @@ import org.fisk.swim.todo.TodoSnapshot;
 import org.fisk.swim.todo.TodoStore;
 import org.fisk.swim.todo.TodoTag;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     private static final class PromptCursor extends Cursor {
@@ -154,7 +154,7 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         if (width <= 0 || height <= 0) {
@@ -518,13 +518,13 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
         title.append(" " + _filter.label() + " ", UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_ACCENT);
         title.append(" " + _visibleItems.size() + " shown  " + openCount() + " open ",
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), rect.getPoint(), width, title,
+        UiTheme.drawLine(TerminalContext.getInstance().getTerminalGraphics(), rect.getPoint(), width, title,
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
 
     }
 
     private void drawSidebar(Rect rect, int sidebarWidth, int height) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY() + 1;
         int rows = Math.max(0, height - 2);
@@ -552,7 +552,7 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     private void drawItems(Point point, int width, int rows) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         for (int row = 0; row < rows; row++) {
             TextColor background = row == _itemSelection && !_sidebarFocused
                     ? UiTheme.PANEL_SELECTION_BACKGROUND
@@ -598,7 +598,7 @@ public class TodoWorkspaceView extends View implements KeyBindingHintProvider {
             line.append(" data ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
             line.append(" " + _store.getDataPath(), UiTheme.TEXT_MUTED, UiTheme.SURFACE_MUTED);
         }
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), point, width, line,
+        UiTheme.drawLine(TerminalContext.getInstance().getTerminalGraphics(), point, width, line,
                 UiTheme.TEXT_MUTED, _prompt == null ? UiTheme.SURFACE_MUTED : UiTheme.COMMAND_BACKGROUND);
     }
 

@@ -19,8 +19,8 @@ import org.fisk.swim.mode.VisualLineMode;
 import org.fisk.swim.mode.VisualMode;
 import org.fisk.swim.text.BufferContext;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 import sun.misc.Unsafe;
 

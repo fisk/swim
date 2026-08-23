@@ -14,7 +14,7 @@ import java.util.List;
 
 import javax.management.ObjectName;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 import org.fisk.swim.mail.MailAccountSummary;
 import org.fisk.swim.mail.MailClient;

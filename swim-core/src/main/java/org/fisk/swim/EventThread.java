@@ -23,8 +23,8 @@ import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.MouseAction;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.MouseAction;
 
 public class EventThread extends Thread {
     private static Logger _log = LogFactory.createLog();
@@ -246,14 +246,14 @@ public class EventThread extends Thread {
         }
         KeyStroke stroke = keyStrokeEvent.getKeyStroke();
         return stroke != null
-                && stroke.getKeyType() == com.googlecode.lanterna.input.KeyType.Character
+                && stroke.getKeyType() == org.fisk.swim.event.KeyType.Character
                 && stroke.isCtrlDown()
                 && (stroke.getCharacter() == 'q' || stroke.getCharacter() == 'Q');
     }
 
     private static boolean isForceRedrawEvent(KeyStroke stroke) {
         return stroke != null
-                && stroke.getKeyType() == com.googlecode.lanterna.input.KeyType.Character
+                && stroke.getKeyType() == org.fisk.swim.event.KeyType.Character
                 && stroke.isCtrlDown()
                 && (stroke.getCharacter() == 'l' || stroke.getCharacter() == 'L');
     }

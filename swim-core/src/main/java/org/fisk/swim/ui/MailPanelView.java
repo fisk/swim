@@ -31,10 +31,10 @@ import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
+import org.fisk.swim.event.KeyType;
 
 public class MailPanelView extends View implements KeyBindingHintProvider {
     private static final class MailCursor extends Cursor {
@@ -801,7 +801,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         if (width <= 0 || height <= 0) {
@@ -818,7 +818,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
     private void drawBrowse(
             Rect rect,
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             int width,
             int height) {
         drawMailHeader(graphics, rect.getPoint(), width, "Mail");
@@ -845,7 +845,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
     private void drawCompose(
             Rect rect,
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             int width,
             int height) {
         drawMailHeader(graphics, rect.getPoint(), width, "Compose");
@@ -868,7 +868,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void drawMailHeader(
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             Point point,
             int width,
             String title) {
@@ -881,7 +881,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         UiTheme.drawLine(graphics, point, width, header, UiTheme.TEXT_MUTED, UiTheme.MAIL_HEADER_BACKGROUND);
     }
 
-    private void drawSearchLine(com.googlecode.lanterna.graphics.TextGraphics graphics, Point point, int width) {
+    private void drawSearchLine(org.fisk.swim.terminal.TerminalGraphics graphics, Point point, int width) {
         var line = new AttributedString();
         if (_mode == Mode.SEARCH) {
             line.append(" Search ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
@@ -896,7 +896,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         UiTheme.drawLine(graphics, point, width, line, UiTheme.TEXT_MUTED, UiTheme.MAIL_STATUS_BACKGROUND);
     }
 
-    private void drawMailStatus(com.googlecode.lanterna.graphics.TextGraphics graphics, Point point, int width) {
+    private void drawMailStatus(org.fisk.swim.terminal.TerminalGraphics graphics, Point point, int width) {
         var status = new AttributedString();
         status.append(" Status ", UiTheme.TEXT_ON_ACCENT, UiTheme.MAIL_STATUS_BACKGROUND);
         status.append(UiTheme.fit(_statusMessage, Math.max(0, width - status.length() - 1)),
@@ -1972,7 +1972,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         return List.copyOf(updated);
     }
 
-    private void drawSidebarColumn(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
+    private void drawSidebarColumn(org.fisk.swim.terminal.TerminalGraphics graphics, int x, int y, int width, int height) {
         if (width <= 0 || height <= 0) {
             return;
         }
@@ -1994,7 +1994,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         }
     }
 
-    private void drawThreadTable(com.googlecode.lanterna.graphics.TextGraphics graphics, int x, int y, int width, int height) {
+    private void drawThreadTable(org.fisk.swim.terminal.TerminalGraphics graphics, int x, int y, int width, int height) {
         if (width <= 0 || height <= 0) {
             return;
         }
@@ -2467,7 +2467,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void drawAuthOverlay(
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             Rect rect,
             int width,
             int height) {

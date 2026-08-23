@@ -122,7 +122,7 @@ import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 import com.google.gson.Gson;
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticActionProvider, NemoLspBackend {
     private static final Logger _log = LogFactory.createLog();

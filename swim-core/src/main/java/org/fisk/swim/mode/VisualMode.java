@@ -9,12 +9,11 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.TextLayout.Glyph;
 import org.fisk.swim.ui.BufferView;
 import org.fisk.swim.ui.Cursor;
+import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
 
 public class VisualMode extends Mode {
     private FancyJumpResponder _fancyJump;
@@ -140,7 +139,7 @@ public class VisualMode extends Mode {
     @Override
     public void draw(Rect rect) {
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         var minCursor = minCursor();
         var maxCursor = maxCursor();
         if (maxCursor.getPosition() - minCursor.getPosition() == 0) {
@@ -166,9 +165,8 @@ public class VisualMode extends Mode {
             if (toColumn <= fromColumn) {
                 continue;
             }
-            graphics.setBackgroundColor(UiTheme.VISUAL_SELECTION_BACKGROUND);
-            graphics.drawRectangle(new TerminalPosition(fromColumn, rect.getPoint().getY() + row),
-                    new TerminalSize(toColumn - fromColumn, 1), ' ');
+            UiTheme.fillRow(graphics, Point.create(fromColumn, rect.getPoint().getY() + row), toColumn - fromColumn,
+                    UiTheme.VISUAL_SELECTION_BACKGROUND);
         }
     }
 

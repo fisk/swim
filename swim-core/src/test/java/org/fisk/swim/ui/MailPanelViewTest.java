@@ -29,9 +29,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class MailPanelViewTest {
     @TempDir
@@ -991,7 +990,7 @@ class MailPanelViewTest {
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
 
         HeadlessWindowHarness.dispatch(panel,
-                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(30, 3)));
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(30, 3)));
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class) != 1
@@ -1008,7 +1007,7 @@ class MailPanelViewTest {
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
 
         HeadlessWindowHarness.dispatch(panel,
-                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(2, 3)));
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(2, 3)));
 
         assertEquals(1, HeadlessWindowHarness.getField(panel, "_sidebarSelection", Integer.class));
         assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
@@ -1019,7 +1018,7 @@ class MailPanelViewTest {
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
 
         HeadlessWindowHarness.dispatch(panel,
-                new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(30, 3)));
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, new MouseAction.Position(30, 3)));
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class) != 2
@@ -1035,7 +1034,7 @@ class MailPanelViewTest {
 
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('c'));
         HeadlessWindowHarness.dispatch(panel,
-                new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(12, 5)));
+                new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(12, 5)));
 
         assertEquals("SUBJECT", HeadlessWindowHarness.getField(panel, "_composeField", Enum.class).name());
     }

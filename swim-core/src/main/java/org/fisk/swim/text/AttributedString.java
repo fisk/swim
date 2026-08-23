@@ -11,8 +11,10 @@ import org.fisk.swim.ui.Range;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.graphics.TextGraphics;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.terminal.AnsiColour;
+import org.fisk.swim.terminal.AnsiStyle;
+import org.fisk.swim.terminal.TerminalGraphics;
 
 public class AttributedString {
     @FunctionalInterface
@@ -394,12 +396,14 @@ public class AttributedString {
         _characterLookupFragmentStart = 0;
     }
 
-    public void drawAt(Point point, TextGraphics graphics) {
+    /** Draws through SWIM's renderer-neutral terminal surface. */
+    public void drawAt(Point point, TerminalGraphics graphics) {
         int currentX = 0;
-        for (var fragment: _fragments) {
-            graphics.setBackgroundColor(fragment.getAttributes()._backgroundColour);
-            graphics.setForegroundColor(fragment.getAttributes()._foregroundColour);
-            graphics.putString(point.getX() + currentX, point.getY(), fragment._string);
+        for (var fragment : _fragments) {
+            var attributes = fragment.getAttributes();
+            graphics.putString(point.getX() + currentX, point.getY(), fragment._string,
+                    new AnsiStyle(AnsiColour.fromTextColor(attributes._foregroundColour),
+                            AnsiColour.fromTextColor(attributes._backgroundColour), false, false, false));
             currentX += fragment._string.length();
         }
         registerRenderedClickRanges(point);

@@ -104,7 +104,7 @@ public class CodeActionPopupView extends View implements KeyBindingHintProvider 
         rect = getBounds();
         super.draw(rect);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY();

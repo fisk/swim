@@ -113,7 +113,7 @@ The core app implementation is `SwimAppImpl`. Startup does the following:
 
 The editor uses a single UI/event model:
 
-- `IOThread` reads terminal input from Lanterna and enqueues events.
+- `IOThread` reads terminal input through SWIM's terminal backend and enqueues events.
 - `EventThread` serializes editor events and calls back into `Window.update`.
 - `Window` owns global editor state: workspaces, tabs, frames, active view, command view, mode line, tab bar, overlays, and layout.
 - `View` subclasses render concrete surfaces such as buffers, command menus, popups, plugin panels, shell workspaces, help, diagnostics, and directory browsing.

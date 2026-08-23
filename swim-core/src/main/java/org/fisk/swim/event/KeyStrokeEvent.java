@@ -1,6 +1,6 @@
 package org.fisk.swim.event;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 public class KeyStrokeEvent extends Event {
     private KeyStroke _keyStroke;

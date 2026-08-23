@@ -12,7 +12,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 class FancyJumpResponderTest {
     @TempDir

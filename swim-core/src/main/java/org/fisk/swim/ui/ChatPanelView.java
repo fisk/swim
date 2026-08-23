@@ -15,10 +15,10 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class ChatPanelView extends View implements KeyBindingHintProvider {
     private static final String HISTORY_ME_PREFIX = "me> ";
@@ -1185,7 +1185,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         int width = rect.getSize().getWidth();
 
         var title = new AttributedString();

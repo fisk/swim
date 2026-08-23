@@ -10,7 +10,7 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class LspFeaturePopupView extends View implements KeyBindingHintProvider {
     public record Entry(String kind, String label, String detail, TextColor accent, Runnable action) {
@@ -116,7 +116,7 @@ public class LspFeaturePopupView extends View implements KeyBindingHintProvider 
         rect = getBounds();
         super.draw(rect);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY();

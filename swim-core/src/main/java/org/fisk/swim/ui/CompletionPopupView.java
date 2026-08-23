@@ -7,9 +7,7 @@ import org.fisk.swim.lsp.LspCompletionSession;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class CompletionPopupView extends View {
     private static final int MIN_WIDTH = 24;
@@ -61,7 +59,7 @@ public class CompletionPopupView extends View {
         session.ensureSelectionVisible(visibleRows);
         var visible = session.visibleEntries(visibleRows);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         drawHeader(rect, graphics, session);
         drawEntries(rect, graphics, session, visible);
         drawFooter(rect, graphics, session);
@@ -69,13 +67,9 @@ public class CompletionPopupView extends View {
 
     private void drawHeader(
             Rect rect,
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             LspCompletionSession session) {
-        graphics.setBackgroundColor(UiTheme.COMPLETION_HEADER_BACKGROUND);
-        graphics.drawRectangle(
-                new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
-                new TerminalSize(rect.getSize().getWidth(), 1),
-                ' ');
+        UiTheme.fillRow(graphics, rect.getPoint(), rect.getSize().getWidth(), UiTheme.COMPLETION_HEADER_BACKGROUND);
         String prefix = session.getPrefix().isBlank() ? "" : "  " + session.getPrefix();
         String incomplete = session.isIncomplete() ? " +" : "";
         String header = " Java " + (session.getSelection() + 1) + "/" + session.size() + incomplete + prefix;
@@ -88,7 +82,7 @@ public class CompletionPopupView extends View {
 
     private void drawEntries(
             Rect rect,
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             LspCompletionSession session,
             List<LspCompletionSession.Entry> visible) {
         int width = rect.getSize().getWidth();
@@ -102,8 +96,7 @@ public class CompletionPopupView extends View {
             TextColor foreground = selected ? UiTheme.COMPLETION_SELECTION_FOREGROUND : UiTheme.COMPLETION_FOREGROUND;
             int y = startY + i;
 
-            graphics.setBackgroundColor(background);
-            graphics.drawRectangle(new TerminalPosition(rect.getPoint().getX(), y), new TerminalSize(width, 1), ' ');
+            UiTheme.fillRow(graphics, Point.create(rect.getPoint().getX(), y), width, background);
 
             int sourceWidth = entry.getSource().isBlank() ? 0 : Math.min(18, Math.max(8, width / 4));
             int leftWidth = width - 4 - (sourceWidth == 0 ? 0 : sourceWidth + 1);
@@ -140,14 +133,11 @@ public class CompletionPopupView extends View {
 
     private void drawFooter(
             Rect rect,
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             LspCompletionSession session) {
         int footerY = rect.getPoint().getY() + rect.getSize().getHeight() - 1;
-        graphics.setBackgroundColor(UiTheme.COMPLETION_FOOTER_BACKGROUND);
-        graphics.drawRectangle(
-                new TerminalPosition(rect.getPoint().getX(), footerY),
-                new TerminalSize(rect.getSize().getWidth(), 1),
-                ' ');
+        UiTheme.fillRow(graphics, Point.create(rect.getPoint().getX(), footerY), rect.getSize().getWidth(),
+                UiTheme.COMPLETION_FOOTER_BACKGROUND);
 
         var selected = session.getSelectedEntry();
         String footerText = "";
@@ -204,7 +194,7 @@ public class CompletionPopupView extends View {
     }
 
     private void drawLine(Point point, String text, TextColor foreground, TextColor background) {
-        AttributedString.create(text, foreground, background).drawAt(point, TerminalContext.getInstance().getGraphics());
+        AttributedString.create(text, foreground, background).drawAt(point, TerminalContext.getInstance().getTerminalGraphics());
     }
 
     private void drawLine(Point point, AttributedString text, int width) {
@@ -212,7 +202,7 @@ public class CompletionPopupView extends View {
         if (clipped.length() != text.length()) {
             text = AttributedString.create(clipped, UiTheme.COMPLETION_FOREGROUND, _backgroundColour);
         }
-        text.drawAt(point, TerminalContext.getInstance().getGraphics());
+        text.drawAt(point, TerminalContext.getInstance().getTerminalGraphics());
     }
 
     private static String clip(String text, int width) {

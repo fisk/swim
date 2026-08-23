@@ -6,7 +6,7 @@ import org.fisk.swim.event.RecordedKey;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.ui.Window;
 
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyType;
 
 public class ReplaceMode extends Mode {
     public ReplaceMode(Window window) {

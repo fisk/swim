@@ -12,9 +12,9 @@ import org.fisk.swim.help.HelpDocument;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     private record NavRow(int chapterIndex, String text, boolean section, String sectionTitle) {
@@ -235,7 +235,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
         refreshChapters();
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         int sidebarWidth = sidebarWidth();
@@ -252,12 +252,12 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     private void drawHeader(Rect rect, int width) {
         var line = new AttributedString();
         line.append(" SWIM Help ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
-        UiTheme.drawLine(TerminalContext.getInstance().getGraphics(), rect.getPoint(), width, line,
+        UiTheme.drawLine(TerminalContext.getInstance().getTerminalGraphics(), rect.getPoint(), width, line,
                 UiTheme.TEXT_MUTED, UiTheme.SURFACE_ACCENT);
     }
 
     private void drawSidebar(Rect rect, int width, int height) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         var title = new AttributedString();
         title.append(" Chapters ", UiTheme.TEXT_ON_ACCENT, UiTheme.ACCENT_GOLD);
         title.append((_selectedChapter + 1) + "/" + _chapters.size(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_MUTED);
@@ -299,7 +299,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     private void drawDivider(Rect rect, int x, int height) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         for (int row = 1; row < height; row++) {
             UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX() + x, rect.getPoint().getY() + row), 1,
                     AttributedString.create("|", UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED),
@@ -308,7 +308,7 @@ public class HelpWorkspaceView extends View implements KeyBindingHintProvider {
     }
 
     private void drawArticle(Rect rect, int offsetX, int width, int height) {
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         List<String> lines = articleLines(width - 2);
         int bodyHeight = Math.max(0, height - 3);
         int maxStart = Math.max(0, lines.size() - bodyHeight);

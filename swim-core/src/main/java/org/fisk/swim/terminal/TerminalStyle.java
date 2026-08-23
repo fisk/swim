@@ -1,6 +1,6 @@
 package org.fisk.swim.terminal;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public record TerminalStyle(TextColor foreground, TextColor background, boolean bold, boolean inverse) {
     public static final TerminalStyle DEFAULT = new TerminalStyle(TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT, false,

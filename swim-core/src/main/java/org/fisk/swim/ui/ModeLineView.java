@@ -25,7 +25,7 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class ModeLineView extends View {
     private static final int HEAP_BAR_WIDTH = 10;
@@ -293,7 +293,7 @@ public class ModeLineView extends View {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var textGraphics = terminalContext.getGraphics();
+        var textGraphics = terminalContext.getTerminalGraphics();
         UiTheme.drawLine(textGraphics, rect.getPoint(), rect.getSize().getWidth(), getString(), UiTheme.TEXT_MUTED,
                 _backgroundColour);
     }

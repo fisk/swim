@@ -1,6 +1,6 @@
 package org.fisk.swim.treesitter;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 /** Maps a parser span to an optional foreground colour for the low-priority syntax layer. */
 @FunctionalInterface

@@ -7,7 +7,7 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public class TabBarView extends View {
     public record Tab(int index, String label, boolean active, Runnable onClick) {
@@ -52,7 +52,7 @@ public class TabBarView extends View {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        UiTheme.drawLine(terminalContext.getGraphics(), rect.getPoint(), rect.getSize().getWidth(),
+        UiTheme.drawLine(terminalContext.getTerminalGraphics(), rect.getPoint(), rect.getSize().getWidth(),
                 buildLine(rect.getSize().getWidth()), UiTheme.TEXT_MUTED, _backgroundColour);
     }
 

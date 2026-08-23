@@ -8,7 +8,7 @@ import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyType;
 
 public class FindResponder implements EventResponder, KeyBindingHintProvider {
     private static final Logger _log = LogFactory.createLog();

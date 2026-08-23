@@ -10,7 +10,7 @@ import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 class ViewTest {
     @Test

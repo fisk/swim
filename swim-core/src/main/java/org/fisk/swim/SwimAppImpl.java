@@ -127,7 +127,7 @@ public class SwimAppImpl implements SwimApp {
 
         @Override
         public Thread createIoThread() {
-            return new IOThread(TerminalContext.getInstance().getScreen());
+            return TerminalContext.getInstance().newInputThread();
         }
 
         @Override

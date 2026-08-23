@@ -6,8 +6,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 class RecordedKeyTest {
     @Test
@@ -19,7 +19,7 @@ class RecordedKeyTest {
     }
 
     @Test
-    void roundTripsLanternaKeyStrokes() {
+    void roundTripsTerminalKeyStrokes() {
         KeyStroke stroke = new KeyStroke('x', true, false);
         assertEquals(stroke.getCharacter(), RecordedKey.fromKeyStroke(stroke).toKeyStroke().getCharacter());
         assertEquals(KeyType.Character, RecordedKey.fromKeyStroke(stroke).toKeyStroke().getKeyType());

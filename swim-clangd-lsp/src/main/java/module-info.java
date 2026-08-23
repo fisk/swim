@@ -1,6 +1,5 @@
 module org.fisk.swim.clangd.lsp {
     requires com.google.gson;
-    requires com.googlecode.lanterna;
     requires org.eclipse.lsp4j;
     requires org.eclipse.lsp4j.jsonrpc;
     requires org.fisk.swim.core;

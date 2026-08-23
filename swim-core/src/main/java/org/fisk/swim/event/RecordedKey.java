@@ -3,8 +3,8 @@ package org.fisk.swim.event;
 import java.util.ArrayList;
 import java.util.List;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public record RecordedKey(
         KeyType keyType,

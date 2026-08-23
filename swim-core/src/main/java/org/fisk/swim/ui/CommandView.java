@@ -10,8 +10,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.debug.DebuggerManager;
@@ -1422,7 +1422,7 @@ public class CommandView extends View {
             return;
         }
         var mode = window.getNormalMode();
-        var pending = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+        var pending = new ArrayList<org.fisk.swim.event.KeyStroke>();
         for (var stroke : parseNormalCommandKeys(argument)) {
             pending.add(stroke);
             var response = mode.processEvent(new KeyStrokes(List.copyOf(pending)));
@@ -1709,8 +1709,8 @@ public class CommandView extends View {
         return Math.max(0, Math.min(buffer.getLineCount() - 1, Integer.parseInt(value) - 1));
     }
 
-    private static List<com.googlecode.lanterna.input.KeyStroke> parseNormalCommandKeys(String argument) {
-        var keys = new ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+    private static List<org.fisk.swim.event.KeyStroke> parseNormalCommandKeys(String argument) {
+        var keys = new ArrayList<org.fisk.swim.event.KeyStroke>();
         if (argument.contains("<") || argument.contains(" ")) {
             try {
                 for (var key : org.fisk.swim.event.RecordedKey.parseSequence(argument)) {
@@ -1722,7 +1722,7 @@ public class CommandView extends View {
             }
         }
         for (int i = 0; i < argument.length(); i++) {
-            keys.add(new com.googlecode.lanterna.input.KeyStroke(argument.charAt(i), false, false));
+            keys.add(new org.fisk.swim.event.KeyStroke(argument.charAt(i), false, false));
         }
         return keys;
     }
@@ -1741,7 +1741,7 @@ public class CommandView extends View {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         int width = rect.getSize().getWidth();
         var line = new AttributedString();
 

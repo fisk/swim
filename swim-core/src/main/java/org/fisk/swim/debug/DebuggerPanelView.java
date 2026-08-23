@@ -86,7 +86,7 @@ public final class DebuggerPanelView extends View {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         var snapshot = DebuggerManager.snapshot();
         AttributedString.create(" " + snapshot.title(), UiTheme.DEBUGGER_HEADER_FOREGROUND,
                 UiTheme.DEBUGGER_HEADER_BACKGROUND)
@@ -194,7 +194,7 @@ public final class DebuggerPanelView extends View {
         _scroll = Math.max(0, Math.min(_scroll, Math.max(0, rowCount - Math.max(1, bodyHeight))));
     }
 
-    private static String normalize(com.googlecode.lanterna.input.KeyType keyType, Character character, boolean ctrlDown,
+    private static String normalize(org.fisk.swim.event.KeyType keyType, Character character, boolean ctrlDown,
             boolean altDown) {
         return switch (keyType) {
         case ArrowUp -> "up";

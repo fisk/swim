@@ -9,9 +9,9 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public class HostApprovalOverlayView extends View {
     public record Entry(String id, String title, String toolName, String reason, String summary, boolean persistable) {
@@ -139,7 +139,7 @@ public class HostApprovalOverlayView extends View {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         if (width <= 0 || rect.getSize().getHeight() <= 0) {
             return;

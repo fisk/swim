@@ -11,10 +11,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.fisk.swim.EventThread;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class EventThreadTest {
     @Test
@@ -241,7 +240,7 @@ class EventThreadTest {
         thread.start();
 
         thread.enqueue(new KeyStrokeEvent(new KeyStroke('g', false, false)));
-        thread.enqueue(new KeyStrokeEvent(new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(0, 0))));
+        thread.enqueue(new KeyStrokeEvent(new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(0, 0))));
         thread.enqueue(new KeyStrokeEvent(new KeyStroke('g', false, false)));
         thread.enqueue(new RunnableEvent(completed::countDown));
 

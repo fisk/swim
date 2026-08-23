@@ -12,12 +12,11 @@ import org.fisk.swim.terminal.TerminalCell;
 import org.fisk.swim.terminal.TerminalEmulator;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class ShellPanelViewTest {
     @Test
@@ -45,7 +44,7 @@ class ShellPanelViewTest {
     void mouseDragUsesSgrEncodingWhenEnabled() {
         var emulator = new TerminalEmulator(20, 10);
         emulator.feed("\u001b[?1002h\u001b[?1006h");
-        var action = new MouseAction(MouseActionType.DRAG, 1, new TerminalPosition(6, 4));
+        var action = new MouseAction(MouseActionType.DRAG, 1, new MouseAction.Position(6, 4));
 
         assertArrayEquals("\u001b[<32;5;4M".getBytes(),
                 ShellPanelView.encodeMouseAction(action, emulator, Point.create(2, 1), Size.create(10, 8)));
@@ -59,24 +58,22 @@ class ShellPanelViewTest {
 
     @Test
     void shellBoldAttributeIsPreservedWhenRenderingCells() {
-        var rendered = ShellPanelView.toTextCharacter(
+        var rendered = ShellPanelView.toAnsiStyle(
                 new TerminalCell('x', new org.fisk.swim.terminal.TerminalStyle(TextColor.ANSI.RED, TextColor.ANSI.DEFAULT, true, false)));
 
-        assertEquals('x', rendered.getCharacter());
-        assertEquals(TextColor.ANSI.RED, rendered.getForegroundColor());
-        assertEquals(TextColor.ANSI.DEFAULT, rendered.getBackgroundColor());
-        assertEquals(true, rendered.isBold());
+        assertEquals(org.fisk.swim.terminal.AnsiColour.fromTextColor(TextColor.ANSI.RED), rendered.foreground());
+        assertEquals(org.fisk.swim.terminal.AnsiColour.DEFAULT, rendered.background());
+        assertEquals(true, rendered.bold());
     }
 
     @Test
     void shellReverseAttributeIsPreservedWhenRenderingCells() {
-        var rendered = ShellPanelView.toTextCharacter(
+        var rendered = ShellPanelView.toAnsiStyle(
                 new TerminalCell('x', new org.fisk.swim.terminal.TerminalStyle(TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT, false, true)));
 
-        assertEquals('x', rendered.getCharacter());
-        assertEquals(TextColor.ANSI.DEFAULT, rendered.getForegroundColor());
-        assertEquals(TextColor.ANSI.DEFAULT, rendered.getBackgroundColor());
-        assertEquals(true, rendered.isReversed());
+        assertEquals(org.fisk.swim.terminal.AnsiColour.DEFAULT, rendered.foreground());
+        assertEquals(org.fisk.swim.terminal.AnsiColour.DEFAULT, rendered.background());
+        assertEquals(true, rendered.inverse());
     }
 
     @Test

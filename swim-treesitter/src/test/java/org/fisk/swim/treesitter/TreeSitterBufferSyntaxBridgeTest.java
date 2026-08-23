@@ -11,7 +11,7 @@ import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.ui.Rect;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 class TreeSitterBufferSyntaxBridgeTest {
     @Test

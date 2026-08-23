@@ -8,11 +8,11 @@ import java.util.function.Consumer;
 import org.fisk.swim.config.ThemeConfig;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Powerline;
+import org.fisk.swim.terminal.AnsiColour;
+import org.fisk.swim.terminal.AnsiStyle;
+import org.fisk.swim.terminal.TerminalGraphics;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.graphics.TextGraphics;
+import org.fisk.swim.terminal.TextColor;
 
 public final class UiTheme {
     public static TextColor ROOT_BACKGROUND;
@@ -481,26 +481,26 @@ public final class UiTheme {
         line.append(Powerline.SYMBOL_FILLED_LEFT_ARROW, fromBackground, toBackground);
     }
 
-    static void fillRow(TextGraphics graphics, Point point, int width, TextColor background) {
-        if (width <= 0) {
-            return;
-        }
-        graphics.setBackgroundColor(background);
-        graphics.fillRectangle(new TerminalPosition(point.getX(), point.getY()), new TerminalSize(width, 1), ' ');
+    public static void fillRow(TerminalGraphics graphics, Point point, int width, TextColor background) {
+        if (graphics == null || width <= 0) return;
+        graphics.fillRow(point.getX(), point.getY(), width,
+                new AnsiStyle(AnsiColour.DEFAULT, AnsiColour.fromTextColor(background), false, false, false));
     }
 
-    static void drawLine(TextGraphics graphics, Point point, int width, AttributedString line,
+    static void drawLine(TerminalGraphics graphics, Point point, int width, AttributedString line,
             TextColor paddingForeground, TextColor paddingBackground) {
-        fillRow(graphics, point, width, paddingBackground);
-        if (width <= 0) {
-            return;
-        }
+        if (graphics == null || width <= 0) return;
         AttributedString output = line.length() > width ? line.slice(0, width) : AttributedString.create(line);
         int remaining = width - output.length();
-        if (remaining > 0) {
-            output.append(repeat(" ", remaining), paddingForeground, paddingBackground);
+        if (remaining > 0) output.append(repeat(" ", remaining), paddingForeground, paddingBackground);
+        int column = point.getX();
+        for (var fragment : output.getFragments()) {
+            var attributes = fragment.getAttributes();
+            graphics.putString(column, point.getY(), fragment.toString(), new AnsiStyle(
+                    AnsiColour.fromTextColor(attributes.foregroundColour()),
+                    AnsiColour.fromTextColor(attributes.backgroundColour()), false, false, false));
+            column += fragment.toString().length();
         }
-        output.drawAt(point, graphics);
     }
 
     static TextColor modeColor(String modeName) {

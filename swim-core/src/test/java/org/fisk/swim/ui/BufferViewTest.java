@@ -27,10 +27,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class BufferViewTest {
     private static final String PROVIDER = "buffer-view-test";
@@ -86,7 +85,7 @@ class BufferViewTest {
             Method handle = BufferView.class.getDeclaredMethod("handleMouseAction", MouseAction.class);
             handle.setAccessible(true);
             handle.invoke(window.getBufferContext().getBufferView(),
-                    new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(3, 3)));
+                    new MouseAction(MouseActionType.MOVE, 0, new MouseAction.Position(3, 3)));
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertEquals("Line Diagnostics", popup.getTitle());
         }
@@ -105,7 +104,7 @@ class BufferViewTest {
                     List.of(diagnostic(1, 0, DiagnosticSeverity.Error, "gutter hover error")));
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.MOVE, 0, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+                    new MouseAction(MouseActionType.MOVE, 0, new MouseAction.Position(origin.getX(), origin.getY() + 1)));
 
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertNotNull(popup);
@@ -128,9 +127,9 @@ class BufferViewTest {
                     List.of(diagnostic(1, 0, DiagnosticSeverity.Warning, "click warning")));
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(textX + 1, textY)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 1, textY)));
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new MouseAction.Position(textX + 1, textY)));
 
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertNotNull(popup);
@@ -152,9 +151,9 @@ class BufferViewTest {
                     List.of(diagnostic(1, 0, DiagnosticSeverity.Warning, "gutter click warning")));
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(origin.getX(), origin.getY() + 1)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(origin.getX(), origin.getY() + 1)));
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new MouseAction.Position(origin.getX(), origin.getY() + 1)));
 
             var popup = HeadlessWindowHarness.getField(window, "_diagnosticPopupView", DiagnosticPopupView.class);
             assertNotNull(popup);
@@ -191,7 +190,7 @@ class BufferViewTest {
             var view = windowBufferView(harness);
 
             var response = view.processEvent(new KeyStrokes(List.of(
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(4, 2)))));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(4, 2)))));
 
             assertEquals(Response.YES, response);
             assertEquals(2, harness.getWindow().getBufferContext().getBuffer().getCursor().getPosition());
@@ -211,9 +210,9 @@ class BufferViewTest {
             int textY = origin.getY();
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(textX + 1, textY)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.DRAG, 1, new TerminalPosition(textX + 3, textY)));
+                    new MouseAction(MouseActionType.DRAG, 1, new MouseAction.Position(textX + 3, textY)));
 
             assertEquals(window.getVisualMode(), window.getCurrentMode());
             assertEquals(2, window.getBufferContext().getBuffer().getCursors().size());
@@ -241,9 +240,9 @@ class BufferViewTest {
             int textY = origin.getY();
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 2, textY)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(textX + 2, textY)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.DRAG, 1, new TerminalPosition(textX + 5, textY)));
+                    new MouseAction(MouseActionType.DRAG, 1, new MouseAction.Position(textX + 5, textY)));
 
             assertEquals(window.getVisualMode(), window.getCurrentMode());
             assertTrue(((VisualMode) window.getCurrentMode()).isSelected(2));
@@ -317,9 +316,9 @@ class BufferViewTest {
             int textY = origin.getY();
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 1, textY)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(textX + 1, textY)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 4, textY)));
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new MouseAction.Position(textX + 4, textY)));
 
             assertEquals(window.getVisualMode(), window.getCurrentMode());
             assertEquals(4, window.getBufferContext().getBuffer().getCursor().getPosition());
@@ -345,7 +344,7 @@ class BufferViewTest {
             Point origin = absoluteScreenOrigin(view);
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.SCROLL_DOWN, 5, new TerminalPosition(origin.getX(), origin.getY())));
+                    new MouseAction(MouseActionType.SCROLL_DOWN, 5, new MouseAction.Position(origin.getX(), origin.getY())));
 
             assertEquals(1, view.getStartLine());
         }
@@ -364,9 +363,9 @@ class BufferViewTest {
             int textY = origin.getY();
 
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(textX + 2, textY)));
+                    new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(textX + 2, textY)));
             HeadlessWindowHarness.dispatch(view,
-                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new TerminalPosition(textX + 2, textY)));
+                    new MouseAction(MouseActionType.CLICK_RELEASE, 0, new MouseAction.Position(textX + 2, textY)));
 
             assertEquals(window.getNormalMode(), window.getCurrentMode());
             assertEquals(2, window.getBufferContext().getBuffer().getCursor().getPosition());

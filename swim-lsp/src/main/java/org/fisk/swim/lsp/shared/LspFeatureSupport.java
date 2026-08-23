@@ -134,7 +134,7 @@ import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public final class LspFeatureSupport {
     private static final long REQUEST_TIMEOUT_SECONDS = 5;

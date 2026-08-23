@@ -63,7 +63,7 @@ public class Swim {
 
         @Override
         public Thread createIoThread() {
-            return new IOThread(TerminalContext.getInstance().getScreen());
+            return TerminalContext.getInstance().newInputThread();
         }
     }
 

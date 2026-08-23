@@ -11,11 +11,9 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class View implements Drawable, EventResponder {
     private static final Logger _log = LogFactory.createLog();
@@ -62,11 +60,12 @@ public class View implements Drawable, EventResponder {
     @Override
     public void draw(Rect rect) {
         var terminalContext = TerminalContext.getInstance();
-        var textGraphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         if (_backgroundColour != null) {
-            textGraphics.setBackgroundColor(_backgroundColour);
-            textGraphics.fillRectangle(new TerminalPosition(rect.getPoint().getX(), rect.getPoint().getY()),
-                                       new TerminalSize(rect.getSize().getWidth(), rect.getSize().getHeight()), ' ');
+            graphics.fillRectangle(rect.getPoint().getX(), rect.getPoint().getY(), rect.getSize().getWidth(),
+                    rect.getSize().getHeight(), new org.fisk.swim.terminal.AnsiStyle(
+                            org.fisk.swim.terminal.AnsiColour.DEFAULT,
+                            org.fisk.swim.terminal.AnsiColour.fromTextColor(_backgroundColour), false, false, false));
         }
     }
 
@@ -183,7 +182,7 @@ public class View implements Drawable, EventResponder {
         return Response.NO;
     }
 
-    private View findTopmostSubviewAt(TerminalPosition position) {
+    private View findTopmostSubviewAt(MouseAction.Position position) {
         if (position == null) {
             return null;
         }

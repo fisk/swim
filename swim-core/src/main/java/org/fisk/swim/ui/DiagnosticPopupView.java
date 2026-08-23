@@ -135,7 +135,7 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
         rect = getBounds();
         super.draw(rect);
 
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int x = rect.getPoint().getX();
         int y = rect.getPoint().getY();
@@ -300,7 +300,7 @@ public class DiagnosticPopupView extends View implements KeyBindingHintProvider 
         return "INF";
     }
 
-    private static com.googlecode.lanterna.TextColor severityColor(DiagnosticEntry entry) {
+    private static org.fisk.swim.terminal.TextColor severityColor(DiagnosticEntry entry) {
         if (DiagnosticSeverity.Error.equals(entry.severity())) {
             return UiTheme.ACCENT_RED;
         }

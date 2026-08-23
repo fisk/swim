@@ -79,7 +79,7 @@ class MainTest {
         List<Path> modulePath = Main.getCoreModulePath(root);
 
         assertTrue(modulePath.stream().anyMatch(path -> path.getFileName().toString().equals("swim-core-0.0.1-SNAPSHOT.jar")));
-        assertTrue(modulePath.stream().anyMatch(path -> path.getFileName().toString().equals("lanterna-9.9.9.jar")));
+        assertTrue(modulePath.stream().anyMatch(path -> path.getFileName().toString().equals("helper-dependency-9.9.9.jar")));
         assertFalse(modulePath.stream().anyMatch(path -> path.getFileName().toString().startsWith("swim-launcher-")));
         assertFalse(modulePath.stream().anyMatch(path -> path.getFileName().toString().startsWith("swim-session-")));
     }
@@ -93,12 +93,12 @@ class MainTest {
         Files.createDirectories(installedCore.resolve("runtime-libs"));
         Files.writeString(target.resolve("swim-core-0.0.1-SNAPSHOT.jar"), "target");
         Files.writeString(installedCore.resolve("swim-core-0.0.2-SNAPSHOT.jar"), "bin");
-        Files.writeString(installedCore.resolve("runtime-libs").resolve("lanterna-9.9.9.jar"), "lib");
+        Files.writeString(installedCore.resolve("runtime-libs").resolve("helper-dependency-9.9.9.jar"), "lib");
 
         List<Path> modulePath = Main.getCoreModulePath(root);
 
         assertEquals(installedCore.resolve("swim-core-0.0.2-SNAPSHOT.jar"), modulePath.get(0));
-        assertTrue(modulePath.contains(installedCore.resolve("runtime-libs").resolve("lanterna-9.9.9.jar")));
+        assertTrue(modulePath.contains(installedCore.resolve("runtime-libs").resolve("helper-dependency-9.9.9.jar")));
     }
 
     @Test
@@ -127,7 +127,7 @@ class MainTest {
     void sharedLibFilterExcludesBootLayerSwimArtifacts() {
         assertTrue(Main.isSharedLib(Path.of("swim-launcher-0.0.1-SNAPSHOT.jar")));
         assertTrue(Main.isSharedLib(Path.of("swim-session-0.0.1-SNAPSHOT.jar")));
-        assertFalse(Main.isSharedLib(Path.of("lanterna-3.1.3.jar")));
+        assertFalse(Main.isSharedLib(Path.of("helper-dependency-3.1.3.jar")));
     }
 
     @Test
@@ -860,7 +860,7 @@ class MainTest {
                         """
         ), helperClasses, List.of(System.getProperty("java.class.path")));
 
-        Path helperJar = runtimeLibs.resolve("lanterna-9.9.9.jar");
+        Path helperJar = runtimeLibs.resolve("helper-dependency-9.9.9.jar");
         jarDirectory(helperClasses, helperJar, null, Map.of());
         Files.writeString(runtimeLibs.resolve("swim-session-0.0.1-SNAPSHOT.jar"), "shared");
 

@@ -10,11 +10,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.fisk.swim.event.KeyStrokes;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 class ListViewBehaviorTest {
     @Test
@@ -54,11 +53,11 @@ class ListViewBehaviorTest {
         var beta = item("beta", () -> clicked.set(1));
         var view = new ListView(Rect.create(5, 3, 20, 6), List.of(alpha, beta), "Files");
 
-        dispatch(view, new MouseAction(MouseActionType.CLICK_DOWN, 1, new TerminalPosition(7, 6)));
+        dispatch(view, new MouseAction(MouseActionType.CLICK_DOWN, 1, new MouseAction.Position(7, 6)));
 
         assertEquals(1, selection(view));
 
-        dispatch(view, new MouseAction(MouseActionType.CLICK_RELEASE, 1, new TerminalPosition(7, 6)));
+        dispatch(view, new MouseAction(MouseActionType.CLICK_RELEASE, 1, new MouseAction.Position(7, 6)));
 
         assertEquals(1, clicked.get());
     }

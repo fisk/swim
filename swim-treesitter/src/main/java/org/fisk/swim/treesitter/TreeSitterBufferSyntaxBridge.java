@@ -13,7 +13,7 @@ import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.Buffer;
 import org.fisk.swim.ui.UiTheme;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 /**
  * Bridges a mutable editor buffer to immutable, concurrent Tree-sitter syntax snapshots.

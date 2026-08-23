@@ -12,8 +12,8 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.terminal.TerminalContext;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class TextPanelView extends View implements KeyBindingHintProvider {
     private final String _title;
@@ -113,7 +113,7 @@ public class TextPanelView extends View implements KeyBindingHintProvider {
     public void draw(Rect rect) {
         super.draw(rect);
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         int width = rect.getSize().getWidth();
 
         var title = new AttributedString();

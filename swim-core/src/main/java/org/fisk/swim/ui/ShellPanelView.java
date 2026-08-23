@@ -22,11 +22,9 @@ import org.fisk.swim.terminal.TerminalEmulator;
 import org.fisk.swim.terminal.TerminalUtf8Decoder;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.SGR;
-import com.googlecode.lanterna.TextCharacter;
-import com.googlecode.lanterna.input.KeyType;
-import com.googlecode.lanterna.input.MouseAction;
-import com.googlecode.lanterna.input.MouseActionType;
+import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class ShellPanelView extends View implements KeyBindingHintProvider {
     private static final class TerminalCursor extends Cursor {
@@ -69,7 +67,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
             throws IOException {
         super(bounds);
         _title = title;
-        setBackgroundColour(com.googlecode.lanterna.TextColor.ANSI.DEFAULT);
+        setBackgroundColour(org.fisk.swim.terminal.TextColor.ANSI.DEFAULT);
         _emulator = new TerminalEmulator(Math.max(1, bounds.getSize().getWidth()), Math.max(1, bounds.getSize().getHeight()));
         _emulator.setDeviceResponseHandler(this::writeTerminalResponse);
         _cursor = new TerminalCursor(this);
@@ -114,7 +112,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
             String command, Path workingDirectory) throws IOException {
         super(bounds);
         _title = title;
-        setBackgroundColour(com.googlecode.lanterna.TextColor.ANSI.DEFAULT);
+        setBackgroundColour(org.fisk.swim.terminal.TextColor.ANSI.DEFAULT);
         _emulator = new TerminalEmulator(Math.max(1, bounds.getSize().getWidth()), Math.max(1, bounds.getSize().getHeight()));
         _emulator.setDeviceResponseHandler(this::writeTerminalResponse);
         _cursor = new TerminalCursor(this);
@@ -387,11 +385,12 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         for (int row = 0; row < rect.getSize().getHeight(); row++) {
             for (int column = 0; column < rect.getSize().getWidth(); column++) {
                 TerminalCell cell = _emulator.screen().cellAt(row, column);
-                graphics.setCharacter(rect.getPoint().getX() + column, rect.getPoint().getY() + row, toTextCharacter(cell));
+                graphics.setCharacter(rect.getPoint().getX() + column, rect.getPoint().getY() + row, cell.character(),
+                        toAnsiStyle(cell));
             }
         }
         if (_commandMode) {
@@ -486,7 +485,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         }));
     }
 
-    private Runnable commandModeAction(com.googlecode.lanterna.input.KeyStroke event) {
+    private Runnable commandModeAction(org.fisk.swim.event.KeyStroke event) {
         return switch (event.getKeyType()) {
         case Escape -> () -> {
             boolean browse = _command.length() == 0;
@@ -594,7 +593,7 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         };
     }
 
-    static byte[] encodeKeyStroke(com.googlecode.lanterna.input.KeyStroke event, boolean applicationCursorKeys) {
+    static byte[] encodeKeyStroke(org.fisk.swim.event.KeyStroke event, boolean applicationCursorKeys) {
         if (event.getKeyType() == KeyType.Character) {
             byte[] payload = null;
             if (event.isCtrlDown()) {
@@ -764,32 +763,27 @@ public class ShellPanelView extends View implements KeyBindingHintProvider {
         };
     }
 
-    private static boolean isCtrlG(com.googlecode.lanterna.input.KeyStroke event) {
+    private static boolean isCtrlG(org.fisk.swim.event.KeyStroke event) {
         if (event.getKeyType() != KeyType.Character || event.getCharacter() == null) {
             return false;
         }
         return (event.isCtrlDown() && Character.toLowerCase(event.getCharacter()) == 'g') || event.getCharacter() == 0x07;
     }
 
-    private static com.googlecode.lanterna.TextColor resolveShellForeground(com.googlecode.lanterna.TextColor colour) {
+    private static org.fisk.swim.terminal.TextColor resolveShellForeground(org.fisk.swim.terminal.TextColor colour) {
         return colour;
     }
 
-    private static com.googlecode.lanterna.TextColor resolveShellBackground(com.googlecode.lanterna.TextColor colour) {
+    private static org.fisk.swim.terminal.TextColor resolveShellBackground(org.fisk.swim.terminal.TextColor colour) {
         return colour;
     }
 
-    static TextCharacter toTextCharacter(TerminalCell cell) {
+    static org.fisk.swim.terminal.AnsiStyle toAnsiStyle(TerminalCell cell) {
         var style = cell.style();
-        java.util.EnumSet<SGR> modifiers = java.util.EnumSet.noneOf(SGR.class);
-        if (style.bold()) {
-            modifiers.add(SGR.BOLD);
-        }
-        if (style.inverse()) {
-            modifiers.add(SGR.REVERSE);
-        }
-        return new TextCharacter(cell.character(), resolveShellForeground(style.foreground()),
-                resolveShellBackground(style.background()), modifiers);
+        return new org.fisk.swim.terminal.AnsiStyle(
+                org.fisk.swim.terminal.AnsiColour.fromTextColor(resolveShellForeground(style.foreground())),
+                org.fisk.swim.terminal.AnsiColour.fromTextColor(resolveShellBackground(style.background())), style.bold(), false,
+                style.inverse());
     }
 
     String buildBrowseText() {

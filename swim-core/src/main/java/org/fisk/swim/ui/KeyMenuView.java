@@ -15,8 +15,8 @@ import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 public class KeyMenuView extends View {
     private static final int MIN_HEIGHT = 2;
@@ -259,7 +259,7 @@ public class KeyMenuView extends View {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         UiTheme.drawLine(graphics, rect.getPoint(), width, buildHeaderLine(), UiTheme.TEXT_MUTED, UiTheme.MENU_BACKGROUND);
         var bodyLines = buildBodyLines(width);
@@ -615,8 +615,8 @@ public class KeyMenuView extends View {
             AttributedString line,
             TextColorTracker colors,
             String text,
-            com.googlecode.lanterna.TextColor foreground,
-            com.googlecode.lanterna.TextColor background) {
+            org.fisk.swim.terminal.TextColor foreground,
+            org.fisk.swim.terminal.TextColor background) {
         UiTheme.appendRightSeparator(line, colors.background(), background);
         UiTheme.appendSegment(line, text, foreground, background);
         colors.background(background);
@@ -637,17 +637,17 @@ public class KeyMenuView extends View {
     }
 
     private static final class TextColorTracker {
-        private com.googlecode.lanterna.TextColor _background;
+        private org.fisk.swim.terminal.TextColor _background;
 
-        private TextColorTracker(com.googlecode.lanterna.TextColor background) {
+        private TextColorTracker(org.fisk.swim.terminal.TextColor background) {
             _background = background;
         }
 
-        private com.googlecode.lanterna.TextColor background() {
+        private org.fisk.swim.terminal.TextColor background() {
             return _background;
         }
 
-        private void background(com.googlecode.lanterna.TextColor background) {
+        private void background(org.fisk.swim.terminal.TextColor background) {
             _background = background;
         }
     }

@@ -13,8 +13,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 /** Generic bottom-panel search with live, asynchronously supplied results. */
 public class LiveSearchPanelView extends View implements KeyBindingHintProvider {
@@ -76,7 +76,7 @@ public class LiveSearchPanelView extends View implements KeyBindingHintProvider 
 
     @Override public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics(); int width = rect.getSize().getWidth();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics(); int width = rect.getSize().getWidth();
         var header = new AttributedString();
         header.append(" " + _title.toLowerCase() + " ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
         header.append(" " + _results.size() + (_searching ? "+ results " : " results "), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
@@ -93,7 +93,7 @@ public class LiveSearchPanelView extends View implements KeyBindingHintProvider 
             drawMessage(graphics, width, "  no results for current query");
     }
 
-    private void drawRow(com.googlecode.lanterna.graphics.TextGraphics graphics, int width, int row, int index) {
+    private void drawRow(org.fisk.swim.terminal.TerminalGraphics graphics, int width, int row, int index) {
         int y = getBounds().getPoint().getY() + 2 + row; boolean selected = index == _selection && index < _results.size();
         TextColor background = selected ? UiTheme.PANEL_SELECTION_BACKGROUND
                 : row % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
@@ -110,7 +110,7 @@ public class LiveSearchPanelView extends View implements KeyBindingHintProvider 
                 line.length() > width ? line.slice(0, width) : line, muted, background);
     }
 
-    private void drawMessage(com.googlecode.lanterna.graphics.TextGraphics graphics, int width, String text) {
+    private void drawMessage(org.fisk.swim.terminal.TerminalGraphics graphics, int width, String text) {
         UiTheme.drawLine(graphics, Point.create(getBounds().getPoint().getX(), getBounds().getPoint().getY() + 2), width,
                 AttributedString.create(text, UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND), UiTheme.TEXT_MUTED, UiTheme.SURFACE_BACKGROUND);
     }

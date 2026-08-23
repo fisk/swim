@@ -9,8 +9,8 @@ import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.event.KeyStroke;
+import org.fisk.swim.event.KeyType;
 
 import org.fisk.swim.copy.Copy;
 import org.fisk.swim.debug.DebuggerManager;
@@ -1569,7 +1569,7 @@ public class NormalMode extends Mode {
             public Response processEvent(KeyStrokes events) {
                 _count = 1;
                 _character = null;
-                var sequence = new java.util.ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new java.util.ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -1580,7 +1580,7 @@ public class NormalMode extends Mode {
                 StringBuilder digits = new StringBuilder();
                 while (index < sequence.size()) {
                     var stroke = sequence.get(index);
-                    if (stroke.getKeyType() != com.googlecode.lanterna.input.KeyType.Character
+                    if (stroke.getKeyType() != org.fisk.swim.event.KeyType.Character
                             || !Character.isDigit(stroke.getCharacter())) {
                         break;
                     }
@@ -1592,7 +1592,7 @@ public class NormalMode extends Mode {
                 for (int i = 0; i < availablePrefixKeys; i++) {
                     var expected = new TextEventResponder(prefixKeys[i], () -> {
                     });
-                    var slice = new java.util.ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                    var slice = new java.util.ArrayList<org.fisk.swim.event.KeyStroke>();
                     slice.add(sequence.get(index + i));
                     if (expected.processEvent(new KeyStrokes(slice)) != Response.YES) {
                         return Response.NO;
@@ -1606,7 +1606,7 @@ public class NormalMode extends Mode {
                     return Response.MAYBE;
                 }
                 var argument = sequence.get(argIndex);
-                if (argument.getKeyType() != com.googlecode.lanterna.input.KeyType.Character || argument.isCtrlDown()
+                if (argument.getKeyType() != org.fisk.swim.event.KeyType.Character || argument.isCtrlDown()
                         || argument.isAltDown()) {
                     return Response.NO;
                 }
@@ -1646,7 +1646,7 @@ public class NormalMode extends Mode {
             public Response processEvent(KeyStrokes events) {
                 _register = null;
                 _stop = false;
-                var sequence = new java.util.ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new java.util.ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -1654,7 +1654,7 @@ public class NormalMode extends Mode {
                     return Response.NO;
                 }
                 var first = sequence.getFirst();
-                if (first.getKeyType() != com.googlecode.lanterna.input.KeyType.Character || first.getCharacter() != 'q'
+                if (first.getKeyType() != org.fisk.swim.event.KeyType.Character || first.getCharacter() != 'q'
                         || first.isCtrlDown() || first.isAltDown()) {
                     return Response.NO;
                 }
@@ -1669,7 +1669,7 @@ public class NormalMode extends Mode {
                     return Response.MAYBE;
                 }
                 var second = sequence.get(1);
-                if (second.getKeyType() != com.googlecode.lanterna.input.KeyType.Character || second.isCtrlDown()
+                if (second.getKeyType() != org.fisk.swim.event.KeyType.Character || second.isCtrlDown()
                         || second.isAltDown()) {
                     return Response.NO;
                 }

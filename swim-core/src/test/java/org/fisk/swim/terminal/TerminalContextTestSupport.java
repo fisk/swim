@@ -1,204 +1,96 @@
 package org.fisk.swim.terminal;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.Proxy;
 import java.util.List;
-import java.util.function.Supplier;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
-import com.googlecode.lanterna.TextCharacter;
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.graphics.TextGraphics;
-import com.googlecode.lanterna.screen.Screen;
-import com.googlecode.lanterna.screen.Screen.RefreshType;
-import com.googlecode.lanterna.terminal.Terminal;
+import org.fisk.swim.event.KeyStroke;
 
+/** Shared, recording implementation of the SWIM terminal boundary for UI tests. */
 public final class TerminalContextTestSupport {
-    private TerminalContextTestSupport() {
-    }
+    private TerminalContextTestSupport() { }
 
     public static InstalledTerminalContext install(int columns, int rows) {
-        return install(columns, rows, null);
+        return install(columns, rows, null, () -> new TerminalDimensions(columns, rows));
     }
 
-    public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure) {
-        return install(columns, rows, stopFailure, () -> new TerminalSize(columns, rows));
+    public static InstalledTerminalContext install(int columns, int rows, Throwable ignored) {
+        return install(columns, rows, ignored, () -> new TerminalDimensions(columns, rows));
     }
 
-    public static InstalledTerminalContext install(int columns, int rows, Throwable stopFailure, Supplier<TerminalSize> terminalSizeSupplier) {
-        var stopCalls = new AtomicInteger();
-        var closeCalls = new AtomicInteger();
-        var clearCalls = new AtomicInteger();
-        var resizeCalls = new AtomicInteger();
-        var drawCalls = new CopyOnWriteArrayList<DrawCall>();
-        var refreshCalls = new CopyOnWriteArrayList<RefreshType>();
-        var terminalWrites = new CopyOnWriteArrayList<String>();
-        var foreground = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
-        var background = new AtomicReference<TextColor>(TextColor.ANSI.DEFAULT);
-        var cursorPosition = new AtomicReference<TerminalPosition>(new TerminalPosition(0, 0));
-        var screenSize = new AtomicReference<TerminalSize>(new TerminalSize(columns, rows));
-        var graphics = (TextGraphics) Proxy.newProxyInstance(
-                TextGraphics.class.getClassLoader(),
-                new Class<?>[] { TextGraphics.class },
-                (proxy, method, args) -> {
-                    switch (method.getName()) {
-                    case "setForegroundColor":
-                        foreground.set((TextColor) args[0]);
-                        return null;
-                    case "setBackgroundColor":
-                        background.set((TextColor) args[0]);
-                        return null;
-                    case "putString":
-                        if (args != null && args.length >= 3 && args[0] instanceof Integer x && args[1] instanceof Integer y
-                                && args[2] instanceof String text) {
-                            drawCalls.add(new DrawCall(x, y, text, foreground.get(), background.get()));
-                        }
-                        return proxy;
-                    case "drawRectangle":
-                        if (args != null && args.length >= 3
-                                && args[0] instanceof TerminalPosition position
-                                && args[1] instanceof TerminalSize size
-                                && args[2] instanceof Character character) {
-                            String text = Character.toString(character).repeat(Math.max(0, size.getColumns()));
-                            for (int row = 0; row < size.getRows(); row++) {
-                                drawCalls.add(new DrawCall(position.getColumn(), position.getRow() + row, text,
-                                        foreground.get(), background.get()));
-                            }
-                        }
-                        return proxy;
-                    default:
-                        return defaultValue(proxy, method.getReturnType(), columns, rows);
-                    }
-                });
-        var terminal = (Terminal) Proxy.newProxyInstance(
-                Terminal.class.getClassLoader(),
-                new Class<?>[] { Terminal.class, TerminalControlWriter.class },
-                (proxy, method, args) -> {
-                    if ("close".equals(method.getName())) {
-                        closeCalls.incrementAndGet();
-                        return null;
-                    }
-                    if ("putString".equals(method.getName()) && args != null && args.length == 1) {
-                        terminalWrites.add((String) args[0]);
-                        return null;
-                    }
-                    if ("writeControlSequence".equals(method.getName()) && args != null && args.length == 1) {
-                        terminalWrites.add((String) args[0]);
-                        return null;
-                    }
-                    return defaultValue(proxy, method.getReturnType(), columns, rows);
-                });
-        var screen = (Screen) Proxy.newProxyInstance(
-                Screen.class.getClassLoader(),
-                new Class<?>[] { Screen.class },
-                (proxy, method, args) -> {
-                    switch (method.getName()) {
-                    case "getTerminalSize":
-                        return screenSize.get();
-                    case "newTextGraphics":
-                        return graphics;
-                    case "doResizeIfNecessary":
-                        TerminalSize supplied = terminalSizeSupplier == null ? null : terminalSizeSupplier.get();
-                        if (supplied != null && !supplied.equals(screenSize.get())) {
-                            screenSize.set(supplied);
-                            resizeCalls.incrementAndGet();
-                            return supplied;
-                        }
-                        return null;
-                    case "clear":
-                        clearCalls.incrementAndGet();
-                        return null;
-                    case "getCursorPosition":
-                        return cursorPosition.get();
-                    case "setCursorPosition":
-                        if (args != null && args.length == 1 && args[0] instanceof TerminalPosition position) {
-                            cursorPosition.set(position);
-                        }
-                        return null;
-                    case "refresh":
-                        if (args != null && args.length == 1 && args[0] instanceof RefreshType refreshType) {
-                            refreshCalls.add(refreshType);
-                        }
-                        return null;
-                    case "getFrontCharacter":
-                    case "getBackCharacter":
-                    case "getCharacter":
-                        return TextCharacter.DEFAULT_CHARACTER;
-                    case "stopScreen":
-                        stopCalls.incrementAndGet();
-                        if (stopFailure instanceof IOException io) {
-                            throw io;
-                        }
-                        if (stopFailure instanceof RuntimeException runtime) {
-                            throw runtime;
-                        }
-                        return null;
-                    default:
-                        return defaultValue(proxy, method.getReturnType(), columns, rows);
-                    }
-                });
-        var context = new TerminalContext(screen, terminal, graphics, terminalSizeSupplier);
-        setInstance(context);
-        return new InstalledTerminalContext(context, stopCalls, closeCalls, clearCalls, resizeCalls, screenSize,
-                drawCalls, refreshCalls, cursorPosition, terminalWrites);
-    }
-
-    private static void setInstance(TerminalContext context) {
+    public static InstalledTerminalContext install(int columns, int rows, Throwable ignored,
+            Supplier<TerminalDimensions> dimensionsSupplier) {
+        var backend = new RecordingBackend(columns, rows, dimensionsSupplier);
+        var context = new TerminalContext(backend);
         try {
             Field field = TerminalContext.class.getDeclaredField("_instance");
             field.setAccessible(true);
             field.set(null, context);
-        } catch (ReflectiveOperationException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private static Object defaultValue(Object proxy, Class<?> type, int columns, int rows) {
-        if (type == Void.TYPE) {
-            return null;
-        }
-        if (type == Boolean.TYPE) {
-            return false;
-        }
-        if (type == Integer.TYPE) {
-            return 0;
-        }
-        if (type == Long.TYPE) {
-            return 0L;
-        }
-        if (type == Byte.TYPE) {
-            return new byte[0];
-        }
-        if (type == TerminalSize.class) {
-            return new TerminalSize(columns, rows);
-        }
-        if (type == TerminalPosition.class) {
-            return new TerminalPosition(0, 0);
-        }
-        if (type.isInstance(proxy)) {
-            return proxy;
-        }
-        return null;
+        } catch (ReflectiveOperationException e) { throw new IllegalStateException(e); }
+        return new InstalledTerminalContext(context, backend.stopCalls, backend.clearCalls, backend.resizeCalls,
+                backend.dimensions, backend.drawCalls, backend.refreshCalls, backend.cursorPosition, backend.terminalWrites);
     }
 
     public record InstalledTerminalContext(
             TerminalContext context,
             AtomicInteger stopCalls,
-            AtomicInteger closeCalls,
             AtomicInteger clearCalls,
             AtomicInteger resizeCalls,
-            AtomicReference<TerminalSize> screenSize,
+            AtomicReference<TerminalDimensions> screenSize,
             List<DrawCall> drawCalls,
-            List<RefreshType> refreshCalls,
-            AtomicReference<TerminalPosition> cursorPosition,
-            List<String> terminalWrites) {
+            List<Boolean> refreshCalls,
+            AtomicReference<CursorPosition> cursorPosition,
+            List<String> terminalWrites) { }
+
+    public record CursorPosition(int column, int row) {
+        public int getColumn() { return column; }
+        public int getRow() { return row; }
     }
 
-    public record DrawCall(int x, int y, String text, TextColor foreground, TextColor background) {
+    public record DrawCall(int x, int y, String text, TextColor foreground, TextColor background) { }
+
+    private static final class RecordingBackend implements TerminalBackend {
+        private final AtomicInteger stopCalls = new AtomicInteger();
+        private final AtomicInteger clearCalls = new AtomicInteger();
+        private final AtomicInteger resizeCalls = new AtomicInteger();
+        private final AtomicReference<TerminalDimensions> dimensions;
+        private final Supplier<TerminalDimensions> dimensionsSupplier;
+        private final List<DrawCall> drawCalls = new CopyOnWriteArrayList<>();
+        private final List<Boolean> refreshCalls = new CopyOnWriteArrayList<>();
+        private final AtomicReference<CursorPosition> cursorPosition = new AtomicReference<>(new CursorPosition(0, 0));
+        private final List<String> terminalWrites = new CopyOnWriteArrayList<>();
+        private final TerminalGraphics graphics = (column, row, text, style) ->
+                drawCalls.add(new DrawCall(column, row, text, toTextColor(style.foreground()), toTextColor(style.background())));
+
+        private RecordingBackend(int columns, int rows, Supplier<TerminalDimensions> dimensionsSupplier) {
+            dimensions = new AtomicReference<>(new TerminalDimensions(columns, rows));
+            this.dimensionsSupplier = dimensionsSupplier;
+        }
+
+        @Override public void start() { }
+        @Override public void stop() { stopCalls.incrementAndGet(); }
+        @Override public void clear() { clearCalls.incrementAndGet(); }
+        @Override public void refresh() { refreshCalls.add(Boolean.TRUE); }
+        @Override public TerminalDimensions dimensions() { return dimensions.get(); }
+        @Override public TerminalDimensions resizeIfNeeded() {
+            TerminalDimensions next = dimensionsSupplier.get();
+            if (next == null || next.equals(dimensions.get())) return null;
+            dimensions.set(next);
+            resizeCalls.incrementAndGet();
+            return next;
+        }
+        @Override public TerminalGraphics graphics() { return graphics; }
+        @Override public KeyStroke pollInput() { return null; }
+        @Override public void setCursorPosition(int column, int row) { cursorPosition.set(new CursorPosition(column, row)); }
+        @Override public void setCursorVisible(boolean visible) { }
+        @Override public void setCursorShape(TerminalCursorShape shape) { terminalWrites.add(shape.escapeSequence()); }
+
+        private static TextColor toTextColor(AnsiColour colour) {
+            return colour.defaultColour() ? TextColor.ANSI.DEFAULT
+                    : new TextColor.RGB(colour.red(), colour.green(), colour.blue());
+        }
     }
 }

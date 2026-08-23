@@ -11,7 +11,7 @@ import org.fisk.swim.terminal.TerminalContextTestSupport;
 import org.fisk.swim.ui.Point;
 import org.junit.jupiter.api.Test;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 class AttributedStringTest {
     @Test
@@ -143,7 +143,7 @@ class AttributedStringTest {
             string.onClick(1, 4, clicked::set);
 
             AttributedString.clearRenderedClickRanges();
-            string.drawAt(Point.create(5, 2), TerminalContext.getInstance().getGraphics());
+            string.drawAt(Point.create(5, 2), TerminalContext.getInstance().getTerminalGraphics());
             Runnable action = AttributedString.clickActionAt(Point.create(7, 2));
             action.run();
 

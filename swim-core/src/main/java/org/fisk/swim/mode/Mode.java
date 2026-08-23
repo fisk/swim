@@ -159,7 +159,7 @@ public class Mode implements EventResponder, Drawable, KeyBindingHintProvider {
             @Override
             public Response processEvent(KeyStrokes events) {
                 _register = null;
-                var sequence = new java.util.ArrayList<com.googlecode.lanterna.input.KeyStroke>();
+                var sequence = new java.util.ArrayList<org.fisk.swim.event.KeyStroke>();
                 for (var keyStroke : events) {
                     sequence.add(keyStroke);
                 }
@@ -167,7 +167,7 @@ public class Mode implements EventResponder, Drawable, KeyBindingHintProvider {
                     return Response.NO;
                 }
                 var prefix = sequence.getFirst();
-                if (prefix.getKeyType() != com.googlecode.lanterna.input.KeyType.Character
+                if (prefix.getKeyType() != org.fisk.swim.event.KeyType.Character
                         || prefix.getCharacter() != '"' || prefix.isCtrlDown() || prefix.isAltDown()) {
                     return Response.NO;
                 }
@@ -175,7 +175,7 @@ public class Mode implements EventResponder, Drawable, KeyBindingHintProvider {
                     return Response.MAYBE;
                 }
                 var register = sequence.get(1);
-                if (register.getKeyType() != com.googlecode.lanterna.input.KeyType.Character
+                if (register.getKeyType() != org.fisk.swim.event.KeyType.Character
                         || register.isCtrlDown() || register.isAltDown()) {
                     return Response.NO;
                 }

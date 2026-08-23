@@ -11,7 +11,7 @@ import org.fisk.swim.ui.View;
 import org.fisk.swim.ui.Window;
 import org.fisk.swim.text.BufferContext;
 
-import com.googlecode.lanterna.input.KeyStroke;
+import org.fisk.swim.event.KeyStroke;
 
 import sun.misc.Unsafe;
 

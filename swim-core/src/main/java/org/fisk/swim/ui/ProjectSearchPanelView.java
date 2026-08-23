@@ -20,8 +20,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.terminal.TerminalCursorShape;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class ProjectSearchPanelView extends View implements KeyBindingHintProvider {
     private static final int MAX_RESULTS = ProjectSearch.MAX_MATCHES;
@@ -169,7 +169,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
 
         var header = new AttributedString();

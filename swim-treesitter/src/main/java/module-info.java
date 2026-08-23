@@ -1,6 +1,5 @@
 module org.fisk.swim.treesitter {
     requires com.google.gson;
-    requires com.googlecode.lanterna;
     requires org.eclipse.lsp4j;
     requires org.fisk.swim.core;
     requires org.fisk.swim.launcher;

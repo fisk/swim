@@ -1,24 +1,22 @@
 package org.fisk.swim.event;
 
-import java.io.IOException;
+import java.util.function.Supplier;
 
 import org.fisk.swim.EventThread;
-import com.googlecode.lanterna.input.KeyStroke;
-import com.googlecode.lanterna.screen.Screen;
 
 public class IOThread extends Thread {
-    private final Screen _screen;
+    private final Supplier<KeyStroke> _input;
 
-    public IOThread(Screen screen) {
+    public IOThread(Supplier<KeyStroke> input) {
         setDaemon(true);
-        _screen = screen;
+        _input = input;
     }
 
     @Override
     public void run() {
         while (!isInterrupted()) {
             try {
-                KeyStroke keyStroke = _screen == null ? null : _screen.pollInput();
+                KeyStroke keyStroke = _input == null ? null : _input.get();
                 if (keyStroke == null) {
                     Thread.sleep(10);
                     continue;
@@ -28,7 +26,7 @@ public class IOThread extends Thread {
             } catch (InterruptedException e) {
                 interrupt();
                 break;
-            } catch (IOException | RuntimeException e) {
+            } catch (RuntimeException e) {
                 break;
             }
         }

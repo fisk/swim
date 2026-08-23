@@ -14,7 +14,7 @@ import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.lsp4j.SemanticTokensLegend;
 import org.slf4j.Logger;
 
-import com.googlecode.lanterna.TextColor;
+import org.fisk.swim.terminal.TextColor;
 
 public final class AsyncSemanticTokenHighlighter {
     public interface Document {

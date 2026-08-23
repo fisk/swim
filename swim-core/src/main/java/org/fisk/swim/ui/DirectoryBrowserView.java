@@ -16,8 +16,8 @@ import org.fisk.swim.event.Response;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class DirectoryBrowserView extends View implements KeyBindingHintProvider {
     record Entry(Path path, String label, boolean directory, boolean parent) {
@@ -92,7 +92,7 @@ public class DirectoryBrowserView extends View implements KeyBindingHintProvider
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
 
         var header = new AttributedString();

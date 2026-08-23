@@ -4,12 +4,11 @@ import org.fisk.swim.copy.Copy;
 import java.util.List;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Range;
+import org.fisk.swim.ui.Point;
 import org.fisk.swim.ui.Rect;
 import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
-import com.googlecode.lanterna.TerminalPosition;
-import com.googlecode.lanterna.TerminalSize;
 
 public class VisualLineMode extends VisualMode {
     public VisualLineMode(Window window) {
@@ -93,7 +92,7 @@ public class VisualLineMode extends VisualMode {
     @Override
     public void draw(Rect rect) {
         var terminalContext = TerminalContext.getInstance();
-        var graphics = terminalContext.getGraphics();
+        var graphics = terminalContext.getTerminalGraphics();
         var minCursor = minCursor();
         var maxCursor = maxCursor();
         int minY = minCursor.getYRelative();
@@ -103,9 +102,8 @@ public class VisualLineMode extends VisualMode {
         int firstVisibleLine = Math.max(0, minY);
         int lastVisibleLine = Math.min(rect.getSize().getHeight() - 1, maxY);
         for (int line = firstVisibleLine; line <= lastVisibleLine; ++line) {
-            graphics.setBackgroundColor(UiTheme.VISUAL_SELECTION_BACKGROUND);
-            graphics.drawRectangle(new TerminalPosition(minX, rect.getPoint().getY() + line),
-                    new TerminalSize(maxX - minX, 1), ' ');
+            UiTheme.fillRow(graphics, Point.create(minX, rect.getPoint().getY() + line), maxX - minX,
+                    UiTheme.VISUAL_SELECTION_BACKGROUND);
         }
     }
 

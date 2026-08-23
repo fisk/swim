@@ -26,8 +26,8 @@ import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 
-import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.input.KeyType;
+import org.fisk.swim.terminal.TextColor;
+import org.fisk.swim.event.KeyType;
 
 public class SlackPanelView extends View implements KeyBindingHintProvider {
     private static final int MESSAGE_PAGE_SIZE = 120;
@@ -255,7 +255,7 @@ public class SlackPanelView extends View implements KeyBindingHintProvider {
     @Override
     public void draw(Rect rect) {
         super.draw(rect);
-        var graphics = TerminalContext.getInstance().getGraphics();
+        var graphics = TerminalContext.getInstance().getTerminalGraphics();
         int width = rect.getSize().getWidth();
         int height = rect.getSize().getHeight();
         if (width <= 0 || height <= 0) {
@@ -589,7 +589,7 @@ public class SlackPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void drawSidebarColumn(
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             int x,
             int y,
             int width,
@@ -622,7 +622,7 @@ public class SlackPanelView extends View implements KeyBindingHintProvider {
     }
 
     private void drawMessageTable(
-            com.googlecode.lanterna.graphics.TextGraphics graphics,
+            org.fisk.swim.terminal.TerminalGraphics graphics,
             int x,
             int y,
             int width,

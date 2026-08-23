@@ -1,6 +1,5 @@
 module org.fisk.swim.java.lsp {
     requires com.google.gson;
-    requires com.googlecode.lanterna;
     requires java.compiler;
     requires org.eclipse.lsp4j;
     requires org.eclipse.lsp4j.jsonrpc;
