@@ -3799,7 +3799,6 @@ public class Window implements Drawable {
         var cursor = _rootView.getCursor();
         TerminalCursorShape shape = TerminalCursorShape.BLOCK;
         if (cursor != null) {
-            terminalContext.setCursorPosition(cursor.getXOnScreen(), cursor.getYOnScreen());
             shape = cursorShape(cursor);
         }
         try {
@@ -3807,7 +3806,16 @@ public class Window implements Drawable {
         } catch (IOException e) {
         }
         _lastTerminalRefreshNanos = System.nanoTime();
-        terminalContext.setCursorShape(shape);
+        // Flushing a frame writes cells all over the screen and consequently
+        // moves the terminal cursor. Place and reveal it only after that work
+        // has completed.
+        if (cursor != null) {
+            terminalContext.setCursorPosition(cursor.getXOnScreen(), cursor.getYOnScreen());
+            terminalContext.setCursorShape(shape);
+            terminalContext.setCursorVisible(true);
+        } else {
+            terminalContext.setCursorVisible(false);
+        }
     }
 
     private boolean deferRedrawForFramePacing() {

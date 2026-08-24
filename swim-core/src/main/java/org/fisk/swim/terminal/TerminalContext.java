@@ -20,6 +20,7 @@ public class TerminalContext {
     private static volatile TerminalContext _instance;
     private final TerminalBackend _backend;
     private boolean _closed;
+    private boolean _cursorVisible;
     private TerminalCursorShape _cursorShape = TerminalCursorShape.BLOCK;
 
     public static TerminalContext getInstance() {
@@ -73,6 +74,11 @@ public class TerminalContext {
     public TerminalDimensions resizeIfNeeded() { return isTerminalSizeFrozen() ? null : _backend.resizeIfNeeded(); }
     public void clear() { _backend.clear(); }
     public void setCursorPosition(int column, int row) { _backend.setCursorPosition(column, row); }
+    public void setCursorVisible(boolean visible) {
+        if (visible == _cursorVisible) return;
+        _cursorVisible = visible;
+        _backend.setCursorVisible(visible);
+    }
     public void refresh(boolean complete) throws IOException { _backend.refresh(); }
     public IOThread newInputThread() {
         return new IOThread(() -> {

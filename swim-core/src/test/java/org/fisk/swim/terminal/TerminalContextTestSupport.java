@@ -31,7 +31,8 @@ public final class TerminalContextTestSupport {
             field.set(null, context);
         } catch (ReflectiveOperationException e) { throw new IllegalStateException(e); }
         return new InstalledTerminalContext(context, backend.stopCalls, backend.clearCalls, backend.resizeCalls,
-                backend.dimensions, backend.drawCalls, backend.refreshCalls, backend.cursorPosition, backend.terminalWrites);
+                backend.dimensions, backend.drawCalls, backend.refreshCalls, backend.cursorPosition, backend.cursorVisible,
+                backend.terminalWrites);
     }
 
     public record InstalledTerminalContext(
@@ -43,6 +44,7 @@ public final class TerminalContextTestSupport {
             List<DrawCall> drawCalls,
             List<Boolean> refreshCalls,
             AtomicReference<CursorPosition> cursorPosition,
+            AtomicReference<Boolean> cursorVisible,
             List<String> terminalWrites) { }
 
     public record CursorPosition(int column, int row) {
@@ -61,6 +63,7 @@ public final class TerminalContextTestSupport {
         private final List<DrawCall> drawCalls = new CopyOnWriteArrayList<>();
         private final List<Boolean> refreshCalls = new CopyOnWriteArrayList<>();
         private final AtomicReference<CursorPosition> cursorPosition = new AtomicReference<>(new CursorPosition(0, 0));
+        private final AtomicReference<Boolean> cursorVisible = new AtomicReference<>(false);
         private final List<String> terminalWrites = new CopyOnWriteArrayList<>();
         private final TerminalGraphics graphics = (column, row, text, style) ->
                 drawCalls.add(new DrawCall(column, row, text, toTextColor(style.foreground()), toTextColor(style.background())));
@@ -85,7 +88,7 @@ public final class TerminalContextTestSupport {
         @Override public TerminalGraphics graphics() { return graphics; }
         @Override public KeyStroke pollInput() { return null; }
         @Override public void setCursorPosition(int column, int row) { cursorPosition.set(new CursorPosition(column, row)); }
-        @Override public void setCursorVisible(boolean visible) { }
+        @Override public void setCursorVisible(boolean visible) { cursorVisible.set(visible); }
         @Override public void setCursorShape(TerminalCursorShape shape) { terminalWrites.add(shape.escapeSequence()); }
 
         private static TextColor toTextColor(AnsiColour colour) {

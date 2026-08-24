@@ -1804,6 +1804,7 @@ class WindowTest {
             assertEquals(expectedColumn, cursorPosition.getColumn());
             assertEquals(expectedRow, cursorPosition.getRow());
             assertTrue(cursorPosition.getRow() < absolute.getPoint().getY() + absolute.getSize().getHeight() - 1);
+            assertTrue(installedTerminal.cursorVisible().get());
         } finally {
             org.fisk.swim.terminal.TerminalContext.shutdownInstance();
         }
