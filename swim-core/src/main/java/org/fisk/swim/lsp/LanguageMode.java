@@ -38,6 +38,14 @@ public interface LanguageMode {
         return false;
     }
 
+    /**
+     * Gives a language mode one opportunity to normalize buffer contents before
+     * a save is announced to tools or written to disk.
+     */
+    default String transformOnSave(BufferContext bufferContext, String contents) {
+        return contents;
+    }
+
     default String getIndentationString(BufferContext bufferContext) {
         return Settings.getIndentationString();
     }

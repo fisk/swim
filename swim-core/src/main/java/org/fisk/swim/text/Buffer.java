@@ -2007,6 +2007,10 @@ public class Buffer {
             throw new IOException("Buffer has no file path");
         }
         var mode = languageMode();
+        String transformed = mode.transformOnSave(_bufferContext, _string.toString());
+        if (transformed != null && !transformed.equals(_string.toString())) {
+            replaceContentsForSave(transformed);
+        }
         if (mode.trimTrailingWhitespaceOnSave(_bufferContext)) {
             trimTrailingWhitespace();
         }
@@ -2019,6 +2023,19 @@ public class Buffer {
             window.getCommandView().setMessage("Saved file");
         }
         mode.didSave(_bufferContext);
+    }
+
+    private void replaceContentsForSave(String contents) {
+        _string = new StringBuilder(contents);
+        _folds.clear();
+        _version++;
+        invalidateAttributedStringCache();
+        _bufferContext.getTextLayout().calculate();
+        for (Cursor cursor : _cursors) {
+            cursor.setPosition(Math.min(cursor.getPosition(), _string.length()));
+        }
+        _bufferContext.getBufferView().setNeedsRedraw();
+        notifyContentChanged();
     }
 
     /**

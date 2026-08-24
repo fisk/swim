@@ -444,6 +444,11 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     }
 
     @Override
+    public String transformOnSave(BufferContext bufferContext, String contents) {
+        return CppIncludeSorter.sort(bufferContext.getBuffer().getPath(), contents);
+    }
+
+    @Override
     public void didSave(BufferContext bufferContext) {
         if (!_enabled || _server == null) {
             return;

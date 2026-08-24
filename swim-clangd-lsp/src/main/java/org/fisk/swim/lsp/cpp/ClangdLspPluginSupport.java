@@ -27,15 +27,15 @@ import org.fisk.swim.utils.LogFactory;
 
 public final class ClangdLspPluginSupport {
     public static final String PLUGIN_ID = "clangd-lsp";
-    private static final List<String> C_SOURCE_HEADER_EXTENSIONS = List.of(".h");
-    private static final List<String> CPP_HEADER_EXTENSIONS = List.of(".hpp", ".h", ".hh", ".hxx");
-    private static final List<String> CXX_HEADER_EXTENSIONS = List.of(".hxx", ".hpp", ".hh", ".h");
-    private static final List<String> CC_HEADER_EXTENSIONS = List.of(".hh", ".hpp", ".h", ".hxx");
+    private static final List<String> C_SOURCE_HEADER_EXTENSIONS = List.of(".h", ".inc");
+    private static final List<String> CPP_HEADER_EXTENSIONS = List.of(".hpp", ".h", ".hh", ".hxx", ".hhp", ".hp", ".h++", ".ipp", ".tpp", ".inl", ".inc");
+    private static final List<String> CXX_HEADER_EXTENSIONS = List.of(".hxx", ".hpp", ".hh", ".h", ".hhp", ".hp", ".h++", ".ipp", ".tpp", ".inl", ".inc");
+    private static final List<String> CC_HEADER_EXTENSIONS = List.of(".hh", ".hpp", ".h", ".hxx", ".hhp", ".hp", ".h++", ".ipp", ".tpp", ".inl", ".inc");
     private static final List<String> H_HEADER_SOURCE_EXTENSIONS = List.of(".c", ".cpp", ".cxx", ".cc");
     private static final List<String> CPP_SOURCE_EXTENSIONS = List.of(".cpp", ".cxx", ".cc", ".c");
-    private static final List<String> ALL_CPP_EXTENSIONS = List.of(".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx");
+    private static final List<String> ALL_CPP_EXTENSIONS = List.of(".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".hhp", ".hp", ".h++", ".ipp", ".tpp", ".inl", ".inc");
     private static final List<String> CPP_FILE_SUFFIXES = List.of(
-            ".inline.hpp", ".cpp", ".hpp", ".cxx", ".hxx", ".cc", ".hh", ".c", ".h");
+            ".inline.hpp", ".inline.hhp", ".inline.hxx", ".inline.hh", ".inline.h", ".cpp", ".hpp", ".cxx", ".hxx", ".hhp", ".h++", ".tpp", ".ipp", ".inl", ".inc", ".cc", ".hh", ".hp", ".c", ".h");
 
     private static final ClangdLspClient UNAVAILABLE = new ClangdLspClient(new ClangdLspProvider((Path) null));
     private static final IdentityHashMap<BufferContext, TreeSitterGrammarKeywordBridge.Registration> TREE_SITTER_ATTACHMENTS = new IdentityHashMap<>();
@@ -160,10 +160,12 @@ public final class ClangdLspPluginSupport {
     public static void preload(SwimPluginPreloadContext context) {
         LspHelp.registerSharedChapter(context);
         context.registerHelpChapter(ClangdLspHelp.chapter());
-        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
+        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "hhp", "hp", "h++", "ipp", "tpp", "inl", "inc"}) {
             context.registerPreloadResource(LanguagePluginRegistry.register(extension, PLUGIN_ID,
                     ClangdLspPluginSupport::createLanguageMode));
         }
+        context.registerPreloadResource(LanguagePluginRegistry.registerPathMatcher(PLUGIN_ID,
+                ClangdLspPluginSupport::isCppFamilyPath, ClangdLspPluginSupport::createLanguageMode));
         registerCppKey(context, "g d", "LSP", "go to definition", "lsp-definition",
                 ClangdLspPluginSupport::goToDefinition);
         registerCppKey(context, "g r", "LSP", "find references", "lsp-references",
@@ -432,10 +434,32 @@ public final class ClangdLspPluginSupport {
     }
 
     public static boolean isCppPath(Path path) {
+        return isKnownCppPath(path) || isCppFamilyPath(path);
+    }
+
+    private static boolean isKnownCppPath(Path path) {
         if (path == null || path.getFileName() == null) {
             return false;
         }
         return !cppSuffix(path.getFileName().toString()).isBlank();
+    }
+
+    /** Matches g m's project-local sibling rule: everything before the first dot is the family name. */
+    private static boolean isCppFamilyPath(Path path) {
+        if (path == null || path.getFileName() == null || path.getParent() == null || isKnownCppPath(path)) return false;
+        String family = siblingPrefix(path.getFileName().toString());
+        try (Stream<Path> siblings = Files.list(path.getParent())) {
+            return siblings.anyMatch(candidate -> !candidate.equals(path)
+                    && family.equals(siblingPrefix(candidate.getFileName().toString()))
+                    && isKnownCppPath(candidate));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static String siblingPrefix(String fileName) {
+        int dot = fileName.indexOf('.');
+        return dot <= 0 ? fileName : fileName.substring(0, dot);
     }
 
     private static String cppSuffix(String fileName) {

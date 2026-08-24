@@ -160,7 +160,9 @@ final class ClangdCompilationDatabase {
         Path name = path == null ? null : path.getFileName();
         if (name == null) return false;
         String lower = name.toString().toLowerCase(java.util.Locale.ROOT);
-        return lower.endsWith(".h") || lower.endsWith(".hh") || lower.endsWith(".hpp") || lower.endsWith(".hxx");
+        return lower.endsWith(".h") || lower.endsWith(".hh") || lower.endsWith(".hpp") || lower.endsWith(".hxx")
+                || lower.endsWith(".hhp") || lower.endsWith(".hp") || lower.endsWith(".h++")
+                || lower.endsWith(".ipp") || lower.endsWith(".tpp") || lower.endsWith(".inl") || lower.endsWith(".inc");
     }
 
     private static int directoryDistance(Path left, Path right) {

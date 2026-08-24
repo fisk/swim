@@ -105,7 +105,7 @@ class ClangdLspPluginSupportTest {
         ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
         LanguageModeProvider.getInstance();
 
-        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
+        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "hhp", "hp", "h++", "ipp", "tpp", "inl", "inc"}) {
             var registration = LanguagePluginRegistry.find(Path.of("demo." + extension));
             assertNotNull(registration);
             assertEquals(ClangdLspPluginSupport.PLUGIN_ID, registration.pluginId());
@@ -115,7 +115,7 @@ class ClangdLspPluginSupportTest {
     @Test
     void languageModeProviderMapsCppExtensionsToClangdMode() {
         ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
-        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx"}) {
+        for (String extension : new String[] {"c", "h", "cc", "cpp", "cxx", "hh", "hpp", "hxx", "hhp", "hp", "h++", "ipp", "tpp", "inl", "inc"}) {
             var mode = LanguageModeProvider.getInstance().getLanguageMode(Path.of("demo." + extension));
             assertNotNull(mode);
             assertInstanceOf(ClangdLspClient.class, mode);
@@ -142,6 +142,90 @@ class ClangdLspPluginSupportTest {
                   return 0;
                 }
                 """, buffer.getString());
+    }
+
+    @Test
+    void savingCppHeadersSortsIncludeBlocksLikeHotspotSortIncludes() throws Exception {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        Path file = Files.writeString(tempDir.resolve("sort-me.hxx"), """
+                #include <vector>
+                #include "zeta.hpp"
+
+                #include <algorithm>
+                #include "Alpha.hpp"
+
+                int value = 0;
+                """);
+        var context = new BufferContext(Rect.create(0, 0, 120, 20), file);
+
+        context.getBuffer().writeOrThrow();
+
+        String expected = """
+                #include "Alpha.hpp"
+                #include "zeta.hpp"
+
+                #include <algorithm>
+                #include <vector>
+
+                int value = 0;
+                """;
+        assertEquals(expected, context.getBuffer().getString());
+        assertEquals(expected, Files.readString(file));
+    }
+
+    @Test
+    void savingInlineHeaderKeepsCorrespondingHeaderBeforeOtherIncludes() throws Exception {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        Path file = Files.writeString(tempDir.resolve("widget.inline.hpp"), """
+                #include <vector>
+                #include "zeta.hpp"
+                #include "widget.hpp"
+                #include "alpha.hpp"
+                """);
+        var context = new BufferContext(Rect.create(0, 0, 120, 20), file);
+
+        context.getBuffer().writeOrThrow();
+
+        assertEquals("""
+                #include "widget.hpp"
+
+                #include "alpha.hpp"
+                #include "zeta.hpp"
+
+                #include <vector>
+                """, Files.readString(file));
+    }
+
+    @Test
+    void savingInlineHhpKeepsItsCorrespondingHeaderBeforeOtherIncludes() throws Exception {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        Path file = Files.writeString(tempDir.resolve("widget.inline.hhp"), """
+                #include <vector>
+                #include "widget.hhp"
+                #include "alpha.hhp"
+                """);
+        var context = new BufferContext(Rect.create(0, 0, 120, 20), file);
+
+        context.getBuffer().writeOrThrow();
+
+        assertEquals("""
+                #include "widget.hhp"
+
+                #include "alpha.hhp"
+
+                #include <vector>
+                """, Files.readString(file));
+    }
+
+    @Test
+    void siblingOfCppFileUsesCppLanguageModeRegardlessOfItsOwnExtension() throws Exception {
+        ClangdLspPluginSupport.preload(() -> ClangdLspPluginSupport.PLUGIN_ID);
+        Files.writeString(tempDir.resolve("widget.cpp"), "int widget() { return 0; }\n");
+        Path companion = Files.writeString(tempDir.resolve("widget.generated"), "#include <vector>\n#include \"alpha.hpp\"\n");
+
+        var mode = LanguageModeProvider.getInstance().getLanguageMode(companion);
+        assertInstanceOf(ClangdLspClient.class, mode);
+        assertTrue(ClangdLspPluginSupport.isCppPath(companion));
     }
 
     @Test
