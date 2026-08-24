@@ -24,6 +24,12 @@ final class GitKeyBindings {
             new Binding(View.STATUS, "k", "Navigation", "move up"),
             new Binding(View.STATUS, "<DOWN>", "Navigation", "move down"),
             new Binding(View.STATUS, "<UP>", "Navigation", "move up"),
+            new Binding(View.STATUS, "<CTRL>-e", "Navigation", "scroll down"),
+            new Binding(View.STATUS, "<CTRL>-y", "Navigation", "scroll up"),
+            new Binding(View.STATUS, "<PAGEDOWN>", "Navigation", "page down"),
+            new Binding(View.STATUS, "<PAGEUP>", "Navigation", "page up"),
+            new Binding(View.STATUS, "gg", "Navigation", "first item"),
+            new Binding(View.STATUS, "G", "Navigation", "last item"),
             new Binding(View.STATUS, "<TAB>", "Sections", "fold section"),
             new Binding(View.STATUS, "?", "Actions", "show actions"),
             new Binding(View.STATUS, "l", "History", "history"),
@@ -173,8 +179,12 @@ final class GitKeyBindings {
         case "<RIGHT>" -> "Right";
         case "<UP>" -> "Up";
         case "<DOWN>" -> "Down";
+        case "<PAGEUP>" -> "PageUp";
+        case "<PAGEDOWN>" -> "PageDown";
         case "<CTRL>-s" -> "C-s";
         case "<CTRL>-g" -> "C-g";
+        case "<CTRL>-e" -> "C-e";
+        case "<CTRL>-y" -> "C-y";
         case "<CHAR>" -> "type";
         default -> key;
         };

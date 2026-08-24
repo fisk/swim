@@ -210,6 +210,8 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
         case ArrowDown -> "down";
         case ArrowLeft -> "left";
         case ArrowRight -> "right";
+        case PageUp -> "pageup";
+        case PageDown -> "pagedown";
         case Tab -> "tab";
         case Backspace -> "backspace";
         case Enter -> "enter";

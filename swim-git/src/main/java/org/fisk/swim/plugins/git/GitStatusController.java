@@ -112,6 +112,8 @@ final class GitStatusController {
     private final EnumSet<GitSection> _collapsed = EnumSet.of(GitSection.STASHES);
     private int _selection;
     private int _scroll;
+    private int _statusPageSize = 1;
+    private boolean _statusGoPrefix;
     private GitFileChange _diffChange;
     private GitDiffView _diffView;
     private String _diffTitle;
@@ -207,6 +209,7 @@ final class GitStatusController {
     }
 
     SwimPanelResult handleInput(String input, int width, int height) {
+        _statusPageSize = Math.max(1, height - 3);
         return switch (_mode) {
         case STATUS -> handleStatusInput(input);
         case ACTIONS -> handleActionsInput(input);
@@ -1022,9 +1025,28 @@ final class GitStatusController {
         }
         clampSelection(rows.size());
         var row = rows.get(_selection);
+        if (_statusGoPrefix) {
+            _statusGoPrefix = false;
+            if ("g".equals(input)) {
+                _selection = 0;
+                return SwimPanelResult.success();
+            }
+        }
         return switch (input) {
         case "j", "down" -> moveStatusSelection(rows.size(), 1);
         case "k", "up" -> moveStatusSelection(rows.size(), -1);
+        case "ctrl-e" -> scrollStatusSelection(rows.size(), 1);
+        case "ctrl-y" -> scrollStatusSelection(rows.size(), -1);
+        case "pagedown" -> scrollStatusSelection(rows.size(), _statusPageSize);
+        case "pageup" -> scrollStatusSelection(rows.size(), -_statusPageSize);
+        case "g" -> {
+            _statusGoPrefix = true;
+            yield SwimPanelResult.success();
+        }
+        case "G" -> {
+            _selection = rows.size() - 1;
+            yield SwimPanelResult.success();
+        }
         case "tab", "space", "left", "right" -> toggleOrAdjustSection(row, input);
         case "enter" -> openSelected(row);
         case "r" -> refreshResult();
@@ -1545,14 +1567,29 @@ final class GitStatusController {
 
     private List<StatusRow> statusRows() {
         var rows = new ArrayList<StatusRow>();
-        appendSection(rows, GitSection.STAGED, _snapshot.staged());
-        appendSection(rows, GitSection.UNSTAGED, _snapshot.unstaged());
-        appendSection(rows, GitSection.UNTRACKED, _snapshot.untracked());
-        appendSection(rows, GitSection.CONFLICTS, _snapshot.conflicts());
+        appendNonEmptySection(rows, GitSection.CONFLICTS, _snapshot.conflicts());
+        appendNonEmptySection(rows, GitSection.REMOVED, changesWithCode("D"));
+        appendNonEmptySection(rows, GitSection.ADDED, changesWithCode("A", "?"));
+        appendNonEmptySection(rows, GitSection.MODIFIED, changesWithCode("M"));
         appendSection(rows, GitSection.STASHES, _snapshot.stashes());
         appendSection(rows, GitSection.COMMITS, _snapshot.commits());
         appendSection(rows, GitSection.REFLOG, _snapshot.reflogEntries());
         return rows;
+    }
+
+    private List<GitFileChange> changesWithCode(String... statusCodes) {
+        List<String> codes = List.of(statusCodes);
+        var changes = new ArrayList<GitFileChange>();
+        for (GitFileChange change : _snapshot.staged()) if (codes.contains(change.statusCode())) changes.add(change);
+        for (GitFileChange change : _snapshot.unstaged()) if (codes.contains(change.statusCode())) changes.add(change);
+        for (GitFileChange change : _snapshot.untracked()) if (codes.contains(change.statusCode())) changes.add(change);
+        changes.sort(java.util.Comparator.comparing(GitFileChange::relativePath)
+                .thenComparing(change -> change.section().ordinal()));
+        return List.copyOf(changes);
+    }
+
+    private void appendNonEmptySection(List<StatusRow> rows, GitSection section, List<?> entries) {
+        if (!entries.isEmpty()) appendSection(rows, section, entries);
     }
 
     private void appendSection(List<StatusRow> rows, GitSection section, List<?> entries) {
@@ -1629,6 +1666,9 @@ final class GitStatusController {
         case UNSTAGED -> C_GOLD;
         case UNTRACKED -> C_ACCENT;
         case CONFLICTS -> C_RED;
+        case REMOVED -> C_RED;
+        case ADDED -> C_GREEN;
+        case MODIFIED -> C_GOLD;
         case STASHES -> C_PURPLE;
         case COMMITS -> C_TEXT;
         case REFLOG -> C_SUBTLE;
@@ -1641,6 +1681,9 @@ final class GitStatusController {
         case UNSTAGED -> _snapshot.unstaged().size();
         case UNTRACKED -> _snapshot.untracked().size();
         case CONFLICTS -> _snapshot.conflicts().size();
+        case REMOVED -> changesWithCode("D").size();
+        case ADDED -> changesWithCode("A", "?").size();
+        case MODIFIED -> changesWithCode("M").size();
         case STASHES -> _snapshot.stashes().size();
         case COMMITS -> _snapshot.commits().size();
         case REFLOG -> _snapshot.reflogEntries().size();
@@ -1649,6 +1692,11 @@ final class GitStatusController {
 
     private SwimPanelResult moveStatusSelection(int size, int delta) {
         _selection = Math.floorMod(_selection + delta, size);
+        return SwimPanelResult.success();
+    }
+
+    private SwimPanelResult scrollStatusSelection(int size, int delta) {
+        _selection = Math.max(0, Math.min(size - 1, _selection + delta));
         return SwimPanelResult.success();
     }
 

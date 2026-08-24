@@ -91,20 +91,46 @@ class GitStatusControllerReviewTest {
 
         assertTrue(spans.stream().anyMatch(span -> span.text().contains("Repository has changes")
                 && ACCENT_GOLD.equals(span.foreground())));
-        assertTrue(spans.stream().anyMatch(span -> span.text().contains("Staged")
+        assertTrue(spans.stream().anyMatch(span -> span.text().contains("Added")
                 && ACCENT_GREEN.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "A".equals(span.text())
                 && ACCENT_GREEN.equals(span.foreground())));
-        assertTrue(spans.stream().anyMatch(span -> span.text().contains("Unstaged")
+        assertTrue(spans.stream().anyMatch(span -> span.text().contains("Modified")
                 && ACCENT_GOLD.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "M".equals(span.text())
                 && ACCENT_GOLD.equals(span.foreground())));
-        assertTrue(spans.stream().anyMatch(span -> span.text().contains("Untracked")
-                && ACCENT_BLUE.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> "?".equals(span.text())
                 && ACCENT_BLUE.equals(span.foreground())));
         assertTrue(spans.stream().anyMatch(span -> span.text().matches("[0-9a-f]{7,8}")
                 && GIT_COMMIT_HASH.equals(span.foreground())));
+    }
+
+    @Test
+    void statusGroupsConflictRemovedAddedAndModifiedBeforeRepositoryMetadata() throws Exception {
+        GitStatusController controller = statusControllerWithAllChangeKinds();
+
+        List<String> lines = controller.render(100, 20);
+
+        assertTrue(indexOfLineContaining(lines, "Conflicts") < indexOfLineContaining(lines, "Removed"));
+        assertTrue(indexOfLineContaining(lines, "Removed") < indexOfLineContaining(lines, "Added"));
+        assertTrue(indexOfLineContaining(lines, "Added") < indexOfLineContaining(lines, "Modified"));
+    }
+
+    @Test
+    void statusSupportsNormalScrollNavigationKeys() throws Exception {
+        GitStatusController controller = statusControllerWithAllChangeKinds();
+
+        assertTrue(controller.handleInput("ctrl-e", 80, 6).handled());
+        assertEquals(1, intField(controller, "_selection"));
+        assertTrue(controller.handleInput("pagedown", 80, 6).handled());
+        assertEquals(4, intField(controller, "_selection"));
+        assertTrue(controller.handleInput("G", 80, 6).handled());
+        assertTrue(intField(controller, "_selection") > 4);
+        controller.handleInput("g", 80, 6);
+        controller.handleInput("g", 80, 6);
+        assertEquals(0, intField(controller, "_selection"));
+        controller.handleInput("ctrl-y", 80, 6);
+        assertEquals(0, intField(controller, "_selection"));
     }
 
     @Test
@@ -358,5 +384,26 @@ class GitStatusControllerReviewTest {
             }
         }
         return -1;
+    }
+
+    private GitStatusController statusControllerWithAllChangeKinds() throws Exception {
+        Path root = tempDir.resolve("ordered-status");
+        Files.createDirectories(root);
+        GitStatusController controller = new GitStatusController();
+        set(controller, "_snapshot", new GitStatusSnapshot(root, "main",
+                List.of(new GitFileChange(GitSection.STAGED, "added.cpp", root.resolve("added.cpp"), "A"),
+                        new GitFileChange(GitSection.STAGED, "removed-staged.cpp", root.resolve("removed-staged.cpp"), "D")),
+                List.of(new GitFileChange(GitSection.UNSTAGED, "modified.cpp", root.resolve("modified.cpp"), "M"),
+                        new GitFileChange(GitSection.UNSTAGED, "removed.cpp", root.resolve("removed.cpp"), "D")),
+                List.of(new GitFileChange(GitSection.UNTRACKED, "untracked.cpp", root.resolve("untracked.cpp"), "?")),
+                List.of(new GitFileChange(GitSection.CONFLICTS, "conflict.cpp", root.resolve("conflict.cpp"), "U")),
+                List.of(), List.of(), List.of(), GitOperationState.idle(), "Repository has changes"));
+        return controller;
+    }
+
+    private static int intField(Object target, String name) throws Exception {
+        Field field = GitStatusController.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.getInt(target);
     }
 }

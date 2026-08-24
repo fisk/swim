@@ -370,7 +370,8 @@ class GitStatusServiceTest {
         case UNSTAGED -> snapshot.unstaged().stream();
         case UNTRACKED -> snapshot.untracked().stream();
         case CONFLICTS -> snapshot.conflicts().stream();
-        case STASHES, COMMITS, REFLOG -> throw new IllegalArgumentException("Not a file section: " + section);
+        case REMOVED, ADDED, MODIFIED, STASHES, COMMITS, REFLOG ->
+                throw new IllegalArgumentException("Not a file section: " + section);
         }).filter(change -> relativePath.equals(change.relativePath()))
                 .findFirst()
                 .orElseThrow();

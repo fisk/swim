@@ -1,10 +1,13 @@
 package org.fisk.swim.plugins.git;
 
 enum GitSection {
+    CONFLICTS("Conflicts"),
+    REMOVED("Removed"),
+    ADDED("Added"),
+    MODIFIED("Modified"),
     STAGED("Staged"),
     UNSTAGED("Unstaged"),
     UNTRACKED("Untracked"),
-    CONFLICTS("Conflicts"),
     STASHES("Stashes"),
     COMMITS("Recent Commits"),
     REFLOG("Reflog");

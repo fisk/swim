@@ -72,16 +72,14 @@ class GitPluginSessionTest {
 
         List<String> lines = session.render(80, 12);
         assertTrue(lines.get(0).contains("Git:"));
-        assertTrue(lines.stream().anyMatch(line -> line.contains("Unstaged")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("Modified")));
         assertTrue(lines.stream().anyMatch(line -> line.contains("note.txt")));
 
         session.handleInput("j", 80, 12);
-        session.handleInput("j", 80, 12);
         session.handleInput("s", 80, 12);
         lines = session.render(80, 12);
-        assertTrue(lines.stream().anyMatch(line -> line.contains("Staged")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("Modified")));
 
-        session.handleInput("k", 80, 12);
         session.handleInput("d", 80, 12);
         lines = session.render(80, 12);
         assertTrue(lines.stream().anyMatch(line -> line.contains("---")));
