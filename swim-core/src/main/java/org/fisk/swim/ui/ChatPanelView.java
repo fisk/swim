@@ -1,7 +1,9 @@
 package org.fisk.swim.ui;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import org.fisk.swim.EventThread;
@@ -47,6 +49,10 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     private record DisplayLine(String text, DisplayKind kind, String language) {
+    }
+
+    private record CodeRenderKey(DisplayLine line, TextColor foreground, TextColor background,
+            TextColor keyword, TextColor string, TextColor comment) {
     }
 
     private static final class ChatCursor extends Cursor {
@@ -98,11 +104,15 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private List<DisplayLine> _cachedTranscriptRows = List.of();
     private int _cachedTranscriptWidth = -1;
     private boolean _transcriptRowsDirty = true;
+    // Syntax colouring can invoke a language plugin. Keep its result while
+    // scrolling so a code-heavy response costs no more than ordinary text.
+    private final Map<CodeRenderKey, AttributedString> _cachedCodeRows = new HashMap<>();
     private final StringBuilder _input = new StringBuilder();
     private int _cursorOffset;
     private int _inputScrollLine;
     private int _startLine;
     private int _commandSelection;
+    private boolean _goToTopPending;
     private boolean _pending;
     private boolean _bracketedPasteActive;
     private long _pendingStartedAtMillis;
@@ -210,10 +220,15 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         hints.add(KeyBindingHint.of("<LEFT>", "Input", "cursor left"));
         hints.add(KeyBindingHint.of("<RIGHT>", "Input", "cursor right"));
         hints.add(KeyBindingHint.of("<CTRL>-a", "Input", "start of input"));
-        hints.add(KeyBindingHint.of("<CTRL>-e", "Input", "end of input"));
         hints.add(KeyBindingHint.of("<CHAR>", "Input", "type text"));
         hints.add(KeyBindingHint.of("<UP>", "History", "scroll up"));
         hints.add(KeyBindingHint.of("<DOWN>", "History", "scroll down"));
+        hints.add(KeyBindingHint.of("<CTRL>-y", "History", "scroll up"));
+        hints.add(KeyBindingHint.of("<CTRL>-e", "History", "scroll down"));
+        hints.add(KeyBindingHint.of("<PAGEUP>", "History", "previous page"));
+        hints.add(KeyBindingHint.of("<PAGEDOWN>", "History", "next page"));
+        hints.add(KeyBindingHint.of("gg", "History", "top (empty prompt)"));
+        hints.add(KeyBindingHint.of("G", "History", "bottom (empty prompt)"));
         hints.add(KeyBindingHint.of("<TAB>", "Commands", "complete command"));
         hints.add(KeyBindingHint.of("<REVERSE-TAB>", "Commands", "previous match"));
         if (_pending) {
@@ -241,6 +256,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
             _cachedTranscriptRows = List.copyOf(rows);
             _cachedTranscriptWidth = width;
             _transcriptRowsDirty = false;
+            _cachedCodeRows.clear();
         }
         if (!_pending) return _cachedTranscriptRows;
         var rows = new ArrayList<DisplayLine>(_cachedTranscriptRows);
@@ -543,13 +559,20 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         return switch (line.kind()) {
         case NORMAL -> renderLine(line.text(), background);
         case CODE_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
-        case CODE -> renderCodeLine(line.text(), line.language(), background);
+        case CODE -> renderCachedCodeLine(line, background);
         case DIFF_HEADER -> renderDecoratedLine(line.text(), UiTheme.ACCENT_BLUE, UiTheme.SURFACE_ACCENT);
         case DIFF_HUNK -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GOLD, background);
         case DIFF_ADDED -> renderDecoratedLine(line.text(), UiTheme.ACCENT_GREEN, background);
         case DIFF_REMOVED -> renderDecoratedLine(line.text(), UiTheme.ACCENT_RED, background);
         case DIFF_CONTEXT -> renderDecoratedLine(line.text(), UiTheme.TEXT_MUTED, background);
         };
+    }
+
+    private AttributedString renderCachedCodeLine(DisplayLine line, TextColor background) {
+        var key = new CodeRenderKey(line, UiTheme.TEXT_PRIMARY, background, UiTheme.ACCENT_BLUE,
+                UiTheme.ACCENT_GREEN, UiTheme.TEXT_MUTED);
+        return _cachedCodeRows.computeIfAbsent(key,
+                ignored -> renderCodeLine(line.text(), line.language(), background));
     }
 
     private AttributedString renderDecoratedLine(String line, TextColor textColour, TextColor background) {
@@ -836,6 +859,15 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         setNeedsRedraw();
     }
 
+    private void scrollPage(int direction) {
+        int amount = Math.max(1, bodyHeight());
+        if (direction < 0) {
+            scrollUp(amount);
+        } else {
+            scrollDown(amount);
+        }
+    }
+
     private int visibleInputHeight() {
         return Math.max(1, getBounds().getSize().getHeight() - 1 - bodyHeight());
     }
@@ -882,6 +914,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         }
 
         var event = events.current();
+        if (_goToTopPending && event.getKeyType() != KeyType.Character) {
+            _goToTopPending = false;
+        }
         if (event instanceof MouseAction mouseAction) {
             return processMouseAction(mouseAction);
         }
@@ -910,6 +945,12 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 return Response.YES;
             }
             _responseAction = () -> scrollUp(1);
+            return Response.YES;
+        case PageDown:
+            _responseAction = () -> scrollPage(1);
+            return Response.YES;
+        case PageUp:
+            _responseAction = () -> scrollPage(-1);
             return Response.YES;
         case ReverseTab:
             if (!hasCommandMenuMatches()) {
@@ -1026,14 +1067,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                     return Response.YES;
                 }
                 if (character == 'e' || character == 'E') {
-                    if (_cursorOffset >= _input.length()) {
-                        return Response.NO;
-                    }
-                    _responseAction = () -> {
-                        _cursorOffset = _input.length();
-                        ensureInputVisible();
-                        refreshChrome();
-                    };
+                    _responseAction = () -> scrollDown(1);
+                    return Response.YES;
+                }
+                if (character == 'y' || character == 'Y') {
+                    _responseAction = () -> scrollUp(1);
                     return Response.YES;
                 }
                 if (character == 'j' || character == 'J') {
@@ -1041,6 +1079,28 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                     return Response.YES;
                 }
                 return Response.NO;
+            }
+            if (_input.isEmpty() && character == 'G') {
+                _responseAction = this::scrollToBottom;
+                return Response.YES;
+            }
+            if (_input.isEmpty() && character == 'g') {
+                if (_goToTopPending) {
+                    _responseAction = () -> {
+                        _goToTopPending = false;
+                        scrollUp(Integer.MAX_VALUE);
+                    };
+                } else {
+                    _responseAction = () -> _goToTopPending = true;
+                }
+                return Response.YES;
+            }
+            if (_goToTopPending) {
+                _responseAction = () -> {
+                    _goToTopPending = false;
+                    insertInputText("g" + normalizeInputCharacter(character));
+                };
+                return Response.YES;
             }
             _responseAction = () -> insertInputText(normalizeInputCharacter(character));
             return Response.YES;

@@ -148,7 +148,7 @@ class ChatPanelViewTest {
     }
 
     @Test
-    void ctrlAAndCtrlEMoveToLineBoundaries() {
+    void ctrlAMovesToStartAndEndMovesToEndOfInput() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
 
         dispatch(view, new KeyStroke('a', false, false));
@@ -157,7 +157,7 @@ class ChatPanelViewTest {
         dispatch(view, new KeyStroke('a', true, false));
         assertEquals(0, view.getCursorOffset());
         dispatch(view, new KeyStroke('x', false, false));
-        dispatch(view, new KeyStroke('e', true, false));
+        dispatch(view, new KeyStroke(KeyType.End));
         assertEquals(view.getInputText().length(), view.getCursorOffset());
         dispatch(view, new KeyStroke('y', false, false));
 
@@ -314,6 +314,41 @@ class ChatPanelViewTest {
         dispatch(view, new MouseAction(MouseActionType.SCROLL_DOWN, 5, new MouseAction.Position(1, 1)));
 
         assertEquals(bottom, view.getStartLine());
+    }
+
+    @Test
+    void historyNavigationSupportsCtrlPageAndGoToCommands() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        for (int i = 0; i < 12; i++) {
+            view.appendMessage("nemo", "message " + i);
+        }
+        int bottom = view.getStartLine();
+
+        dispatch(view, new KeyStroke('y', true, false));
+        assertEquals(bottom - 1, view.getStartLine());
+        dispatch(view, new KeyStroke('e', true, false));
+        assertEquals(bottom, view.getStartLine());
+
+        dispatch(view, new KeyStroke(KeyType.PageUp));
+        assertTrue(view.getStartLine() < bottom);
+        dispatch(view, new KeyStroke(KeyType.PageDown));
+        assertEquals(bottom, view.getStartLine());
+
+        dispatch(view, new KeyStroke('g', false, false));
+        dispatch(view, new KeyStroke('g', false, false));
+        assertEquals(0, view.getStartLine());
+        dispatch(view, new KeyStroke('G', false, false));
+        assertEquals(bottom, view.getStartLine());
+    }
+
+    @Test
+    void goToTopPrefixDoesNotPreventTypingIntoThePrompt() {
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+
+        dispatch(view, new KeyStroke('g', false, false));
+        dispatch(view, new KeyStroke('r', false, false));
+
+        assertEquals("gr", view.getInputText());
     }
 
     @Test
