@@ -179,7 +179,7 @@ class ClangdLspPluginSupportTest {
         Path file = Files.writeString(tempDir.resolve("widget.inline.hpp"), """
                 #include <vector>
                 #include "zeta.hpp"
-                #include "widget.hpp"
+                #include "detail/widget.hpp"
                 #include "alpha.hpp"
                 """);
         var context = new BufferContext(Rect.create(0, 0, 120, 20), file);
@@ -187,7 +187,7 @@ class ClangdLspPluginSupportTest {
         context.getBuffer().writeOrThrow();
 
         assertEquals("""
-                #include "widget.hpp"
+                #include "detail/widget.hpp"
 
                 #include "alpha.hpp"
                 #include "zeta.hpp"

@@ -62,6 +62,7 @@ public class Buffer {
     private int _savedVersion = 1;
     private String _pendingExternalContents;
     private boolean _readOnly;
+    private boolean _backingFileMissing;
     private volatile AttributedString _attributedStringCache;
     private volatile int _attributedStringCacheVersion = -1;
     private List<AttributedString.FormatRange> _syntaxFormatOverlays = List.of();
@@ -202,11 +203,12 @@ public class Buffer {
     }
 
     public boolean isModified() {
-        return _version != _savedVersion;
+        return _backingFileMissing || _version != _savedVersion;
     }
 
     public void markUnmodified() {
         _savedVersion = _version;
+        _backingFileMissing = false;
     }
 
     public boolean hasPendingExternalChange() {
@@ -217,6 +219,12 @@ public class Buffer {
         _pendingExternalContents = content == null ? "" : content;
     }
 
+    /** Keeps an externally moved or deleted document safe until it is saved again. */
+    public void noteExternalDeletion() {
+        _backingFileMissing = true;
+        _pendingExternalContents = null;
+    }
+
     public String consumePendingExternalChange() {
         String content = _pendingExternalContents;
         _pendingExternalContents = null;
@@ -225,6 +233,7 @@ public class Buffer {
 
     public void discardPendingExternalChange() {
         _pendingExternalContents = null;
+        _backingFileMissing = false;
     }
 
     /**
@@ -243,6 +252,7 @@ public class Buffer {
         _folds.clear();
         _version++;
         _savedVersion = _version;
+        _backingFileMissing = false;
         _pendingExternalContents = null;
         _undoLog.clear();
         invalidateAttributedStringCache();
@@ -2017,6 +2027,7 @@ public class Buffer {
         mode.willSave(_bufferContext);
         writeAtomically(_path, _string.toString());
         _savedVersion = _version;
+        _backingFileMissing = false;
         notifyContentChanged();
         var window = Window.getInstance();
         if (window != null && window.getCommandView() != null) {

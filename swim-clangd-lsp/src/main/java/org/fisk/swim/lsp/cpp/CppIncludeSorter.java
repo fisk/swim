@@ -1,6 +1,5 @@
 package org.fisk.swim.lsp.cpp;
 
-import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -39,11 +38,13 @@ final class CppIncludeSorter {
         SortedSet<String> userIncludes = new TreeSet<>(includeComparator('"'));
         SortedSet<String> systemIncludes = new TreeSet<>(includeComparator('<'));
         var result = new ArrayList<String>(lines.length);
-        String expectedHeader = expectedInlineHeader(path);
+        String expectedHeaderName = expectedInlineHeaderName(path);
 
         for (String line : lines) {
             if (line.indexOf('"') >= 0) {
-                if (expectedHeader != null && expectedHeader.endsWith(extract(line, '"', '"'))) result.add(line);
+                if (expectedHeaderName != null && expectedHeaderName.equals(includeFileName(extract(line, '"', '"')))) {
+                    result.add(line);
+                }
                 else userIncludes.add(line);
             } else if (line.indexOf('<') >= 0) {
                 systemIncludes.add(line);
@@ -60,12 +61,18 @@ final class CppIncludeSorter {
         return Comparator.comparing(line -> line.toLowerCase(Locale.ROOT).substring(line.indexOf(delimiter)));
     }
 
-    private static String expectedInlineHeader(Path path) {
-        String value = path.toString();
+    private static String expectedInlineHeaderName(Path path) {
+        Path fileName = path.getFileName();
+        if (fileName == null) return null;
+        String value = fileName.toString();
         int inline = value.lastIndexOf(".inline.");
         if (inline < 1 || inline + ".inline.".length() >= value.length()) return null;
-        String header = value.substring(0, inline) + value.substring(inline + ".inline".length());
-        return File.separatorChar == '/' ? header : header.replace(File.separatorChar, '/');
+        return value.substring(0, inline) + value.substring(inline + ".inline".length());
+    }
+
+    private static String includeFileName(String include) {
+        int separator = Math.max(include.lastIndexOf('/'), include.lastIndexOf('\\'));
+        return separator < 0 ? include : include.substring(separator + 1);
     }
 
     private static String extract(String line, char start, char end) {

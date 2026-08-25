@@ -225,8 +225,8 @@ public class Window implements Drawable {
 
     public Window(List<Path> paths) {
         try {
-            _openBufferFileWatcher = new OpenBufferFileWatcher((path, content) -> EventThread.getInstance()
-                    .enqueue(new RunnableEvent(() -> handleWatchedFileChange(path, content))));
+            _openBufferFileWatcher = new OpenBufferFileWatcher((path, change) -> EventThread.getInstance()
+                    .enqueue(new RunnableEvent(() -> handleWatchedFileChange(path, change.content(), change.exists()))));
         } catch (IOException e) {
             throw new IllegalStateException("Unable to watch open buffers", e);
         }
@@ -2615,13 +2615,21 @@ public class Window implements Drawable {
         return refreshed;
     }
 
-    private void handleWatchedFileChange(Path path, String content) {
+    void handleWatchedFileChange(Path path, String content, boolean exists) {
         if (path == null) return;
         Path normalized = path.toAbsolutePath().normalize();
         boolean changed = false;
         for (BufferContext context : openBufferContextsSnapshot()) {
             if (!bufferPathEquals(context, normalized)) continue;
             var buffer = context.getBuffer();
+            if (!exists) {
+                // A rename appears as a delete/create pair to WatchService.
+                // Keep the open document intact rather than replacing it with
+                // an empty buffer while the file is absent at its old path.
+                buffer.noteExternalDeletion();
+                changed = true;
+                continue;
+            }
             String external = content == null ? "" : content;
             if (external.equals(buffer.getString())) {
                 buffer.discardPendingExternalChange();
@@ -2635,6 +2643,9 @@ public class Window implements Drawable {
             changed = true;
         }
         if (changed && _rootView != null) _rootView.setNeedsRedraw();
+        if (changed && !exists && _commandView != null) {
+            _commandView.setMessage("Open file moved or deleted; keeping its buffer (save recreates it)");
+        }
     }
 
     public void showBufferList() {

@@ -1613,6 +1613,27 @@ class WindowTest {
     }
 
     @Test
+    void externalFileDeletionRetainsOpenBufferUntilItIsSavedAgain() throws Exception {
+        Path file = writeFile("externally-moved.txt", "alpha\nbeta\n");
+
+        try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
+            var window = harness.getWindow();
+            var buffer = window.getBufferContext().getBuffer();
+            Files.delete(file);
+
+            window.handleWatchedFileChange(file, "", false);
+
+            assertEquals("alpha\nbeta\n", buffer.getString());
+            assertTrue(buffer.isModified());
+
+            buffer.writeOrThrow();
+
+            assertEquals("alpha\nbeta\n", Files.readString(file));
+            assertFalse(buffer.isModified());
+        }
+    }
+
+    @Test
     void clickingSplitFrameBarActivatesThatBufferFrame() throws Exception {
         Path file = writeFile("click-split-frame.txt", "alpha\nbeta\n");
 

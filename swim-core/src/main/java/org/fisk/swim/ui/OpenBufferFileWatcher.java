@@ -15,16 +15,19 @@ import java.util.function.BiConsumer;
 
 /** Watches directories containing open buffers and delivers changed contents. */
 final class OpenBufferFileWatcher implements AutoCloseable {
+    record FileChange(String content, boolean exists) {
+    }
+
     /** Wait for a write's truncate/rewrite event burst to settle before reading it. */
     private static final long SETTLE_DELAY_MILLIS = 100L;
     private final WatchService _watchService;
     private final Map<Path, WatchKey> _keysByDirectory = new ConcurrentHashMap<>();
     private final Map<WatchKey, Path> _directoriesByKey = new ConcurrentHashMap<>();
     private final Map<Path, AtomicLong> _changeGenerations = new ConcurrentHashMap<>();
-    private final BiConsumer<Path, String> _onFileChanged;
+    private final BiConsumer<Path, FileChange> _onFileChanged;
     private volatile boolean _closed;
 
-    OpenBufferFileWatcher(BiConsumer<Path, String> onFileChanged) throws IOException {
+    OpenBufferFileWatcher(BiConsumer<Path, FileChange> onFileChanged) throws IOException {
         _watchService = FileSystems.getDefault().newWatchService();
         _onFileChanged = onFileChanged;
         Thread.ofVirtual().start(this::watchLoop);
@@ -81,7 +84,8 @@ final class OpenBufferFileWatcher implements AutoCloseable {
                 return;
             }
             try {
-                _onFileChanged.accept(changed, Files.isRegularFile(changed) ? Files.readString(changed) : "");
+                boolean exists = Files.isRegularFile(changed);
+                _onFileChanged.accept(changed, new FileChange(exists ? Files.readString(changed) : "", exists));
             } catch (IOException ignored) {
             } finally {
                 if (generation.get() == expectedGeneration) {
