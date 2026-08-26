@@ -106,6 +106,7 @@ public class Window implements Drawable {
         private View _panelView;
         private String _pluginId;
         private String _customTabLabel;
+        private boolean _mergeResolution;
     }
 
     public record OpenBufferEntry(Path path, String label, boolean modified) {
@@ -614,6 +615,7 @@ public class Window implements Drawable {
         ensureLayoutState();
         var workspace = new WorkspaceState();
         workspace._kind = WorkspaceKind.BUFFER;
+        workspace._mergeResolution = true;
         var ours = new BufferContext(Rect.create(0, 0, 0, 0), "OURS (read-only)\n\n" + resolution.ours(), true);
         var theirs = new BufferContext(Rect.create(0, 0, 0, 0), "THEIRS (read-only)\n\n" + resolution.theirs(), true);
         ours.getBuffer().setFormatOverlays(mergeFormatRanges(resolution.oursRanges(), "OURS (read-only)\n\n".length(),
@@ -1642,15 +1644,28 @@ public class Window implements Drawable {
             throw new IllegalArgumentException("path is required");
         }
         Path root = _editorDriveWorkspaceRoot;
-        Path inputPath = Path.of(rawPath.trim());
-        Path resolved = inputPath.isAbsolute()
-                ? inputPath.toAbsolutePath().normalize()
-                : (root == null ? Path.of(System.getProperty("user.dir")) : root).resolve(inputPath).toAbsolutePath()
-                        .normalize();
+        Path resolved = resolvePathRelativeToActiveBuffer(rawPath);
         if (root != null && !resolved.startsWith(root)) {
             throw new IllegalArgumentException("path escapes workspace: " + rawPath);
         }
         return resolved;
+    }
+
+    /** Resolves a command path beside the active file, falling back to SWIM's launch directory. */
+    Path resolvePathRelativeToActiveBuffer(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            throw new IllegalArgumentException("path is required");
+        }
+        Path input = Path.of(rawPath.trim());
+        if (input.isAbsolute()) {
+            return input.toAbsolutePath().normalize();
+        }
+        Path activePath = _bufferContext == null ? null : _bufferContext.getBuffer().getPath();
+        Path base = activePath == null ? null : activePath.toAbsolutePath().normalize().getParent();
+        if (base == null) {
+            base = Path.of(System.getProperty("user.dir"));
+        }
+        return base.resolve(input).toAbsolutePath().normalize();
     }
 
     public String editorDriveWorkspacePathBlock(Path path, String action) {
@@ -3376,9 +3391,10 @@ public class Window implements Drawable {
         ensureLayoutState();
         if (_keyMenuView != null) {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
+            boolean mergeResolver = isMergeResolutionResponder(responder);
             _keyMenuView.setModeName(modeNameForDisplay());
-            _keyMenuView.setBufferFocused(_activeBufferView != null && responder == _activeBufferView);
-            _keyMenuView.setFocusContext(focusContextFor(responder));
+            _keyMenuView.setBufferFocused(!mergeResolver && _activeBufferView != null && responder == _activeBufferView);
+            _keyMenuView.setFocusContext(mergeResolver ? KeyMenuView.FocusContext.OTHER : focusContextFor(responder));
             _keyMenuView.setContextLabel(contextLabelFor(responder));
             List<KeyBindingHint> hints = keyBindingHintsFor(responder);
             if (responder == _activeBufferView && _currentMode == _normalMode) {
@@ -3625,6 +3641,9 @@ public class Window implements Drawable {
         if (responder == null) {
             return null;
         }
+        if (isMergeResolutionResponder(responder)) {
+            return "merge resolver";
+        }
         if (responder == _commandView) {
             if ("/".equals(_commandView.getPrompt())) {
                 return "forward search";
@@ -3680,6 +3699,9 @@ public class Window implements Drawable {
     }
 
     private String contextHintFor(EventResponder responder) {
+        if (isMergeResolutionResponder(responder)) {
+            return "merge resolver";
+        }
         if (responder == _activeBufferView && _currentMode instanceof KeyBindingHintProvider provider) {
             return provider.keyHintContext();
         }
@@ -3690,6 +3712,9 @@ public class Window implements Drawable {
     }
 
     private List<KeyBindingHint> keyBindingHintsFor(EventResponder responder) {
+        if (isMergeResolutionResponder(responder)) {
+            return mergeResolutionKeyBindingHints();
+        }
         if (responder == _activeBufferView && _currentMode instanceof KeyBindingHintProvider provider) {
             return modeKeyBindingHints(provider);
         }
@@ -3697,6 +3722,21 @@ public class Window implements Drawable {
             return provider.keyBindingHints();
         }
         return List.of();
+    }
+
+    private boolean isMergeResolutionResponder(EventResponder responder) {
+        return _currentWorkspace != null && _currentWorkspace._mergeResolution
+                && responder != null && responder == _activeBufferView;
+    }
+
+    private static List<KeyBindingHint> mergeResolutionKeyBindingHints() {
+        return List.of(
+                KeyBindingHint.of("c ]", "Conflicts", "next conflict"),
+                KeyBindingHint.of("c [", "Conflicts", "previous conflict"),
+                KeyBindingHint.of("c o", "Conflicts", "choose ours"),
+                KeyBindingHint.of("c t", "Conflicts", "choose theirs"),
+                KeyBindingHint.of("i", "Editing", "edit result"),
+                KeyBindingHint.of("<CTRL>-w h/j/k/l", "Panes", "focus pane"));
     }
 
     String shortcutForCommand(String commandName) {

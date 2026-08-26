@@ -844,6 +844,55 @@ class CommandViewTest {
     }
 
     @Test
+    void fileArgumentsResolveBesideTheActiveBuffer() throws Exception {
+        Path directory = Files.createDirectories(tempDir.resolve("foo"));
+        Path path = directory.resolve("bar.txt");
+        Files.writeString(path, "contents\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var window = harness.getWindow();
+
+            invokeRunCommand(window.getCommandView(), "w sibling.txt");
+            assertEquals("contents\n", Files.readString(directory.resolve("sibling.txt")));
+
+            invokeRunCommand(window.getCommandView(), "e opened.txt");
+            assertEquals(directory.resolve("opened.txt").toAbsolutePath(),
+                    window.getBufferContext().getBuffer().getPath().toAbsolutePath());
+            assertTrue(Files.isRegularFile(directory.resolve("opened.txt")));
+        }
+    }
+
+    @Test
+    void editAndWriteArgumentsOfferRelativePathCompletion() throws Exception {
+        Path directory = Files.createDirectories(tempDir.resolve("foo"));
+        Path path = directory.resolve("bar.txt");
+        Files.writeString(path, "contents\n");
+        Files.writeString(directory.resolve("alpha.txt"), "alpha\n");
+        Files.createDirectories(directory.resolve("assets"));
+
+        try (var harness = HeadlessWindowHarness.create(path, 60, 12)) {
+            var commandView = harness.getWindow().getCommandView();
+            commandView.activate(":", "e al");
+
+            var state = commandView.getMenuState();
+            assertEquals("path matches", state.title());
+            assertEquals(List.of(":e alpha.txt"), state.matches().stream().map(CommandView.CommandSpec::label).toList());
+
+            invoke(commandView, "completeSelectedCommand", new Class<?>[0]);
+            assertEquals("e alpha.txt", commandView.getCommandText());
+
+            commandView.activate(":", "w a");
+            assertEquals("path matches", commandView.getMenuState().title());
+            assertTrue(commandView.getMenuState().matches().stream()
+                    .map(CommandView.CommandSpec::label)
+                    .anyMatch(":w alpha.txt"::equals));
+            assertTrue(commandView.getMenuState().matches().stream()
+                    .map(CommandView.CommandSpec::label)
+                    .anyMatch(":w assets/"::equals));
+        }
+    }
+
+    @Test
     void lgrepBuildsLocationListAndNavigatesMatches() throws Exception {
         Path path = tempDir.resolve("lgrep.txt");
         Files.writeString(path, """

@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.SwimRuntime;
 import org.fisk.swim.api.SwimHost;
+import org.fisk.swim.api.SwimMergeResolution;
 import org.fisk.swim.event.KeyStrokes;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.mail.MailClient;
@@ -253,6 +254,29 @@ class WindowTest {
             assertTrue(window.getKeyMenuView().bodyText().contains("Tab complete"));
             assertTrue(window.getCommandMenuView().getState().visible());
             assertEquals("q", window.getCommandMenuView().getState().selectedMatch().primaryName());
+        }
+    }
+
+    @Test
+    void mergeResolverShowsConflictBindingsInTopKeyMenu() throws Exception {
+        Path file = writeFile("merge-conflict.txt", """
+                <<<<<<< HEAD
+                ours
+                =======
+                theirs
+                >>>>>>> branch
+                """);
+        try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+            var window = harness.getWindow();
+
+            assertTrue(window.showMergeResolution(new SwimMergeResolution(file, "ours\n", "theirs\n")));
+
+            assertTrue(window.getKeyMenuView().buildHeaderLine().toString().contains("merge resolver"));
+            String hints = window.getKeyMenuView().bodyText();
+            assertTrue(hints.contains("next conflict"));
+            assertTrue(hints.contains("previous conflict"));
+            assertTrue(hints.contains("choose ours"));
+            assertTrue(hints.contains("choose theirs"));
         }
     }
 

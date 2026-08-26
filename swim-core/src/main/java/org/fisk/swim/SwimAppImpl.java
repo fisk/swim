@@ -236,12 +236,14 @@ public class SwimAppImpl implements SwimApp {
         if (window != null) {
             window.dispose();
         }
-        // Keep the alternate screen active while the replacement app starts.
-        if (!reloading) {
-            _bindings.shutdownTerminalContext();
-        } else {
+        // The launcher refreshes System.in before loading the replacement app.  The
+        // terminal backend captures its input stream at construction time, so it
+        // must be recreated as well; otherwise a reload leaves the new IO thread
+        // polling the old, no-longer-live stream.
+        if (reloading) {
             TerminalContext.prepareForReloadRestart();
         }
+        _bindings.shutdownTerminalContext();
         if (ioThread != null && Thread.currentThread() != ioThread) {
             try {
                 ioThread.join(2000);

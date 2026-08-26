@@ -154,7 +154,7 @@ class SwimAppImplTest {
     }
 
     @Test
-    void closeDuringReloadKeepsTerminalContextAliveForSeamlessRestart() {
+    void closeDuringReloadRecreatesTerminalContextForTheRefreshedInputStream() {
         FakeBindings bindings = new FakeBindings();
         SwimAppImpl app = new SwimAppImpl(bindings);
         RecordingHost host = new RecordingHost();
@@ -167,7 +167,7 @@ class SwimAppImplTest {
         assertTrue(bindings.window.disposed);
         assertTrue(bindings.clearRuntimeCalled);
         assertTrue(bindings.ioThread.interrupted);
-        assertFalse(bindings.shutdownTerminalContextCalled);
+        assertTrue(bindings.shutdownTerminalContextCalled);
         assertNull(System.getProperty("swim.terminal.preserve_screen_on_start"));
     }
 

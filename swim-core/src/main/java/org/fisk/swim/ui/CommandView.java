@@ -3,7 +3,6 @@ package org.fisk.swim.ui;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -1087,7 +1086,92 @@ public class CommandView extends View {
     }
 
     private List<CommandSpec> matchingCommandSpecs() {
+        var pathCompletion = pathCompletion();
+        if (pathCompletion != null) {
+            return pathCompletion.matches();
+        }
         return matchingCommandSpecs(commandPrefix(), _lastCommand);
+    }
+
+    private PathCompletion pathCompletion() {
+        if (_command == null || !isCommandPrompt()) {
+            return null;
+        }
+        String text = _command.toString();
+        int commandStart = 0;
+        while (commandStart < text.length() && Character.isWhitespace(text.charAt(commandStart))) {
+            commandStart++;
+        }
+        int commandEnd = commandStart;
+        while (commandEnd < text.length() && !Character.isWhitespace(text.charAt(commandEnd))) {
+            commandEnd++;
+        }
+        if (commandEnd == text.length()) {
+            return null;
+        }
+        String command = text.substring(commandStart, commandEnd).toLowerCase(Locale.ROOT);
+        if (!command.equals("e") && !command.equals("w")) {
+            return null;
+        }
+        String typedPath = text.substring(commandEnd).stripLeading();
+        return new PathCompletion(command, typedPath, pathMatches(command, typedPath));
+    }
+
+    private List<CommandSpec> pathMatches(String command, String typedPath) {
+        var window = Window.getInstance();
+        if (window == null) {
+            return List.of();
+        }
+        try {
+            boolean trailingSeparator = typedPath.endsWith("/");
+            Path input = typedPath.isBlank() ? null : Path.of(typedPath);
+            Path base = window.resolvePathRelativeToActiveBuffer(".");
+            Path directory;
+            String prefix;
+            String namePrefix;
+            if (input == null) {
+                directory = base;
+                prefix = "";
+                namePrefix = "";
+            } else if (trailingSeparator) {
+                directory = input.isAbsolute() ? input : base.resolve(input);
+                prefix = typedPath;
+                namePrefix = "";
+            } else {
+                Path parent = input.getParent();
+                directory = parent == null ? base : input.isAbsolute() ? parent : base.resolve(parent);
+                prefix = parent == null ? "" : parent.toString().replace('\\', '/') + "/";
+                Path name = input.getFileName();
+                namePrefix = name == null ? "" : name.toString();
+            }
+            if (!Files.isDirectory(directory)) {
+                return List.of();
+            }
+            String normalizedPrefix = namePrefix.toLowerCase(Locale.ROOT);
+            try (var children = Files.list(directory)) {
+                return children
+                        .filter(path -> {
+                            String name = path.getFileName().toString();
+                            return (normalizedPrefix.isEmpty() || name.toLowerCase(Locale.ROOT).startsWith(normalizedPrefix))
+                                    && (namePrefix.startsWith(".") || !name.startsWith("."));
+                        })
+                        .sorted(Comparator.comparing((Path path) -> !Files.isDirectory(path))
+                                .thenComparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
+                        .limit(100)
+                        .map(path -> pathCommandSpec(command, prefix, path))
+                        .toList();
+            }
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private static CommandSpec pathCommandSpec(String command, String prefix, Path path) {
+        String name = path.getFileName().toString();
+        boolean directory = Files.isDirectory(path);
+        String displayPath = prefix + name + (directory ? "/" : "");
+        return new CommandSpec(displayPath, List.of(), "", directory ? "directory" : "file",
+                command + " " + displayPath, true, ":" + command + " " + displayPath, "");
     }
 
     private static List<CommandSpec> matchingCommandSpecs(String prefix) {
@@ -1149,7 +1233,7 @@ public class CommandView extends View {
             _message = "Wrong number of parameters";
             return;
         }
-        var path = Paths.get(pathString).toAbsolutePath();
+        var path = Window.getInstance().resolvePathRelativeToActiveBuffer(pathString);
         if (path.toFile().isDirectory()) {
             if (!Window.getInstance().showDirectoryBrowser(path)) {
                 _message = "Failed to open directory";
@@ -1351,7 +1435,7 @@ public class CommandView extends View {
             return;
         }
         try {
-            Path path = Paths.get(argument).toAbsolutePath();
+            Path path = window.resolvePathRelativeToActiveBuffer(argument);
             Files.writeString(path, window.getBufferContext().getBuffer().getString());
             _message = "Saved file: " + path;
         } catch (Exception e) {
@@ -1370,7 +1454,7 @@ public class CommandView extends View {
             return;
         }
         try {
-            Path path = Paths.get(argument).toAbsolutePath();
+            Path path = window.resolvePathRelativeToActiveBuffer(argument);
             String text = Files.readString(path);
             if (!text.endsWith("\n")) {
                 text += "\n";
@@ -1828,10 +1912,13 @@ public class CommandView extends View {
         if (parseLiveGrepCommand(_command.toString()) != null) {
             return CommandMenuState.hidden();
         }
+        var pathCompletion = pathCompletion();
         var matches = matchingCommandSpecs().stream()
                 .map(this::withDiscoveredShortcut)
                 .toList();
-        return new CommandMenuState(true, commandPrefix(), List.copyOf(matches), normalizeSelection(matches.size()));
+        String prefix = pathCompletion == null ? commandPrefix() : pathCompletion.typedPath();
+        String title = pathCompletion == null ? "command matches" : "path matches";
+        return new CommandMenuState(true, prefix, List.copyOf(matches), normalizeSelection(matches.size()), title);
     }
 
     private CommandSpec withDiscoveredShortcut(CommandSpec spec) {
@@ -1925,6 +2012,9 @@ public class CommandView extends View {
     }
 
     private record LiveGrepCommand(String query) {
+    }
+
+    private record PathCompletion(String command, String typedPath, List<CommandSpec> matches) {
     }
 
     public static record CommandSpec(
