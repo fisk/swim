@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 
 public class BufferView extends View {
     private static final int MIN_DECORATED_WIDTH = 6;
+    private static final int MAX_BLAME_WIDTH = 24;
     private static final String GUTTER_SEPARATOR = "│";
     private static final String SCROLLBAR_TRACK = "│";
     private static final String SCROLLBAR_THUMB = "█";
@@ -29,6 +30,9 @@ public class BufferView extends View {
     private int _startLine = 0;
     private Integer _mouseSelectionAnchorPosition;
     private Function<EventResponder, EventResponder> _firstResponderDecorator;
+    private List<String> _blameAnnotations = List.of();
+    private int _blameRequest;
+    private boolean _gitBlameEnabled;
 
     public int getStartLine() {
         return _startLine;
@@ -82,6 +86,30 @@ public class BufferView extends View {
 
     public void setFirstResponderDecorator(Function<EventResponder, EventResponder> decorator) {
         _firstResponderDecorator = decorator;
+    }
+
+    int beginGitBlame() {
+        _blameAnnotations = List.of();
+        _gitBlameEnabled = true;
+        return ++_blameRequest;
+    }
+
+    boolean applyGitBlame(int request, List<String> annotations) {
+        if (!_gitBlameEnabled || request != _blameRequest) return false;
+        _blameAnnotations = annotations == null ? List.of() : List.copyOf(annotations);
+        setNeedsRedraw();
+        return true;
+    }
+
+    void clearGitBlame() {
+        _blameRequest++;
+        _gitBlameEnabled = false;
+        _blameAnnotations = List.of();
+        setNeedsRedraw();
+    }
+
+    boolean isGitBlameEnabled() {
+        return _gitBlameEnabled;
     }
 
     EventResponder firstResponderForMode(EventResponder mode) {
@@ -480,7 +508,8 @@ public class BufferView extends View {
         } else {
             lineCount = countPhysicalLines(_bufferContext.getBuffer().getString());
         }
-        return digitCount(Math.max(1, lineCount)) + 1;
+        int lineNumberWidth = digitCount(Math.max(1, lineCount)) + 1;
+        return lineNumberWidth + (isGitBlameEnabled() ? blameGutterWidth() + 1 : 0);
     }
 
     private void drawLineNumberGutter(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,
@@ -496,12 +525,12 @@ public class BufferView extends View {
             var physicalLine = textLayout.getPhysicalLineAt(line.getStartPosition());
             boolean firstSegment = line.getStartPosition() == physicalLine.getStartPosition();
             TextColor foreground = lineNumberForeground(physicalLine.getY(), currentPhysicalLine);
-            AttributedString gutter = createLineNumberString(firstSegment ? physicalLine.getY() + 1 : null, gutterWidth, foreground);
+            AttributedString gutter = createLineNumberString(firstSegment ? physicalLine.getY() + 1 : null, physicalLine.getY(), gutterWidth, foreground);
             gutter.drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + row), graphics);
         }
     }
 
-    private AttributedString createLineNumberString(Integer lineNumber, int gutterWidth, TextColor foreground) {
+    private AttributedString createLineNumberString(Integer lineNumber, int physicalLine, int gutterWidth, TextColor foreground) {
         var gutter = new AttributedString();
         if (gutterWidth <= 0) {
             return gutter;
@@ -511,7 +540,14 @@ public class BufferView extends View {
                     foreground, UiTheme.SURFACE_MUTED);
             return gutter;
         }
-        int numberWidth = gutterWidth - 1;
+        int blameWidth = isGitBlameEnabled() ? Math.min(blameGutterWidth(), Math.max(0, gutterWidth - 2)) : 0;
+        if (blameWidth > 0) {
+            String blame = physicalLine < _blameAnnotations.size() ? _blameAnnotations.get(physicalLine) : "Loading…";
+            if (blame.length() > blameWidth) blame = blame.substring(0, blameWidth);
+            gutter.append(blame + " ".repeat(Math.max(0, blameWidth - blame.length())), UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
+            gutter.append(" ", UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
+        }
+        int numberWidth = gutterWidth - blameWidth - 1;
         String number = lineNumber == null ? "" : Integer.toString(lineNumber);
         if (number.length() > numberWidth) {
             number = number.substring(number.length() - numberWidth);
@@ -520,6 +556,14 @@ public class BufferView extends View {
         gutter.append(padded, foreground, UiTheme.SURFACE_MUTED);
         gutter.append(GUTTER_SEPARATOR, UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
         return gutter;
+    }
+
+    private int blameGutterWidth() {
+        int width = 12;
+        for (String annotation : _blameAnnotations) {
+            width = Math.max(width, annotation == null ? 0 : annotation.length());
+        }
+        return Math.min(MAX_BLAME_WIDTH, width);
     }
 
     private void drawScrollbar(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,

@@ -2409,6 +2409,44 @@ public class Window implements Drawable {
         return _bufferContext;
     }
 
+    public void toggleGitBlame() {
+        BufferContext context = getBufferContext();
+        if (context == null || context.getBuffer().getPath() == null) {
+            if (_commandView != null) _commandView.setMessage("Git blame requires a file-backed buffer");
+            return;
+        }
+        BufferView view = context.getBufferView();
+        if (view.isGitBlameEnabled()) {
+            view.clearGitBlame();
+            if (_commandView != null) _commandView.setMessage("Git blame disabled");
+            return;
+        }
+        Path path = context.getBuffer().getPath();
+        int request = view.beginGitBlame();
+        view.setNeedsRedraw();
+        if (_commandView != null) _commandView.setMessage("Loading Git blame…");
+        Thread.ofVirtual().name("swim-git-blame").start(() -> {
+            List<String> loadedAnnotations;
+            try {
+                loadedAnnotations = GitBlame.load(path);
+            } catch (IOException e) {
+                loadedAnnotations = List.of();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            List<String> annotations = loadedAnnotations;
+            if (Window.getInstance() != this) return;
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                if (Window.getInstance() != this) return;
+                if (!view.applyGitBlame(request, annotations)) return;
+                if (_commandView != null) {
+                    _commandView.setMessage(annotations.isEmpty() ? "Git blame unavailable for this file" : "Git blame enabled");
+                }
+            }));
+        });
+    }
+
     public Character consumeSelectedRegister() {
         return getEditorState().consumeSelectedRegister();
     }

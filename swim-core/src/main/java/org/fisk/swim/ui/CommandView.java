@@ -63,6 +63,7 @@ public class CommandView extends View {
             new CommandSpec("debug", List.of("dbg"), "[providers|open|stop|continue|next|step|out|break|<provider> ...]",
                     "choose and run the project's debugger command, or run debugger commands"),
             new CommandSpec("git", List.of(), "[status]", "open the Git workspace"),
+            new CommandSpec("blame", List.of(), "", "toggle Git blame annotations for the current buffer"),
             new CommandSpec("split", List.of("sp"), "", "split the active pane below"),
             new CommandSpec("vsplit", List.of("vs"), "", "split the active pane to the right"),
             new CommandSpec("close", List.of(), "", "close the active pane"),
@@ -402,6 +403,9 @@ public class CommandView extends View {
             break;
         case "git":
             openGit(argument);
+            break;
+        case "blame":
+            Window.getInstance().toggleGitBlame();
             break;
         case "split":
         case "sp":
@@ -849,7 +853,7 @@ public class CommandView extends View {
                 "restarting language servers requires host action");
         case "debug", "dbg" -> blockEditorDriveCommand(window, rawCommand,
                 "debugger commands are outside the editor-control sandbox");
-        case "git" -> blockEditorDriveCommand(window, rawCommand,
+        case "git", "blame" -> blockEditorDriveCommand(window, rawCommand,
                 "git UI commands are outside the editor-control sandbox");
         case "tab-rename", "rename-tab", "rename-window",
                 "tab-move", "move-tab", "move-window",

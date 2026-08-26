@@ -59,6 +59,22 @@ class CommandViewTest {
     Path tempDir;
 
     @Test
+    void blameCommandTogglesAnnotationsForTheCurrentBuffer() throws IOException {
+        Path path = tempDir.resolve("blame-command.txt");
+        Files.writeString(path, "alpha\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 30, 8)) {
+            var window = harness.getWindow();
+            var view = window.getBufferContext().getBufferView();
+
+            window.getCommandView().execute("blame");
+            assertTrue(view.isGitBlameEnabled());
+            window.getCommandView().execute("blame");
+            assertFalse(view.isGitBlameEnabled());
+        }
+    }
+
+    @Test
     void deactivateIsSafeWhenWindowHasBeenDisposed() {
         var view = new CommandView(Rect.create(0, 0, 10, 1));
 

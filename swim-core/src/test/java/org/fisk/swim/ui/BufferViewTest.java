@@ -390,6 +390,21 @@ class BufferViewTest {
     }
 
     @Test
+    void gitBlameExpandsTheBufferFringeForPerLineAnnotations() throws Exception {
+        Path path = tempDir.resolve("blame-gutter.txt");
+        Files.writeString(path, "alpha\nbeta\n");
+
+        var context = new BufferContext(Rect.create(0, 0, 40, 10), path);
+        var view = context.getBufferView();
+        int normalFringeWidth = view.getTextColumnStart();
+        int request = view.beginGitBlame();
+        view.applyGitBlame(request, List.of("01234567 Ada", "89abcdef Grace"));
+
+        assertTrue(view.isGitBlameEnabled());
+        assertTrue(view.getTextColumnStart() > normalFringeWidth);
+    }
+
+    @Test
     void wrappedTextStopsBeforeScrollbarColumn() throws Exception {
         Path path = tempDir.resolve("wrap-scrollbar-boundary.txt");
         Files.writeString(path, "abcdefghijklmnop");
