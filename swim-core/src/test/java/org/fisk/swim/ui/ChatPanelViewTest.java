@@ -42,6 +42,37 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void upperCaseGIsTypedWhenFollowingTheLiveConversation() {
+        var view = new ChatPanelView(Rect.create(0, 0, 30, 6), "Nemo", ignored -> { });
+
+        for (char character : "Great work".toCharArray()) {
+            dispatch(view, new KeyStroke(character, false, false));
+        }
+
+        assertEquals("Great work", view.getInputText());
+    }
+
+    @Test
+    void ggAndGNavigateOnlyWhileReadingScrolledHistory() {
+        var view = new ChatPanelView(Rect.create(0, 0, 30, 5), "Nemo", ignored -> { });
+        for (int i = 0; i < 10; i++) {
+            view.appendMessage("nemo", "message " + i);
+        }
+        int bottom = view.getStartLine();
+
+        dispatch(view, new KeyStroke(KeyType.ArrowUp));
+        assertTrue(view.getStartLine() < bottom);
+        dispatch(view, new KeyStroke('g', false, false));
+        dispatch(view, new KeyStroke('g', false, false));
+        assertEquals(0, view.getStartLine());
+
+        dispatch(view, new KeyStroke('G', false, false));
+        assertEquals(bottom, view.getStartLine());
+        dispatch(view, new KeyStroke('G', false, false));
+        assertEquals("G", view.getInputText());
+    }
+
+    @Test
     void submittingMessageReturnsTranscriptToBottom() {
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> { });
         for (int i = 0; i < 10; i++) {
@@ -334,6 +365,7 @@ class ChatPanelViewTest {
         dispatch(view, new KeyStroke(KeyType.PageDown));
         assertEquals(bottom, view.getStartLine());
 
+        dispatch(view, new KeyStroke(KeyType.ArrowUp));
         dispatch(view, new KeyStroke('g', false, false));
         dispatch(view, new KeyStroke('g', false, false));
         assertEquals(0, view.getStartLine());

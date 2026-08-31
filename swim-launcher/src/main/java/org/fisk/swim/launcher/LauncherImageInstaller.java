@@ -407,7 +407,7 @@ public final class LauncherImageInstaller {
                                 }
                                 return new LaunchRequest(normalizeName(args[1]), List.of());
                             }
-                            return new LaunchRequest(swim.sessionName(), Arrays.asList(args == null ? new String[0] : args));
+                            return new LaunchRequest(swim.newSessionName(), Arrays.asList(args == null ? new String[0] : args));
                         }
                     }
 
@@ -702,6 +702,18 @@ public final class LauncherImageInstaller {
                     private static String sessionName() {
                         String session = System.getenv("SWIM_SESSION");
                         return normalizeName(session);
+                    }
+
+                    private static String newSessionName() {
+                        String requested = System.getenv("SWIM_SESSION");
+                        if (requested != null && !requested.isBlank()) {
+                            return normalizeName(requested);
+                        }
+                        Path directory = clientWorkingDirectory().getFileName();
+                        String prefix = directory == null ? "swim" : directory.toString();
+                        String unique = Long.toUnsignedString(ProcessHandle.current().pid(), 36)
+                                + "-" + Long.toUnsignedString(System.nanoTime(), 36);
+                        return normalizeName(prefix + "-" + unique);
                     }
 
                     private static String normalizeName(String session) {

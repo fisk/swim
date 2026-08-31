@@ -227,8 +227,10 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         hints.add(KeyBindingHint.of("<CTRL>-e", "History", "scroll down"));
         hints.add(KeyBindingHint.of("<PAGEUP>", "History", "previous page"));
         hints.add(KeyBindingHint.of("<PAGEDOWN>", "History", "next page"));
-        hints.add(KeyBindingHint.of("gg", "History", "top (empty prompt)"));
-        hints.add(KeyBindingHint.of("G", "History", "bottom (empty prompt)"));
+        if (canNavigateHistory()) {
+            hints.add(KeyBindingHint.of("gg", "History", "top (empty prompt)"));
+            hints.add(KeyBindingHint.of("G", "History", "bottom (empty prompt)"));
+        }
         hints.add(KeyBindingHint.of("<TAB>", "Commands", "complete command"));
         hints.add(KeyBindingHint.of("<REVERSE-TAB>", "Commands", "previous match"));
         if (_pending) {
@@ -840,6 +842,10 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         _startLine = Math.max(0, getDisplayRows().size() - bodyHeight());
     }
 
+    private boolean canNavigateHistory() {
+        return !isAtBottom();
+    }
+
     private boolean isAtBottom() {
         return _startLine >= Math.max(0, getDisplayRows().size() - bodyHeight());
     }
@@ -1080,11 +1086,14 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
                 }
                 return Response.NO;
             }
-            if (_input.isEmpty() && character == 'G') {
-                _responseAction = this::scrollToBottom;
+            if (canNavigateHistory() && _input.isEmpty() && character == 'G') {
+                _responseAction = () -> {
+                    _goToTopPending = false;
+                    scrollToBottom();
+                };
                 return Response.YES;
             }
-            if (_input.isEmpty() && character == 'g') {
+            if (canNavigateHistory() && _input.isEmpty() && character == 'g') {
                 if (_goToTopPending) {
                     _responseAction = () -> {
                         _goToTopPending = false;

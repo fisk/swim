@@ -303,6 +303,7 @@ class MainTest {
         assertTrue(content.contains("redirectInput(ProcessBuilder.Redirect.from(Path.of(\"/dev/null\").toFile()))"));
         assertFalse(content.contains("redirectInput(ProcessBuilder.Redirect.DISCARD)"));
         assertTrue(content.contains("\"--attach\""));
+        assertTrue(content.contains("newSessionName()"));
         assertTrue(content.contains("\"--kill-session\""));
         assertTrue(Files.isExecutable(launcher));
     }
@@ -443,6 +444,16 @@ class MainTest {
                 System.setProperty(SwimServerSessions.PROPERTY_SOCKET, previous);
             }
         }
+    }
+
+    @Test
+    void swimSessionClientCreatesANewSessionByDefault() {
+        String first = SwimSessionClient.newSessionName();
+        String second = SwimSessionClient.newSessionName();
+
+        assertFalse("default".equals(first));
+        assertFalse("default".equals(second));
+        assertFalse(first.equals(second));
     }
 
     @Test

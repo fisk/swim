@@ -372,6 +372,7 @@ public class NemoClient {
         private Configuration _configuration;
         private String _modelOverride = "";
         private String _reasoningEffortOverride = "";
+        private String _goal = "";
         private ChatPanelView _panelView;
         private boolean _pending;
         private long _pendingStartedAtMillis;
@@ -4994,6 +4995,9 @@ public class NemoClient {
                         conversation._reasoningEffortOverride = compactRawBody(
                                 sessionObject.get("reasoning_effort_override").getAsString());
                     }
+                    if (sessionObject.has("goal")) {
+                        conversation._goal = compactRawBody(sessionObject.get("goal").getAsString());
+                    }
                     JsonArray turns = sessionObject.getAsJsonArray("turns");
                     if (turns != null) {
                         for (JsonElement turnElement : turns) {
@@ -5063,6 +5067,9 @@ public class NemoClient {
             }
             if (!conversation._reasoningEffortOverride.isBlank()) {
                 session.addProperty("reasoning_effort_override", conversation._reasoningEffortOverride);
+            }
+            if (!conversation._goal.isBlank()) {
+                session.addProperty("goal", conversation._goal);
             }
 
             var turns = new JsonArray();
@@ -5706,6 +5713,10 @@ public class NemoClient {
 
         var promptTurns = new ArrayList<>(conversation._turns);
         promptTurns.addAll(extraPromptTurns);
+        if (!conversation._goal.isBlank()) {
+            promptTurns.add(new ChatTurn("goal", "Active goal: " + conversation._goal
+                    + "\nKeep working toward this goal until it is achieved, blocked, or the user changes it."));
+        }
         var requestConfiguration = conversation._configuration;
         var requestContext = conversation._context;
         var executionSession = new ConversationToolExecutionSession(conversation, requestId);
@@ -5771,6 +5782,7 @@ public class NemoClient {
             new CommandSpec("model", List.of(), "[name]", "show or select the model for this conversation"),
             new CommandSpec("reasoning", List.of("reasoning-effort"), "[level]",
                     "show or select the reasoning effort for this conversation"),
+            new CommandSpec("goal", List.of(), "[objective|clear]", "show, set, or clear this conversation's active goal"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
             new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<conversation-id> <message>", "send a message to a worker without switching"),
@@ -5924,6 +5936,9 @@ public class NemoClient {
         case ":reasoning-effort":
             handleReasoningCommand(conversation, argument);
             return;
+        case ":goal":
+            handleGoalCommand(conversation, argument);
+            return;
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
@@ -5950,7 +5965,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :usage, :model [name], :reasoning [level], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :usage, :model [name], :reasoning [level], :goal [objective|clear], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -5979,6 +5994,31 @@ public class NemoClient {
                     conversation._reasoningEffortOverride = value;
                     conversation._configuration = conversation._configuration.withReasoningEffort(value);
                 });
+    }
+
+    private void handleGoalCommand(Conversation conversation, String argument) {
+        String goal = argument.trim();
+        if (goal.isEmpty()) {
+            appendAssistantNote(conversation, conversation._goal.isBlank()
+                    ? "No active goal. Use :goal <objective> to set one."
+                    : "Active goal: " + conversation._goal);
+            return;
+        }
+        if ("clear".equalsIgnoreCase(goal)) {
+            if (conversation._goal.isBlank()) {
+                appendAssistantNote(conversation, "No active goal to clear.");
+                return;
+            }
+            conversation._goal = "";
+            conversation._updatedAtMillis = System.currentTimeMillis();
+            persistSessions();
+            appendAssistantNote(conversation, "Cleared the active goal.");
+            return;
+        }
+        conversation._goal = goal;
+        conversation._updatedAtMillis = System.currentTimeMillis();
+        persistSessions();
+        appendAssistantNote(conversation, "Active goal set: " + goal);
     }
 
     private void handleRuntimeOptionCommand(Conversation conversation, String argument, String label, String current,

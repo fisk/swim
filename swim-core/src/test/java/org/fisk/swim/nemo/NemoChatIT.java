@@ -84,6 +84,37 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void goalCommandPersistsAndAddsTheObjectiveToEveryRequest() throws Exception {
+        var requestCount = new AtomicInteger();
+        var requestBody = new AtomicReference<>("");
+        var server = startServer(requestCount, requestBody, List.of(textResponse("Goal-aware answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            Path file = writeFile("goal.txt", "class Goal {}\n");
+            try (var harness = HeadlessWindowHarness.create(file, 80, 16)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":goal Fix the parser regression");
+                waitForLine(panel, "Active goal set: Fix the parser regression");
+                submit(panel, "Please start.");
+                waitForLine(panel, "Goal-aware answer");
+                assertTrue(requestBody.get().contains("goal> Active goal: Fix the parser regression"));
+                assertTrue(Files.readString(tempDir.resolve(".swim/nemo/sessions.json"))
+                        .contains("Fix the parser regression"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void showsToolProgressBeforeFinalAnswerArrives() throws Exception {
         var requestCount = new AtomicInteger();
         var server = startServer(requestCount, List.of(0L, 1500L), List.of(
