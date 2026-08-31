@@ -449,6 +449,14 @@ final class NemoLangChain4jClient {
                 JsonObjectSchema.builder()
                         .additionalProperties(false)
                         .build()));
+        tools.add(tool("request_directory_access",
+                "Request explicit user approval for recursive read/write access to a directory outside the workspace root. Use this when a required file is in a parent or sibling directory; never assume that an escaped path is available. Approval extends only to the requested directory subtree.",
+                JsonObjectSchema.builder()
+                        .addStringProperty("path", "Directory path, relative to the workspace root or absolute.")
+                        .addStringProperty("access", "Optional access mode. Only read-write is supported.")
+                        .required(List.of("path"))
+                        .additionalProperties(false)
+                        .build()));
         tools.add(tool("analyze_open_file",
                 "Open a hidden project-local document for LSP analysis and return an analysis_handle. Call lsp_query with that handle, then analyze_close_file when finished.",
                 JsonObjectSchema.builder().addStringProperty("path", "Workspace-relative source file path.")

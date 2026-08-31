@@ -3,7 +3,9 @@ package org.fisk.swim.nemo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.nio.file.Path;
 
+import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.text.BufferContext;
 
 final class NemoPromptBuilder {
@@ -23,7 +25,7 @@ final class NemoPromptBuilder {
         int promptBudget = promptBudgetChars(configuration);
         String path = String.valueOf(buffer.getPath());
 
-        String capabilities = capabilitiesSection(configuration);
+        String capabilities = capabilitiesSection(configuration, workspaceRoot(configuration, buffer.getPath()));
         String fullSkills = skillsSection(skills);
         String fullPrompt = assemblePrompt(configuration.systemPrompt(), capabilities, fullSkills, fullTranscript,
                 path, "File contents", fullFile);
@@ -34,15 +36,15 @@ final class NemoPromptBuilder {
             return fullPrompt;
         }
 
-        return buildBudgetedInput(path, fullFile, buffer.getCursor().getPosition(),
+        return buildBudgetedInput(path, fullFile, buffer.getCursor().getPosition(), workspaceRoot(configuration, buffer.getPath()),
                 turns, configuration, skills, promptBudget);
     }
 
-    private static String buildBudgetedInput(String path, String fullFile, int cursorPosition,
+    private static String buildBudgetedInput(String path, String fullFile, int cursorPosition, Path workspaceRoot,
             List<NemoClient.ChatTurn> turns, NemoClient.Configuration configuration, List<NemoSkillDocument> skills,
             int promptBudget) {
         String systemPrompt = configuration.systemPrompt();
-        String capabilities = capabilitiesSection(configuration);
+        String capabilities = capabilitiesSection(configuration, workspaceRoot);
         String conversationHeader = "\n\nConversation:\n";
         String fileHeader = "\n\nCurrent file:\n" + path + "\n\nFile contents (budgeted around cursor):\n";
         int variableBudget = Math.max(0,
@@ -108,10 +110,24 @@ final class NemoPromptBuilder {
                 + fileContents;
     }
 
-    private static String capabilitiesSection(NemoClient.Configuration configuration) {
+    private static Path workspaceRoot(NemoClient.Configuration configuration, Path bufferPath) {
+        if (configuration.workspaceRoot() != null) {
+            return configuration.workspaceRoot().toAbsolutePath().normalize();
+        }
+        Path projectRoot = bufferPath == null ? null : ProjectPaths.getProjectRootPath(bufferPath);
+        if (projectRoot != null) {
+            return projectRoot.toAbsolutePath().normalize();
+        }
+        return bufferPath == null ? Path.of(System.getProperty("user.dir")).toAbsolutePath()
+                : bufferPath.toAbsolutePath().getParent();
+    }
+
+    private static String capabilitiesSection(NemoClient.Configuration configuration, Path workspaceRoot) {
         var lines = new ArrayList<String>();
         lines.add("\n\nNemo runtime capabilities:");
         lines.add("- permission mode: " + configuration.toolPermissionMode().replace('_', '-'));
+        lines.add("- directory access: " + NemoClient.directoryAccessSummary(workspaceRoot)
+                + ". Do not request_directory_access for a path already inside one of these directories.");
         lines.add("- current_editor_context reports the active editor workspace, current file path, and project root without reading file or screen contents.");
         if ("read_only".equals(configuration.toolPermissionMode())) {
             lines.add("- mutating tools are disabled; inspect files and explain the change needed.");

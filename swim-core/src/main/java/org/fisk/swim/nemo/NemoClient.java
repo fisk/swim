@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.FileVisitResult;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
@@ -129,6 +130,7 @@ public class NemoClient {
     private final Map<String, AsyncShell> _asyncShells = new LinkedHashMap<>();
     private final NemoLspAnalysisLeaseManager _lspAnalysisLeases = new NemoLspAnalysisLeaseManager();
     private final List<ApprovalRule> _approvalRules = new ArrayList<>();
+    private final List<DirectoryGrant> _directoryGrants = new ArrayList<>();
     private final List<ApprovedShellLine> _approvedShellLines = new ArrayList<>();
     private EditorControlLease _editorControlLease;
     private boolean _sessionsLoaded;
@@ -161,6 +163,7 @@ public class NemoClient {
         _asyncShells.clear();
         _lspAnalysisLeases.closeAll("standalone");
         _approvalRules.clear();
+        _directoryGrants.clear();
         _approvedShellLines.clear();
         _editorControlLease = null;
         _sessionsLoaded = false;
@@ -248,6 +251,10 @@ public class NemoClient {
     }
 
     private record ApprovalRule(String id, String workspaceRoot, String toolName, String signature, long createdAtMillis) {
+    }
+
+    /** An explicitly approved recursive extension of a conversation workspace. */
+    private record DirectoryGrant(String workspaceRoot, String directory, boolean write, boolean persisted) {
     }
 
     private record ApprovedShellLine(String workspaceRoot, String name, String cwd, String command, long createdAtMillis) {
@@ -1928,6 +1935,7 @@ public class NemoClient {
         case "screen_snapshot" -> withOutputStatus("", output);
         case "drive_editor" -> withOutputStatus(argumentSummary(call.arguments(), "input", "max_events"), output);
         case "finish_editor_control" -> firstOutputLine(output);
+        case "request_directory_access" -> withOutputStatus(argumentSummary(call.arguments(), "path", "access"), output);
         case "current_editor_context" -> firstOutputLine(output);
         case "list_files" -> argumentSummary(call.arguments(), "path", "directory", "max_results");
         case "find" -> argumentSummary(call.arguments(), "query", "directory", "max_results");
@@ -2177,6 +2185,8 @@ public class NemoClient {
             return new ToolExecutionResult(_instance.callPluginTool(configuration, context, call, executionSession));
         }
         return switch (call.name()) {
+        case "request_directory_access" -> new ToolExecutionResult(
+                requestDirectoryAccess(configuration, context, call.arguments(), executionSession));
         case "web_search" -> new ToolExecutionResult(webSearch(call.arguments()));
         case "delegate_task" -> new ToolExecutionResult(_instance.delegateTask(configuration, context, call.arguments()));
         case "worker_status" -> new ToolExecutionResult(_instance.workerStatus(configuration, context, call.arguments()));
@@ -2619,6 +2629,7 @@ public class NemoClient {
         var lines = new ArrayList<String>();
         lines.add("workspace: " + workspaceKind);
         lines.add("workspace_root: " + workspaceRoot);
+        lines.add("directory_access: " + _instance.directoryAccessSummary(workspaceRoot));
         if (currentFile == null) {
             lines.add("current_file: (none)");
         } else {
@@ -3064,7 +3075,7 @@ public class NemoClient {
         Path path = requested.isAbsolute()
                 ? requested.normalize()
                 : workspaceRoot.resolve(requested).normalize();
-        if (!isPathInsideWorkspaceOrProjectExtension(workspaceRoot, path)) {
+        if (!isPathInsideWorkspaceOrGrantedDirectory(workspaceRoot, path)) {
             throw new IOException("Path escapes workspace root: " + rawPath);
         }
         Path fallback = maybeStripWorkspaceRootPrefix(workspaceRoot, requested, path);
@@ -3086,10 +3097,109 @@ public class NemoClient {
         Path path = requested.isAbsolute()
                 ? requested.normalize()
                 : base.resolve(requested).normalize();
-        if (!isPathInsideWorkspaceOrProjectExtension(workspaceRoot, path)) {
+        if (!isPathInsideWorkspaceOrGrantedDirectory(workspaceRoot, path)) {
             throw new IOException("Path escapes workspace root: " + rawPath);
         }
         return path;
+    }
+
+    private static String requestDirectoryAccess(Configuration configuration, BufferContext context, JsonObject arguments,
+            ToolExecutionSession executionSession) throws IOException, InterruptedException {
+        if (executionSession == null) {
+            return "request_directory_access blocked by Nemo approval: an active Nemo session is required.";
+        }
+        String rawPath = stringArgument(arguments, "path", "").trim();
+        String access = stringArgument(arguments, "access", "read-write").trim().toLowerCase(java.util.Locale.ROOT);
+        boolean write = "write".equals(access) || "read-write".equals(access) || "read/write".equals(access);
+        if (!write) {
+            return "request_directory_access failed: access must be read-write.";
+        }
+        if (rawPath.isBlank()) {
+            return "request_directory_access failed: path is required.";
+        }
+        Path root = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        Path requested = Path.of(rawPath);
+        Path directory = (requested.isAbsolute() ? requested : root.resolve(requested)).toAbsolutePath().normalize();
+        if (!Files.isDirectory(directory)) {
+            return "request_directory_access failed: not a directory: " + rawPath;
+        }
+        DirectoryGrant existing = _instance.coveringDirectoryGrant(root, directory);
+        if (existing != null) {
+            return "Nemo already has recursive read/write access to " + directory
+                    + " through existing grant " + existing.directory() + ".";
+        }
+        ApprovalResult approval = executionSession.requestApproval(root, new ToolApprovalRequest(
+                "request_directory_access",
+                "recursive directory read/write access",
+                "Allow Nemo read/write access to " + directory
+                        + " and every file below it. This extends the workspace sandbox for this workspace.",
+                "directory-access:" + directory + ":" + (write ? "write" : "read"),
+                true));
+        if (!approval.approved()) {
+            return "request_directory_access blocked by Nemo approval: user denied access to " + directory + ".";
+        }
+        _instance.addDirectoryGrant(root, directory, write, approval.persisted());
+        return "Granted Nemo read/write access to " + directory
+                + " recursively" + (approval.persisted() ? " and saved it for this workspace." : " for this session.");
+    }
+
+    private synchronized boolean isPathInsideGrantedDirectory(Path workspaceRoot, Path path) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        Path normalizedPath = path.toAbsolutePath().normalize();
+        for (DirectoryGrant grant : _directoryGrants) {
+            if (grant.workspaceRoot().equals(root) && normalizedPath.startsWith(Path.of(grant.directory()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private synchronized DirectoryGrant coveringDirectoryGrant(Path workspaceRoot, Path directory) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        Path normalizedDirectory = directory.toAbsolutePath().normalize();
+        return _directoryGrants.stream()
+                .filter(grant -> grant.workspaceRoot().equals(root)
+                        && normalizedDirectory.startsWith(Path.of(grant.directory())))
+                .findFirst()
+                .orElse(null);
+    }
+
+    static String directoryAccessSummary(Path workspaceRoot) {
+        return _instance.directoryAccessSummaryLocked(workspaceRoot);
+    }
+
+    private synchronized String directoryAccessSummaryLocked(Path workspaceRoot) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        var directories = topLevelDirectoryGrants(root).stream().map(DirectoryGrant::directory).toList();
+        return directories.isEmpty() ? "workspace only" : "workspace plus " + String.join(", ", directories);
+    }
+
+    private List<DirectoryGrant> topLevelDirectoryGrants(String workspaceRoot) {
+        return _directoryGrants.stream()
+                .filter(grant -> grant.workspaceRoot().equals(workspaceRoot))
+                .filter(grant -> _directoryGrants.stream().noneMatch(other -> other != grant
+                        && other.workspaceRoot().equals(workspaceRoot)
+                        && Path.of(grant.directory()).startsWith(Path.of(other.directory()))))
+                .toList();
+    }
+
+    private synchronized void addDirectoryGrant(Path workspaceRoot, Path directory, boolean write, boolean persisted) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        String normalizedDirectory = directory.toAbsolutePath().normalize().toString();
+        DirectoryGrant existing = coveringDirectoryGrant(workspaceRoot, directory);
+        if (existing != null) {
+            return;
+        }
+        _directoryGrants.removeIf(grant -> grant.workspaceRoot().equals(root)
+                && grant.directory().equals(normalizedDirectory));
+        _directoryGrants.add(new DirectoryGrant(root, normalizedDirectory, write, persisted));
+        if (persisted) {
+            persistApprovals();
+        }
     }
 
     private static Path maybeStripWorkspaceRootPrefix(Path workspaceRoot, Path requested, Path resolvedPath) {
@@ -3109,10 +3219,11 @@ public class NemoClient {
         return stripped;
     }
 
-    private static boolean isPathInsideWorkspaceOrProjectExtension(Path workspaceRoot, Path path) {
+    private static boolean isPathInsideWorkspaceOrGrantedDirectory(Path workspaceRoot, Path path) {
         if (path.startsWith(workspaceRoot)) return true;
         SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
-        return project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith);
+        return (project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith))
+                || _instance.isPathInsideGrantedDirectory(workspaceRoot, path);
     }
 
     private static Path requireDirectory(Path path, String rawPath) throws IOException {
@@ -4710,6 +4821,9 @@ public class NemoClient {
     private static List<Path> sandboxWritableRoots(Path workspaceRoot) throws IOException {
         var roots = new LinkedHashSet<Path>();
         addSandboxWritableRoot(roots, workspaceRoot);
+        for (Path grant : _instance.writableDirectoryGrants(workspaceRoot)) {
+            addSandboxWritableRoot(roots, grant);
+        }
         SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
         if (project != null) {
             for (Path root : project.nemoWorkspaceWriteRoots()) {
@@ -4717,6 +4831,15 @@ public class NemoClient {
             }
         }
         return List.copyOf(roots);
+    }
+
+    private synchronized List<Path> writableDirectoryGrants(Path workspaceRoot) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        return _directoryGrants.stream()
+                .filter(grant -> grant.write() && grant.workspaceRoot().equals(root))
+                .map(grant -> Path.of(grant.directory()))
+                .toList();
     }
 
     private static void addSandboxWritableRoot(LinkedHashSet<Path> roots, Path root) throws IOException {
@@ -5095,6 +5218,7 @@ public class NemoClient {
         }
         _approvalsLoaded = true;
         _approvalRules.clear();
+        _directoryGrants.clear();
         _approvedShellLines.clear();
         _nextApprovalRuleNumber = 1;
 
@@ -5126,6 +5250,17 @@ public class NemoClient {
                 }
             }
             _nextApprovalRuleNumber = Math.max(_nextApprovalRuleNumber, highestRuleNumber + 1);
+            JsonArray directoryGrants = root.getAsJsonArray("directory_grants");
+            if (directoryGrants != null) {
+                for (JsonElement element : directoryGrants) {
+                    JsonObject grant = element.getAsJsonObject();
+                    _directoryGrants.add(new DirectoryGrant(
+                            grant.get("workspace_root").getAsString(),
+                            grant.get("directory").getAsString(),
+                            !grant.has("write") || grant.get("write").getAsBoolean(),
+                            true));
+                }
+            }
             JsonArray shellLines = root.getAsJsonArray("shell_lines");
             if (shellLines != null) {
                 for (JsonElement element : shellLines) {
@@ -5143,6 +5278,7 @@ public class NemoClient {
         } catch (Exception e) {
             _log.error("Unable to load Nemo approvals from {}", approvalsPath, e);
             _approvalRules.clear();
+            _directoryGrants.clear();
             _approvedShellLines.clear();
             _nextApprovalRuleNumber = 1;
         }
@@ -5162,6 +5298,18 @@ public class NemoClient {
             rules.add(object);
         }
         root.add("rules", rules);
+        var directoryGrants = new JsonArray();
+        for (DirectoryGrant grant : _directoryGrants) {
+            if (!grant.persisted()) {
+                continue;
+            }
+            var object = new JsonObject();
+            object.addProperty("workspace_root", grant.workspaceRoot());
+            object.addProperty("directory", grant.directory());
+            object.addProperty("write", grant.write());
+            directoryGrants.add(object);
+        }
+        root.add("directory_grants", directoryGrants);
         var shellLines = new JsonArray();
         for (ApprovedShellLine shellLine : _approvedShellLines) {
             var object = new JsonObject();
@@ -5796,6 +5944,8 @@ public class NemoClient {
                     "show or select the reasoning effort for this conversation"),
             new CommandSpec("goal", List.of(), "[objective|clear]", "show, set, or clear this conversation's active goal"),
             new CommandSpec("permissions", List.of(), "[read-only|workspace-write|full-access]", "show or change Nemo tool permissions"),
+            new CommandSpec("grant", List.of("grants"), "[directory]", "grant recursive read/write access outside the workspace"),
+            new CommandSpec("ungrant", List.of(), "<directory|all>", "remove a recursive directory access grant"),
             new CommandSpec("mcp", List.of(), "", "list configured MCP servers and exposed tools"),
             new CommandSpec("tell", List.of(), "<conversation-id> <message>", "send a message to a worker without switching"),
             new CommandSpec("approve", List.of(), "<approval-id> [always|shell-10m]", "approve a pending Nemo tool request"),
@@ -5954,6 +6104,15 @@ public class NemoClient {
         case ":permissions":
             handlePermissionsCommand(conversation, argument);
             return;
+        case ":grant":
+            handleGrantCommand(conversation, argument);
+            return;
+        case ":grants":
+            appendAssistantNote(conversation, formatDirectoryGrants(conversation._workspaceRoot));
+            return;
+        case ":ungrant":
+            handleUngrantsCommand(conversation, argument);
+            return;
         case ":mcp":
             appendAssistantNote(conversation, _mcpClient.status(conversation._configuration.mcpServers()));
             return;
@@ -5977,7 +6136,7 @@ public class NemoClient {
             return;
         case ":help":
             appendAssistantNote(conversation,
-                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :usage, :model [name], :reasoning [level], :goal [objective|clear], :permissions [read-only|workspace-write|full-access], :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
+                    "Available commands: :conversations, :abort [conversation-id|all], :workers, :new [title], :switch <conversation-id>, :rename <title>, :clear, :reset [conversation-id], :delete [conversation-id], :shells, :shell_delete <shell-id>, :usage, :model [name], :reasoning [level], :goal [objective|clear], :permissions [read-only|workspace-write|full-access], :grant [directory], :ungrant <directory|all>, :mcp, :tell <conversation-id> <message>, approval options from the : menu, :approvals, :unapprove <rule-id|all>, :swim-help [topic], :help, :q\n"
                             + "Input: Enter sends; Shift-Enter, Ctrl-Enter, Alt-Enter, and Ctrl-J insert newlines. Pasted multiline text stays in the draft. The swim_help tool and :swim-help command expose the editor manual to Nemo. current_editor_context reports the active workspace, project, and file path without reading contents. The web_search, delegate_task, start_editor_control, screen_snapshot, and drive_editor tools are enabled by default unless disabled in nemo.conf. screen_snapshot and drive_editor require an active editor-control session started with host approval, and private/non-buffer workspaces are blocked. Loaded plugin tools are exposed as plugin__plugin__tool and follow Nemo permissions and approvals. Delegated workers can be inspected with worker_status/read_worker, messaged with :tell or message_worker, and joined with bounded join_worker. Editor-control approvals appear in a host overlay Nemo cannot see or control; Esc in that overlay stops the request.");
             return;
         case ":q":
@@ -6092,6 +6251,72 @@ public class NemoClient {
 
         conversation._configuration = conversation._configuration.withToolPermissionMode(mode);
         appendAssistantNote(conversation, formatPermissions(conversation._configuration));
+    }
+
+    private void handleGrantCommand(Conversation conversation, String argument) {
+        if (argument.isBlank()) {
+            appendAssistantNote(conversation, formatDirectoryGrants(conversation._workspaceRoot)
+                    + "\n\nUsage: :grant <directory>");
+            return;
+        }
+        try {
+            Path root = conversation._workspaceRoot.toAbsolutePath().normalize();
+            Path requested = Path.of(argument);
+            Path directory = (requested.isAbsolute() ? requested : root.resolve(requested)).toAbsolutePath().normalize();
+            if (!Files.isDirectory(directory)) {
+                appendAssistantNote(conversation, "Not a directory: " + argument);
+                return;
+            }
+            addDirectoryGrant(root, directory, true, true);
+            appendAssistantNote(conversation, "Granted recursive read/write access to " + directory + ".");
+        } catch (InvalidPathException e) {
+            appendAssistantNote(conversation, "Invalid directory path: " + argument);
+        }
+    }
+
+    private void handleUngrantsCommand(Conversation conversation, String argument) {
+        String target = argument.trim();
+        if (target.isBlank()) {
+            appendAssistantNote(conversation, "Usage: :ungrant <directory|all>");
+            return;
+        }
+        int removed = removeDirectoryGrants(conversation._workspaceRoot, target);
+        appendAssistantNote(conversation, removed == 0 ? "No directory access grant matched " + target + "."
+                : "Removed " + removed + " directory access grant" + (removed == 1 ? "." : "s."));
+    }
+
+    private synchronized String formatDirectoryGrants(Path workspaceRoot) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        var lines = new ArrayList<String>();
+        lines.add("Directory access grants:");
+        topLevelDirectoryGrants(root).forEach(grant ->
+                lines.add("- read/write recursive | " + grant.directory()
+                        + (grant.persisted() ? " | saved" : " | this session")));
+        if (lines.size() == 1) lines.add("(none)");
+        return String.join("\n", lines);
+    }
+
+    private synchronized int removeDirectoryGrants(Path workspaceRoot, String target) {
+        ensureApprovalsLoaded();
+        String root = workspaceRoot.toAbsolutePath().normalize().toString();
+        String directory = null;
+        if (!"all".equalsIgnoreCase(target)) {
+            try {
+                Path requested = Path.of(target);
+                directory = (requested.isAbsolute() ? requested : workspaceRoot.resolve(requested))
+                        .toAbsolutePath().normalize().toString();
+            } catch (InvalidPathException e) {
+                return 0;
+            }
+        }
+        String targetDirectory = directory;
+        int before = _directoryGrants.size();
+        _directoryGrants.removeIf(grant -> grant.workspaceRoot().equals(root)
+                && (targetDirectory == null || grant.directory().equals(targetDirectory)));
+        int removed = before - _directoryGrants.size();
+        if (removed > 0) persistApprovals();
+        return removed;
     }
 
     private void handleTellCommand(Conversation conversation, String argument) {

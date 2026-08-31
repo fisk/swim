@@ -2,6 +2,7 @@ package org.fisk.swim.nemo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -602,6 +603,44 @@ class NemoClientTest {
     }
 
     @Test
+    void directoryAccessApprovalExtendsOnlyTheApprovedSubtree() throws Exception {
+        Path project = tempDir.resolve("project");
+        Path shared = tempDir.resolve("shared");
+        Path sibling = tempDir.resolve("private");
+        Files.createDirectories(project);
+        Files.createDirectories(shared);
+        Files.createDirectories(shared.resolve("nested"));
+        Files.createDirectories(sibling);
+        Files.writeString(shared.resolve("note.txt"), "shared\n");
+        Files.writeString(sibling.resolve("secret.txt"), "secret\n");
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "project\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
+        var session = new RecordingToolSession();
+
+        assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("before", "read_file", json(Map.of("path", "../shared/note.txt")))));
+
+        String granted = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("grant", "request_directory_access", json(Map.of("path", "../shared"))), session);
+        assertTrue(granted.contains("Granted Nemo read/write access"));
+        assertEquals(1, session.approvals.get());
+        assertEquals("request_directory_access", session.request.get().toolName());
+
+        String alreadyGranted = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("nested", "request_directory_access", json(Map.of("path", "../shared/nested"))), session);
+        assertTrue(alreadyGranted.contains("already has recursive read/write access"));
+        assertEquals(1, session.approvals.get());
+
+        String readable = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("read", "read_file", json(Map.of("path", "../shared/note.txt"))));
+        assertTrue(readable.contains("shared"));
+        assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("sibling", "read_file", json(Map.of("path", "../private/secret.txt")))));
+    }
+
+    @Test
     void executesMcpToolAfterApproval() throws Exception {
         Path project = tempDir.resolve("mcp-workspace");
         Files.createDirectories(project);
@@ -871,7 +910,7 @@ class NemoClientTest {
 
         var tools = NemoLangChain4jClient.buildToolSpecifications(configuration);
 
-        assertEquals(38, tools.size());
+        assertEquals(39, tools.size());
         assertEquals("web_search", tools.get(0).name());
         assertEquals("delegate_task", tools.get(1).name());
         assertEquals("worker_status", tools.get(2).name());
@@ -884,9 +923,10 @@ class NemoClientTest {
         assertEquals("finish_editor_control", tools.get(9).name());
         assertEquals("swim_help", tools.get(10).name());
         assertEquals("current_editor_context", tools.get(11).name());
-        assertEquals("analyze_open_file", tools.get(12).name());
-        assertEquals("lsp_query", tools.get(13).name());
-        assertEquals("analyze_close_file", tools.get(14).name());
+        assertEquals("request_directory_access", tools.get(12).name());
+        assertEquals("analyze_open_file", tools.get(13).name());
+        assertEquals("lsp_query", tools.get(14).name());
+        assertEquals("analyze_close_file", tools.get(15).name());
         assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("replace_lines_if_unchanged")));
         assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("replace_function_body_if_unchanged")));
         assertTrue(tools.stream().anyMatch(tool -> tool.name().equals("compile_translation_unit")));

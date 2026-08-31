@@ -1375,6 +1375,36 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void grantCommandAddsAndRemovesRecursiveDirectoryAccess() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path configDir = tempDir.resolve(".swim");
+        Files.createDirectories(configDir.resolve("nemo"));
+        Files.writeString(configDir.resolve("nemo/nemo.conf"), "");
+        Path file = writeFile("grant-command.txt", "class Demo {}\n");
+        try {
+            try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+
+                submit(panel, ":grant ..");
+                waitForLine(panel, "Granted recursive read/write access to " + tempDir.getParent());
+
+                submit(panel, ":grants");
+                waitForLine(panel, tempDir.getParent().toString());
+
+                submit(panel, ":ungrant ..");
+                waitForLine(panel, "Removed 1 directory access grant.");
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void modelAndReasoningCommandsListAndSelectConfiguredConversationOptions() throws Exception {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");
