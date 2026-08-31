@@ -26,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.session.SwimServerSession;
+import org.fisk.swim.session.SwimServerHeapUsage;
 import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.session.SwimServerTerminalSize;
 
@@ -100,6 +101,8 @@ final class SwimSessionServer {
             case "kill" -> handleKill(dataInput, dataOutput);
             case "resize" -> handleResize(dataInput, dataOutput);
             case "size" -> handleSize(dataInput, dataOutput);
+            case "client-heap" -> handleClientHeap(dataInput, dataOutput);
+            case "client-heap-usage" -> handleClientHeapUsage(dataInput, dataOutput);
             default -> writeError(dataOutput, "Unknown SWIM session request: " + requestType);
             }
         } catch (IOException | RuntimeException e) {
@@ -239,6 +242,27 @@ final class SwimSessionServer {
             output.writeBoolean(true);
             output.writeInt(size.rows());
             output.writeInt(size.columns());
+        }
+        output.flush();
+    }
+
+    private void handleClientHeap(DataInputStream input, DataOutputStream output) throws IOException {
+        ManagedSession target = _sessions.get(SwimServerSessions.normalizeName(input.readUTF()));
+        long used = input.readLong();
+        long committed = input.readLong();
+        if (target != null) target.setClientHeapUsage(used, committed);
+        output.writeUTF("OK");
+        output.flush();
+    }
+
+    private void handleClientHeapUsage(DataInputStream input, DataOutputStream output) throws IOException {
+        ManagedSession target = _sessions.get(SwimServerSessions.normalizeName(input.readUTF()));
+        SwimServerHeapUsage usage = target == null ? null : target.clientHeapUsage();
+        output.writeUTF("OK");
+        output.writeBoolean(usage != null);
+        if (usage != null) {
+            output.writeLong(usage.usedBytes());
+            output.writeLong(usage.committedBytes());
         }
         output.flush();
     }
@@ -427,6 +451,7 @@ final class SwimSessionServer {
         private volatile List<String> _launchArgs = List.of();
         private volatile ClientRequest _launchRequest;
         private volatile SwimServerTerminalSize _terminalSize = new SwimServerTerminalSize(24, 80);
+        private volatile SwimServerHeapUsage _clientHeapUsage;
 
         private ManagedSession(String name, Path workingDirectory, Path socketPath) {
             _name = name;
@@ -470,6 +495,14 @@ final class SwimSessionServer {
             long pid = running ? process.pid() : -1L;
             return new SwimServerSession(_name, _name.equals(currentSession), _client.get() != null, running, pid,
                     _launchArgs);
+        }
+
+        void setClientHeapUsage(long usedBytes, long committedBytes) {
+            _clientHeapUsage = new SwimServerHeapUsage(usedBytes, committedBytes);
+        }
+
+        SwimServerHeapUsage clientHeapUsage() {
+            return _clientHeapUsage;
         }
 
         void writeInput(byte[] buffer, int offset, int length) {

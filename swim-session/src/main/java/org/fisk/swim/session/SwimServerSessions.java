@@ -169,6 +169,33 @@ public final class SwimServerSessions {
         }
     }
 
+    public static void reportClientHeap(String targetSession, long usedBytes, long committedBytes) throws IOException {
+        try (SocketChannel channel = connect(requireSocketPath())) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("client-heap");
+            output.writeUTF(normalizeName(targetSession));
+            output.writeLong(Math.max(0, usedBytes));
+            output.writeLong(Math.max(1, committedBytes));
+            output.flush();
+            readOk(new DataInputStream(Channels.newInputStream(channel)));
+        }
+    }
+
+    public static Optional<SwimServerHeapUsage> clientHeapUsage() throws IOException {
+        try (SocketChannel channel = connect(requireSocketPath())) {
+            var output = new DataOutputStream(Channels.newOutputStream(channel));
+            output.writeUTF(MAGIC);
+            output.writeUTF("client-heap-usage");
+            output.writeUTF(currentSessionName());
+            output.flush();
+            var input = new DataInputStream(Channels.newInputStream(channel));
+            readOk(input);
+            if (!input.readBoolean()) return Optional.empty();
+            return Optional.of(new SwimServerHeapUsage(input.readLong(), input.readLong()));
+        }
+    }
+
     public static boolean ping(Path socketPath) {
         try (SocketChannel channel = connect(socketPath)) {
             var output = new DataOutputStream(Channels.newOutputStream(channel));

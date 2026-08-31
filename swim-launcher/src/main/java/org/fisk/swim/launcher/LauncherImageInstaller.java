@@ -581,6 +581,7 @@ public final class LauncherImageInstaller {
 
                     private static void relayResize(Path socket, String session, TerminalSize initialSize) {
                         TerminalSize previous = initialSize;
+                        long nextHeapReportNanos = 0;
                         while (!Thread.currentThread().isInterrupted()) {
                             try {
                                 Thread.sleep(250);
@@ -589,15 +590,34 @@ public final class LauncherImageInstaller {
                                 return;
                             }
                             TerminalSize current = TerminalMode.currentSize();
-                            if (current.equals(previous)) {
-                                continue;
+                            if (!current.equals(previous)) {
+                                try {
+                                    resizeSession(socket, session, current);
+                                    previous = current;
+                                } catch (IOException e) {
+                                    return;
+                                }
                             }
-                            try {
-                                resizeSession(socket, session, current);
-                                previous = current;
-                            } catch (IOException e) {
-                                return;
+                            long now = System.nanoTime();
+                            if (now >= nextHeapReportNanos) {
+                                reportClientHeap(socket, session);
+                                nextHeapReportNanos = now + Duration.ofSeconds(1).toNanos();
                             }
+                        }
+                    }
+
+                    private static void reportClientHeap(Path socket, String session) {
+                        Runtime runtime = Runtime.getRuntime();
+                        try (SocketChannel channel = connect(socket)) {
+                            DataOutputStream output = new DataOutputStream(Channels.newOutputStream(channel));
+                            output.writeUTF(MAGIC);
+                            output.writeUTF("client-heap");
+                            output.writeUTF(normalizeName(session));
+                            output.writeLong(Math.max(0, runtime.totalMemory() - runtime.freeMemory()));
+                            output.writeLong(Math.max(1, runtime.totalMemory()));
+                            output.flush();
+                            new DataInputStream(Channels.newInputStream(channel)).readUTF();
+                        } catch (IOException ignored) {
                         }
                     }
 

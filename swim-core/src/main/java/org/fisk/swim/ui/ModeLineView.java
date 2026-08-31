@@ -17,6 +17,7 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.RunnableEvent;
 import org.fisk.swim.mail.MailStatusService;
+import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.fileindex.ProjectPaths;
 import org.fisk.swim.lsp.DiagnosticCounts;
 import org.fisk.swim.lsp.DiagnosticService;
@@ -35,6 +36,7 @@ public class ModeLineView extends View {
     private final Timer _timer;
     private final MemoryMXBean _memoryBean;
     private final List<GarbageCollectorMXBean> _gcBeans;
+    private volatile MemoryUsage _clientHeapUsage;
     private Path _cachedBranchRoot;
     private String _cachedBranch = "";
 
@@ -157,16 +159,34 @@ public class ModeLineView extends View {
     }
 
     private AttributedString getHeapString() {
-        MemoryUsage usage = getHeapUsage();
+        var str = heapString("srv", getHeapUsage(), zgcCollectionLabel(_gcBeans));
+        MemoryUsage clientUsage = _clientHeapUsage;
+        if (clientUsage != null) {
+            str.append("  ", _foregroundColour, _backgroundColour);
+            str.append(heapString("cli", clientUsage, ""));
+        }
+        return str;
+    }
+
+    private AttributedString heapString(String label, MemoryUsage usage, String collectionLabel) {
         int filledColumns = heapBarFilledColumns(usage, HEAP_BAR_WIDTH);
-        String collectionLabel = zgcCollectionLabel(_gcBeans);
         var str = new AttributedString();
-        str.append("[", _foregroundColour, _backgroundColour);
+        str.append(label + " [", _foregroundColour, _backgroundColour);
         str.append(UiTheme.repeat("■", filledColumns), heapBarColor(usage), _backgroundColour);
         str.append(UiTheme.repeat("·", HEAP_BAR_WIDTH - filledColumns), UiTheme.TEXT_SUBTLE, _backgroundColour);
         str.append("] " + heapLabel(usage)
                 + (collectionLabel.isBlank() ? "" : " " + collectionLabel), _foregroundColour, _backgroundColour);
         return str;
+    }
+
+    private void refreshClientHeapUsage() {
+        try {
+            var usage = SwimServerSessions.clientHeapUsage().orElse(null);
+            if (usage == null) return;
+            _clientHeapUsage = new MemoryUsage(0, usage.usedBytes(), usage.committedBytes(), usage.committedBytes());
+        } catch (IOException | RuntimeException ignored) {
+            _clientHeapUsage = null;
+        }
     }
 
     private String getLine() {
@@ -189,6 +209,7 @@ public class ModeLineView extends View {
         _timer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
+                refreshClientHeapUsage();
                 var time = getTime();
                 if (!time.equals(_time)) {
                     EventThread.getInstance().enqueue(new RunnableEvent(() -> {

@@ -179,6 +179,7 @@ final class SwimSessionClient {
     private Thread startResizeRelay(LaunchRequest request, SwimTerminalMode.TerminalSize initialSize) {
         return Thread.ofVirtual().name("swim-client-resize").start(() -> {
             var previous = initialSize;
+            long nextHeapReportNanos = 0;
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     Thread.sleep(250);
@@ -187,17 +188,30 @@ final class SwimSessionClient {
                     return;
                 }
                 var current = SwimTerminalMode.currentSize();
-                if (current.equals(previous)) {
-                    continue;
+                if (!current.equals(previous)) {
+                    try {
+                        SwimServerSessions.resize(_socketPath, request.sessionName(), current.rows(), current.columns());
+                        previous = current;
+                    } catch (IOException e) {
+                        return;
+                    }
                 }
-                try {
-                    SwimServerSessions.resize(_socketPath, request.sessionName(), current.rows(), current.columns());
-                    previous = current;
-                } catch (IOException e) {
-                    return;
+                long now = System.nanoTime();
+                if (now >= nextHeapReportNanos) {
+                    reportClientHeap(request.sessionName());
+                    nextHeapReportNanos = now + Duration.ofSeconds(1).toNanos();
                 }
             }
         });
+    }
+
+    private void reportClientHeap(String sessionName) {
+        Runtime runtime = Runtime.getRuntime();
+        try {
+            SwimServerSessions.reportClientHeap(sessionName,
+                    runtime.totalMemory() - runtime.freeMemory(), runtime.totalMemory());
+        } catch (IOException ignored) {
+        }
     }
 
     private static void writeStringList(DataOutputStream output, List<String> values) throws IOException {
