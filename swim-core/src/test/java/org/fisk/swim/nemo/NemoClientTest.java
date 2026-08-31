@@ -2260,6 +2260,26 @@ class NemoClientTest {
     }
 
     @Test
+    void conditionalEditPreviewUsesAPlainUnifiedDiffForColourfulChatRendering() throws Exception {
+        Path project = tempDir.resolve("conditional-edit-preview");
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "old\nkeep\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
+        var call = new NemoClient.ToolCall("conditional-preview", "replace_lines_if_unchanged", json(Map.of(
+                "path", "note.txt", "start_line", 1, "end_line", 1,
+                "expected", "old", "replacement", "new", "preview", true)));
+
+        NemoClient.ToolExecutionResult result = NemoClient.executeToolDetailedSafely(configuration, context, call, null);
+
+        assertTrue(result.displayPatch().startsWith("diff --git a/note.txt b/note.txt"));
+        assertTrue(result.displayPatch().contains("-old"));
+        assertTrue(result.displayPatch().contains("+new"));
+        assertEquals("old\nkeep\n", Files.readString(file));
+    }
+
+    @Test
     void searchReplaceEditsScopedFileAndReturnsDisplayPatch() throws Exception {
         Path project = tempDir.resolve("replace-workspace");
         Path file = project.resolve("src/note.txt");

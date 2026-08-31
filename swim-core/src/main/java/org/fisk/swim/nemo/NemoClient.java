@@ -4109,7 +4109,7 @@ public class NemoClient {
                     + ". Re-read the file and retry with fresh expected content.");
         }
         Path relative = root.relativize(path);
-        String preview = numberedPatch(relative, change.before(), change.after());
+        String preview = unifiedDiff(relative, change.before(), change.after(), true, true);
         if (booleanArgument(arguments, "preview", false)) {
             return new ToolExecutionResult("preview: " + relative + " lines " + change.startLine() + "-" + change.endLine(),
                     truncateOutput(configuration, preview));
@@ -4119,17 +4119,6 @@ public class NemoClient {
         if (!refreshed && isCurrentBufferPath(context, path)) writeOpenBuffer(context, change.after());
         return new ToolExecutionResult("replaced " + relative + " lines " + change.startLine() + "-" + change.endLine()
                 + " after exact-content verification", truncateOutput(configuration, preview));
-    }
-
-    private static String numberedPatch(Path path, String before, String after) {
-        String diff = unifiedDiff(path, before, after, true, true);
-        if (diff.isBlank()) return "(no changes)";
-        var numbered = new StringBuilder();
-        int lineNumber = 1;
-        for (String line : diff.split("\\R", -1)) {
-            numbered.append(String.format("%4d | %s%n", lineNumber++, line));
-        }
-        return numbered.toString().stripTrailing();
     }
 
     private static String applyPatch(Configuration configuration, BufferContext context, JsonObject arguments,
@@ -5232,6 +5221,8 @@ public class NemoClient {
             _pendingApprovals.put(id, pending);
         }
 
+        refreshPendingApprovalStatus(normalizedRoot);
+
         boolean hostPromptVisible = request.hostOnly() && presentHostApprovalPrompt(pending);
         if (!hostPromptVisible) {
             appendApprovalPrompt(conversation, pending);
@@ -5242,6 +5233,7 @@ public class NemoClient {
             synchronized (this) {
                 _pendingApprovals.remove(pending._id);
             }
+            refreshPendingApprovalStatus(normalizedRoot);
             if (request.hostOnly()) {
                 refreshHostApprovalOverlay(normalizedRoot);
             }
@@ -5418,6 +5410,25 @@ public class NemoClient {
     private static void openApprovalMenuIfVisible(Conversation conversation) {
         if (isPanelVisible(conversation)) {
             conversation._panelView.openCommandInputIfEmpty();
+        }
+    }
+
+    private void refreshPendingApprovalStatus(String workspaceRoot) {
+        Runnable refresh = () -> {
+            synchronized (this) {
+                int count = pendingApprovalsForWorkspace(Path.of(workspaceRoot)).size();
+                for (Conversation conversation : _conversations.values()) {
+                    if (conversation._workspaceRoot.toString().equals(workspaceRoot) && isPanelVisible(conversation)) {
+                        conversation._panelView.setPendingApprovalCount(count);
+                    }
+                }
+            }
+        };
+        EventThread eventThread = EventThread.getInstance();
+        if (eventThread.isAlive() && Thread.currentThread() != eventThread) {
+            eventThread.enqueue(new RunnableEvent(refresh));
+        } else {
+            refresh.run();
         }
     }
 
@@ -5606,6 +5617,7 @@ public class NemoClient {
         }
         conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
         conversation._panelView.setDailyTokenUsage(compactDailyTokenUsage());
+        conversation._panelView.setPendingApprovalCount(pendingApprovalsForWorkspace(conversation._workspaceRoot).size());
         conversation._panelView.activatePrompt();
     }
 

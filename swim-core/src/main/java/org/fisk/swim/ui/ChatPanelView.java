@@ -114,6 +114,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     private int _commandSelection;
     private boolean _goToTopPending;
     private boolean _pending;
+    private int _pendingApprovalCount;
     private boolean _bracketedPasteActive;
     private long _pendingStartedAtMillis;
     private Integer _contextUsagePercent;
@@ -203,6 +204,18 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     boolean isPending() {
         return _pending;
+    }
+
+    int getPendingApprovalCount() {
+        return _pendingApprovalCount;
+    }
+
+    public void setPendingApprovalCount(int count) {
+        int next = Math.max(0, count);
+        if (_pendingApprovalCount == next) return;
+        _pendingApprovalCount = next;
+        setNeedsRedraw();
+        refreshChrome();
     }
 
     @Override
@@ -1262,6 +1275,11 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         title.append(_pending ? _promptStyle.titlePendingLabel() : _promptStyle.titleReadyLabel(),
                 _pending ? UiTheme.ACCENT_GOLD : UiTheme.ACCENT_GREEN,
                 UiTheme.SURFACE_ACCENT);
+        if (_pendingApprovalCount > 0) {
+            String label = _pendingApprovalCount == 1 ? " APPROVAL REQUIRED "
+                    : " " + _pendingApprovalCount + " APPROVALS REQUIRED ";
+            title.append(label, UiTheme.TEXT_ON_ACCENT, UiTheme.DIAGNOSTIC_ERROR_BACKGROUND);
+        }
         if (_contextUsagePercent != null) {
             title.append(" ctx " + _contextUsagePercent + "% ", contextUsageColour(_contextUsagePercent),
                     UiTheme.SURFACE_ACCENT);

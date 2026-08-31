@@ -53,6 +53,17 @@ class ChatPanelViewTest {
     }
 
     @Test
+    void pendingApprovalIsShownInTheChatStatusBar() {
+        var view = new ChatPanelView(Rect.create(0, 0, 30, 6), "Nemo", ignored -> { });
+
+        view.setPendingApprovalCount(2);
+
+        assertEquals(2, view.getPendingApprovalCount());
+        view.setPendingApprovalCount(0);
+        assertEquals(0, view.getPendingApprovalCount());
+    }
+
+    @Test
     void ggAndGNavigateOnlyWhileReadingScrolledHistory() {
         var view = new ChatPanelView(Rect.create(0, 0, 30, 5), "Nemo", ignored -> { });
         for (int i = 0; i < 10; i++) {
