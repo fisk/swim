@@ -281,50 +281,37 @@ public class AttributedString {
             throw new IllegalArgumentException("Insert out of bounds: " + position + " length: " + _length);
         }
         var newAttr = new AttributeSet(foregroundColour, backgroundColour);
-        var oldFragments = _fragments;
         var oldClickRanges = _clickRanges;
         int currentX = 0;
-        _fragments = new ArrayList<>();
         _clickRanges = new ArrayList<>();
-        boolean inserted = false;
-        int length = 0;
-        for (var fragment: oldFragments) {
+        for (int index = 0; index < _fragments.size(); index++) {
+            var fragment = _fragments.get(index);
             int fragmentLength = fragment._string.length();
-            if (inserted ||
-                    currentX + fragmentLength <= position ||
-                    currentX >= position + str.length()) {
-                _fragments.add(fragment);
-                length += fragmentLength;
-            } else {
+            if (position >= currentX && position < currentX + fragmentLength) {
                 int splitIndex = position - currentX;
                 var preString = fragment._string.substring(0, splitIndex);
                 var postString = fragment._string.substring(splitIndex, fragmentLength);
-                if (preString.length() > 0) {
-                    _fragments.add(new AttributedStringFragment(preString, fragment._attributes));
-                    length += preString.length();
-                }
-                _fragments.add(new AttributedStringFragment(str, newAttr));
-                length += str.length();
-                if (postString.length() > 0) {
-                    _fragments.add(new AttributedStringFragment(postString, fragment._attributes));
-                    length += postString.length();
-                }
-                inserted = true;
+                _fragments.remove(index);
+                if (!postString.isEmpty()) _fragments.add(index, new AttributedStringFragment(postString, fragment._attributes));
+                _fragments.add(index, new AttributedStringFragment(str, newAttr));
+                if (!preString.isEmpty()) _fragments.add(index, new AttributedStringFragment(preString, fragment._attributes));
+                _length += str.length();
+                updateClickRangesAfterInsert(oldClickRanges, position, str.length());
+                resetCharacterLookupCache();
+                return;
             }
             currentX += fragmentLength;
         }
-        if (!inserted) {
-            _fragments.add(new AttributedStringFragment(str, newAttr));
-            length += str.length();
-        }
+        _fragments.add(new AttributedStringFragment(str, newAttr));
         _length += str.length();
-        for (ClickRange range : oldClickRanges) {
-            _clickRanges.add(range.insert(position, str.length()));
-        }
-        if (length != _length) {
-            throw new RuntimeException("Unexpected length: " + length + ", expected: " + _length);
-        }
+        updateClickRangesAfterInsert(oldClickRanges, position, str.length());
         resetCharacterLookupCache();
+    }
+
+    private void updateClickRangesAfterInsert(List<ClickRange> oldClickRanges, int position, int length) {
+        for (ClickRange range : oldClickRanges) {
+            _clickRanges.add(range.insert(position, length));
+        }
     }
     
     public void remove(int startPosition, int endPosition) {

@@ -2164,6 +2164,20 @@ public class Buffer {
     }
 
     /**
+     * Publishes a fully formatted snapshot prepared away from the
+     * event thread.  Language modes use this for large documents where
+     * rebuilding formatting during paint would otherwise make typing wait.
+     */
+    public boolean setPrecomputedAttributedString(int expectedVersion, AttributedString attributedString) {
+        if (attributedString == null || _version != expectedVersion || attributedString.length() != _string.length()) {
+            return false;
+        }
+        _attributedStringCache = attributedString;
+        _attributedStringCacheVersion = expectedVersion;
+        return true;
+    }
+
+    /**
      * Applies parser-provided syntax formatting below language-mode and view-specific formatting.
      * The expected version prevents a delayed analysis result from colouring newer buffer contents.
      */
@@ -2193,7 +2207,10 @@ public class Buffer {
         int version = _version;
         AttributedString cached = _attributedStringCache;
         if (cached != null && _attributedStringCacheVersion == version) {
-            return AttributedString.create(cached);
+            // BufferView consumes attributed strings read-only.  Returning the
+            // version-owned cache avoids copying every syntax fragment on each
+            // paint of a large source file.
+            return cached;
         }
         var str = AttributedString.create(_string.toString(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_BACKGROUND);
         str.format(_syntaxFormatOverlays);

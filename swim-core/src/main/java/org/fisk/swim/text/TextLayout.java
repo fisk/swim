@@ -3,12 +3,18 @@ package org.fisk.swim.text;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import org.fisk.swim.ui.Range;
+import org.fisk.swim.EventThread;
+import org.fisk.swim.event.RunnableEvent;
 
 public class TextLayout {
+    private static final int ASYNC_LAYOUT_TAIL_THRESHOLD = 256 * 1024;
+    private static final int SYNCHRONOUS_LAYOUT_WINDOW = 8 * 1024;
+    private static final long ASYNC_LAYOUT_DEBOUNCE_MILLIS = 75;
     public static class Glyph {
         private int _x;
         private int _y;
@@ -136,6 +142,12 @@ public class TextLayout {
     private int _layoutBufferVersion = -1;
     private int _layoutWidth = -1;
     private long _layoutFoldSignature = Long.MIN_VALUE;
+    private final AtomicLong _asyncLayoutGeneration = new AtomicLong();
+
+    private record LayoutSnapshot(int version, int width, ArrayList<Line> physicalLines,
+            TreeMap<Integer, Line> physicalLineAtPosition, ArrayList<Line> logicalLines,
+            TreeMap<Integer, Line> logicalLineAtPosition) {
+    }
 
     public TextLayout(BufferContext bufferContext) {
         _bufferContext = bufferContext;
@@ -382,9 +394,21 @@ public class TextLayout {
         Line physicalStartLine = getPhysicalLineAt(oldPosition);
         Line logicalStartLine = getLogicalLineAt(oldPosition);
 
-        _physicalLines = rebuildPhysicalSuffix(physicalStartLine);
+        int remaining = _bufferContext.getBuffer().getLength() - physicalStartLine.getStartPosition();
+        if (remaining > ASYNC_LAYOUT_TAIL_THRESHOLD) {
+            _physicalLines = rebuildPhysicalSuffix(physicalStartLine, SYNCHRONOUS_LAYOUT_WINDOW);
+            _physicalLineAtPosition = lineMap(_physicalLines);
+            _logicalLines = rebuildLogicalSuffix(logicalStartLine, width, SYNCHRONOUS_LAYOUT_WINDOW);
+            _logicalLineAtPosition = lineMap(_logicalLines);
+            markCurrent(version, width, foldSignature);
+            scheduleAsyncLayout(version, width);
+            _bufferContext.getBufferView().setNeedsRedraw();
+            return;
+        }
+
+        _physicalLines = rebuildPhysicalSuffix(physicalStartLine, Integer.MAX_VALUE);
         _physicalLineAtPosition = lineMap(_physicalLines);
-        _logicalLines = rebuildLogicalSuffix(logicalStartLine, width);
+        _logicalLines = rebuildLogicalSuffix(logicalStartLine, width, Integer.MAX_VALUE);
         _logicalLineAtPosition = lineMap(_logicalLines);
 
         markCurrent(version, width, foldSignature);
@@ -402,14 +426,14 @@ public class TextLayout {
                 && !_logicalLines.isEmpty();
     }
 
-    private ArrayList<Line> rebuildPhysicalSuffix(Line startLine) {
+    private ArrayList<Line> rebuildPhysicalSuffix(Line startLine, int maximumCharacters) {
         var result = new ArrayList<Line>(_physicalLines.subList(0, startLine.getY()));
         Line previous = result.isEmpty() ? null : result.get(result.size() - 1);
-        result.addAll(buildPhysicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous));
+        result.addAll(buildPhysicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous, maximumCharacters));
         return result;
     }
 
-    private ArrayList<Line> buildPhysicalLinesFrom(int startPosition, int startY, Line previous) {
+    private ArrayList<Line> buildPhysicalLinesFrom(int startPosition, int startY, Line previous, int maximumCharacters) {
         var string = _bufferContext.getBuffer().getString();
         int position = Math.max(0, Math.min(startPosition, string.length()));
         int y = startY;
@@ -420,7 +444,9 @@ public class TextLayout {
             previous.setNext(line);
         }
         result.add(line);
-        while (position < string.length()) {
+        int endPosition = maximumCharacters == Integer.MAX_VALUE ? string.length()
+                : Math.min(string.length(), position + maximumCharacters);
+        while (position < endPosition) {
             String character = string.substring(position, position + 1);
             line.getGlyphs().add(new Glyph(x, y, position, character));
             position++;
@@ -437,14 +463,16 @@ public class TextLayout {
         return result;
     }
 
-    private ArrayList<Line> rebuildLogicalSuffix(Line startLine, int width) {
+    private ArrayList<Line> rebuildLogicalSuffix(Line startLine, int width, int maximumCharacters) {
         var result = new ArrayList<Line>(_logicalLines.subList(0, startLine.getY()));
         Line previous = result.isEmpty() ? null : result.get(result.size() - 1);
-        result.addAll(buildLogicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous, width));
+        result.addAll(buildLogicalLinesFrom(startLine.getStartPosition(), startLine.getY(), previous, width,
+                maximumCharacters));
         return result;
     }
 
-    private ArrayList<Line> buildLogicalLinesFrom(int startPosition, int startY, Line previous, int width) {
+    private ArrayList<Line> buildLogicalLinesFrom(int startPosition, int startY, Line previous, int width,
+            int maximumCharacters) {
         var string = _bufferContext.getBuffer().getString();
         int position = Math.max(0, Math.min(startPosition, string.length()));
         int y = startY;
@@ -455,7 +483,9 @@ public class TextLayout {
             previous.setNext(line);
         }
         result.add(line);
-        while (position < string.length()) {
+        int endPosition = maximumCharacters == Integer.MAX_VALUE ? string.length()
+                : Math.min(string.length(), position + maximumCharacters);
+        while (position < endPosition) {
             String character = string.substring(position, position + 1);
             if (character.equals("\n")) {
                 Line next = new Line(++y, position + 1, line, true);
@@ -485,6 +515,94 @@ public class TextLayout {
             result.putIfAbsent(line.getStartPosition(), line);
         }
         return result;
+    }
+
+    private void scheduleAsyncLayout(int version, int width) {
+        long generation = _asyncLayoutGeneration.incrementAndGet();
+        Thread.ofVirtual().start(() -> {
+            try {
+                Thread.sleep(ASYNC_LAYOUT_DEBOUNCE_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (generation != _asyncLayoutGeneration.get()) return;
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> captureAsyncLayout(generation, version, width)));
+        });
+    }
+
+    /** Copy mutable buffer text only once typing has been quiet for the debounce interval. */
+    private void captureAsyncLayout(long generation, int version, int width) {
+        if (generation != _asyncLayoutGeneration.get() || version != _bufferContext.getBuffer().getVersion()) return;
+        String text = _bufferContext.getBuffer().getString();
+        Thread.ofVirtual().start(() -> {
+            LayoutSnapshot snapshot = buildSnapshot(text, version, width);
+            if (generation != _asyncLayoutGeneration.get()) return;
+            EventThread.getInstance().enqueue(new RunnableEvent(() -> applySnapshot(generation, snapshot)));
+        });
+    }
+
+    private void applySnapshot(long generation, LayoutSnapshot snapshot) {
+        if (generation != _asyncLayoutGeneration.get() || snapshot.version() != _bufferContext.getBuffer().getVersion()
+                || snapshot.width() != currentWidth() || hasCollapsedFolds()) return;
+        _physicalLines = snapshot.physicalLines();
+        _physicalLineAtPosition = snapshot.physicalLineAtPosition();
+        _logicalLines = snapshot.logicalLines();
+        _logicalLineAtPosition = snapshot.logicalLineAtPosition();
+        markCurrent(snapshot.version(), snapshot.width(), collapsedFoldSignature());
+        _bufferContext.getBufferView().setNeedsRedraw();
+    }
+
+    private static LayoutSnapshot buildSnapshot(String text, int version, int width) {
+        var context = new SnapshotBuilder(text, width);
+        var physical = context.lines(false);
+        var logical = context.lines(true);
+        return new LayoutSnapshot(version, width, physical.lines(), physical.map(), logical.lines(), logical.map());
+    }
+
+    private static final class SnapshotBuilder {
+        private final String _text;
+        private final int _width;
+
+        private SnapshotBuilder(String text, int width) {
+            _text = text == null ? "" : text;
+            _width = Math.max(1, width);
+        }
+
+        private record Lines(ArrayList<Line> lines, TreeMap<Integer, Line> map) { }
+
+        private Lines lines(boolean wrap) {
+            var lines = new ArrayList<Line>();
+            var map = new TreeMap<Integer, Line>();
+            Line line = new Line(0, 0, null, false);
+            lines.add(line);
+            map.put(0, line);
+            int x = 0;
+            int y = 0;
+            for (int position = 0; position < _text.length(); position++) {
+                char character = _text.charAt(position);
+                if (character == '\n') {
+                    if (!wrap) line.getGlyphs().add(new Glyph(x, y, position, "\n"));
+                    Line next = new Line(++y, position + 1, line, true);
+                    line.setNext(next);
+                    line = next;
+                    lines.add(line);
+                    map.putIfAbsent(position + 1, line);
+                    x = 0;
+                } else {
+                    if (wrap && x == _width) {
+                        Line next = new Line(++y, position, line, false);
+                        line.setNext(next);
+                        line = next;
+                        lines.add(line);
+                        map.putIfAbsent(position, line);
+                        x = 0;
+                    }
+                    line.getGlyphs().add(new Glyph(x++, y, position, String.valueOf(character)));
+                }
+            }
+            return new Lines(lines, map);
+        }
     }
 
     private int currentWidth() {

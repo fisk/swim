@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams;
@@ -174,6 +175,15 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
             new AsyncCompletionCoordinator<>(_lspRequestQueue, this::runOnEventThread);
     private final Map<String, AsyncSemanticTokenHighlighter.CachedSemanticTokens> _semanticTokensCache =
             _semanticTokens.cacheView();
+    private record LexicalSnapshot(int version, List<AttributedString.FormatRange> ranges) { }
+    private record PendingLexicalSnapshot(long generation, int version, String text, BufferContext context) { }
+    private record PendingColourSnapshot(long generation, int version, String text,
+            List<AttributedString.FormatRange> ranges, BufferContext context) { }
+    private final Object _lexicalLock = new Object();
+    private final Map<String, LexicalSnapshot> _lexicalSnapshots = new HashMap<>();
+    private final Map<String, PendingLexicalSnapshot> _pendingLexicalSnapshots = new HashMap<>();
+    private final Map<String, PendingColourSnapshot> _pendingColourSnapshots = new HashMap<>();
+    private final AtomicLong _lexicalSequence = new AtomicLong();
     private final Object _completionLock = new Object();
     private final Set<BufferContext> _openDocuments = Collections.newSetFromMap(new IdentityHashMap<>());
     private final AtomicBoolean _recoveryPending = new AtomicBoolean();
@@ -387,6 +397,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
 
     @Override
     public void didInsert(BufferContext bufferContext, int position, String text) {
+        scheduleLexicalHighlightRefresh(bufferContext);
         if (!_enabled || _server == null) {
             return;
         }
@@ -405,6 +416,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
 
     @Override
     public void didRemove(BufferContext bufferContext, int startPosition, int endPosition) {
+        scheduleLexicalHighlightRefresh(bufferContext);
         if (!_enabled || _server == null) {
             return;
         }
@@ -473,6 +485,14 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     @Override
     public void didClose(BufferContext bufferContext) {
         ClangdLspPluginSupport.detachTreeSitter(bufferContext);
+        if (bufferContext != null && bufferContext.getBuffer() != null) {
+            String uri = bufferContext.getBuffer().getURI().toString();
+            synchronized (_lexicalLock) {
+                _lexicalSnapshots.remove(uri);
+                _pendingLexicalSnapshots.remove(uri);
+                _pendingColourSnapshots.remove(uri);
+            }
+        }
         synchronized (_openDocuments) {
             _openDocuments.remove(bufferContext);
         }
@@ -495,6 +515,7 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     @Override
     public void didOpen(BufferContext bufferContext) {
         ClangdLspPluginSupport.attachTreeSitter(bufferContext);
+        scheduleLexicalHighlightRefresh(bufferContext);
         synchronized (_openDocuments) {
             _openDocuments.add(bufferContext);
         }
@@ -1251,13 +1272,20 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
     @Override
     public void applyColouring(BufferContext bufferContext, AttributedString str) {
         String string = str.toString();
-        formatCppPreprocessorLines(str, string);
-        formatToken(str, string, CPP_KEYWORD_PATTERN, UiTheme.SEMANTIC_KEYWORD);
-        formatCppLexicalTokens(str, string);
-        if (bufferContext != null) {
-            for (var highlight : getSemanticHighlights(bufferContext)) {
-                str.format(highlight.start(), highlight.end(), highlight.foregroundColor(), TextColor.ANSI.DEFAULT);
-            }
+        if (bufferContext == null) {
+            formatCppPreprocessorLines(str, string);
+            formatToken(str, string, CPP_KEYWORD_PATTERN, UiTheme.SEMANTIC_KEYWORD);
+            formatCppLexicalTokens(str, string);
+            return;
+        }
+        var lexical = lexicalSnapshot(bufferContext);
+        if (lexical != null && lexical.version() == bufferContext.getBuffer().getVersion()) {
+            str.format(lexical.ranges());
+        } else {
+            scheduleLexicalHighlightRefresh(bufferContext);
+        }
+        for (var highlight : getSemanticHighlights(bufferContext)) {
+            str.format(highlight.start(), highlight.end(), highlight.foregroundColor(), TextColor.ANSI.DEFAULT);
         }
     }
 
@@ -1814,20 +1842,145 @@ public class ClangdLspClient implements LanguageMode, DiagnosticActionProvider, 
         _semanticTokens.scheduleRefresh(semanticDocument(bufferContext));
     }
 
+    private LexicalSnapshot lexicalSnapshot(BufferContext context) {
+        if (context == null || context.getBuffer() == null) return null;
+        synchronized (_lexicalLock) {
+            return _lexicalSnapshots.get(context.getBuffer().getURI().toString());
+        }
+    }
+
+    /** Debounces immutable C++ lexical snapshots so regex colouring never runs in the key handler. */
+    private void scheduleLexicalHighlightRefresh(BufferContext context) {
+        if (context == null || context.getBuffer() == null) return;
+        String uri = context.getBuffer().getURI().toString();
+        synchronized (_lexicalLock) {
+            if (_pendingLexicalSnapshots.containsKey(uri)) return;
+            long generation = _lexicalSequence.incrementAndGet();
+            _pendingLexicalSnapshots.put(uri, new PendingLexicalSnapshot(generation, context.getBuffer().getVersion(),
+                    context.getBuffer().getString(), context));
+            Thread.ofVirtual().start(() -> compileLexicalSnapshot(uri, generation));
+        }
+    }
+
+    private void compileLexicalSnapshot(String uri, long generation) {
+        try {
+            Thread.sleep(60);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        PendingLexicalSnapshot pending;
+        synchronized (_lexicalLock) {
+            pending = _pendingLexicalSnapshots.get(uri);
+            if (pending == null || pending.generation() != generation) return;
+        }
+        var rendered = AttributedString.create(pending.text(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
+        formatCppPreprocessorLines(rendered, pending.text());
+        formatToken(rendered, pending.text(), CPP_KEYWORD_PATTERN, UiTheme.SEMANTIC_KEYWORD);
+        formatCppLexicalTokens(rendered, pending.text());
+        List<AttributedString.FormatRange> ranges = formatRanges(rendered);
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> applyLexicalSnapshot(uri, pending, ranges)));
+    }
+
+    private void applyLexicalSnapshot(String uri, PendingLexicalSnapshot pending,
+            List<AttributedString.FormatRange> ranges) {
+        boolean refreshAgain;
+        synchronized (_lexicalLock) {
+            PendingLexicalSnapshot current = _pendingLexicalSnapshots.get(uri);
+            if (current == null || current.generation() != pending.generation()) return;
+            _pendingLexicalSnapshots.remove(uri);
+            refreshAgain = pending.context().getBuffer().getVersion() != pending.version();
+            if (!refreshAgain) {
+                _lexicalSnapshots.put(uri, new LexicalSnapshot(pending.version(), ranges));
+            }
+        }
+        if (refreshAgain) {
+            scheduleLexicalHighlightRefresh(pending.context());
+            return;
+        }
+        scheduleColourSnapshot(pending.context());
+    }
+
+    private static List<AttributedString.FormatRange> formatRanges(AttributedString rendered) {
+        var ranges = new ArrayList<AttributedString.FormatRange>();
+        int start = 0;
+        for (var fragment : rendered.getFragments()) {
+            int end = start + fragment.toString().length();
+            TextColor foreground = fragment.getAttributes().foregroundColour();
+            if (foreground != null && !foreground.equals(TextColor.ANSI.DEFAULT)) {
+                ranges.add(new AttributedString.FormatRange(start, end, foreground, TextColor.ANSI.DEFAULT));
+            }
+            start = end;
+        }
+        return List.copyOf(ranges);
+    }
+
+    /** Builds the expensive, whole-document attributed representation off the event thread. */
+    private void scheduleColourSnapshot(BufferContext context) {
+        if (context == null || context.getBuffer() == null) return;
+        String uri = context.getBuffer().getURI().toString();
+        synchronized (_lexicalLock) {
+            if (_pendingColourSnapshots.containsKey(uri)) return;
+            var lexical = _lexicalSnapshots.get(uri);
+            int version = context.getBuffer().getVersion();
+            if (lexical == null || lexical.version() != version) {
+                scheduleLexicalHighlightRefresh(context);
+                return;
+            }
+            // Preserve the normal Buffer formatting order: parser syntax,
+            // C++ lexical and semantic colours, then view decorations.
+            var ranges = new ArrayList<AttributedString.FormatRange>(context.getBuffer().getSyntaxFormatOverlays());
+            ranges.addAll(lexical.ranges());
+            for (var highlight : getSemanticHighlights(context)) {
+                ranges.add(new AttributedString.FormatRange(highlight.start(), highlight.end(),
+                        highlight.foregroundColor(), TextColor.ANSI.DEFAULT));
+            }
+            ranges.addAll(context.getBuffer().getFormatOverlays());
+            long generation = _lexicalSequence.incrementAndGet();
+            var pending = new PendingColourSnapshot(generation, version, context.getBuffer().getString(),
+                    List.copyOf(ranges), context);
+            _pendingColourSnapshots.put(uri, pending);
+            Thread.ofVirtual().start(() -> compileColourSnapshot(uri, pending));
+        }
+    }
+
+    private void compileColourSnapshot(String uri, PendingColourSnapshot pending) {
+        var rendered = AttributedString.create(pending.text(), UiTheme.TEXT_PRIMARY, UiTheme.SURFACE_BACKGROUND);
+        rendered.format(pending.ranges());
+        EventThread.getInstance().enqueue(new RunnableEvent(() -> applyColourSnapshot(uri, pending, rendered)));
+    }
+
+    private void applyColourSnapshot(String uri, PendingColourSnapshot pending, AttributedString rendered) {
+        synchronized (_lexicalLock) {
+            PendingColourSnapshot current = _pendingColourSnapshots.get(uri);
+            if (current == null || current.generation() != pending.generation()) return;
+            _pendingColourSnapshots.remove(uri);
+        }
+        if (!pending.context().getBuffer().setPrecomputedAttributedString(pending.version(), rendered)) {
+            scheduleLexicalHighlightRefresh(pending.context());
+            return;
+        }
+        redrawColouring(pending.context());
+    }
+
     private void requestSemanticRedraw(BufferContext bufferContext) {
         Runnable redraw = () -> {
-            bufferContext.getBuffer().invalidateAttributedStringCache();
-            bufferContext.getBufferView().setNeedsRedraw();
-            var window = Window.getInstance();
-            if (window != null && window.getRootView() != null) {
-                window.getRootView().setNeedsRedraw();
-            }
+            scheduleColourSnapshot(bufferContext);
+            redrawColouring(bufferContext);
         };
         var eventThread = EventThread.getInstance();
         if (eventThread.isAlive()) {
             eventThread.enqueue(new RunnableEvent(redraw));
         } else {
             redraw.run();
+        }
+    }
+
+    private void redrawColouring(BufferContext bufferContext) {
+        bufferContext.getBufferView().setNeedsRedraw();
+        var window = Window.getInstance();
+        if (window != null && window.getRootView() != null) {
+            window.getRootView().setNeedsRedraw();
         }
     }
 
