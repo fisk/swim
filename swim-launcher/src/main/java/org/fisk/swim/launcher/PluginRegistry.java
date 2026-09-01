@@ -1,5 +1,6 @@
 package org.fisk.swim.launcher;
 
+import java.io.File;
 import java.io.IOException;
 import java.lang.module.Configuration;
 import java.lang.module.ModuleFinder;
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -18,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import org.fisk.swim.api.SwimApp;
+import org.fisk.swim.api.SwimCommandRegistry;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.api.SwimNemoToolRegistry;
 import org.fisk.swim.api.SwimPlugin;
@@ -29,6 +32,8 @@ import org.fisk.swim.api.SwimPluginWorkers;
 final class PluginRegistry implements Main.PluginController {
     private static final String CORE_MODULE = "org.fisk.swim.core";
     private static final String CORE_PLUGIN_ID = "core";
+    static final String PRIVATE_PLUGIN_PATH_PROPERTY = "swim.private-plugin-path";
+    static final String PRIVATE_PLUGIN_PATH_ENVIRONMENT = "SWIM_PRIVATE_PLUGIN_PATH";
     private static final Comparator<PluginBinding> LOAD_ORDER = Comparator
             .comparingInt(PluginBinding::loadOrder)
             .thenComparing(PluginBinding::id);
@@ -99,27 +104,65 @@ final class PluginRegistry implements Main.PluginController {
         if (!Files.isDirectory(pluginRoot)) {
             return List.of();
         }
-        boolean installedPlugins = Files.isDirectory(buildRoot.resolve("plugins"));
-        if (!installedPlugins) {
-            return List.of(Main.findCoreJar(pluginRoot));
-        }
 
         Map<String, Path> jarsByModule = new HashMap<>();
-        try (var stream = Files.list(pluginRoot)) {
-            stream.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
-                    .filter(path -> !path.getFileName().toString().endsWith("-tests.jar"))
-                    .filter(path -> !Main.isSharedLib(path))
-                    .forEach(path -> {
-                        String moduleName = describeModule(path);
-                        jarsByModule.merge(moduleName, path, PluginRegistry::preferNewerJar);
-                    });
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to inspect plugin directory " + pluginRoot, e);
+        if (Files.isDirectory(buildRoot.resolve("plugins"))) {
+            collectPluginJars(pluginRoot, jarsByModule, false);
+        } else {
+            Path coreJar = Main.findCoreJar(pluginRoot);
+            jarsByModule.put(CORE_MODULE, coreJar);
+        }
+        for (Path privatePluginDirectory : privatePluginDirectories(buildRoot)) {
+            // Private directories are intentionally scanned after SWIM's managed artifacts so a
+            // company can replace one of its own previously installed plugin modules.
+            collectPluginJars(privatePluginDirectory, jarsByModule, true);
         }
         return jarsByModule.values().stream()
                 .sorted(Comparator.comparing(path -> path.getFileName().toString()))
                 .toList();
+    }
+
+    static List<Path> privatePluginDirectories(Path buildRoot) {
+        var directories = new LinkedHashSet<Path>();
+        directories.add(buildRoot.resolve("private-plugins").toAbsolutePath().normalize());
+        addConfiguredPrivatePluginDirectories(directories, System.getProperty(PRIVATE_PLUGIN_PATH_PROPERTY));
+        addConfiguredPrivatePluginDirectories(directories, System.getenv(PRIVATE_PLUGIN_PATH_ENVIRONMENT));
+        return directories.stream().filter(Files::isDirectory).toList();
+    }
+
+    private static void addConfiguredPrivatePluginDirectories(Set<Path> directories, String configuredDirectories) {
+        if (configuredDirectories == null || configuredDirectories.isBlank()) {
+            return;
+        }
+        for (String entry : configuredDirectories.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (!entry.isBlank()) {
+                directories.add(Path.of(entry).toAbsolutePath().normalize());
+            }
+        }
+    }
+
+    private static void collectPluginJars(Path pluginDirectory, Map<String, Path> jarsByModule, boolean privatePlugin) {
+        try (var stream = Files.list(pluginDirectory)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".jar"))
+                    .filter(path -> !path.getFileName().toString().endsWith("-tests.jar"))
+                    .filter(path -> privatePlugin || !Main.isSharedLib(path))
+                    .forEach(path -> addPluginJar(path, jarsByModule, privatePlugin));
+        } catch (IOException e) {
+            throw new RuntimeException("Unable to inspect plugin directory " + pluginDirectory, e);
+        }
+    }
+
+    private static void addPluginJar(Path path, Map<String, Path> jarsByModule, boolean privatePlugin) {
+        String moduleName = describeModule(path);
+        if (CORE_MODULE.equals(moduleName) && privatePlugin) {
+            throw new IllegalArgumentException("Private plugin directory must not provide " + CORE_MODULE + ": " + path);
+        }
+        if (privatePlugin) {
+            jarsByModule.put(moduleName, path);
+        } else {
+            jarsByModule.merge(moduleName, path, PluginRegistry::preferNewerJar);
+        }
     }
 
     private static Path preferNewerJar(Path left, Path right) {
@@ -513,6 +556,7 @@ final class PluginRegistry implements Main.PluginController {
                 return;
             }
             SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+            SwimCommandRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             SwimApp app = _provider.get();
             _app = app;
@@ -523,6 +567,7 @@ final class PluginRegistry implements Main.PluginController {
                 _app = null;
                 _loaded = false;
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimCommandRegistry.unregisterPlugin(CORE_PLUGIN_ID);
                 SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
                 throw e;
             }
@@ -540,6 +585,7 @@ final class PluginRegistry implements Main.PluginController {
                 app.close();
             } finally {
                 SwimNemoToolRegistry.unregisterPlugin(CORE_PLUGIN_ID);
+                SwimCommandRegistry.unregisterPlugin(CORE_PLUGIN_ID);
                 SwimPluginPreloadRegistry.unregisterPlugin(CORE_PLUGIN_ID);
             }
         }
@@ -618,6 +664,7 @@ final class PluginRegistry implements Main.PluginController {
                 return;
             }
             SwimNemoToolRegistry.unregisterPlugin(_id);
+            SwimCommandRegistry.unregisterPlugin(_id);
             SwimPlugin plugin = _instance == null ? _provider.get() : _instance;
             try {
                 plugin.load(context);
@@ -629,6 +676,7 @@ final class PluginRegistry implements Main.PluginController {
                 _instance = null;
                 _loaded = false;
                 SwimNemoToolRegistry.unregisterPlugin(_id);
+                SwimCommandRegistry.unregisterPlugin(_id);
                 throw e;
             }
         }
@@ -637,6 +685,7 @@ final class PluginRegistry implements Main.PluginController {
         public void unload() {
             if (!_loaded) {
                 SwimNemoToolRegistry.unregisterPlugin(_id);
+                SwimCommandRegistry.unregisterPlugin(_id);
                 return;
             }
             SwimPlugin plugin = _instance;
@@ -649,6 +698,7 @@ final class PluginRegistry implements Main.PluginController {
                 } finally {
                     _context = null;
                     SwimNemoToolRegistry.unregisterPlugin(_id);
+                    SwimCommandRegistry.unregisterPlugin(_id);
                 }
             }
         }

@@ -26,6 +26,7 @@ build
 /image/
 /share/
 /plugins/
+/private-plugins/
 /workspace/
 /email/
 /email/accounts.json

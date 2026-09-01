@@ -144,6 +144,52 @@ class PluginRegistryTest {
         assertEquals(List.of("core-start", "plugin-load:ok"), Files.readAllLines(events));
     }
 
+    @Test
+    void registryLoadsPluginFromPrivatePluginDirectory() throws Exception {
+        Path root = createSyntheticInstalledBuildRoot();
+        Path privatePlugins = root.resolve("private-plugins");
+        Files.createDirectories(privatePlugins);
+        Path publicPlugin = root.resolve("plugins").resolve("marker-plugin-0.0.1-SNAPSHOT.jar");
+        Files.move(publicPlugin, privatePlugins.resolve(publicPlugin.getFileName()));
+        Path file = root.resolve("README.txt");
+        Path events = root.resolve("plugin-registry-events.txt");
+        Files.writeString(file, "hello");
+
+        var registry = new PluginRegistry();
+        var host = new RecordingHost(root);
+        registry.reload(root, file, host, Main.class.getClassLoader(), null);
+
+        assertEquals(List.of("core", "marker-plugin"), registry.availablePluginIds());
+        registry.loadPlugin("marker-plugin", file, host);
+        assertEquals(List.of("core-start", "plugin-load"), Files.readAllLines(events));
+    }
+
+    @Test
+    void registryLoadsPluginFromConfiguredPrivatePluginDirectory() throws Exception {
+        Path root = createSyntheticInstalledBuildRoot();
+        Path companyPlugins = tempDir.resolve("company-plugins");
+        Files.createDirectories(companyPlugins);
+        Path publicPlugin = root.resolve("plugins").resolve("marker-plugin-0.0.1-SNAPSHOT.jar");
+        Files.move(publicPlugin, companyPlugins.resolve(publicPlugin.getFileName()));
+        Path file = root.resolve("README.txt");
+        Files.writeString(file, "hello");
+
+        String previous = System.getProperty(PluginRegistry.PRIVATE_PLUGIN_PATH_PROPERTY);
+        System.setProperty(PluginRegistry.PRIVATE_PLUGIN_PATH_PROPERTY, companyPlugins.toString());
+        try {
+            var registry = new PluginRegistry();
+            registry.reload(root, file, new RecordingHost(root), Main.class.getClassLoader(), null);
+
+            assertEquals(List.of("core", "marker-plugin"), registry.availablePluginIds());
+        } finally {
+            if (previous == null) {
+                System.clearProperty(PluginRegistry.PRIVATE_PLUGIN_PATH_PROPERTY);
+            } else {
+                System.setProperty(PluginRegistry.PRIVATE_PLUGIN_PATH_PROPERTY, previous);
+            }
+        }
+    }
+
     private Path createSyntheticInstalledBuildRoot() throws Exception {
         Path root = tempDir.resolve("swim");
         Path plugins = root.resolve("plugins");

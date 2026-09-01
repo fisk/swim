@@ -48,6 +48,7 @@ Startup behavior:
 - `~/.swim/bin`
 - `~/.swim/image`
 - `~/.swim/plugins`
+- `~/.swim/private-plugins` (optional, locally managed plugins)
 - `~/.swim/share/man`
 - `~/.swim/deps/oracle.oracle-java`
 
@@ -98,6 +99,8 @@ This repository currently builds these Maven modules:
 - `swim-slack`: Slack workspace plugin.
 
 Installed plugin jars and their shared runtime dependencies live under `plugins/`. Plugins can preload lightweight metadata such as help chapters and key bindings before their full UI/runtime code is loaded.
+
+Private or company-only plugins belong in `~/.swim/private-plugins`, not in this source tree. Put the plugin jar and any module dependencies directly in that directory; SWIM discovers them alongside its managed plugins, and `:reload`/`:rebuild` leave the directory untouched. Set `SWIM_PRIVATE_PLUGIN_PATH` (or the JVM property `swim.private-plugin-path`) to a path-separated list of additional plugin directories when company tooling is installed elsewhere. Private plugin modules take precedence over matching managed plugin module names, but may not replace `org.fisk.swim.core`. Private plugins use the same `SwimPlugin` service-provider API and Nemo permission controls as public plugins. Only place code you trust in these directories; SWIM never discovers plugins from the current project automatically.
 
 The main plugin API lives under `swim-launcher/src/main/java/org/fisk/swim/api/`. Existing plugin modules are the best references for new plugins because they show the current preload, keybinding, panel, command, help, and Nemo-tool integration patterns.
 

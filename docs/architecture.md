@@ -58,6 +58,7 @@ Installed runtime artifacts are copied to:
 - `image/`: the generated runtime image and embedded Java.
 - `plugins/`: core and plugin jars.
 - `plugins/runtime-libs/`: runtime dependencies used by the app/plugin layers.
+- `private-plugins/`: optional locally managed plugin jars, preserved across public SWIM rebuilds.
 - `share/man/`: the generated `swim(1)` man page paired with `bin/`; its editor-help section is rendered from the same `HelpDocument` used by `:help`.
 - `deps/oracle.oracle-java/`: bundled Java language-server payload.
 
@@ -69,7 +70,7 @@ Core and plugin code are loaded through JPMS layers:
 
 1. `Main.createCoreLayer` resolves `org.fisk.swim.core` plus its runtime libraries.
 2. `PluginRegistry` finds the `SwimApp` service from the core layer.
-3. `PluginRegistry` scans installed plugin jars, creates a plugin layer that reads the boot and core layers, and discovers `SwimPlugin` providers through `ServiceLoader`.
+3. `PluginRegistry` scans installed plugin jars and optional local private-plugin directories, creates a plugin layer that reads the boot and core layers, and discovers `SwimPlugin` providers through `ServiceLoader`.
 4. Bindings are sorted by load order and id.
 5. Plugin `preload` runs first for all plugins.
 6. Plugins whose `loadOnStartup()` returns true are loaded immediately; others remain available for lazy loading.
@@ -77,6 +78,8 @@ Core and plugin code are loaded through JPMS layers:
 Preload is for lightweight metadata that must exist before the full plugin runtime is loaded, such as help chapters and key bindings. Plugin documentation belongs here: core renders the help tree, but plugin-owned topics are registered by the plugin modules that implement those features. Full `load` is for runtime state, external clients, panels, background workers, and service registrations.
 
 Every plugin must clean up in `close()`. If a plugin starts threads, owns clients, registers tools, or registers editor resources, unload must terminate those resources. Shared registries unregister plugin-owned resources during unload, but plugin-owned threads and external handles are still the plugin's responsibility.
+
+Private plugins are opt-in local code: `<swim-home>/private-plugins` is scanned without being managed by Maven or the public source checkout. `SWIM_PRIVATE_PLUGIN_PATH` and `-Dswim.private-plugin-path` add path-separated directories for company-managed installations. SWIM does not search the active project for plugins, so opening a repository cannot cause its code to load. Private modules may override a managed plugin module, but cannot replace the core module.
 
 ## Plugin Boundary
 

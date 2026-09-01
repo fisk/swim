@@ -15,6 +15,18 @@ public final class ProjectSearchUiSupport {
         open(window, "");
     }
 
+    /** Opens project search whose Enter key creates a live editable results buffer. */
+    public static void toggleEditable(Window window) {
+        if (window == null) {
+            return;
+        }
+        if (window.getPanelView() instanceof ProjectSearchPanelView) {
+            window.hidePanel();
+            return;
+        }
+        openEditablePanel(window, "");
+    }
+
     public static void open(Window window, String initialQuery) {
         openPanel(window, initialQuery);
     }
@@ -49,5 +61,19 @@ public final class ProjectSearchUiSupport {
             return null;
         }
         return panelView;
+    }
+
+    private static void openEditablePanel(Window window, String initialQuery) {
+        if (window.isShowingPanel()) {
+            window.hidePanel();
+        }
+        var panelView = ProjectSearchPanelView.createEditable(Rect.create(0, 0, 0, 0),
+                window.getBufferContext().getBuffer().getPath());
+        if (panelView == null) {
+            window.getCommandView().setMessage("Project search unavailable");
+            return;
+        }
+        panelView.setQuery(initialQuery);
+        window.showPanel(panelView);
     }
 }

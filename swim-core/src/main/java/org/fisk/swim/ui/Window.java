@@ -378,6 +378,101 @@ public class Window implements Drawable {
         return true;
     }
 
+    /** Opens a virtual buffer whose result text writes through to project files on each edit. */
+    boolean openEditableSearchResults(Path projectRoot, List<ProjectSearch.Match> matches) {
+        if (projectRoot == null || matches == null || matches.isEmpty()) {
+            return false;
+        }
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        if (matches.stream().anyMatch(match -> match.path() == null
+                || !match.path().toAbsolutePath().normalize().startsWith(normalizedRoot))) {
+            return false;
+        }
+        ensureLayoutState();
+        var currentBufferView = getEditableBufferView();
+        if (currentBufferView == null) {
+            return false;
+        }
+        var results = EditableSearchResults.create(this, matches);
+        var context = new BufferContext(currentBufferView.getBounds(),
+                EditableSearchResults.text(this, matches), false);
+        context.getBuffer().addContentChangeListener(results);
+        replaceViewInLayout(currentBufferView, context.getBufferView());
+        registerBufferView(context, context.getBufferView());
+        _bufferContext = context;
+        _activeBufferView = context.getBufferView();
+        setupModes();
+        activateView(context.getBufferView());
+        if (_commandView != null) {
+            _commandView.setMessage("Editable search results: edit text after each location prefix");
+        }
+        return true;
+    }
+
+    boolean applyEditableSearchResultChange(Path path, int lineNumber, String replacement) {
+        if (path == null || lineNumber < 1 || replacement == null) {
+            return false;
+        }
+        Path normalized = path.toAbsolutePath().normalize();
+        if (isEditorDriveSandboxActive()) {
+            String block = editorDriveWorkspacePathBlock(normalized, "write");
+            if (block != null) {
+                blockEditorDriveAction("edit search result", block);
+                return false;
+            }
+            allowEditorDriveAction("edit search result");
+        }
+        String source = sourceContents(normalized);
+        String changed = replaceLine(source, lineNumber, replacement);
+        if (changed == null || changed.equals(source)) {
+            return changed != null;
+        }
+        try {
+            Files.writeString(normalized, changed);
+        } catch (IOException e) {
+            _log.warn("Failed to update editable search result " + normalized, e);
+            return false;
+        }
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (bufferPathEquals(context, normalized)) {
+                replaceBufferContents(context, changed);
+            }
+        }
+        return true;
+    }
+
+    private String sourceContents(Path path) {
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (bufferPathEquals(context, path)) {
+                return context.getBuffer().getString();
+            }
+        }
+        try {
+            return Files.readString(path);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private static String replaceLine(String source, int lineNumber, String replacement) {
+        int start = 0;
+        for (int line = 1; line < lineNumber; line++) {
+            int newline = source.indexOf('\n', start);
+            if (newline < 0) {
+                return null;
+            }
+            start = newline + 1;
+        }
+        int end = source.indexOf('\n', start);
+        if (end < 0) {
+            end = source.length();
+        }
+        if (end > start && source.charAt(end - 1) == '\r') {
+            end--;
+        }
+        return source.substring(0, start) + replacement + source.substring(end);
+    }
+
     /** Cycles through regular files in the current directory with the same basename. */
     public boolean cycleSiblingFile() {
         var context = getBufferContext();

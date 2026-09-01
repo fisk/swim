@@ -11,6 +11,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.EventThread;
+import org.fisk.swim.api.SwimCommand;
+import org.fisk.swim.api.SwimCommandInvocation;
+import org.fisk.swim.api.SwimCommandRegistry;
 import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailMessageDetail;
 import org.fisk.swim.mail.MailSnapshot;
@@ -162,6 +165,34 @@ class HostGuestScreenControlTest {
             assertFalse(result.accepted());
             assertTrue(result.message().contains("Editor control blocked :shell"));
             assertFalse(window.getCommandView().isActive());
+        }
+    }
+
+    @Test
+    void driveEditorInputUsesPluginCommandEditorControlCallback() throws Exception {
+        Path file = tempDir.resolve("plugin-command.txt");
+        Files.writeString(file, "alpha\n");
+        var executed = new AtomicReference<String>();
+        try (var blockedRegistration = SwimCommandRegistry.register("blocked-plugin", new SwimCommand() {
+            @Override public String name() { return "blocked-plugin-command"; }
+            @Override public String description() { return "test command"; }
+            @Override public String execute(SwimCommandInvocation invocation) { executed.set("blocked"); return ""; }
+        }); var allowedRegistration = SwimCommandRegistry.register("allowed-plugin", new SwimCommand() {
+            @Override public String name() { return "allowed-plugin-command"; }
+            @Override public String description() { return "test command"; }
+            @Override public boolean allowEditorDrive(SwimCommandInvocation invocation) { return true; }
+            @Override public String execute(SwimCommandInvocation invocation) { executed.set(invocation.argument()); return "done"; }
+        }); var harness = HeadlessWindowHarness.create(file, 80, 24)) {
+            Window window = harness.getWindow();
+
+            Window.EditorDriveResult blocked = window.driveEditorInput(":blocked-plugin-command<ENTER>", 50);
+            assertFalse(blocked.accepted());
+            assertTrue(blocked.message().contains("plugin commands require explicit"));
+            assertNull(executed.get());
+
+            Window.EditorDriveResult allowed = window.driveEditorInput(":allowed-plugin-command hello<ENTER>", 50);
+            assertTrue(allowed.accepted(), allowed.message());
+            assertEquals("hello", executed.get());
         }
     }
 

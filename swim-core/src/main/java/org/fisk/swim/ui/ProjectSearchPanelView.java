@@ -51,6 +51,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private final ProjectSearch _projectSearch;
+    private final boolean _editableResults;
     private final StringBuilder _query = new StringBuilder();
     private final ListEventResponder _responders = new ListEventResponder();
     private final QueryCursor _cursor;
@@ -65,22 +66,36 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     private int _start;
 
     public static ProjectSearchPanelView create(Rect bounds, Path startPath) {
+        return create(bounds, startPath, false);
+    }
+
+    public static ProjectSearchPanelView createEditable(Rect bounds, Path startPath) {
+        return create(bounds, startPath, true);
+    }
+
+    private static ProjectSearchPanelView create(Rect bounds, Path startPath, boolean editableResults) {
         var search = new ProjectSearch(startPath);
         if (!search.isAvailable()) {
             return null;
         }
-        return new ProjectSearchPanelView(bounds, search);
+        return new ProjectSearchPanelView(bounds, search, editableResults);
     }
 
     public ProjectSearchPanelView(Rect bounds, ProjectSearch projectSearch) {
+        this(bounds, projectSearch, false);
+    }
+
+    private ProjectSearchPanelView(Rect bounds, ProjectSearch projectSearch, boolean editableResults) {
         super(bounds);
         _projectSearch = projectSearch;
+        _editableResults = editableResults;
         _cursor = new QueryCursor(this);
         setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
         _responders.addEventResponder("<DOWN>", "Results", "move down", () -> moveSelection(1));
         _responders.addEventResponder("<UP>", "Results", "move up", () -> moveSelection(-1));
         _responders.addEventResponder("<ESC>", "Search", "close", this::close);
-        _responders.addEventResponder("<ENTER>", "Results", "open selected", this::openSelection);
+        _responders.addEventResponder("<ENTER>", "Results",
+                editableResults ? "edit all results" : "open selected", this::openSelection);
         _responders.addEventResponder("<BACKSPACE>", "Search", "delete character", () -> {
             if (_query.length() == 0) {
                 return;
@@ -114,7 +129,7 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     String getTitle() {
-        return "Project Search";
+        return _editableResults ? "Project Search (Editable Results)" : "Project Search";
     }
 
     @Override
@@ -387,6 +402,10 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
     }
 
     private void openSelection() {
+        if (_editableResults) {
+            openEditableResults();
+            return;
+        }
         if (_selection < 0 || _selection >= _results.size()) {
             return;
         }
@@ -397,6 +416,21 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         }
         if (!window.openBufferLocation(match.path(), match.lineNumber(), match.columnNumber())) {
             window.getCommandView().setMessage("Failed to open search result");
+            return;
+        }
+        close();
+    }
+
+    private void openEditableResults() {
+        if (_results.isEmpty()) {
+            return;
+        }
+        var window = Window.getInstance();
+        if (window == null) {
+            return;
+        }
+        if (!window.openEditableSearchResults(_projectSearch.getRoot(), _results)) {
+            window.getCommandView().setMessage("Failed to open editable search results");
             return;
         }
         close();

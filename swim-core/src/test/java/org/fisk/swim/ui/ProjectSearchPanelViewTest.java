@@ -79,6 +79,34 @@ class ProjectSearchPanelViewTest {
                         && UiTheme.ACCENT_GREEN.equals(fragment.getAttributes().foregroundColour())));
     }
 
+    @Test
+    void editableSearchEnterOpensLiveResultsBufferAndWritesMatchingSourceLine() throws Exception {
+        Path root = tempDir.resolve("editable-workspace");
+        Files.createDirectories(root.resolve(".git"));
+        Path current = root.resolve("current.txt");
+        Files.writeString(current, "needle value\n");
+
+        try (var harness = HeadlessWindowHarness.create(current, 72, 16)) {
+            var window = harness.getWindow();
+            var source = window.getBufferContext().getBuffer();
+            var panel = ProjectSearchPanelView.createEditable(Rect.create(0, 0, 0, 0), current);
+            assertTrue(window.showPanel(panel));
+            panel.setQuery("needle");
+            awaitResults(panel, 1);
+
+            HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.enter());
+
+            assertFalse(window.isShowingPanel());
+            var results = window.getBufferContext().getBuffer();
+            assertEquals("current.txt:1: needle value", results.getString());
+            results.getCursor().setPosition("current.txt:1: needle".length());
+            results.insert(" updated");
+
+            assertEquals("needle updated value\n", Files.readString(current));
+            assertEquals("needle updated value\n", source.getString());
+        }
+    }
+
     private static void awaitResults(ProjectSearchPanelView panel, int expected) {
         EventThread eventThread = EventThread.getInstance();
         if (eventThread.getState() == Thread.State.NEW) eventThread.start();

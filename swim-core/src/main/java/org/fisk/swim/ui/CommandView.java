@@ -13,6 +13,8 @@ import org.fisk.swim.terminal.TextColor;
 import org.fisk.swim.event.KeyType;
 
 import org.fisk.swim.SwimRuntime;
+import org.fisk.swim.api.SwimCommandInvocation;
+import org.fisk.swim.api.SwimCommandRegistry;
 import org.fisk.swim.debug.DebuggerManager;
 import org.fisk.swim.debug.DebuggerUiSupport;
 import org.fisk.swim.event.EventResponder;
@@ -648,8 +650,25 @@ public class CommandView extends View {
             runNormal(argument);
             break;
         default:
-            _message = "Unknown command: " + command;
+            runPluginCommand(command, argument);
             break;
+        }
+    }
+
+    private void runPluginCommand(String command, String argument) {
+        var registration = SwimCommandRegistry.find(command);
+        if (registration == null) {
+            _message = "Unknown command: " + command;
+            return;
+        }
+        try {
+            var context = Window.getInstance().getBufferContext();
+            Path currentPath = context == null ? null : context.getBuffer().getPath();
+            String result = registration.command().execute(new SwimCommandInvocation(command, argument, currentPath,
+                    currentPath == null ? Path.of(System.getProperty("user.dir")) : currentPath.getParent()));
+            _message = result == null ? "" : result;
+        } catch (Exception e) {
+            _message = "Failed " + command + ": " + e.getMessage();
         }
     }
 
@@ -859,9 +878,25 @@ public class CommandView extends View {
                 "tab-move", "move-tab", "move-window",
                 "tab-swap-left", "tab-swap-right" -> blockEditorDriveCommand(window, rawCommand,
                         "tab layout management requires host action");
-        default -> blockEditorDriveCommand(window, rawCommand,
-                "unknown or unsupported command in the editor-control sandbox");
+        default -> sandboxedPluginCommand(window, rawCommand, command, argument);
         };
+    }
+
+    private String sandboxedPluginCommand(Window window, String rawCommand, String command, String argument) {
+        var registration = SwimCommandRegistry.find(command);
+        if (registration == null) {
+            return blockEditorDriveCommand(window, rawCommand,
+                    "unknown or unsupported command in the editor-control sandbox");
+        }
+        var context = window.getBufferContext();
+        Path currentPath = context == null ? null : context.getBuffer().getPath();
+        var invocation = new SwimCommandInvocation(command, argument, currentPath,
+                currentPath == null ? Path.of(System.getProperty("user.dir")) : currentPath.getParent());
+        if (!registration.command().allowEditorDrive(invocation)) {
+            return blockEditorDriveCommand(window, rawCommand,
+                    "plugin commands require explicit editor-control approval");
+        }
+        return allowEditorDriveCommand(window, rawCommand);
     }
 
     private String sandboxedEditorOpenCommand(Window window, String rawCommand, String argument) {
@@ -1196,6 +1231,13 @@ public class CommandView extends View {
             matches.add(CommandSpec.lastCommand(lastCommand));
         }
         for (var spec : commandSpecs) {
+            if (prefix.isBlank() || spec.matches(prefix)) {
+                matches.add(spec);
+            }
+        }
+        for (var registration : SwimCommandRegistry.list()) {
+            var command = registration.command();
+            var spec = new CommandSpec(command.name(), List.of(), "", command.description());
             if (prefix.isBlank() || spec.matches(prefix)) {
                 matches.add(spec);
             }

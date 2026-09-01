@@ -540,6 +540,10 @@ public class NormalMode extends Mode {
             allow("project search panel");
             ProjectSearchUiSupport.toggle(window);
         });
+        _rootResponder.addEventResponder("g \\", "Search", "editable project grep", "grep edit", () -> {
+            allow("editable project search results");
+            ProjectSearchUiSupport.toggleEditable(window);
+        });
         _rootResponder.addEventResponder(leader + " t", "Workspace", "Todo", "todo", () -> {
             if (window.blockEditorDriveAction("Todo workspace", "Todo is outside the editor-control sandbox")) {
                 return;

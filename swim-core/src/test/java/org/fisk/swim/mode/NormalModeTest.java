@@ -872,6 +872,11 @@ class NormalModeTest {
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
                     HeadlessWindowHarness.key('/'));
             assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
+            window.hidePanel();
+
+            HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('g'),
+                    HeadlessWindowHarness.key('\\'));
+            assertTrue(window.getPanelView() instanceof ProjectSearchPanelView);
         }
     }
 

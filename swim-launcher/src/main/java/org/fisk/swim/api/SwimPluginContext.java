@@ -29,4 +29,8 @@ public interface SwimPluginContext {
     default AutoCloseable registerHelpChapter(SwimHelpChapter chapter) {
         return SwimHelpRegistry.register(getPluginId(), chapter);
     }
+
+    default AutoCloseable registerCommand(SwimCommand command) {
+        return SwimCommandRegistry.register(getPluginId(), command);
+    }
 }
