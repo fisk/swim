@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import org.fisk.swim.api.SwimHttpClients;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -20,11 +21,13 @@ import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -124,6 +127,7 @@ public class NemoClient {
             .build();
     private static final AtomicReference<OsSandboxBackend> _osSandboxBackend = new AtomicReference<>();
     private final Map<String, Conversation> _conversations = new LinkedHashMap<>();
+    private final java.util.Set<String> _loadedConversationIds = new HashSet<>();
     private final Map<String, DailyTokenUsage> _dailyTokenUsage = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
@@ -156,6 +160,7 @@ public class NemoClient {
         _mcpClient.shutdownAll();
         resetMacOsSandboxAvailabilityForTests();
         _conversations.clear();
+        _loadedConversationIds.clear();
         _dailyTokenUsage.clear();
         _workspaceSessionIds.clear();
         _pendingApprovals.clear();
@@ -3123,6 +3128,10 @@ public class NemoClient {
         if (!Files.isDirectory(directory)) {
             return "request_directory_access failed: not a directory: " + rawPath;
         }
+        if (isPathInsideImplicitWorkspace(root, directory)) {
+            return "Nemo already has recursive read/write access to " + directory
+                    + " through the workspace's implicit project permissions.";
+        }
         DirectoryGrant existing = _instance.coveringDirectoryGrant(root, directory);
         if (existing != null) {
             return "Nemo already has recursive read/write access to " + directory
@@ -3220,10 +3229,14 @@ public class NemoClient {
     }
 
     private static boolean isPathInsideWorkspaceOrGrantedDirectory(Path workspaceRoot, Path path) {
+        return isPathInsideImplicitWorkspace(workspaceRoot, path)
+                || _instance.isPathInsideGrantedDirectory(workspaceRoot, path);
+    }
+
+    private static boolean isPathInsideImplicitWorkspace(Path workspaceRoot, Path path) {
         if (path.startsWith(workspaceRoot)) return true;
         SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
-        return (project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith))
-                || _instance.isPathInsideGrantedDirectory(workspaceRoot, path);
+        return project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith);
     }
 
     private static Path requireDirectory(Path path, String rawPath) throws IOException {
@@ -5040,6 +5053,7 @@ public class NemoClient {
 
         _sessionsLoaded = true;
         _conversations.clear();
+        _loadedConversationIds.clear();
         _dailyTokenUsage.clear();
         _workspaceSessionIds.clear();
         _activeSessionId = null;
@@ -5123,6 +5137,7 @@ public class NemoClient {
                         }
                     }
                     _conversations.put(conversation._id, conversation);
+                    _loadedConversationIds.add(conversation._id);
                     highestSessionNumber = Math.max(highestSessionNumber, sessionNumber(conversation._id));
                 }
             }
@@ -5135,6 +5150,7 @@ public class NemoClient {
         } catch (Exception e) {
             _log.error("Unable to load Nemo sessions from {}", statePath, e);
             _conversations.clear();
+            _loadedConversationIds.clear();
             _dailyTokenUsage.clear();
             _workspaceSessionIds.clear();
             _activeSessionId = null;
@@ -5200,15 +5216,72 @@ public class NemoClient {
         Path statePath = getStatePath();
         try {
             Files.createDirectories(statePath.getParent());
-            Path tempPath = Files.createTempFile(statePath.getParent(), "sessions-", ".json.tmp");
-            Files.writeString(tempPath, _gson.toJson(root), StandardCharsets.UTF_8);
-            try {
-                Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException e) {
-                Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING);
+            Path lockPath = statePath.resolveSibling(statePath.getFileName() + ".lock");
+            try (FileChannel lockChannel = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                    var ignored = lockChannel.lock()) {
+                mergeNewerPersistedSessions(root, statePath);
+                Path tempPath = Files.createTempFile(statePath.getParent(), "sessions-", ".json.tmp");
+                Files.writeString(tempPath, _gson.toJson(root), StandardCharsets.UTF_8);
+                try {
+                    Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    Files.move(tempPath, statePath, StandardCopyOption.REPLACE_EXISTING);
+                }
             }
         } catch (IOException e) {
             _log.error("Unable to persist Nemo sessions to {}", statePath, e);
+        }
+    }
+
+    /** Preserve conversations written by another live editor process since this process last loaded state. */
+    private static void mergeNewerPersistedSessions(JsonObject root, Path statePath) {
+        if (!Files.isRegularFile(statePath)) {
+            return;
+        }
+        try {
+            JsonArray diskSessions = parseJsonObject(Files.readString(statePath, StandardCharsets.UTF_8))
+                    .getAsJsonArray("sessions");
+            if (diskSessions == null) {
+                return;
+            }
+            var merged = new LinkedHashMap<String, JsonObject>();
+            JsonArray currentSessions = root.getAsJsonArray("sessions");
+            for (JsonElement element : currentSessions) {
+                JsonObject session = element.getAsJsonObject();
+                merged.put(session.get("id").getAsString(), session);
+            }
+            for (JsonElement element : diskSessions) {
+                JsonObject disk = element.getAsJsonObject();
+                String id = disk.get("id").getAsString();
+                JsonObject current = merged.get(id);
+                long diskUpdated = disk.has("updated_at_millis") ? disk.get("updated_at_millis").getAsLong() : 0;
+                long currentUpdated = current != null && current.has("updated_at_millis")
+                        ? current.get("updated_at_millis").getAsLong() : 0;
+                long diskCreated = disk.has("created_at_millis") ? disk.get("created_at_millis").getAsLong() : 0;
+                long currentCreated = current != null && current.has("created_at_millis")
+                        ? current.get("created_at_millis").getAsLong() : diskCreated;
+                if (current != null && diskCreated != currentCreated) {
+                    String recoveredId = id + "-recovered-" + diskCreated;
+                    JsonObject recovered = disk.deepCopy();
+                    recovered.addProperty("id", recoveredId);
+                    merged.put(recoveredId, recovered);
+                    continue;
+                }
+                if (current == null && _instance._loadedConversationIds.contains(id)) {
+                    // This process explicitly deleted a session it had loaded; do not resurrect it.
+                    continue;
+                }
+                if (current == null || diskUpdated > currentUpdated) {
+                    merged.put(id, disk);
+                }
+            }
+            var sessions = new JsonArray();
+            for (JsonObject session : merged.values()) {
+                sessions.add(session);
+            }
+            root.add("sessions", sessions);
+        } catch (Exception e) {
+            _log.warn("Unable to merge existing Nemo session state from {}", statePath, e);
         }
     }
 
@@ -5684,6 +5757,7 @@ public class NemoClient {
         long now = System.currentTimeMillis();
         var conversation = new Conversation(id, title, workspaceRoot, now, now);
         _conversations.put(conversation._id, conversation);
+        _loadedConversationIds.add(conversation._id);
         return conversation;
     }
 
@@ -6265,6 +6339,11 @@ public class NemoClient {
             Path directory = (requested.isAbsolute() ? requested : root.resolve(requested)).toAbsolutePath().normalize();
             if (!Files.isDirectory(directory)) {
                 appendAssistantNote(conversation, "Not a directory: " + argument);
+                return;
+            }
+            if (isPathInsideImplicitWorkspace(root, directory)) {
+                appendAssistantNote(conversation, "Nemo already has recursive read/write access to " + directory
+                        + " through the workspace's implicit project permissions.");
                 return;
             }
             addDirectoryGrant(root, directory, true, true);

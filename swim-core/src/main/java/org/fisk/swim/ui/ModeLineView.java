@@ -302,9 +302,15 @@ public class ModeLineView extends View {
                 ? new AttributedString()
                 : getLeftString();
         var right = getRightString();
+        int width = getBounds().getSize().getWidth();
+        // Keep the client heap sample visible when the mode line is crowded. UiTheme.drawLine
+        // truncates from the right, which otherwise drops the client bar after the server bar.
+        if (_clientHeapUsage != null && left.length() + right.length() > width) {
+            left = left.slice(0, Math.max(0, width - right.length()));
+        }
 
         str.append(left);
-        str.append(getWhitespaces(getBounds().getSize().getWidth() - left.length() - right.length()));
+        str.append(getWhitespaces(width - left.length() - right.length()));
         str.append(right);
 
         return str;

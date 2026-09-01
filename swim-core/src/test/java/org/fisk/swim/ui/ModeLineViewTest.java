@@ -143,6 +143,23 @@ class ModeLineViewTest {
     }
 
     @Test
+    void crowdedModeLineKeepsClientHeapBarVisible() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(
+                writeFile("a-very-long-mode-line-buffer-name-that-must-yield-to-the-heap-bars.txt", "abc"), 80, 8)) {
+            var modeLine = harness.getWindow().getModeLineView();
+            var clientHeap = modeLine.getClass().getDeclaredField("_clientHeapUsage");
+            clientHeap.setAccessible(true);
+            long mib = 1024L * 1024L;
+            clientHeap.set(modeLine, new MemoryUsage(0, 32 * mib, 64 * mib, 64 * mib));
+
+            String rendered = invoke(modeLine, "getString", AttributedString.class).toString();
+
+            assertTrue(rendered.contains("srv ["));
+            assertTrue(rendered.contains("cli ["));
+        }
+    }
+
+    @Test
     void leftSegmentsUsePowerlineTransitionsBetweenBackgroundBlocks() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("mode-line-powerline.txt", "abc"), 50, 8)) {
             var window = harness.getWindow();

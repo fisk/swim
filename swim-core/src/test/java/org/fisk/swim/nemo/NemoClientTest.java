@@ -619,6 +619,11 @@ class NemoClientTest {
         var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
         var session = new RecordingToolSession();
 
+        String implicit = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("implicit", "request_directory_access", json(Map.of("path", "."))), session);
+        assertTrue(implicit.contains("implicit project permissions"));
+        assertEquals(0, session.approvals.get());
+
         assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("before", "read_file", json(Map.of("path", "../shared/note.txt")))));
 
