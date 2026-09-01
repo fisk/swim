@@ -96,7 +96,8 @@ class ProjectSearchPanelViewTest {
 
             HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.enter());
 
-            assertFalse(window.isShowingPanel());
+            assertTrue(window.isShowingPanel());
+            assertTrue(window.getPanelView() instanceof EditableSearchResultsBufferView);
             var results = window.getBufferContext().getBuffer();
             assertEquals("current.txt:1: needle value", results.getString());
             results.getCursor().setPosition("current.txt:1: needle".length());
@@ -104,6 +105,10 @@ class ProjectSearchPanelViewTest {
 
             assertEquals("needle updated value\n", Files.readString(current));
             assertEquals("needle updated value\n", source.getString());
+
+            HeadlessWindowHarness.dispatch(window.getActiveView().getFirstResponder(), HeadlessWindowHarness.escape());
+            assertFalse(window.isShowingPanel());
+            assertEquals(source, window.getBufferContext().getBuffer());
         }
     }
 

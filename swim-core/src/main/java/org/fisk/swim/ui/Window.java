@@ -379,7 +379,7 @@ public class Window implements Drawable {
     }
 
     /** Opens a virtual buffer whose result text writes through to project files on each edit. */
-    boolean openEditableSearchResults(Path projectRoot, List<ProjectSearch.Match> matches) {
+    boolean openEditableSearchResults(Path projectRoot, String query, List<ProjectSearch.Match> matches) {
         if (projectRoot == null || matches == null || matches.isEmpty()) {
             return false;
         }
@@ -388,21 +388,26 @@ public class Window implements Drawable {
                 || !match.path().toAbsolutePath().normalize().startsWith(normalizedRoot))) {
             return false;
         }
+        if (_panelView != null) {
+            hidePanel();
+        }
         ensureLayoutState();
         var currentBufferView = getEditableBufferView();
         if (currentBufferView == null) {
             return false;
         }
-        var results = EditableSearchResults.create(this, matches);
+        var results = EditableSearchResults.create(this, query, matches);
         var context = new BufferContext(currentBufferView.getBounds(),
-                EditableSearchResults.text(this, matches), false);
+                EditableSearchResults.text(this, query, matches), false, EditableSearchResultsBufferView::new);
         context.getBuffer().addContentChangeListener(results);
-        replaceViewInLayout(currentBufferView, context.getBufferView());
+        results.applyColours(context.getBuffer());
         registerBufferView(context, context.getBufferView());
-        _bufferContext = context;
-        _activeBufferView = context.getBufferView();
-        setupModes();
-        activateView(context.getBufferView());
+        var resultsView = (EditableSearchResultsBufferView) context.getBufferView();
+        resultsView.setOnClose(this::hidePanel);
+        if (!showPanel(resultsView)) {
+            unregisterBufferView(resultsView);
+            return false;
+        }
         if (_commandView != null) {
             _commandView.setMessage("Editable search results: edit text after each location prefix");
         }
@@ -3634,7 +3639,8 @@ public class Window implements Drawable {
     }
 
     private boolean isOverlayPanel(View panelView) {
-        return panelView instanceof ChatPanelView || panelView instanceof ShellPanelView;
+        return panelView instanceof ChatPanelView || panelView instanceof ShellPanelView
+                || panelView instanceof EditableSearchResultsBufferView;
     }
 
     @SuppressWarnings("unchecked")
@@ -4206,6 +4212,20 @@ public class Window implements Drawable {
             chatPanelView.removeFromParent();
             if (_activeBufferView != null) {
                 activateView(_activeBufferView);
+            } else if (_workspaceView != null) {
+                activateView(findFocusableView(_workspaceView));
+            }
+            return;
+        }
+        if (_panelView instanceof EditableSearchResultsBufferView resultsView) {
+            BufferView restoreView = _activeBufferView == resultsView ? findFirstBufferView() : _activeBufferView;
+            _panelView = null;
+            resultsView.removeFromParent();
+            unregisterBufferView(resultsView);
+            if (restoreView != null) {
+                _activeBufferView = restoreView;
+                _bufferContext = getBufferContextFor(restoreView);
+                activateView(restoreView);
             } else if (_workspaceView != null) {
                 activateView(findFocusableView(_workspaceView));
             }

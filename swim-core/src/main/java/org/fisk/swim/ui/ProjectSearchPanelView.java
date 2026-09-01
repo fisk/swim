@@ -429,11 +429,9 @@ public class ProjectSearchPanelView extends View implements KeyBindingHintProvid
         if (window == null) {
             return;
         }
-        if (!window.openEditableSearchResults(_projectSearch.getRoot(), _results)) {
+        if (!window.openEditableSearchResults(_projectSearch.getRoot(), _query.toString(), _results)) {
             window.getCommandView().setMessage("Failed to open editable search results");
-            return;
         }
-        close();
     }
 
     private void close() {
