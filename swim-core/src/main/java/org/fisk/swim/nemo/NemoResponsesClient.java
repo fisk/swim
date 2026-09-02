@@ -30,7 +30,7 @@ final class NemoResponsesClient {
     private static final Gson GSON = new Gson();
     // A tool-using model can otherwise keep returning calls forever, retaining
     // every call/result in the next Responses request until the editor OOMs.
-    private static final int MAX_TOOL_CALLS_PER_REQUEST = 64;
+    private static final int MAX_TOOL_CONTEXT_CHARS = 1024 * 1024;
     private static final int MAX_TOOL_TRANSCRIPT_CHARS = 512 * 1024;
 
     NemoClient.ResponseResult request(NemoClient.Configuration configuration, BufferContext context,
@@ -47,7 +47,7 @@ final class NemoResponsesClient {
         JsonArray tools = tools(configuration);
         TokenUsage cumulativeUsage = null;
         var toolTraces = new ArrayList<NemoClient.ToolTrace>();
-        int toolCalls = 0;
+        int toolContextChars = 0;
         int toolTranscriptChars = 0;
         int attempts = Math.max(1, configuration.maxRetries() + 1);
         int failedAttempts = 0;
@@ -72,10 +72,12 @@ final class NemoResponsesClient {
 
             ResponseParts parts = responseParts(response);
             if (!parts.toolCalls().isEmpty()) {
-                if (toolCalls + parts.toolCalls().size() > MAX_TOOL_CALLS_PER_REQUEST) {
+                int rawToolCallChars = parts.rawToolCalls().stream().mapToInt(call -> call.toString().length()).sum();
+                if (toolContextChars + rawToolCallChars > MAX_TOOL_CONTEXT_CHARS) {
                     return toolLimitResult(configuration, cumulativeUsage, toolTraces,
-                            "Nemo stopped after " + toolCalls + " tool calls to keep this request bounded.");
+                            "Nemo stopped after reaching the tool-context limit for this request.");
                 }
+                toolContextChars += rawToolCallChars;
                 for (JsonObject rawToolCall : parts.rawToolCalls()) {
                     input.add(rawToolCall);
                 }
@@ -93,8 +95,12 @@ final class NemoResponsesClient {
                     }
                     String boundedOutput = output.length() <= remaining ? output
                             : output.substring(0, remaining) + "\n[tool output truncated]";
+                    if (toolContextChars + boundedOutput.length() > MAX_TOOL_CONTEXT_CHARS) {
+                        return toolLimitResult(configuration, cumulativeUsage, toolTraces,
+                                "Nemo stopped after reaching the tool-context limit for this request.");
+                    }
                     toolTranscriptChars += boundedOutput.length();
-                    toolCalls++;
+                    toolContextChars += boundedOutput.length();
                     input.add(functionCallOutput(toolCall.callId(), boundedOutput));
                 }
                 continue;
