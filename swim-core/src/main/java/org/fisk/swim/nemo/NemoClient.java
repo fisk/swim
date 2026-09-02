@@ -88,6 +88,8 @@ public class NemoClient {
     private static final int _defaultMaxOutputChars = 12_000;
     /** Never materialize arbitrary build logs or generated artifacts in the editor JVM. */
     private static final long _maxNemoTextFileBytes = 8L * 1024 * 1024;
+    private static final int _maxNemoGitOutputChars = 256 * 1024;
+    private static final int _maxEditIntentTextChars = 4_096;
     private static final int _defaultCommandTimeoutSeconds = 20;
     private static final int _diffContextLines = 3;
     private static final String _defaultCommandPolicy = "restricted";
@@ -3438,9 +3440,6 @@ public class NemoClient {
             if (matches.size() >= maxResults) {
                 break;
             }
-            if (Files.size(path) > _maxNemoTextFileBytes) {
-                continue;
-            }
             try {
                 try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
                     String line;
@@ -3448,7 +3447,8 @@ public class NemoClient {
                     while ((line = reader.readLine()) != null && matches.size() < maxResults) {
                         lineNumber++;
                         if (line.contains(query)) {
-                            matches.add(root.relativize(path) + ":" + lineNumber + ": " + line);
+                            matches.add(root.relativize(path) + ":" + lineNumber + ": "
+                                    + searchLineSnippet(line, query));
                         }
                     }
                 }
@@ -3460,6 +3460,16 @@ public class NemoClient {
             return "(no matches)";
         }
         return truncateOutput(configuration, String.join("\n", matches));
+    }
+
+    private static String searchLineSnippet(String line, String query) {
+        final int limit = 512;
+        if (line.length() <= limit) return line;
+        int match = Math.max(0, line.indexOf(query));
+        int start = Math.max(0, match - limit / 3);
+        int end = Math.min(line.length(), start + limit);
+        start = Math.max(0, end - limit);
+        return (start > 0 ? "…" : "") + line.substring(start, end) + (end < line.length() ? "…" : "");
     }
 
     private static void rejectOversizedNemoTextFile(Path path) throws IOException {
@@ -3528,11 +3538,14 @@ public class NemoClient {
         String name = stringArgument(arguments, "name", "").trim();
         if (name.isBlank()) throw new IOException("name is required");
         Path path = editIntentPath(root);
+        if (Files.isRegularFile(path)) rejectOversizedNemoTextFile(path);
         JsonObject document = Files.isRegularFile(path) ? parseJsonObject(Files.readString(path, StandardCharsets.UTF_8)) : new JsonObject();
+        var preserve = boundedEditIntentTexts(stringArrayArgument(arguments, "preserve"));
+        var remove = boundedEditIntentTexts(stringArrayArgument(arguments, "remove"));
         JsonObject checkpoint = new JsonObject();
         checkpoint.addProperty("intent", stringArgument(arguments, "intent", ""));
-        checkpoint.add("preserve", _gson.toJsonTree(stringArrayArgument(arguments, "preserve")));
-        checkpoint.add("remove", _gson.toJsonTree(stringArrayArgument(arguments, "remove")));
+        checkpoint.add("preserve", _gson.toJsonTree(preserve));
+        checkpoint.add("remove", _gson.toJsonTree(remove));
         checkpoint.addProperty("created_at", System.currentTimeMillis());
         document.add(name, checkpoint);
         Files.createDirectories(path.getParent());
@@ -3544,22 +3557,65 @@ public class NemoClient {
         Path root = resolveWorkspaceRoot(configuration, context);
         String name = stringArgument(arguments, "name", "").trim();
         Path path = editIntentPath(root);
+        if (Files.isRegularFile(path)) rejectOversizedNemoTextFile(path);
         JsonObject document = Files.isRegularFile(path) ? parseJsonObject(Files.readString(path, StandardCharsets.UTF_8)) : new JsonObject();
         if (!document.has(name) || !document.get(name).isJsonObject()) return "Unknown edit intent checkpoint: " + name;
         JsonObject checkpoint = document.getAsJsonObject(name);
-        String workspace;
+        List<String> preserve = boundedEditIntentTexts(stringArrayArgument(checkpoint, "preserve"));
+        List<String> remove = boundedEditIntentTexts(stringArrayArgument(checkpoint, "remove"));
+        boolean[] preserved = new boolean[preserve.size()];
+        boolean[] removed = new boolean[remove.size()];
         try (Stream<Path> paths = Files.walk(root)) {
-            workspace = paths.filter(Files::isRegularFile)
+            paths.filter(Files::isRegularFile)
                     .filter(candidate -> !candidate.startsWith(root.resolve(".git")) && !candidate.equals(path))
-                    .map(candidate -> { try { return Files.readString(candidate, StandardCharsets.UTF_8); } catch (IOException e) { return ""; } })
-                    .collect(Collectors.joining("\n"));
+                    .forEach(candidate -> updateEditIntentMatches(candidate, preserve, preserved, remove, removed));
         }
         var failures = new ArrayList<String>();
-        for (String text : stringArrayArgument(checkpoint, "preserve")) if (!workspace.contains(text)) failures.add("missing preserved text: " + text);
-        for (String text : stringArrayArgument(checkpoint, "remove")) if (workspace.contains(text)) failures.add("still present removed text: " + text);
+        for (int index = 0; index < preserve.size(); index++) if (!preserved[index]) failures.add("missing preserved text: " + preserve.get(index));
+        for (int index = 0; index < remove.size(); index++) if (removed[index]) failures.add("still present removed text: " + remove.get(index));
         String diff = runGit(root, List.of("diff", "--unified=3"));
         String result = failures.isEmpty() ? "edit intent '" + name + "' verified" : "edit intent '" + name + "' failed:\n" + String.join("\n", failures);
-        return result + "\n\nDiff with context:\n" + (diff.isBlank() ? "(no uncommitted diff)" : diff);
+        return truncateOutput(configuration,
+                result + "\n\nDiff with context:\n" + (diff.isBlank() ? "(no uncommitted diff)" : diff));
+    }
+
+    private static List<String> boundedEditIntentTexts(List<String> texts) throws IOException {
+        var result = new ArrayList<String>();
+        for (String text : texts) {
+            if (text != null && !text.isEmpty()) {
+                if (text.length() > _maxEditIntentTextChars) {
+                    throw new IOException("edit intent text exceeds " + _maxEditIntentTextChars + " characters");
+                }
+                result.add(text);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private static void updateEditIntentMatches(Path path, List<String> firstTexts, boolean[] firstMatches,
+            List<String> secondTexts, boolean[] secondMatches) {
+        updateEditIntentMatches(path, firstTexts, firstMatches);
+        updateEditIntentMatches(path, secondTexts, secondMatches);
+    }
+
+    private static void updateEditIntentMatches(Path path, List<String> texts, boolean[] matches) {
+        if (texts.isEmpty()) return;
+        int carryLength = texts.stream().mapToInt(String::length).max().orElse(1) - 1;
+        var carry = new StringBuilder();
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            char[] buffer = new char[8192];
+            int count;
+            while ((count = reader.read(buffer)) >= 0) {
+                carry.append(buffer, 0, count);
+                String chunk = carry.toString();
+                for (int index = 0; index < texts.size(); index++) {
+                    if (!matches[index] && chunk.contains(texts.get(index))) matches[index] = true;
+                }
+                if (carry.length() > carryLength) carry.delete(0, carry.length() - carryLength);
+            }
+        } catch (IOException ignored) {
+            // A file disappearing or being unreadable during an advisory check does not invalidate the workspace.
+        }
     }
 
     private static String runGit(Path root, List<String> arguments) throws IOException {
@@ -3568,7 +3624,7 @@ public class NemoClient {
         command.addAll(arguments);
         Process process = new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start();
         try {
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            String output = readBoundedProcessOutput(process.getInputStream(), _maxNemoGitOutputChars);
             process.waitFor(10, TimeUnit.SECONDS);
             return output.strip();
         } catch (InterruptedException e) {
@@ -3577,6 +3633,19 @@ public class NemoClient {
         } finally {
             process.destroyForcibly();
         }
+    }
+
+    private static String readBoundedProcessOutput(InputStream input, int maximumChars) throws IOException {
+        var output = new StringBuilder();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) >= 0) {
+            if (read <= 0 || output.length() >= maximumChars) continue;
+            String chunk = new String(buffer, 0, read, StandardCharsets.UTF_8);
+            int remaining = maximumChars - output.length();
+            output.append(chunk, 0, Math.min(remaining, chunk.length()));
+        }
+        return output.length() >= maximumChars ? output + "\n[output truncated]" : output.toString();
     }
 
     private static String shellStart(Configuration configuration, BufferContext context, JsonObject arguments,

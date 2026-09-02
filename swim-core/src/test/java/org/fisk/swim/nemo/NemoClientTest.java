@@ -1485,7 +1485,7 @@ class NemoClientTest {
         Files.writeString(file, "needle\n");
         try (FileChannel channel = FileChannel.open(large, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
             channel.position(8L * 1024 * 1024);
-            channel.write(java.nio.ByteBuffer.wrap(new byte[] { 'x' }));
+            channel.write(java.nio.ByteBuffer.wrap("needle".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         }
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
         var configuration = new NemoClient.Configuration("token", "gpt-5.4",
@@ -1496,10 +1496,16 @@ class NemoClientTest {
                 new NemoClient.ToolCall("read-large", "read_file", json(Map.of("path", "build/huge.log")))));
         String searched = NemoClient.executeTool(configuration, context,
                 new NemoClient.ToolCall("search", "search_files", json(Map.of("query", "needle"))));
+        NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("checkpoint", "edit_intent_checkpoint", json(Map.of(
+                        "name", "bounded", "preserve", List.of("needle"), "remove", List.of("gone")))));
+        String verified = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("verify", "edit_intent_verify", json(Map.of("name", "bounded"))));
 
         assertTrue(error.getMessage().contains("too large"));
         assertTrue(searched.contains("src/Main.txt:1: needle"));
-        assertFalse(searched.contains("huge.log"));
+        assertTrue(searched.contains("build/huge.log"));
+        assertTrue(verified.contains("verified"));
     }
 
     @Test
