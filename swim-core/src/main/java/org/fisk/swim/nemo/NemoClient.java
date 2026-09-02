@@ -10,6 +10,8 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import org.fisk.swim.api.SwimHttpClients;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +31,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -3563,12 +3566,19 @@ public class NemoClient {
         JsonObject checkpoint = document.getAsJsonObject(name);
         List<String> preserve = boundedEditIntentTexts(stringArrayArgument(checkpoint, "preserve"));
         List<String> remove = boundedEditIntentTexts(stringArrayArgument(checkpoint, "remove"));
+        WorkspaceFingerprint before = fingerprintWorkspace(root, path);
         boolean[] preserved = new boolean[preserve.size()];
         boolean[] removed = new boolean[remove.size()];
         try (Stream<Path> paths = Files.walk(root)) {
-            paths.filter(Files::isRegularFile)
-                    .filter(candidate -> !candidate.startsWith(root.resolve(".git")) && !candidate.equals(path))
-                    .forEach(candidate -> updateEditIntentMatches(candidate, preserve, preserved, remove, removed));
+            Iterator<Path> candidates = paths.filter(Files::isRegularFile)
+                    .filter(candidate -> !candidate.startsWith(root.resolve(".git")) && !candidate.equals(path)).iterator();
+            while (candidates.hasNext()) {
+                updateEditIntentMatches(candidates.next(), preserve, preserved, remove, removed);
+            }
+        }
+        WorkspaceFingerprint after = fingerprintWorkspace(root, path);
+        if (!before.equals(after)) {
+            return "Workspace changed while verifying edit intent '" + name + "'; retry verification.";
         }
         var failures = new ArrayList<String>();
         for (int index = 0; index < preserve.size(); index++) if (!preserved[index]) failures.add("missing preserved text: " + preserve.get(index));
@@ -3577,6 +3587,54 @@ public class NemoClient {
         String result = failures.isEmpty() ? "edit intent '" + name + "' verified" : "edit intent '" + name + "' failed:\n" + String.join("\n", failures);
         return truncateOutput(configuration,
                 result + "\n\nDiff with context:\n" + (diff.isBlank() ? "(no uncommitted diff)" : diff));
+    }
+
+    private record WorkspaceFingerprint(long fileCount, String checksum) { }
+
+    /**
+     * A commutative aggregate of per-file SHA-256 digests avoids retaining a
+     * workspace-sized file list while still detecting added, removed, or
+     * modified files between the two verification passes.
+     */
+    private static WorkspaceFingerprint fingerprintWorkspace(Path root, Path excluded) throws IOException {
+        byte[] aggregate = new byte[32];
+        long fileCount = 0;
+        try (Stream<Path> paths = Files.walk(root)) {
+            Iterator<Path> candidates = paths.filter(Files::isRegularFile)
+                    .filter(candidate -> !candidate.startsWith(root.resolve(".git")) && !candidate.equals(excluded)).iterator();
+            while (candidates.hasNext()) {
+                Path candidate = candidates.next();
+                byte[] digest = digestFile(candidate);
+                MessageDigest entry = sha256();
+                entry.update(root.relativize(candidate).toString().getBytes(StandardCharsets.UTF_8));
+                entry.update((byte) 0);
+                entry.update(digest);
+                byte[] entryDigest = entry.digest();
+                for (int index = 0; index < aggregate.length; index++) aggregate[index] ^= entryDigest[index];
+                fileCount++;
+            }
+        }
+        return new WorkspaceFingerprint(fileCount, java.util.HexFormat.of().formatHex(aggregate));
+    }
+
+    private static byte[] digestFile(Path path) throws IOException {
+        MessageDigest digest = sha256();
+        try (InputStream input = Files.newInputStream(path)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (read > 0) digest.update(buffer, 0, read);
+            }
+        }
+        return digest.digest();
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private static List<String> boundedEditIntentTexts(List<String> texts) throws IOException {
