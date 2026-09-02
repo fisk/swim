@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1471,6 +1473,33 @@ class NemoClientTest {
         assertFalse(found.contains("other/Main.txt"));
         assertTrue(foundGlob.contains("src/Main.txt"));
         assertFalse(foundGlob.contains("other/Main.txt"));
+    }
+
+    @Test
+    void refusesOversizedFilesAndSkipsThemDuringSearch() throws Exception {
+        Path project = tempDir.resolve("large-project");
+        Path file = project.resolve("src/Main.txt");
+        Path large = project.resolve("build/huge.log");
+        Files.createDirectories(file.getParent());
+        Files.createDirectories(large.getParent());
+        Files.writeString(file, "needle\n");
+        try (FileChannel channel = FileChannel.open(large, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+            channel.position(8L * 1024 * 1024);
+            channel.write(java.nio.ByteBuffer.wrap(new byte[] { 'x' }));
+        }
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = new NemoClient.Configuration("token", "gpt-5.4",
+                java.net.URI.create("https://example.invalid/responses"), Map.of(), project,
+                false, true, true, true, false, false, false, false, false, false, false, 50, 4000, 5);
+
+        IOException error = assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("read-large", "read_file", json(Map.of("path", "build/huge.log")))));
+        String searched = NemoClient.executeTool(configuration, context,
+                new NemoClient.ToolCall("search", "search_files", json(Map.of("query", "needle"))));
+
+        assertTrue(error.getMessage().contains("too large"));
+        assertTrue(searched.contains("src/Main.txt:1: needle"));
+        assertFalse(searched.contains("huge.log"));
     }
 
     @Test

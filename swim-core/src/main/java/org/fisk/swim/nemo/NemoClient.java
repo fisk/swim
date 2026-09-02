@@ -1,6 +1,7 @@
 package org.fisk.swim.nemo;
 
 import java.io.File;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -85,6 +86,8 @@ public class NemoClient {
             "When applicable, follow instructions from relevant SKILLS.md files in the workspace.");
     private static final int _defaultMaxResults = 200;
     private static final int _defaultMaxOutputChars = 12_000;
+    /** Never materialize arbitrary build logs or generated artifacts in the editor JVM. */
+    private static final long _maxNemoTextFileBytes = 8L * 1024 * 1024;
     private static final int _defaultCommandTimeoutSeconds = 20;
     private static final int _diffContextLines = 3;
     private static final String _defaultCommandPolicy = "restricted";
@@ -3368,17 +3371,32 @@ public class NemoClient {
         if (!Files.isRegularFile(path)) {
             throw new IOException("Not a file: " + path);
         }
-        var lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+        rejectOversizedNemoTextFile(path);
         int startLine = Math.max(1, intArgument(arguments, "start_line", 1));
-        int endLine = intArgument(arguments, "end_line", lines.size());
-        endLine = Math.min(lines.size(), endLine <= 0 ? lines.size() : endLine);
-        startLine = Math.min(startLine, lines.isEmpty() ? 1 : lines.size());
-
-        var output = new ArrayList<String>();
-        for (int i = startLine; i <= endLine && i <= lines.size(); i++) {
-            output.add(i + ": " + lines.get(i - 1));
+        int requestedEndLine = intArgument(arguments, "end_line", Integer.MAX_VALUE);
+        int endLine = requestedEndLine <= 0 ? Integer.MAX_VALUE : requestedEndLine;
+        var output = new StringBuilder();
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            String line;
+            int lineNumber = 0;
+            while ((line = reader.readLine()) != null) {
+                lineNumber++;
+                if (lineNumber < startLine) {
+                    continue;
+                }
+                if (lineNumber > endLine) {
+                    break;
+                }
+                if (!output.isEmpty()) {
+                    output.append('\n');
+                }
+                output.append(lineNumber).append(": ").append(line);
+                if (output.length() >= configuration.toolMaxOutputChars()) {
+                    break;
+                }
+            }
         }
-        return truncateOutput(configuration, String.join("\n", output));
+        return truncateOutput(configuration, output.toString());
     }
 
     private String openLspAnalysis(Configuration configuration, BufferContext context, JsonObject arguments,
@@ -3420,22 +3438,36 @@ public class NemoClient {
             if (matches.size() >= maxResults) {
                 break;
             }
-            List<String> lines;
-            try {
-                lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-            } catch (IOException e) {
+            if (Files.size(path) > _maxNemoTextFileBytes) {
                 continue;
             }
-            for (int i = 0; i < lines.size() && matches.size() < maxResults; i++) {
-                if (lines.get(i).contains(query)) {
-                    matches.add(root.relativize(path) + ":" + (i + 1) + ": " + lines.get(i));
+            try {
+                try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+                    String line;
+                    int lineNumber = 0;
+                    while ((line = reader.readLine()) != null && matches.size() < maxResults) {
+                        lineNumber++;
+                        if (line.contains(query)) {
+                            matches.add(root.relativize(path) + ":" + lineNumber + ": " + line);
+                        }
+                    }
                 }
+            } catch (IOException e) {
+                continue;
             }
         }
         if (matches.isEmpty()) {
             return "(no matches)";
         }
         return truncateOutput(configuration, String.join("\n", matches));
+    }
+
+    private static void rejectOversizedNemoTextFile(Path path) throws IOException {
+        long size = Files.size(path);
+        if (size > _maxNemoTextFileBytes) {
+            throw new IOException("File is too large for Nemo to read safely (" + size + " bytes; limit "
+                    + _maxNemoTextFileBytes + "): " + path);
+        }
     }
 
     private static String runCommand(Configuration configuration, BufferContext context, JsonObject arguments,
