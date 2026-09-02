@@ -31,6 +31,9 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     private TerminalDimensions dimensions;
     private AnsiScreen screen;
     private AnsiScreenGraphics graphics;
+    private final TerminalUtf8Decoder utf8Decoder = new TerminalUtf8Decoder();
+    private boolean decodingUtf8;
+    private boolean utf8Alt;
     private boolean started;
 
     public AnsiTerminalBackend(InputStream input, OutputStream output, Supplier<TerminalDimensions> dimensionsSupplier) {
@@ -74,10 +77,10 @@ public final class AnsiTerminalBackend implements TerminalBackend {
         if (input == null || input.available() == 0) return null;
         int first = input.read();
         if (first < 0) return new KeyStroke(KeyType.EOF);
-        if (first != 0x1b) return decodeByte(first, false);
+        if (first != 0x1b) return readTextInput(first, false);
         if (input.available() == 0) return new KeyStroke(KeyType.Escape);
         int second = input.read();
-        if (second != '[' && second != 'O') return decodeByte(second, true);
+        if (second != '[' && second != 'O') return readTextInput(second, true);
         if (input.available() == 0) return new KeyStroke(KeyType.Escape);
         int third = input.read();
         if (second == 'O') return ss3Key((char) third);
@@ -94,6 +97,38 @@ public final class AnsiTerminalBackend implements TerminalBackend {
         if (value >= 28 && value <= 31) return new KeyStroke((char) ('\\' + value - 28), true, alt);
         if (value == 0) return new KeyStroke(' ', true, alt);
         return new KeyStroke((char) value, false, alt);
+    }
+
+    /**
+     * Terminal input is a byte stream, while editor text events are Unicode
+     * characters.  Keep an incomplete UTF-8 sequence until all of its bytes
+     * arrive instead of turning each byte into a separate Latin-1 character.
+     */
+    private KeyStroke readTextInput(int value, boolean alt) throws IOException {
+        KeyStroke stroke = decodeTextByte(value, alt);
+        while (stroke == null && input.available() > 0) {
+            stroke = decodeTextByte(input.read(), alt);
+        }
+        return stroke;
+    }
+
+    private KeyStroke decodeTextByte(int value, boolean alt) {
+        if (value < 0) return new KeyStroke(KeyType.EOF);
+        if (!decodingUtf8 && value < 0x80) return decodeByte(value, alt);
+        if (!decodingUtf8) {
+            decodingUtf8 = true;
+            utf8Alt = alt;
+        }
+        String decoded = utf8Decoder.decode(new byte[] { (byte) value }, 1);
+        if (decoded.isEmpty()) return null;
+        decodingUtf8 = false;
+        // KeyStroke currently represents BMP character input.  Reject an
+        // invalid/multi-code-point sequence rather than inserting its raw
+        // transport bytes into a buffer.
+        if (decoded.codePointCount(0, decoded.length()) != 1 || decoded.length() != 1) {
+            return new KeyStroke(KeyType.Unknown, false, utf8Alt);
+        }
+        return new KeyStroke(decoded.charAt(0), false, utf8Alt);
     }
 
     private static KeyStroke ss3Key(char key) {

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.fisk.swim.event.KeyType;
@@ -47,6 +48,26 @@ class AnsiTerminalBackendTest {
         var ctrlY = backend.pollInput();
         assertEquals('y', ctrlY.getCharacter());
         assertEquals(true, ctrlY.isCtrlDown());
+    }
+
+    @Test
+    void decodesUtf8TextAsOneCharacter() throws Exception {
+        var backend = new AnsiTerminalBackend(new ByteArrayInputStream("ö".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream(), () -> new TerminalDimensions(80, 24));
+
+        var key = backend.pollInput();
+        assertEquals('ö', key.getCharacter());
+        assertNull(backend.pollInput());
+    }
+
+    @Test
+    void preservesAltForUtf8Text() throws Exception {
+        var backend = new AnsiTerminalBackend(new ByteArrayInputStream("\u001bö".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream(), () -> new TerminalDimensions(80, 24));
+
+        var key = backend.pollInput();
+        assertEquals('ö', key.getCharacter());
+        assertEquals(true, key.isAltDown());
     }
 
     @Test
