@@ -1002,7 +1002,7 @@ class WindowTest {
             assertEquals(leavesBefore, leafViews(window).size());
             assertSame(shell, window.getPanelView());
             assertSame(shell, window.getActiveView());
-            assertEquals(WindowLayoutTestSupport.overlayPanel(32, 11, 1.0 / 3.0).toString(),
+            assertEquals(WindowLayoutTestSupport.overlayPanel(32, 11, 0.70).toString(),
                     shell.getBounds().toString());
             assertTrue(rootSubviews(window).indexOf(shell) > rootSubviews(window).indexOf(HeadlessWindowHarness.getField(window, "_workspaceView", View.class)));
             assertTrue(rootSubviews(window).indexOf(shell) < rootSubviews(window).indexOf(window.getModeLineView()));

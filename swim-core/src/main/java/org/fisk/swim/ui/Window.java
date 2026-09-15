@@ -378,6 +378,54 @@ public class Window implements Drawable {
         return true;
     }
 
+    /**
+     * Save the active buffer under a new name, retaining the original file as
+     * Vim's :saveas does.  Split views of the same file remain linked.
+     */
+    public boolean saveCurrentBufferAs(Path path) {
+        return saveCurrentBufferAs(path, false);
+    }
+
+    public boolean saveCurrentBufferAs(Path path, boolean force) {
+        var context = getBufferContext();
+        if (context == null || context.getBuffer() == null || path == null) {
+            return false;
+        }
+        Path target = path.toAbsolutePath().normalize();
+        Path previous = context.getBuffer().getPath();
+        if (previous != null && target.equals(previous.toAbsolutePath().normalize())) {
+            try {
+                context.getBuffer().writeOrThrow();
+                return true;
+            } catch (IOException e) {
+                return false;
+            }
+        }
+        var existing = findRegisteredBufferContext(target);
+        if (existing != null && existing != context) {
+            return false;
+        }
+        try {
+            context.getBuffer().writeAsOrThrow(target, force);
+            if (previous != null) {
+                Path normalizedPrevious = previous.toAbsolutePath().normalize();
+                for (BufferContext linked : openBufferContextsSnapshot()) {
+                    if (linked != context && bufferPathEquals(linked, normalizedPrevious)) {
+                        linked.getBuffer().rebindPath(target);
+                        linked.getBuffer().replaceContentsFromLinkedBuffer(context.getBuffer().getString(),
+                                context.getBuffer().getVersion(), false);
+                    }
+                }
+            }
+            if (_openBufferFileWatcher != null) _openBufferFileWatcher.watch(target);
+            if (_rootView != null) _rootView.setNeedsRedraw();
+            return true;
+        } catch (IOException e) {
+            if (_commandView != null) _commandView.setMessage(e.getMessage());
+            return false;
+        }
+    }
+
     /** Opens a virtual buffer whose result text writes through to project files on each edit. */
     boolean openEditableSearchResults(Path projectRoot, String query, List<ProjectSearch.Match> matches) {
         if (projectRoot == null || matches == null || matches.isEmpty()) {
@@ -5155,7 +5203,7 @@ public class Window implements Drawable {
         }
         if (isOverlayPanel(_panelView) && _panelView != null && _panelView.getParent() == _rootView) {
             Rect workspace = layout.workspace();
-            double overlayRatio = _panelView instanceof ChatPanelView ? 0.70 : (1.0 / 3.0);
+            double overlayRatio = _panelView instanceof ChatPanelView || _panelView instanceof ShellPanelView ? 0.70 : (1.0 / 3.0);
             int overlayHeight = Math.max(1, (int) Math.ceil(workspace.getSize().getHeight() * overlayRatio));
             _panelView.setBounds(Rect.create(0,
                     workspace.getPoint().getY() + workspace.getSize().getHeight() - overlayHeight,

@@ -17,6 +17,8 @@ import org.slf4j.LoggerFactory;
 
 import org.fisk.swim.terminal.TextColor;
 import org.fisk.swim.event.KeyType;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 
 public class PluginPanelView extends View implements KeyBindingHintProvider {
     private static final Logger LOG = LoggerFactory.getLogger(PluginPanelView.class);
@@ -25,6 +27,7 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
     private final SwimPanel _panel;
     private final boolean _workspaceClose;
     private String _pendingInput;
+    private MouseClick _pendingMouseClick;
 
     public PluginPanelView(Rect bounds, String pluginId, SwimPanel panel) {
         this(bounds, pluginId, panel, false);
@@ -73,6 +76,10 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
         if (events.remaining() != 0) {
             return Response.NO;
         }
+        if (events.current() instanceof MouseAction mouse && mouse.getActionType() == MouseActionType.CLICK_DOWN) {
+            _pendingMouseClick = new MouseClick(mouse.getPosition().getColumn() - getBounds().getPoint().getX(), mouse.getPosition().getRow() - getBounds().getPoint().getY());
+            return Response.YES;
+        }
         String input = normalize(events.current().getKeyType(), events.current().getCharacter(),
                 events.current().isCtrlDown(), events.current().isAltDown());
         if (input == null) {
@@ -84,14 +91,15 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
 
     @Override
     public void respond() {
-        if (_pendingInput == null) {
+        if (_pendingInput == null && _pendingMouseClick == null) {
             return;
         }
         syncToCurrentPath();
         SwimPanelResult result;
         try {
-            result = _panel.handleInput(_pendingInput, getBounds().getSize().getWidth(),
-                    getBounds().getSize().getHeight());
+            result = _pendingMouseClick == null
+                    ? _panel.handleInput(_pendingInput, getBounds().getSize().getWidth(), getBounds().getSize().getHeight())
+                    : _panel.handleMouseClick(_pendingMouseClick.x, _pendingMouseClick.y, getBounds().getSize().getWidth(), getBounds().getSize().getHeight());
         } catch (Throwable e) {
             LOG.warn("Plugin panel input failed for {}: {}", _pluginId, errorSummary(e));
             LOG.debug("Plugin panel input failure details", e);
@@ -100,10 +108,11 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
                 window.getCommandView().setMessage("Plugin input failed: " + errorSummary(e));
             }
             _pendingInput = null;
+            _pendingMouseClick = null;
             setNeedsRedraw();
             return;
         }
-        if (!result.handled() && ("esc".equals(_pendingInput) || "q".equals(_pendingInput))) {
+        if (_pendingMouseClick == null && !result.handled() && ("esc".equals(_pendingInput) || "q".equals(_pendingInput))) {
             if (_workspaceClose) {
                 Window.getInstance().closeCurrentWorkspaceWindow();
             } else {
@@ -129,7 +138,10 @@ public class PluginPanelView extends View implements KeyBindingHintProvider {
             setNeedsRedraw();
         }
         _pendingInput = null;
+        _pendingMouseClick = null;
     }
+
+    private record MouseClick(int x, int y) { }
 
     @Override
     public void draw(Rect rect) {

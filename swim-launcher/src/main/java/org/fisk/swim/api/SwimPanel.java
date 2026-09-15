@@ -9,6 +9,11 @@ public interface SwimPanel {
     List<String> render(int width, int height);
     SwimPanelResult handleInput(String input, int width, int height);
 
+    /** Receives a local, zero-based primary-button click when a plugin panel supports it. */
+    default SwimPanelResult handleMouseClick(int x, int y, int width, int height) {
+        return SwimPanelResult.ignored();
+    }
+
     default List<SwimPanelLine> renderRich(int width, int height) {
         return render(width, height).stream()
                 .map(SwimPanelLine::plain)

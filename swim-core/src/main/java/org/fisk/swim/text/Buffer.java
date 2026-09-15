@@ -54,7 +54,7 @@ public class Buffer {
 
     private StringBuilder _string = new StringBuilder();
     private Path _path;
-    private final URI _uri;
+    private URI _uri;
     private List<Cursor> _cursors = new ArrayList<>();
     private BufferContext _bufferContext;
     private UndoLog _undoLog;
@@ -358,17 +358,39 @@ public class Buffer {
                 || position > _attributedStringCache.length()) {
             return false;
         }
-        TextColor foreground = UiTheme.TEXT_PRIMARY;
-        TextColor background = UiTheme.SURFACE_BACKGROUND;
-        if (_attributedStringCache.length() > 0) {
-            int sourcePosition = Math.max(0, Math.min(position, _attributedStringCache.length() - 1));
-            var attributes = _attributedStringCache.attributesAt(sourcePosition);
-            foreground = attributes.foregroundColour();
-            background = attributes.backgroundColour();
+        int inserted = 0;
+        for (int i = 0; i < str.length(); i++) {
+            int insertionPosition = position + inserted;
+            char character = str.charAt(i);
+            TextColor foreground = UiTheme.TEXT_PRIMARY;
+            TextColor background = UiTheme.SURFACE_BACKGROUND;
+            // Keep asynchronous syntax/semantic colouring visually stable while
+            // typing.  A new non-whitespace character inherits an immediately
+            // adjacent non-whitespace character's colour; a new word between
+            // whitespace stays neutral until an analysis snapshot knows better.
+            if (!Character.isWhitespace(character)) {
+                var adjacent = adjacentNonWhitespaceAttributes(insertionPosition);
+                if (adjacent != null) {
+                    foreground = adjacent.foregroundColour();
+                    background = adjacent.backgroundColour();
+                }
+            }
+            _attributedStringCache.insert(Character.toString(character), insertionPosition, foreground, background);
+            inserted++;
         }
-        _attributedStringCache.insert(str, position, foreground, background);
         _attributedStringCacheVersion = _version;
         return true;
+    }
+
+    private AttributedString.AttributeSet adjacentNonWhitespaceAttributes(int position) {
+        if (position > 0 && !Character.isWhitespace(_attributedStringCache.toString().charAt(position - 1))) {
+            return _attributedStringCache.attributesAt(position - 1);
+        }
+        if (position < _attributedStringCache.length()
+                && !Character.isWhitespace(_attributedStringCache.toString().charAt(position))) {
+            return _attributedStringCache.attributesAt(position);
+        }
+        return null;
     }
 
     private boolean updateAttributedStringCacheForRemove(LanguageMode mode, int startPosition, int endPosition) {
@@ -2036,6 +2058,59 @@ public class Buffer {
         mode.didSave(_bufferContext);
     }
 
+    /**
+     * Implements Vim's {@code :saveas}: write this buffer under {@code path} and
+     * then make subsequent saves use that path.  The previous file is retained.
+     */
+    public void writeAsOrThrow(Path path) throws IOException {
+        writeAsOrThrow(path, false);
+    }
+
+    public void writeAsOrThrow(Path path, boolean force) throws IOException {
+        if (_readOnly) {
+            throw new IOException("Buffer is read-only");
+        }
+        if (path == null) {
+            throw new IOException("Missing file path");
+        }
+        Path target = path.toAbsolutePath().normalize();
+        if (target.equals(_path)) {
+            writeOrThrow();
+            return;
+        }
+        if (!force && Files.exists(target)) {
+            throw new IOException("File exists (use :saveas! to overwrite): " + target);
+        }
+        var mode = languageMode();
+        String transformed = mode.transformOnSave(_bufferContext, _string.toString());
+        if (transformed != null && !transformed.equals(_string.toString())) {
+            replaceContentsForSave(transformed);
+        }
+        if (mode.trimTrailingWhitespaceOnSave(_bufferContext)) {
+            trimTrailingWhitespace();
+        }
+        mode.willSave(_bufferContext);
+        writeAtomically(target, _string.toString());
+        _path = target;
+        _uri = target.toUri();
+        _savedVersion = _version;
+        _backingFileMissing = false;
+        reloadLanguageMode();
+        notifyContentChanged();
+        mode.didSave(_bufferContext);
+    }
+
+    /** Rebind a linked split buffer after its source was saved under a new name. */
+    public void rebindPath(Path path) {
+        if (path == null) {
+            return;
+        }
+        _path = path.toAbsolutePath().normalize();
+        _uri = _path.toUri();
+        _backingFileMissing = false;
+        reloadLanguageMode();
+    }
+
     private void replaceContentsForSave(String contents) {
         _string = new StringBuilder(contents);
         _folds.clear();
@@ -2184,6 +2259,14 @@ public class Buffer {
     public boolean setSyntaxFormatOverlays(int expectedVersion, List<AttributedString.FormatRange> overlays) {
         if (_version != expectedVersion) return false;
         _syntaxFormatOverlays = overlays == null ? List.of() : List.copyOf(overlays);
+        if (_attributedStringCache != null && _attributedStringCacheVersion == expectedVersion) {
+            // Parser work arrives concurrently.  Do not blank the known prior
+            // colouring while the C++ lexical/semantic snapshot is catching up:
+            // apply ranges this result knows and retain provisional colours for
+            // the rest.  The completed snapshot atomically replaces this cache.
+            _attributedStringCache.format(_syntaxFormatOverlays);
+            return true;
+        }
         invalidateAttributedStringCache();
         return true;
     }

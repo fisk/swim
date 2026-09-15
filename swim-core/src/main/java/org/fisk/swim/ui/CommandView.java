@@ -119,6 +119,8 @@ public class CommandView extends View {
             new CommandSpec("hshell", List.of(), "", "open a shell in a split below"),
             new CommandSpec("upgrade", List.of(), "", "alias for :rebuild"),
             new CommandSpec("w", List.of(), "[path]", "write the current buffer"),
+            new CommandSpec("saveas", List.of("sav"), "<path>", "write the current buffer under a new name"),
+            new CommandSpec("saveas!", List.of(), "<path>", "write the current buffer under a new name, replacing an existing file"),
             new CommandSpec("wq", List.of(), "", "write current buffer and close current window"),
             new CommandSpec("x", List.of(), "", "write current buffer and close current window"),
             new CommandSpec("q!", List.of(), "", "close current window without checks"),
@@ -633,6 +635,13 @@ public class CommandView extends View {
         case "w":
             write(argument);
             break;
+        case "saveas":
+        case "sav":
+            saveAs(argument, false);
+            break;
+        case "saveas!":
+            saveAs(argument, true);
+            break;
         case "wq":
         case "x":
             Window.getInstance().getBufferContext().getBuffer().write();
@@ -860,7 +869,7 @@ public class CommandView extends View {
         case "detach", "sessions", "session", "session-kill" -> blockEditorDriveCommand(window, rawCommand,
                 "server session management requires host action");
         case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
-        case "w" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
+        case "w", "saveas", "sav", "saveas!" -> sandboxedEditorWriteCommand(window, rawCommand, argument);
         case "q", "q!", "wq", "x" -> blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
         case "mail", "todo", "slack", "nemo" -> blockEditorDriveCommand(window, rawCommand,
                 "opening host communication or assistant workspaces is not allowed");
@@ -1487,6 +1496,24 @@ public class CommandView extends View {
         } catch (Exception e) {
             _message = e.getMessage() == null || e.getMessage().isBlank() ? "Write failed" : e.getMessage();
         }
+    }
+
+    private void saveAs(String argument, boolean force) {
+        if (argument == null || argument.isBlank()) {
+            _message = "Usage: :saveas <path>";
+            return;
+        }
+        var window = Window.getInstance();
+        if (window == null || window.getBufferContext() == null) {
+            _message = "No active buffer";
+            return;
+        }
+        Path path = window.resolvePathRelativeToActiveBuffer(argument);
+        if (!window.saveCurrentBufferAs(path, force)) {
+            if (_message == null || _message.isBlank()) _message = "Save as failed";
+            return;
+        }
+        _message = "Saved as: " + path;
     }
 
     private void readFile(String argument) {

@@ -75,6 +75,27 @@ class CommandViewTest {
     }
 
     @Test
+    void saveAsChangesTheCurrentBufferFileLikeVim() throws Exception {
+        Path original = tempDir.resolve("original.txt");
+        Path target = tempDir.resolve("renamed.txt");
+        Files.writeString(original, "before\n");
+
+        try (var harness = HeadlessWindowHarness.create(original, 30, 8)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().replaceContentsFromExternal("after\n");
+
+            window.getCommandView().execute("saveas renamed.txt");
+
+            assertEquals(target.toAbsolutePath(), window.getBufferContext().getBuffer().getPath());
+            assertEquals("before\n", Files.readString(original));
+            assertEquals("after\n", Files.readString(target));
+            window.getBufferContext().getBuffer().replaceContentsFromExternal("saved again\n");
+            window.getCommandView().execute("w");
+            assertEquals("saved again\n", Files.readString(target));
+        }
+    }
+
+    @Test
     void deactivateIsSafeWhenWindowHasBeenDisposed() {
         var view = new CommandView(Rect.create(0, 0, 10, 1));
 

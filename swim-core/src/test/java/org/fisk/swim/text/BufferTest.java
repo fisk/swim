@@ -19,6 +19,7 @@ import org.fisk.swim.lsp.LanguagePluginRegistry;
 import org.fisk.swim.ui.Cursor;
 import org.fisk.swim.ui.Range;
 import org.fisk.swim.ui.Rect;
+import org.fisk.swim.ui.UiTheme;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -100,6 +101,36 @@ class BufferTest {
         buffer.writeOrThrow();
 
         assertEquals("first  \nsecond\t\n", Files.readString(buffer.getPath()));
+    }
+
+    @Test
+    void saveAsWritesNewFileAndMakesItTheBufferPath() throws Exception {
+        var context = createBufferContext("saved as\n", 80);
+        var buffer = context.getBuffer();
+        Path original = buffer.getPath();
+        Path target = tempDir.resolve("renamed.txt");
+
+        buffer.writeAsOrThrow(target);
+
+        assertEquals(target.toAbsolutePath(), buffer.getPath());
+        assertEquals(target.toUri(), buffer.getURI());
+        assertEquals("saved as\n", Files.readString(target));
+        assertTrue(Files.exists(original));
+    }
+
+    @Test
+    void saveAsDoesNotOverwriteAnExistingFileWithoutForce() throws Exception {
+        var context = createBufferContext("new contents\n", 80);
+        Path target = tempDir.resolve("existing.txt");
+        Files.writeString(target, "original contents\n");
+
+        try {
+            context.getBuffer().writeAsOrThrow(target);
+        } catch (IOException e) {
+            assertEquals("original contents\n", Files.readString(target));
+            return;
+        }
+        throw new AssertionError("Expected :saveas to reject an existing file");
     }
 
     @Test
@@ -416,6 +447,41 @@ class BufferTest {
 
             assertEquals("alZpha", attributed.toString());
             assertEquals(TextColor.ANSI.RED, attributed.getCharacter(2).getFragments().get(0).getAttributes().foregroundColour());
+            assertEquals(1, mode.colouringCount());
+        }
+    }
+
+    @Test
+    void provisionalInsertedCharactersInheritOnlyAdjacentNonWhitespaceColour() throws Exception {
+        var mode = new CountingLanguageMode(true, TextColor.ANSI.RED);
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var adjacent = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            adjacent.getAttributedString();
+            adjacent.insert(2, "Z");
+            assertEquals(TextColor.ANSI.RED, adjacent.getAttributedString().attributesAt(2).foregroundColour());
+
+            var isolated = createBufferContext("a  b", 80, "cachetest").getBuffer();
+            isolated.getAttributedString();
+            isolated.insert(2, "word");
+            var attributed = isolated.getAttributedString();
+            assertEquals(UiTheme.TEXT_PRIMARY, attributed.attributesAt(2).foregroundColour());
+            assertEquals(UiTheme.TEXT_PRIMARY, attributed.attributesAt(5).foregroundColour());
+        }
+    }
+
+    @Test
+    void sameVersionSyntaxResultLayersOntoProvisionalCache() throws Exception {
+        var mode = new CountingLanguageMode(true, TextColor.ANSI.RED);
+        try (var ignored = LanguagePluginRegistry.register("cachetest", "buffer-cache-test", path -> mode)) {
+            var buffer = createBufferContext("alpha", 80, "cachetest").getBuffer();
+            buffer.getAttributedString();
+            buffer.insert(2, "Z");
+
+            assertTrue(buffer.setSyntaxFormatOverlays(buffer.getVersion(),
+                    List.of(new AttributedString.FormatRange(0, 1, TextColor.ANSI.BLUE, TextColor.ANSI.DEFAULT))));
+            var attributed = buffer.getAttributedString();
+            assertEquals(TextColor.ANSI.BLUE, attributed.attributesAt(0).foregroundColour());
+            assertEquals(TextColor.ANSI.RED, attributed.attributesAt(2).foregroundColour());
             assertEquals(1, mode.colouringCount());
         }
     }
