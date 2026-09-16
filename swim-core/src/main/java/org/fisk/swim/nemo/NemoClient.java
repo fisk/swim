@@ -6111,7 +6111,7 @@ public class NemoClient {
                     + "\nKeep working toward this goal until it is achieved, blocked, or the user changes it."));
         }
         var requestConfiguration = conversation._configuration;
-        var requestContext = conversation._context;
+        var requestContext = currentEditorContext(conversation);
         var executionSession = new ConversationToolExecutionSession(conversation, requestId);
         var worker = new Thread(() -> {
             try {
@@ -6129,6 +6129,24 @@ public class NemoClient {
         worker.setDaemon(true);
         conversation._worker = worker;
         worker.start();
+    }
+
+    /**
+     * A chat panel can stay open while the user moves between files.  The next
+     * request should describe the focused file, rather than the file that was
+     * focused when the panel was first opened.  Do not cross a conversation's
+     * workspace boundary here; opening Nemo in another workspace selects that
+     * workspace's conversation through {@link #ensureConversation}.
+     */
+    private BufferContext currentEditorContext(Conversation conversation) {
+        Window window = Window.getInstance();
+        BufferContext current = window == null ? null : window.getBufferContext();
+        if (current != null && conversation._configuration != null
+                && resolveWorkspaceRoot(conversation._configuration, current).toAbsolutePath().normalize()
+                        .equals(conversation._workspaceRoot)) {
+            conversation._context = current;
+        }
+        return conversation._context;
     }
 
     private synchronized void queueUserMessage(Conversation conversation, String message) {
@@ -6933,6 +6951,7 @@ public class NemoClient {
     private void clearConversation(Conversation conversation) {
         stopWorker(conversation);
         conversation._turns.clear();
+        conversation._goal = "";
         conversation._contextUsagePercent = null;
         conversation._updatedAtMillis = System.currentTimeMillis();
         persistSessions();

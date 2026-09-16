@@ -1265,6 +1265,39 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
+    void clearRemovesTheActiveGoalFromFutureRequests() throws Exception {
+        var requestBody = new AtomicReference<>("");
+        var server = startServer(new AtomicInteger(), requestBody, List.of(textResponse("Fresh answer")));
+        try {
+            writeConfig(server);
+            String originalUserHome = switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("clear-goal.txt", "class Demo {}\n"), 80, 18)) {
+                EventThread.getInstance().start();
+                var window = harness.getWindow();
+
+                NemoClient.getInstance().run(window.getBufferContext(), "");
+                var panel = waitForPanel(window);
+                submit(panel, ":goal Investigate the old project");
+                waitForLine(panel, "Active goal set: Investigate the old project");
+
+                submit(panel, ":clear");
+                waitForNoLine(panel, "Investigate the old project");
+                submit(panel, "Start fresh in this project.");
+                waitForLine(panel, "Fresh answer");
+
+                assertFalse(requestBody.get().contains("Investigate the old project"));
+                assertFalse(Files.readString(tempDir.resolve(".swim/nemo/sessions.json"))
+                        .contains("Investigate the old project"));
+            } finally {
+                System.setProperty("user.home", originalUserHome);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @Timeout(15)
     void serverSessionCommandsAreNotNemoChatCommands() throws Exception {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");
