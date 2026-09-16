@@ -2,9 +2,17 @@ package org.fisk.swim.terminal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,6 +43,80 @@ class AnsiTerminalBackendTest {
         var backend = new AnsiTerminalBackend(new ByteArrayInputStream("\u001b[A".getBytes()), new ByteArrayOutputStream(),
                 () -> new TerminalDimensions(80, 24));
         assertEquals(KeyType.ArrowUp, backend.pollInput().getKeyType());
+    }
+
+    @Test
+    void decodesAnEscapeSequenceSplitByTransportDelay() throws Exception {
+        try (var input = new PipedInputStream(); var writer = new PipedOutputStream(input)) {
+            writer.write(0x1b);
+            writer.flush();
+            Thread.ofVirtual().start(() -> {
+                try {
+                    Thread.sleep(10);
+                    writer.write('[');
+                    writer.flush();
+                    Thread.sleep(10);
+                    writer.write('A');
+                    writer.flush();
+                } catch (Exception e) {
+                    throw new AssertionError(e);
+                }
+            });
+            var backend = new AnsiTerminalBackend(input, new ByteArrayOutputStream(), () -> new TerminalDimensions(80, 24));
+
+            assertEquals(KeyType.ArrowUp, backend.pollInput().getKeyType());
+        }
+    }
+
+    @Test
+    void suppressesStaleIdenticalKeyBurstAfterQuietTransportGap() throws Exception {
+        var backend = new AnsiTerminalBackend(new ByteArrayInputStream("jjjj".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream(), () -> new TerminalDimensions(80, 24));
+
+        assertEquals('j', backend.pollInput().getCharacter());
+        assertNull(backend.pollInput());
+    }
+
+    @Test
+    void keepsRepeatedCharactersInBracketedPaste() throws Exception {
+        var backend = new AnsiTerminalBackend(new ByteArrayInputStream("\u001b[200~jjjj\u001b[201~".getBytes(StandardCharsets.UTF_8)),
+                new ByteArrayOutputStream(), () -> new TerminalDimensions(80, 24));
+
+        assertEquals(KeyType.F18, backend.pollInput().getKeyType());
+        assertEquals('j', backend.pollInput().getCharacter());
+        assertEquals('j', backend.pollInput().getCharacter());
+        assertEquals('j', backend.pollInput().getCharacter());
+        assertEquals('j', backend.pollInput().getCharacter());
+        assertEquals(KeyType.F19, backend.pollInput().getKeyType());
+    }
+
+    @Test
+    void asynchronousRefreshDoesNotBlockOnSlowTerminalOutput() throws Exception {
+        var output = new BlockingOutputStream();
+        var backend = new AnsiTerminalBackend(new ByteArrayInputStream(new byte[0]), output,
+                () -> new TerminalDimensions(3, 2), true);
+        backend.graphics().putString(0, 0, "x", AnsiStyle.DEFAULT);
+
+        assertTimeout(Duration.ofMillis(100), backend::refresh);
+        assertTrue(output.started.await(1, TimeUnit.SECONDS));
+        backend.graphics().putString(1, 0, "y", AnsiStyle.DEFAULT);
+        assertTimeout(Duration.ofMillis(100), backend::refresh);
+        output.release.countDown();
+    }
+
+    private static final class BlockingOutputStream extends OutputStream {
+        private final CountDownLatch started = new CountDownLatch(1);
+        private final CountDownLatch release = new CountDownLatch(1);
+
+        @Override
+        public void write(int value) {
+            started.countDown();
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     @Test

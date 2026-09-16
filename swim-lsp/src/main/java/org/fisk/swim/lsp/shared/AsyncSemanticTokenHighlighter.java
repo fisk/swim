@@ -60,7 +60,10 @@ public final class AsyncSemanticTokenHighlighter {
     }
 
     private static final class SemanticRefresh {
-        private final Snapshot _snapshot;
+        // Semantic token responses do not identify their document version.
+        // Advance this after flushing didChange so offsets are decoded against
+        // the text clangd has when the request is made.
+        private Snapshot _snapshot;
         private final List<SemanticMutation> _mutations = new ArrayList<>();
         private int _attempts;
         private boolean _reschedule;
@@ -198,11 +201,24 @@ public final class AsyncSemanticTokenHighlighter {
         }
 
         _flushDocumentChanges.accept(snapshot.uri());
-        List<Highlight> highlights = defaultList(_fetchHighlights.apply(snapshot));
+        Snapshot requestSnapshot;
+        synchronized (this) {
+            var queuedRefresh = _semanticRefreshes.get(snapshot.uri());
+            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
+                return;
+            }
+            // The flush sends all mutations collected so far.  Do not apply
+            // them again to the ranges returned for that newer server state.
+            requestSnapshot = new Snapshot(snapshot.uri(), document.version(), document.text());
+            queuedRefresh._snapshot = requestSnapshot;
+            queuedRefresh._mutations.clear();
+            queuedRefresh._reschedule = false;
+        }
+        List<Highlight> highlights = defaultList(_fetchHighlights.apply(requestSnapshot));
         if (!highlights.isEmpty()) {
             synchronized (this) {
                 var queuedRefresh = _semanticRefreshes.get(snapshot.uri());
-                if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
+                if (queuedRefresh == null || queuedRefresh._snapshot != requestSnapshot) {
                     return;
                 }
                 for (var mutation : queuedRefresh._mutations) {
@@ -211,7 +227,7 @@ public final class AsyncSemanticTokenHighlighter {
                 int currentVersion = document.version();
                 _semanticTokensCache.put(snapshot.uri(), new CachedSemanticTokens(currentVersion,
                         clampHighlights(highlights, document.text().length())));
-                reschedule = queuedRefresh._reschedule && currentVersion != snapshot.version();
+                reschedule = queuedRefresh._reschedule && currentVersion != requestSnapshot.version();
                 _semanticRefreshes.remove(snapshot.uri());
             }
             document.requestSemanticRedraw();
@@ -223,14 +239,14 @@ public final class AsyncSemanticTokenHighlighter {
 
         synchronized (this) {
             var queuedRefresh = _semanticRefreshes.get(snapshot.uri());
-            if (queuedRefresh == null || queuedRefresh._snapshot != snapshot) {
+            if (queuedRefresh == null || queuedRefresh._snapshot != requestSnapshot) {
                 return;
             }
             if (queuedRefresh._attempts < _maxAttempts) {
-                enqueueRefresh(snapshot, document, _retryDelayMillis);
+                enqueueRefresh(requestSnapshot, document, _retryDelayMillis);
                 return;
             }
-            reschedule = queuedRefresh._reschedule && document.version() != snapshot.version();
+            reschedule = queuedRefresh._reschedule && document.version() != requestSnapshot.version();
             _semanticRefreshes.remove(snapshot.uri());
         }
         if (reschedule) {

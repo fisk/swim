@@ -7,13 +7,26 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.function.Supplier;
 
+import org.fisk.swim.EventThread;
 import org.fisk.swim.event.KeyStroke;
 import org.fisk.swim.event.KeyType;
 import org.fisk.swim.event.MouseAction;
 import org.fisk.swim.event.MouseActionType;
+import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.ui.Window;
 
 /** POSIX ANSI terminal transport backed solely by SWIM's cell buffer. */
 public final class AnsiTerminalBackend implements TerminalBackend {
+    /**
+     * A terminal is a byte stream, so SSH or another relayed terminal can split
+     * one key's escape sequence over multiple reads.  Wait briefly for its
+     * continuation rather than turning one physical key into ESC followed by
+     * the sequence's printable bytes.
+     */
+    private static final long INPUT_CONTINUATION_WAIT_MILLIS = 120L;
+    /** A queued SSH/tmux burst has near-zero inter-key spacing, unlike ordinary key repeat. */
+    private static final long STALE_REPEAT_GAP_NANOS = 2_000_000L;
+    private static final long STALE_REPEAT_QUIET_NANOS = 100_000_000L;
     private static final String ENTER_ALTERNATE_SCREEN = "\u001b[?1049h";
     private static final String EXIT_ALTERNATE_SCREEN = "\u001b[?1049l";
     private static final String HIDE_CURSOR = "\u001b[?25l";
@@ -27,6 +40,14 @@ public final class AnsiTerminalBackend implements TerminalBackend {
 
     private final InputStream input;
     private final OutputStream output;
+    // The production backend writes to System.out, which can block behind an
+    // SSH/client relay.  Keep test and embedded streams synchronous so their
+    // deterministic flush contract remains unchanged.
+    private final boolean asynchronousOutput;
+    private final Object outputQueueLock = new Object();
+    private boolean outputWriteInFlight;
+    private boolean redrawRequestedWhileWriting;
+    private String pendingTerminalControl = "";
     private final Supplier<TerminalDimensions> dimensionsSupplier;
     private TerminalDimensions dimensions;
     private AnsiScreen screen;
@@ -34,11 +55,21 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     private final TerminalUtf8Decoder utf8Decoder = new TerminalUtf8Decoder();
     private boolean decodingUtf8;
     private boolean utf8Alt;
+    private long lastInputNanos;
+    private long repeatBurstStartedNanos;
+    private KeyStroke repeatBurstKey;
+    private boolean bracketedPaste;
     private boolean started;
 
     public AnsiTerminalBackend(InputStream input, OutputStream output, Supplier<TerminalDimensions> dimensionsSupplier) {
+        this(input, output, dimensionsSupplier, output == System.out);
+    }
+
+    AnsiTerminalBackend(InputStream input, OutputStream output, Supplier<TerminalDimensions> dimensionsSupplier,
+            boolean asynchronousOutput) {
         this.input = input;
         this.output = Objects.requireNonNull(output, "output");
+        this.asynchronousOutput = asynchronousOutput;
         this.dimensionsSupplier = Objects.requireNonNull(dimensionsSupplier, "dimensionsSupplier");
         this.dimensions = requireDimensions(dimensionsSupplier.get());
         this.screen = new AnsiScreen(dimensions.columns(), dimensions.rows());
@@ -48,18 +79,33 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     @Override public void start() throws IOException {
         if (started) return;
         started = true;
-        write(ENTER_ALTERNATE_SCREEN + HIDE_CURSOR + ENABLE_BRACKETED_PASTE + ENABLE_MOUSE + ENABLE_MODIFY_OTHER_KEYS);
+        writeSynchronously(ENTER_ALTERNATE_SCREEN + HIDE_CURSOR + ENABLE_BRACKETED_PASTE + ENABLE_MOUSE + ENABLE_MODIFY_OTHER_KEYS);
     }
 
     @Override public void stop() throws IOException {
         if (!started) return;
         started = false;
-        write(DISABLE_MODIFY_OTHER_KEYS + DISABLE_MOUSE + DISABLE_BRACKETED_PASTE + SHOW_CURSOR + EXIT_ALTERNATE_SCREEN + "\u001b[0m");
+        writeSynchronously(DISABLE_MODIFY_OTHER_KEYS + DISABLE_MOUSE + DISABLE_BRACKETED_PASTE + SHOW_CURSOR + EXIT_ALTERNATE_SCREEN + "\u001b[0m");
     }
 
     @Override public void clear() { screen.clear(); }
 
-    @Override public void refresh() throws IOException { write(screen.flush()); }
+    @Override public void refresh() throws IOException {
+        if (!asynchronousOutput) {
+            writeSynchronously(screen.flush());
+            return;
+        }
+        synchronized (outputQueueLock) {
+            if (outputWriteInFlight) {
+                redrawRequestedWhileWriting = true;
+                return;
+            }
+            String frame = screen.flush();
+            if (frame.isEmpty()) return;
+            outputWriteInFlight = true;
+            writeAsynchronously(frame);
+        }
+    }
 
     @Override public TerminalDimensions dimensions() { return dimensions; }
 
@@ -74,19 +120,59 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     @Override public TerminalGraphics graphics() { return graphics; }
 
     @Override public KeyStroke pollInput() throws IOException {
+        KeyStroke stroke;
+        do {
+            stroke = pollOneInput();
+        } while (stroke != null && suppressStaleRepeat(stroke));
+        return stroke;
+    }
+
+    private KeyStroke pollOneInput() throws IOException {
         if (input == null || input.available() == 0) return null;
         int first = input.read();
         if (first < 0) return new KeyStroke(KeyType.EOF);
         if (first != 0x1b) return readTextInput(first, false);
-        if (input.available() == 0) return new KeyStroke(KeyType.Escape);
-        int second = input.read();
+        int second = readContinuationByte();
+        if (second < 0) return new KeyStroke(KeyType.Escape);
         if (second != '[' && second != 'O') return readTextInput(second, true);
-        if (input.available() == 0) return new KeyStroke(KeyType.Escape);
-        int third = input.read();
+        int third = readContinuationByte();
+        if (third < 0) return new KeyStroke(KeyType.Escape);
         if (second == 'O') return ss3Key((char) third);
         if (third == '<') return readSgrMouse();
         if (third >= '0' && third <= '9') return readCsi((char) third);
         return cursorKey((char) third, false, false, false);
+    }
+
+    private boolean suppressStaleRepeat(KeyStroke stroke) {
+        long now = System.nanoTime();
+        long gap = lastInputNanos == 0 ? Long.MAX_VALUE : now - lastInputNanos;
+        lastInputNanos = now;
+        if (stroke.getKeyType() == KeyType.F18) {
+            bracketedPaste = true;
+            repeatBurstKey = null;
+            return false;
+        }
+        if (stroke.getKeyType() == KeyType.F19) {
+            bracketedPaste = false;
+            repeatBurstKey = null;
+            return false;
+        }
+        if (bracketedPaste || stroke.getKeyType() != KeyType.Character || stroke.isCtrlDown() || stroke.isAltDown()) {
+            repeatBurstKey = null;
+            return false;
+        }
+        if (repeatBurstKey != null && repeatBurstKey.equals(stroke)
+                && now - repeatBurstStartedNanos <= STALE_REPEAT_QUIET_NANOS
+                && gap <= STALE_REPEAT_GAP_NANOS) {
+            return true;
+        }
+        if (gap >= STALE_REPEAT_QUIET_NANOS) {
+            repeatBurstKey = stroke;
+            repeatBurstStartedNanos = now;
+        } else {
+            repeatBurstKey = null;
+        }
+        return false;
     }
 
     private static KeyStroke decodeByte(int value, boolean alt) {
@@ -106,10 +192,26 @@ public final class AnsiTerminalBackend implements TerminalBackend {
      */
     private KeyStroke readTextInput(int value, boolean alt) throws IOException {
         KeyStroke stroke = decodeTextByte(value, alt);
-        while (stroke == null && input.available() > 0) {
-            stroke = decodeTextByte(input.read(), alt);
+        while (stroke == null) {
+            int continuation = readContinuationByte();
+            if (continuation < 0) return null;
+            stroke = decodeTextByte(continuation, alt);
         }
         return stroke;
+    }
+
+    private int readContinuationByte() throws IOException {
+        long deadline = System.nanoTime() + INPUT_CONTINUATION_WAIT_MILLIS * 1_000_000L;
+        while (input.available() == 0) {
+            if (System.nanoTime() >= deadline) return -1;
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return -1;
+            }
+        }
+        return input.read();
     }
 
     private KeyStroke decodeTextByte(int value, boolean alt) {
@@ -143,8 +245,10 @@ public final class AnsiTerminalBackend implements TerminalBackend {
 
     private KeyStroke readCsi(char initial) throws IOException {
         var sequence = new StringBuilder().append(initial);
-        while (input.available() > 0 && sequence.length() < 32) {
-            char character = (char) input.read();
+        while (sequence.length() < 32) {
+            int continuation = readContinuationByte();
+            if (continuation < 0) break;
+            char character = (char) continuation;
             sequence.append(character);
             if (character >= '@' && character <= '~') break;
         }
@@ -242,8 +346,10 @@ public final class AnsiTerminalBackend implements TerminalBackend {
 
     private KeyStroke readSgrMouse() throws IOException {
         var sequence = new StringBuilder();
-        while (input.available() > 0 && sequence.length() < 32) {
-            char character = (char) input.read();
+        while (sequence.length() < 32) {
+            int continuation = readContinuationByte();
+            if (continuation < 0) break;
+            char character = (char) continuation;
             sequence.append(character);
             if (character == 'M' || character == 'm') break;
         }
@@ -278,21 +384,71 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     }
 
     @Override public void setCursorPosition(int column, int row) {
-        try { write("\u001b[" + (row + 1) + ';' + (column + 1) + 'H'); }
+        try { writeTerminalControl("\u001b[" + (row + 1) + ';' + (column + 1) + 'H'); }
         catch (IOException e) { throw new IllegalStateException("Unable to position terminal cursor", e); }
     }
 
     @Override public void setCursorVisible(boolean visible) {
-        try { write(visible ? SHOW_CURSOR : HIDE_CURSOR); }
+        try { writeTerminalControl(visible ? SHOW_CURSOR : HIDE_CURSOR); }
         catch (IOException e) { throw new IllegalStateException("Unable to update terminal cursor", e); }
     }
 
     @Override public void setCursorShape(TerminalCursorShape shape) {
-        try { write((shape == null ? TerminalCursorShape.DEFAULT : shape).escapeSequence()); }
+        try { writeTerminalControl((shape == null ? TerminalCursorShape.DEFAULT : shape).escapeSequence()); }
         catch (IOException e) { throw new IllegalStateException("Unable to update terminal cursor shape", e); }
     }
 
-    private void write(String text) throws IOException {
+    private void writeTerminalControl(String text) throws IOException {
+        if (!asynchronousOutput) {
+            writeSynchronously(text);
+            return;
+        }
+        synchronized (outputQueueLock) {
+            if (outputWriteInFlight) {
+                pendingTerminalControl += text;
+                return;
+            }
+            outputWriteInFlight = true;
+            writeAsynchronously(text);
+        }
+    }
+
+    private void writeAsynchronously(String initialOutput) {
+        Thread.ofVirtual().name("swim-terminal-output").start(() -> {
+            String outputText = initialOutput;
+            boolean requestRedraw = false;
+            try {
+                while (outputText != null) {
+                    writeSynchronously(outputText);
+                    synchronized (outputQueueLock) {
+                        if (!pendingTerminalControl.isEmpty()) {
+                            outputText = pendingTerminalControl;
+                            pendingTerminalControl = "";
+                        } else {
+                            outputWriteInFlight = false;
+                            requestRedraw = redrawRequestedWhileWriting;
+                            redrawRequestedWhileWriting = false;
+                            outputText = null;
+                        }
+                    }
+                }
+            } catch (IOException ignored) {
+                synchronized (outputQueueLock) {
+                    outputWriteInFlight = false;
+                    pendingTerminalControl = "";
+                    redrawRequestedWhileWriting = false;
+                }
+            }
+            if (requestRedraw) {
+                EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+                    var window = Window.getInstance();
+                    if (window != null) window.update(false);
+                }));
+            }
+        });
+    }
+
+    private void writeSynchronously(String text) throws IOException {
         if (text.isEmpty()) return;
         synchronized (output) {
             output.write(text.getBytes(StandardCharsets.UTF_8));
