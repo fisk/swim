@@ -648,6 +648,40 @@ class NemoClientTest {
     }
 
     @Test
+    void defaultNemoDirectoryIsAvailableAlongsideTheProjectWorkspace() throws Exception {
+        String originalUserHome = System.getProperty("user.home");
+        Path home = tempDir.resolve("home");
+        Path nemoDirectory = home.resolve(".nemo");
+        Path project = tempDir.resolve("project");
+        Files.createDirectories(nemoDirectory);
+        Files.createDirectories(project);
+        Path file = project.resolve("note.txt");
+        Files.writeString(file, "project\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
+        var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
+        try {
+            System.setProperty("user.home", home.toString());
+            Path settings = nemoDirectory.resolve("editor.conf");
+
+            String write = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("write-nemo-config", "write_file",
+                            json(Map.of("path", settings.toString(), "content", "theme=midnight\n"))));
+            assertTrue(write.contains("wrote"));
+            assertEquals("theme=midnight\n", Files.readString(settings));
+
+            String read = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("read-nemo-config", "read_file", json(Map.of("path", settings.toString()))));
+            assertTrue(read.contains("theme=midnight"));
+            assertTrue(NemoClient.directoryAccessSummary(project).contains(nemoDirectory.toString()));
+            assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("outside-home", "read_file",
+                            json(Map.of("path", home.resolve("private.txt").toString())))));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     void executesMcpToolAfterApproval() throws Exception {
         Path project = tempDir.resolve("mcp-workspace");
         Files.createDirectories(project);

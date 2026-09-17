@@ -2362,6 +2362,15 @@ public class NemoClient {
         return Paths.get(System.getProperty("user.dir")).toAbsolutePath();
     }
 
+    /**
+     * Nemo's own editable configuration lives outside individual projects, but
+     * is intentionally a narrow, always-available exception to the workspace
+     * sandbox.  Do not broaden this to the user's home directory.
+     */
+    static Path defaultNemoDirectory() {
+        return Paths.get(System.getProperty("user.home"), ".nemo").toAbsolutePath().normalize();
+    }
+
     static String webSearch(JsonObject arguments) {
         String query = stringArgument(arguments, "query", "").trim();
         if (query.isBlank()) {
@@ -3138,7 +3147,7 @@ public class NemoClient {
         }
         if (isPathInsideImplicitWorkspace(root, directory)) {
             return "Nemo already has recursive read/write access to " + directory
-                    + " through the workspace's implicit project permissions.";
+                    + " through " + implicitAccessDescription(root, directory) + ".";
         }
         DirectoryGrant existing = _instance.coveringDirectoryGrant(root, directory);
         if (existing != null) {
@@ -3191,7 +3200,10 @@ public class NemoClient {
         ensureApprovalsLoaded();
         String root = workspaceRoot.toAbsolutePath().normalize().toString();
         var directories = topLevelDirectoryGrants(root).stream().map(DirectoryGrant::directory).toList();
-        return directories.isEmpty() ? "workspace only" : "workspace plus " + String.join(", ", directories);
+        var accessible = new ArrayList<String>();
+        accessible.add(defaultNemoDirectory().toString() + " (default Nemo directory)");
+        accessible.addAll(directories);
+        return "workspace plus " + String.join(", ", accessible);
     }
 
     private List<DirectoryGrant> topLevelDirectoryGrants(String workspaceRoot) {
@@ -3243,8 +3255,15 @@ public class NemoClient {
 
     private static boolean isPathInsideImplicitWorkspace(Path workspaceRoot, Path path) {
         if (path.startsWith(workspaceRoot)) return true;
+        if (path.startsWith(defaultNemoDirectory())) return true;
         SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
         return project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith);
+    }
+
+    private static String implicitAccessDescription(Path workspaceRoot, Path path) {
+        return path.startsWith(defaultNemoDirectory())
+                ? "the default Nemo directory permission"
+                : "the workspace's implicit project permissions";
     }
 
     private static Path requireDirectory(Path path, String rawPath) throws IOException {
@@ -4993,6 +5012,9 @@ public class NemoClient {
     private static List<Path> sandboxWritableRoots(Path workspaceRoot) throws IOException {
         var roots = new LinkedHashSet<Path>();
         addSandboxWritableRoot(roots, workspaceRoot);
+        Path nemoDirectory = defaultNemoDirectory();
+        Files.createDirectories(nemoDirectory);
+        addSandboxWritableRoot(roots, nemoDirectory);
         for (Path grant : _instance.writableDirectoryGrants(workspaceRoot)) {
             addSandboxWritableRoot(roots, grant);
         }
@@ -6520,7 +6542,7 @@ public class NemoClient {
             }
             if (isPathInsideImplicitWorkspace(root, directory)) {
                 appendAssistantNote(conversation, "Nemo already has recursive read/write access to " + directory
-                        + " through the workspace's implicit project permissions.");
+                        + " through " + implicitAccessDescription(root, directory) + ".");
                 return;
             }
             addDirectoryGrant(root, directory, true, true);
