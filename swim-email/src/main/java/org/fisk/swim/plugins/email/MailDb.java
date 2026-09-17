@@ -268,13 +268,41 @@ final class MailDb {
                 }
                 continue;
             }
-            long insertedMessageId = insertMessage(connection, message);
+            long insertedMessageId;
+            try {
+                insertedMessageId = insertMessage(connection, message);
+            } catch (SQLException insertFailure) {
+                // IMAP/EWS refreshes can overlap across editor processes.  A
+                // concurrent refresh may insert this Message-ID after our
+                // update found no row.  The unique index is the final arbiter;
+                // update the winning row instead of exposing that benign race
+                // as a mail UI failure.
+                if (!isMessageIdentityConflict(insertFailure, message)) {
+                    throw insertFailure;
+                }
+                Long concurrentMessageId = updateExistingMessage(connection, accountId, message);
+                if (concurrentMessageId == null) {
+                    throw insertFailure;
+                }
+                replaceMessageRecipients(connection, concurrentMessageId, message.recipients());
+                StoredMessage changedMessage = loadStoredMessage(connection, concurrentMessageId);
+                if (changedMessage != null) {
+                    changedMessages.add(changedMessage);
+                }
+                continue;
+            }
             StoredMessage changedMessage = loadStoredMessage(connection, insertedMessageId);
             if (changedMessage != null) {
                 changedMessages.add(changedMessage);
             }
         }
         return List.copyOf(changedMessages);
+    }
+
+    private static boolean isMessageIdentityConflict(SQLException failure, ImportedMailMessage message) {
+        return message.internetMessageId() != null
+                && !message.internetMessageId().isBlank()
+                && "23505".equals(failure.getSQLState());
     }
 
     static void upsertAccountMessagesAndRefreshThreads(

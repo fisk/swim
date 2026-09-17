@@ -63,6 +63,7 @@ public class Buffer {
     private String _pendingExternalContents;
     private boolean _readOnly;
     private boolean _backingFileMissing;
+    private boolean _dormant;
     private volatile AttributedString _attributedStringCache;
     private volatile int _attributedStringCacheVersion = -1;
     private List<AttributedString.FormatRange> _syntaxFormatOverlays = List.of();
@@ -206,6 +207,69 @@ public class Buffer {
         return _backingFileMissing || _version != _savedVersion;
     }
 
+    /** True when clean file contents and derived presentation state were released. */
+    public boolean isDormant() {
+        return _dormant;
+    }
+
+    /**
+     * Releases the reloadable payload of a clean file-backed buffer. Cursor,
+     * path, view, and buffer identity remain available to history and splits.
+     */
+    public boolean hibernateIfClean() {
+        if (_dormant || _path == null || isModified() || hasPendingExternalChange() || !Files.isRegularFile(_path)) {
+            return false;
+        }
+        close();
+        _string = new StringBuilder();
+        _folds.clear();
+        _syntaxFormatOverlays = List.of();
+        _formatOverlays = List.of();
+        _undoLog.clear();
+        _version++;
+        _savedVersion = _version;
+        _dormant = true;
+        invalidateAttributedStringCache();
+        _bufferContext.getTextLayout().discardPayload();
+        return true;
+    }
+
+    /** Restores a dormant buffer immediately before it becomes visible. */
+    public boolean activateIfDormant() {
+        if (!_dormant) {
+            return true;
+        }
+        String content = "";
+        boolean exists = false;
+        try {
+            exists = Files.isRegularFile(_path);
+            if (exists) {
+                content = Files.readString(_path);
+            }
+        } catch (IOException e) {
+            _log.warn("Unable to reactivate buffer {}", _path, e);
+        }
+        _string = new StringBuilder(content);
+        _folds.clear();
+        _syntaxFormatOverlays = List.of();
+        _formatOverlays = List.of();
+        _undoLog.clear();
+        _version++;
+        _savedVersion = exists ? _version : Math.max(0, _version - 1);
+        _backingFileMissing = !exists;
+        _pendingExternalContents = null;
+        _dormant = false;
+        invalidateAttributedStringCache();
+        _bufferContext.getTextLayout().calculate();
+        for (Cursor cursor : _cursors) {
+            cursor.setPosition(Math.min(cursor.getPosition(), _string.length()));
+        }
+        open();
+        _bufferContext.getBufferView().adaptViewToCursor();
+        _bufferContext.getBufferView().setNeedsRedraw();
+        return exists;
+    }
+
     public void markUnmodified() {
         _savedVersion = _version;
         _backingFileMissing = false;
@@ -249,6 +313,7 @@ public class Buffer {
             mode.didClose(_bufferContext);
         }
         _string = new StringBuilder(content == null ? "" : content);
+        _dormant = false;
         _folds.clear();
         _version++;
         _savedVersion = _version;
@@ -273,6 +338,7 @@ public class Buffer {
      */
     public void replaceContentsFromLinkedBuffer(String content, int version, boolean modified) {
         _string = new StringBuilder(content == null ? "" : content);
+        _dormant = false;
         _folds.clear();
         _version = Math.max(1, version);
         _savedVersion = modified ? Math.max(0, _version - 1) : _version;

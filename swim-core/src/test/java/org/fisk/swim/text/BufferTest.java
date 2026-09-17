@@ -55,6 +55,34 @@ class BufferTest {
     }
 
     @Test
+    void cleanFileBufferCanHibernateAndRestoreItsCursorAndContents() throws IOException {
+        var context = createBufferContext("first\nsecond\n", 80);
+        var buffer = context.getBuffer();
+        buffer.getCursor().setPosition(8);
+
+        assertTrue(buffer.hibernateIfClean());
+        assertTrue(buffer.isDormant());
+        assertEquals(0, buffer.getLength());
+
+        assertTrue(buffer.activateIfDormant());
+        assertFalse(buffer.isDormant());
+        assertEquals("first\nsecond\n", buffer.getString());
+        assertEquals(8, buffer.getCursor().getPosition());
+        assertFalse(buffer.isModified());
+    }
+
+    @Test
+    void modifiedBufferIsNeverHibernated() throws IOException {
+        var buffer = createBuffer("contents", 80);
+        buffer.getCursor().setPosition(buffer.getLength());
+        buffer.insert(" changed");
+
+        assertFalse(buffer.hibernateIfClean());
+        assertFalse(buffer.isDormant());
+        assertEquals("contents changed", buffer.getString());
+    }
+
+    @Test
     void deleteInnerWordUpdatesClipboardAndCursor() throws IOException {
         var buffer = createBuffer("foo bar", 80);
         buffer.getCursor().setPosition(1);

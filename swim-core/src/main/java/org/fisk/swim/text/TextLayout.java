@@ -365,6 +365,17 @@ public class TextLayout {
         _bufferContext.getBufferView().setNeedsRedraw();
     }
 
+    /** Drops cached glyph and line maps held by a dormant buffer. */
+    public void discardPayload() {
+        _logicalLines = new ArrayList<>();
+        _logicalLineAtPosition = new TreeMap<>();
+        _physicalLines = new ArrayList<>();
+        _physicalLineAtPosition = new TreeMap<>();
+        _layoutBufferVersion = -1;
+        _layoutWidth = -1;
+        _layoutFoldSignature = Long.MIN_VALUE;
+    }
+
     public void didInsert(int position, String text) {
         if (text == null || text.isEmpty()) {
             calculate();

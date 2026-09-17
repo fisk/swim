@@ -66,6 +66,7 @@ import org.fisk.swim.event.KeyType;
 
 public class Window implements Drawable {
     private static final int MIN_TOP_MENU_HEIGHT = 2;
+    private static final int MAX_RESIDENT_CLEAN_BUFFER_PAYLOADS = 32;
     // A terminal refresh may block on a remote terminal. Coalesce key-repeat
     // redraws into a steady frame cadence while continuing to consume input.
     private static final long REDRAW_INTERVAL_NANOS = 25_000_000L;
@@ -1487,6 +1488,7 @@ public class Window implements Drawable {
         if (view instanceof BufferView bufferView) {
             var bufferContext = getBufferContextFor(bufferView);
             if (bufferContext != null) {
+                bufferContext.getBuffer().activateIfDormant();
                 _activeBufferView = bufferView;
                 _bufferContext = bufferContext;
                 trackBufferContext(bufferContext);
@@ -1498,6 +1500,7 @@ public class Window implements Drawable {
                 if (_modeLineView != null) {
                     _modeLineView.setNeedsRedraw();
                 }
+                hibernateInactiveCleanBuffers();
             }
         }
         if (_rootView != null) {
@@ -2823,6 +2826,15 @@ public class Window implements Drawable {
         for (BufferContext context : openBufferContextsSnapshot()) {
             if (!bufferPathEquals(context, normalized)) continue;
             var buffer = context.getBuffer();
+            if (buffer.isDormant()) {
+                if (!exists) {
+                    buffer.noteExternalDeletion();
+                    changed = true;
+                }
+                // Reactivation reads the current file. Do not retain watcher
+                // contents for a payload that was intentionally evicted.
+                continue;
+            }
             if (!exists) {
                 // A rename appears as a delete/create pair to WatchService.
                 // Keep the open document intact rather than replacing it with
@@ -5553,6 +5565,7 @@ public class Window implements Drawable {
         }
         restoreWorkspace(workspace);
         _currentWorkspace = workspace;
+        activateDormantBuffersInCurrentWorkspace();
         if (_workspaceView != null && _workspaceView.getParent() == null) {
             attachWorkspaceView();
         }
@@ -6083,6 +6096,59 @@ public class Window implements Drawable {
         if (_bufferHistory.size() > 200) {
             _bufferHistory = new ArrayList<>(_bufferHistory.subList(0, 200));
         }
+    }
+
+    private void activateDormantBuffersInCurrentWorkspace() {
+        var activated = new IdentityHashMap<BufferContext, Boolean>();
+        for (BufferContext context : bufferContextsInWorkspaceLayout()) {
+            if (context != null && activated.put(context, Boolean.TRUE) == null) {
+                context.getBuffer().activateIfDormant();
+            }
+        }
+    }
+
+    /** Keeps recently used and visible buffers warm; older clean files become reloadable shells. */
+    private void hibernateInactiveCleanBuffers() {
+        if (_bufferHistory == null || _bufferHistory.size() <= MAX_RESIDENT_CLEAN_BUFFER_PAYLOADS) {
+            return;
+        }
+        var protectedPaths = new HashSet<Path>();
+        for (int i = 0; i < Math.min(MAX_RESIDENT_CLEAN_BUFFER_PAYLOADS, _bufferHistory.size()); i++) {
+            protectedPaths.add(_bufferHistory.get(i));
+        }
+        var visible = new IdentityHashMap<BufferContext, Boolean>();
+        for (BufferContext context : bufferContextsInWorkspaceLayout()) {
+            visible.put(context, Boolean.TRUE);
+        }
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            if (visible.containsKey(context)) {
+                continue;
+            }
+            Buffer buffer = context.getBuffer();
+            Path path = buffer == null ? null : buffer.getPath();
+            if (path != null && !protectedPaths.contains(normalizePath(path))) {
+                buffer.hibernateIfClean();
+            }
+        }
+    }
+
+    private List<BufferContext> bufferContextsInWorkspaceLayout() {
+        if (_workspaceView == null) {
+            return List.of();
+        }
+        List<View> leaves = _workspaceView instanceof SplitView splitView
+                ? splitView.leafViews()
+                : List.of(_workspaceView);
+        var contexts = new ArrayList<BufferContext>();
+        for (View leaf : leaves) {
+            if (leaf instanceof BufferView bufferView) {
+                BufferContext context = getBufferContextFor(bufferView);
+                if (context != null) {
+                    contexts.add(context);
+                }
+            }
+        }
+        return contexts;
     }
 
     private static boolean sameProject(Path left, Path right) {
