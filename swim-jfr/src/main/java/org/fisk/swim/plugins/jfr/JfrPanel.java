@@ -11,17 +11,22 @@ import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
 
 final class JfrPanel implements SwimPanel {
+    private static final String EXPLICIT_RECORDINGS_PREFIX = "swim-jfr-recordings:";
+    private static final long LIVE_REFRESH_NANOS = 1_000_000_000L;
     private record Source(Path path, JfrMetrics.Recording recording) { }
 
     private List<Source> sources = List.of();
     private String error;
     private boolean live;
+    private boolean followActivePath = true;
+    private long lastLiveRefreshNanos;
 
     JfrPanel(Path path) { loadPaths(path == null ? List.of() : List.of(path)); }
     @Override public String getId() { return JfrPlugin.PLUGIN_ID; }
     @Override public String getTitle() { return "JFR Metrics"; }
 
     @Override public List<String> render(int width, int height) {
+        refreshLiveRecordingIfDue();
         int chartWidth = Math.max(1, width - 8);
         if (error != null) return List.of("JFR Metrics", error, "Use :jfr [recording.jfr[,other.jfr]].");
         if (sources.isEmpty() || sources.stream().allMatch(source -> source.recording().samples().isEmpty())) {
@@ -61,29 +66,40 @@ final class JfrPanel implements SwimPanel {
         return List.of(new SwimKeyBindingHint("r", "JFR", "reload recordings"), new SwimKeyBindingHint("q", "Panel", "close"));
     }
     @Override public void syncToCurrentPath(Path current) {
-        if (isJfr(current)) {
-            live = false;
-            loadPaths(List.of(current));
+        if (current == null) {
+            followActivePath = false;
+            refreshLiveRecording();
+            return;
         }
-    }
-    @Override public SwimPanelResult openPaths(List<Path> paths) {
+        String encoded = current.toString();
+        if (encoded.startsWith(EXPLICIT_RECORDINGS_PREFIX)) {
+            followActivePath = false;
+            live = false;
+            loadPaths(splitPaths(encoded.substring(EXPLICIT_RECORDINGS_PREFIX.length())));
+            return;
+        }
+        if (!followActivePath) return;
         live = false;
-        loadPaths(paths);
-        return error == null ? SwimPanelResult.successMessage("Opened " + sources.size() + " JFR recording(s)")
-                : new SwimPanelResult(false, null, error);
+        loadPaths(splitPaths(current));
     }
-    @Override public SwimPanelResult openDefault() { return refreshLiveRecording(); }
 
     private SwimPanelResult refreshLiveRecording() {
         try {
             loadPaths(List.of(JfrLiveRecording.snapshot()));
             live = error == null;
+            lastLiveRefreshNanos = System.nanoTime();
             return error == null ? SwimPanelResult.successMessage("Live JFR recording refreshed")
                     : new SwimPanelResult(false, null, error);
         } catch (IOException | RuntimeException e) {
             live = false;
             error = "Unable to create live JFR snapshot: " + e.getMessage();
             return new SwimPanelResult(false, null, error);
+        }
+    }
+
+    private void refreshLiveRecordingIfDue() {
+        if (live && System.nanoTime() - lastLiveRefreshNanos >= LIVE_REFRESH_NANOS) {
+            refreshLiveRecording();
         }
     }
 
@@ -105,6 +121,16 @@ final class JfrPanel implements SwimPanel {
             }
         }
         sources = List.copyOf(loaded);
+    }
+
+    private static List<Path> splitPaths(Path combined) {
+        return splitPaths(combined.toString());
+    }
+
+    private static List<Path> splitPaths(String paths) {
+        return java.util.Arrays.stream(paths.split(",", -1))
+                .map(Path::of)
+                .toList();
     }
 
     private List<String> chart(int width, double maximum, java.util.function.ToDoubleFunction<JfrMetrics.Sample> value) {

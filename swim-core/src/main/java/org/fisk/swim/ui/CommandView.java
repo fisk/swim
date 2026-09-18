@@ -208,6 +208,8 @@ public class CommandView extends View {
                 refreshChrome();
             }
         });
+        // Ctrl-Enter is the reliable multiline spelling in terminal multiplexers.
+        // Keep an unmodified Enter exclusively for submitting the prompt.
         // This must come after the ordinary Enter responder: ListEventResponder
         // deliberately lets the last matching responder win.
         _responders.addEventResponder(new EventResponder() {
@@ -217,9 +219,8 @@ public class CommandView extends View {
                     return Response.NO;
                 }
                 var event = events.current();
-                return event.getKeyType() == KeyType.Enter
-                        && (event.isShiftDown() || event.isCtrlDown() || event.isAltDown())
-                                ? Response.YES : Response.NO;
+                return event.getKeyType() == KeyType.Enter && event.isCtrlDown() && !event.isAltDown()
+                        ? Response.YES : Response.NO;
             }
 
             @Override
@@ -1443,19 +1444,14 @@ public class CommandView extends View {
             return;
         }
         if (!recordingPaths.isEmpty()) {
-            var result = panel.openPaths(List.copyOf(recordingPaths));
-            if (!result.handled()) {
-                _message = result.message() == null || result.message().isBlank()
-                        ? "Unable to open JFR recordings" : result.message();
-                return;
-            }
+            // Keep this selection distinct from the panel's ordinary active-buffer
+            // synchronization, which continues while the workspace is displayed.
+            panel.syncToCurrentPath(Path.of("swim-jfr-recordings:" + String.join(",",
+                    recordingPaths.stream().map(Path::toString).toList())));
         } else {
-            var result = panel.openDefault();
-            if (!result.handled()) {
-                _message = result.message() == null || result.message().isBlank()
-                        ? "Unable to start JFR recording" : result.message();
-                return;
-            }
+            // null is the established panel callback for "no active file".
+            // The JFR panel uses it to start or refresh its live recording.
+            panel.syncToCurrentPath(null);
         }
         if (!window.showPluginWorkspace(pluginId, panel)) {
             _message = "Unable to open JFR workspace";

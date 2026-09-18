@@ -35,6 +35,7 @@ build
 /slack/
 /nemo.conf
 /nemo/
+/jfr/
 /deps/oracle.oracle-java/
 /deps/oracle.oracle-java.vsix
 /deps/oracle.oracle-java.vsix.download
