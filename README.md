@@ -136,6 +136,15 @@ Inside a running editor:
 - `:rebuild` rebuilds the project and then reloads.
 - `:upgrade` is an alias for `:rebuild`.
 
+The terminal reload regression uses `InstalledSwimDriver` and `TmuxSession`:
+
+```bash
+mvn -pl swim-core -am -Dtest=NoSuchTest -Dsurefire.failIfNoSpecifiedTests=false \
+  -Dit.test=ReloadSessionIT,TmuxSessionIT -Dfailsafe.failIfNoSpecifiedTests=false verify
+```
+
+Each harness session uses its own tmux server socket and test configuration, and cleanup targets only that session. Tests retain exited panes until cleanup so failures include terminal output. Set `-Dswim.test.tmux=/path/to/tmux` to test with a different binary; the system `next-3.4` build on some hosts aborts during `capture-pane`.
+
 When changing Nemo editor-control behavior, read `AGENTS.md` first. It documents the sandboxing boundary and the expectation that commands, key actions, workspace actions, and plugin actions explicitly decide whether they are allowed during Nemo-driven editor control.
 
 ## License

@@ -91,7 +91,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         }
     }
 
-    private final String _title;
+    private String _title;
     private final Consumer<String> _onSubmit;
     private final Consumer<String> _onCommand;
     private final Consumer<String> _onCommandInputChanged;
@@ -188,6 +188,12 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
 
     String getTitle() {
         return _title;
+    }
+
+    public void setTitle(String title) {
+        _title = title;
+        setNeedsRedraw();
+        refreshChrome();
     }
 
     String getInputText() {

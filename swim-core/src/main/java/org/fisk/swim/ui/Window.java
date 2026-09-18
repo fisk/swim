@@ -3476,7 +3476,7 @@ public class Window implements Drawable {
         activateWorkspace(_workspaceHistory.get(index));
         if (session.nemoOverlayConversationId() != null) {
             org.fisk.swim.nemo.NemoClient.getInstance()
-                    .restoreOverlayConversation(session.nemoOverlayConversationId(), getNemoRequestContext());
+                    .restoreOverlayConversation(session.nemoOverlayConversationId(), getNemoRequestContext(), this);
         }
     }
 

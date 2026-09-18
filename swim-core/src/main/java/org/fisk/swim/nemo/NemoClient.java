@@ -498,13 +498,18 @@ public class NemoClient {
 
     /** Restores the dedicated ! overlay after the editor workspaces are live. */
     public synchronized void restoreOverlayConversation(String conversationId, BufferContext context) {
+        restoreOverlayConversation(conversationId, context, Window.getInstance());
+    }
+
+    /** The replacement window is not published globally until its constructor returns. */
+    public synchronized void restoreOverlayConversation(String conversationId, BufferContext context, Window window) {
         ChatPanelView panel = restoreConversationPanel(conversationId, context);
         if (panel == null) {
             return;
         }
         Conversation conversation = _conversations.get(conversationId);
         if (conversation != null) {
-            showConversation(conversation);
+            showConversation(conversation, window);
         }
     }
 
@@ -6040,7 +6045,10 @@ public class NemoClient {
     }
 
     private synchronized void showConversation(Conversation conversation) {
-        var window = Window.getInstance();
+        showConversation(conversation, Window.getInstance());
+    }
+
+    private synchronized void showConversation(Conversation conversation, Window window) {
         if (window == null) {
             throw new IllegalStateException("No active window");
         }
@@ -7061,8 +7069,10 @@ public class NemoClient {
         conversation._title = argument.trim();
         conversation._updatedAtMillis = System.currentTimeMillis();
         persistSessions();
-        if (isPanelVisible(conversation)) {
-            reopenConversationPanel(conversation);
+        if (conversation._panelView != null) {
+            // Workspace snapshots identify the conversation by this panel.
+            // Replacing it would leave the workspace holding an orphan panel.
+            conversation._panelView.setTitle(formatPanelTitle(conversation));
         }
         appendAssistantNote(conversation, "Renamed " + conversation._id + " to " + conversation._title + ".");
     }
@@ -7131,19 +7141,6 @@ public class NemoClient {
 
         persistSessions();
         appendAssistantNote(conversation, "Deleted " + target._id + ".");
-    }
-
-    private synchronized void reopenConversationPanel(Conversation conversation) {
-        if (!isPanelVisible(conversation)) {
-            return;
-        }
-        var window = Window.getInstance();
-        if (window == null) {
-            return;
-        }
-        window.hidePanel();
-        conversation._panelView = null;
-        showConversation(conversation);
     }
 
     private Conversation findConversation(String identifier, Path workspaceRoot) {

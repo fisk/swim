@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Assumptions;
 public final class InstalledSwimDriver {
     private static final Path TEST_SOCKET_PATH = Path.of("/tmp",
             "swim-it-" + safePathToken(System.getProperty("user.name", "unknown"))
-                    + "-" + ProcessHandle.current().pid(),
+                    + "-" + ProcessHandle.current().pid() + "-" + Long.toUnsignedString(System.nanoTime(), 36),
             "default.sock");
 
     private InstalledSwimDriver() {
@@ -77,7 +77,9 @@ public final class InstalledSwimDriver {
         environment.put("HOME", home.toString());
         Path socketPath = TEST_SOCKET_PATH;
         environment.put(SwimServerSessions.ENV_SOCKET, socketPath.toString());
-        environment.put(SwimServerSessions.ENV_SESSION, "it-" + Long.toUnsignedString(System.nanoTime(), 36));
+        String sessionName = "it-" + Long.toUnsignedString(System.nanoTime(), 36);
+        environment.put(SwimServerSessions.ENV_SESSION, sessionName);
+        environment.put("SWIM_SESSION", sessionName);
         String currentPath = System.getenv("PATH");
         if (currentPath != null && !currentPath.isBlank()) {
             environment.put("PATH", currentPath);
@@ -108,24 +110,10 @@ public final class InstalledSwimDriver {
 
     private static boolean tmuxAvailable() {
         try {
-            var process = new ProcessBuilder("tmux", "-V")
+            var process = new ProcessBuilder(TmuxSession.executable(), "-V")
                     .redirectErrorStream(true)
                     .start();
-            if (process.waitFor() != 0) {
-                return false;
-            }
-            String session = "swim-it-probe-" + safePathToken(Long.toUnsignedString(System.nanoTime(), 36));
-            var create = new ProcessBuilder("tmux", "new-session", "-d", "-s", session, "true")
-                    .redirectErrorStream(true)
-                    .start();
-            if (create.waitFor() != 0) {
-                return false;
-            }
-            var kill = new ProcessBuilder("tmux", "kill-session", "-t", session)
-                    .redirectErrorStream(true)
-                    .start();
-            kill.waitFor();
-            return true;
+            return process.waitFor() == 0;
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

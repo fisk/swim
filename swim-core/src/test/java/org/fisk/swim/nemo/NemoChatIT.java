@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -174,6 +175,75 @@ class NemoChatIT {
             }
             assertTrue(restoredWorkspace);
         } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void renamingNemoWorkspaceKeepsItsPanelAndPersistedConversationId() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        try (var harness = HeadlessWindowHarness.create(writeFile("rename-nemo.txt", "text\n"), 80, 16)) {
+            var window = harness.getWindow();
+            NemoClient nemo = NemoClient.getInstance();
+            nemo.runWorkspace(window.getBufferContext(), "");
+            var panel = assertInstanceOf(ChatPanelView.class, window.getActiveView());
+            String id = nemo.conversationIdForPanel(panel);
+
+            submit(panel, ":rename Renamed workspace");
+
+            assertSame(panel, window.getActiveView());
+            assertFalse(window.isShowingPanel());
+            assertEquals(id, nemo.conversationIdForPanel(panel));
+            Method createSession = window.getClass().getDeclaredMethod("createSession");
+            createSession.setAccessible(true);
+            var session = (org.fisk.swim.config.EditorSession) createSession.invoke(window);
+            assertTrue(session.workspaces().stream().anyMatch(workspace -> "NEMO".equals(workspace.kind())
+                    && id.equals(workspace.conversationId())));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void reloadConstructsWindowBeforeRestoringNemoOverlay() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        String restoreProperty = "swim.session.restore_on_reload";
+        String previousRestore = System.getProperty(restoreProperty);
+        org.fisk.swim.terminal.TerminalContextTestSupport.install(80, 20);
+        try {
+            System.clearProperty(restoreProperty);
+            Path file = writeFile("reload-startup.txt", "startup sentinel\n");
+            org.fisk.swim.ui.Window.createInstance(file);
+            var window = org.fisk.swim.ui.Window.getInstance();
+            NemoClient nemo = NemoClient.getInstance();
+            nemo.run(window.getBufferContext(), "");
+            String overlayId = nemo.conversationIdForPanel((ChatPanelView) window.getPanelView());
+            nemo.runWorkspace(window.getBufferContext(), "");
+            String workspaceId = nemo.conversationIdForPanel((ChatPanelView) window.getActiveView());
+            window.switchToWorkspaceIndex(0);
+            nemo.restoreOverlayConversation(overlayId, window.getBufferContext());
+            window.saveSessionForReload();
+            nemo.checkpointForReload();
+            window.dispose();
+            nemo.resetForTests();
+
+            System.setProperty(restoreProperty, "true");
+            org.fisk.swim.ui.Window.createInstance(file);
+            window = org.fisk.swim.ui.Window.getInstance();
+            assertEquals(overlayId, nemo.conversationIdForPanel(
+                    assertInstanceOf(ChatPanelView.class, window.getPanelView())));
+            window.hidePanel();
+            assertEquals(file.toAbsolutePath(), window.getBufferContext().getBuffer().getPath());
+            window.switchToWorkspaceIndex(1);
+            assertEquals(workspaceId, nemo.conversationIdForPanel(
+                    assertInstanceOf(ChatPanelView.class, window.getActiveView())));
+        } finally {
+            System.clearProperty(restoreProperty);
+            if (org.fisk.swim.ui.Window.getInstance() != null) {
+                org.fisk.swim.ui.Window.getInstance().dispose();
+            }
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+            if (previousRestore != null) System.setProperty(restoreProperty, previousRestore);
             System.setProperty("user.home", originalUserHome);
         }
     }
