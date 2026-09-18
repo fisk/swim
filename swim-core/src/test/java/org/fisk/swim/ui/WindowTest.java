@@ -989,6 +989,21 @@ class WindowTest {
     }
 
     @Test
+    void nemoRequestContextNeverUsesRenderedChatBrowseBuffer() throws Exception {
+        try (var harness = HeadlessWindowHarness.create(writeFile("nemo-source-context.txt", "source"), 70, 16)) {
+            var window = harness.getWindow();
+            var source = window.getBufferContext();
+            var chat = new ChatPanelView(Rect.create(0, 0, 0, 0), "Nemo", ignored -> {});
+            chat.appendMessage("me", "Build a JFR plugin");
+            assertTrue(window.showNemoWorkspace(chat));
+            assertTrue(window.enterNemoBrowse(chat));
+
+            assertSame(source, window.getNemoRequestContext());
+            assertFalse(window.getNemoRequestContext().getBuffer().getString().contains("JFR plugin"));
+        }
+    }
+
+    @Test
     void shellPanelOverlaysWorkspaceInsteadOfJoiningSplitTree() throws Exception {
         try (var harness = HeadlessWindowHarness.create(writeFile("window.txt", "abc"), 32, 11)) {
             var window = harness.getWindow();
@@ -2273,6 +2288,54 @@ class WindowTest {
             assertEquals(second.toAbsolutePath().normalize().toString(), session.workspaces().getFirst().activePath());
         } finally {
             shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void restoringSessionHibernatesCleanBuffersInInactiveWorkspaces() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("reload-dormant-first.txt", "first");
+        Path second = writeFile("reload-dormant-second.txt", "second");
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            var session = (org.fisk.swim.config.EditorSession) invoke(window, "createSession", new Class<?>[0]);
+
+            invoke(window, "restoreSessionWorkspaces",
+                    new Class<?>[] { org.fisk.swim.config.EditorSession.class }, session);
+
+            var firstBuffer = window.openBufferContextsSnapshot().stream()
+                    .map(context -> context.getBuffer())
+                    .filter(buffer -> first.toAbsolutePath().equals(buffer.getPath()))
+                    .findFirst()
+                    .orElseThrow();
+            assertTrue(firstBuffer.isDormant());
+            assertFalse(window.getBufferContext().getBuffer().isDormant());
+        } finally {
+            shutdownRealWindow();
+        }
+    }
+
+    @Test
+    void disposeReleasesBuffersHeldByInactiveWorkspaces() throws Exception {
+        TerminalContextTestSupport.install(80, 16);
+        Path first = writeFile("reload-dispose-first.txt", "first");
+        Path second = writeFile("reload-dispose-second.txt", "second");
+        try {
+            Window.createInstance(first);
+            var window = Window.getInstance();
+            assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+
+            window.dispose();
+
+            assertTrue(window.openBufferContextsSnapshot().isEmpty());
+        } finally {
+            if (Window.getInstance() != null) {
+                Window.getInstance().dispose();
+            }
+            EventThread.shutdownInstance();
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
         }
     }
 

@@ -652,8 +652,10 @@ class NemoClientTest {
         String originalUserHome = System.getProperty("user.home");
         Path home = tempDir.resolve("home");
         Path nemoDirectory = home.resolve(".nemo");
+        Path swimDirectory = home.resolve(".swim");
         Path project = tempDir.resolve("project");
         Files.createDirectories(nemoDirectory);
+        Files.createDirectories(swimDirectory);
         Files.createDirectories(project);
         Path file = project.resolve("note.txt");
         Files.writeString(file, "project\n");
@@ -672,7 +674,14 @@ class NemoClientTest {
             String read = NemoClient.executeTool(configuration, context,
                     new NemoClient.ToolCall("read-nemo-config", "read_file", json(Map.of("path", settings.toString()))));
             assertTrue(read.contains("theme=midnight"));
+            Path swimSettings = swimDirectory.resolve("editor.conf");
+            String swimWrite = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("write-swim-config", "write_file",
+                            json(Map.of("path", swimSettings.toString(), "content", "theme=forest\n"))));
+            assertTrue(swimWrite.contains("wrote"));
+            assertEquals("theme=forest\n", Files.readString(swimSettings));
             assertTrue(NemoClient.directoryAccessSummary(project).contains(nemoDirectory.toString()));
+            assertTrue(NemoClient.directoryAccessSummary(project).contains(swimDirectory.toString()));
             assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
                     new NemoClient.ToolCall("outside-home", "read_file",
                             json(Map.of("path", home.resolve("private.txt").toString())))));

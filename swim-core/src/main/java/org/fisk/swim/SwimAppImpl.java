@@ -9,6 +9,7 @@ import org.fisk.swim.api.SwimApp;
 import org.fisk.swim.api.SwimHost;
 import org.fisk.swim.event.IOThread;
 import org.fisk.swim.event.RunnableEvent;
+import org.fisk.swim.nemo.NemoClient;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.ui.Window;
 
@@ -217,6 +218,7 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void checkpointForReload() {
+        NemoClient.getInstance().checkpointForReload();
         var window = _bindings.getWindow();
         if (window != null) {
             window.checkpointForReload();
@@ -227,6 +229,9 @@ public class SwimAppImpl implements SwimApp {
     public void close() {
         boolean reloading = SwimRuntime.isReloading();
         Thread ioThread = _ioThread;
+        if (reloading) {
+            NemoClient.getInstance().shutdownForReload();
+        }
         if (_ioThread != null) {
             _ioThread.interrupt();
             _ioThread = null;

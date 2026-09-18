@@ -103,6 +103,25 @@ class CommandViewTest {
     }
 
     @Test
+    void commandPromptWrapsAndShiftEnterAddsAQuestionLine() throws IOException {
+        Path path = tempDir.resolve("multiline-command.txt");
+        Files.writeString(path, "alpha\n");
+
+        try (var harness = HeadlessWindowHarness.create(path, 30, 12)) {
+            var commandView = harness.getWindow().getCommandView();
+            commandView.activate(":", "nemo first line");
+
+            HeadlessWindowHarness.dispatch(commandView,
+                    new org.fisk.swim.event.KeyStroke(org.fisk.swim.event.KeyType.Enter, false, false, true));
+            HeadlessWindowHarness.dispatch(commandView, HeadlessWindowHarness.key('s'));
+
+            assertEquals("nemo first line\ns", commandView.getCommandText());
+            assertEquals(2, commandView.preferredHeight(30));
+            assertEquals(2, commandView.getBounds().getSize().getHeight());
+        }
+    }
+
+    @Test
     void searchNextAndPreviousUseRegexPatterns() throws IOException {
         Path path = tempDir.resolve("search.txt");
         Files.writeString(path, "x [ y [ z");

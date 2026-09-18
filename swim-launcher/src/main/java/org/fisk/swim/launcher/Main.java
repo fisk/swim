@@ -324,6 +324,11 @@ public class Main implements SwimHost {
             try {
                 Runnable beforeLoad = shouldRefreshStandardInput() ? Main::refreshStandardInput : null;
                 SwimApp next = _plugins.reload(_buildRoot, paths, this, getClass().getClassLoader(), beforeLoad);
+                // A reload releases an entire module layer plus any clean
+                // buffer payloads hibernated during session restoration. Ask
+                // the VM to collect at this explicit maintenance boundary so
+                // :rebuild does not appear to retain the previous editor.
+                System.gc();
                 if (successMessage != null) {
                     next.showMessage(successMessage);
                 }

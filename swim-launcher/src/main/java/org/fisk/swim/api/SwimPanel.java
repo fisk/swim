@@ -26,4 +26,14 @@ public interface SwimPanel {
 
     default void syncToCurrentPath(Path path) {
     }
+
+    /** Prepares the panel's default resource when it is opened without an explicit path. */
+    default SwimPanelResult openDefault() {
+        return SwimPanelResult.ignored();
+    }
+
+    /** Opens a set of explicitly requested resources when the panel supports comparison. */
+    default SwimPanelResult openPaths(List<Path> paths) {
+        return SwimPanelResult.ignored();
+    }
 }

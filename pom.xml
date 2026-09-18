@@ -30,6 +30,7 @@
     <module>swim-email</module>
     <module>swim-git</module>
     <module>swim-slack</module>
+    <module>swim-jfr</module>
   </modules>
 
   <properties>

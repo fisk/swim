@@ -23,6 +23,7 @@ build
 /swim-email/target/
 /swim-git/target/
 /swim-slack/target/
+/swim-jfr/target/
 /image/
 /share/
 /plugins/

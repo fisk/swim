@@ -425,7 +425,7 @@ public class NormalMode extends Mode {
             if (window.blockEditorDriveAction("Nemo chat", "opening Nemo from editor control is not allowed")) {
                 return;
             }
-            NemoClient.getInstance().run(window.getBufferContext(), "");
+            NemoClient.getInstance().run(window.getNemoRequestContext(), "");
         });
         _rootResponder.addEventResponder("*", "Search", "search current word forward", () -> {
             searchCurrentWord(window, true, true);
@@ -515,14 +515,14 @@ public class NormalMode extends Mode {
     private void installLeaderMoveBindings(Window window, String leader) {
         _rootResponder.addEventResponder(new MotionResponder(leader + " h",
                 count -> indentCurrentLines(window, -1, count)));
-        _rootResponder.addEventResponder(new MotionResponder(leader + " j",
+        _rootResponder.addEventResponder(new MotionResponder(leader + " J",
                 count -> moveCurrentLines(window, 1, count)));
         _rootResponder.addEventResponder(new MotionResponder(leader + " k",
                 count -> moveCurrentLines(window, -1, count)));
         _rootResponder.addEventResponder(new MotionResponder(leader + " l",
                 count -> indentCurrentLines(window, 1, count)));
         _rootResponder.addKeyBindingHint(leader + " h", "Editing", "outdent line");
-        _rootResponder.addKeyBindingHint(leader + " j", "Editing", "move line down");
+        _rootResponder.addKeyBindingHint(leader + " J", "Editing", "move line down");
         _rootResponder.addKeyBindingHint(leader + " k", "Editing", "move line up");
         _rootResponder.addKeyBindingHint(leader + " l", "Editing", "indent line");
     }

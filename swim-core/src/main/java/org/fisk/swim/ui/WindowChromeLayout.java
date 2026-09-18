@@ -39,16 +39,44 @@ final class WindowChromeLayout {
     }
 
     static WindowChromeLayout compute(Size size, int topMenuHeight, Set<FooterBar> requestedFooterBars) {
+        return compute(size, topMenuHeight, requestedFooterBars, 1);
+    }
+
+    static WindowChromeLayout compute(
+            Size size, int topMenuHeight, Set<FooterBar> requestedFooterBars, int commandRows) {
         int width = size == null ? 0 : Math.max(0, size.getWidth());
         int height = size == null ? 0 : Math.max(0, size.getHeight());
         int menuHeight = Math.min(Math.max(0, topMenuHeight), height);
         Set<FooterBar> requested = requestedFooterBars == null || requestedFooterBars.isEmpty()
                 ? EnumSet.noneOf(FooterBar.class)
                 : EnumSet.copyOf(requestedFooterBars);
-        int availableFooterRows = Math.min(requested.size(), Math.max(0, height - menuHeight));
-        Set<FooterBar> visibleFooterBars = visibleFooterBars(requested, availableFooterRows);
+        int remainingFooterRows = Math.max(0, height - menuHeight);
+        int requestedCommandRows = Math.max(1, commandRows);
+        var footerHeights = new EnumMap<FooterBar, Integer>(FooterBar.class);
+        for (var bar : FooterBar.values()) {
+            footerHeights.put(bar, 0);
+        }
+        FooterBar[] priorityOrder = { FooterBar.COMMAND, FooterBar.MODE_LINE, FooterBar.TAB_BAR };
+        for (int barIndex = 0; barIndex < priorityOrder.length; barIndex++) {
+            FooterBar bar = priorityOrder[barIndex];
+            if (!requested.contains(bar) || remainingFooterRows == 0) {
+                continue;
+            }
+            int rowsReservedForOtherBars = 0;
+            for (int laterIndex = barIndex + 1; laterIndex < priorityOrder.length; laterIndex++) {
+                if (requested.contains(priorityOrder[laterIndex])) {
+                    rowsReservedForOtherBars++;
+                }
+            }
+            int desiredHeight = bar == FooterBar.COMMAND ? requestedCommandRows : 1;
+            int availableForBar = Math.max(1, remainingFooterRows - rowsReservedForOtherBars);
+            int actualHeight = Math.min(desiredHeight, availableForBar);
+            footerHeights.put(bar, actualHeight);
+            remainingFooterRows -= actualHeight;
+        }
         int contentTop = menuHeight;
-        int contentHeight = Math.max(0, height - menuHeight - visibleFooterBars.size());
+        int footerInsetRows = height - menuHeight - remainingFooterRows;
+        int contentHeight = Math.max(0, height - menuHeight - footerInsetRows);
         var footerBounds = new EnumMap<FooterBar, Rect>(FooterBar.class);
         for (var bar : FooterBar.values()) {
             footerBounds.put(bar, Rect.create(0, contentTop + contentHeight, width, 0));
@@ -56,12 +84,9 @@ final class WindowChromeLayout {
 
         int y = contentTop + contentHeight;
         for (var bar : FooterBar.values()) {
-            if (visibleFooterBars.contains(bar)) {
-                footerBounds.put(bar, Rect.create(0, y, width, 1));
-                y++;
-            } else {
-                footerBounds.put(bar, Rect.create(0, y, width, 0));
-            }
+            int barHeight = footerHeights.get(bar);
+            footerBounds.put(bar, Rect.create(0, y, width, barHeight));
+            y += barHeight;
         }
 
         return new WindowChromeLayout(
@@ -69,7 +94,7 @@ final class WindowChromeLayout {
                 Rect.create(0, 0, width, menuHeight),
                 Rect.create(0, contentTop, width, contentHeight),
                 footerBounds,
-                visibleFooterBars.size());
+                footerInsetRows);
     }
 
     static Set<FooterBar> standardFooterBars(boolean hasTabBar) {
@@ -108,12 +133,4 @@ final class WindowChromeLayout {
         return _footerInsetRows;
     }
 
-    private static Set<FooterBar> visibleFooterBars(Set<FooterBar> requested, int availableRows) {
-        var visible = EnumSet.noneOf(FooterBar.class);
-        requested.stream()
-                .sorted((left, right) -> Integer.compare(left._priority, right._priority))
-                .limit(Math.max(0, availableRows))
-                .forEach(visible::add);
-        return visible;
-    }
 }

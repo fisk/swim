@@ -110,7 +110,8 @@ public class CommandView extends View {
             new CommandSpec("marks", List.of(), "", "show marks"),
             new CommandSpec("jumps", List.of(), "", "show the jump list"),
             new CommandSpec("slack", List.of(), "", "open the Slack client"),
-            new CommandSpec("nemo", List.of(), "<question>", "open Nemo workspace and optionally ask a question"),
+            new CommandSpec("jfr", List.of(), "[file[,file...]]", "open or compare JFR recordings in the metrics visualizer"),
+            new CommandSpec("nemo", List.of(), "<question>", "open a new Nemo workspace and optionally ask a question"),
             new CommandSpec("lsp-restart", List.of("lsp-reload"), "", "restart the language server for the current buffer"),
             new CommandSpec("reload", List.of("restart"), "", "restart with the current workspace restored"),
             new CommandSpec("rebuild", List.of(), "", "rebuild and reload SWIM"),
@@ -204,6 +205,28 @@ public class CommandView extends View {
                     resetCommandSelection();
                     syncLiveGrepPreview();
                 }
+                refreshChrome();
+            }
+        });
+        // This must come after the ordinary Enter responder: ListEventResponder
+        // deliberately lets the last matching responder win.
+        _responders.addEventResponder(new EventResponder() {
+            @Override
+            public Response processEvent(KeyStrokes events) {
+                if (events.remaining() != 0 || _command == null) {
+                    return Response.NO;
+                }
+                var event = events.current();
+                return event.getKeyType() == KeyType.Enter
+                        && (event.isShiftDown() || event.isCtrlDown() || event.isAltDown())
+                                ? Response.YES : Response.NO;
+            }
+
+            @Override
+            public void respond() {
+                allowEditorDrivePromptAction("edit prompt");
+                _command.insert(_commandCursorIndex++, '\n');
+                resetCommandSelection();
                 refreshChrome();
             }
         });
@@ -382,7 +405,7 @@ public class CommandView extends View {
             return;
         }
         _lastCommand = rawCommand;
-        int splitIndex = rawCommand.indexOf(' ');
+        int splitIndex = firstWhitespaceIndex(rawCommand);
         String command;
         String argument = "";
         if (splitIndex == -1) {
@@ -407,6 +430,9 @@ public class CommandView extends View {
             break;
         case "git":
             openGit(argument);
+            break;
+        case "jfr":
+            openJfr(argument);
             break;
         case "blame":
             Window.getInstance().toggleGitBlame();
@@ -590,7 +616,7 @@ public class CommandView extends View {
             SlackUiSupport.toggle(Window.getInstance());
             break;
         case "nemo":
-            org.fisk.swim.nemo.NemoClient.getInstance().runWorkspace(Window.getInstance().getBufferContext(), argument);
+            org.fisk.swim.nemo.NemoClient.getInstance().runWorkspace(Window.getInstance().getNemoRequestContext(), argument);
             break;
         case "lsp-restart":
         case "lsp-reload":
@@ -881,8 +907,8 @@ public class CommandView extends View {
                 "restarting language servers requires host action");
         case "debug", "dbg" -> blockEditorDriveCommand(window, rawCommand,
                 "debugger commands are outside the editor-control sandbox");
-        case "git", "blame" -> blockEditorDriveCommand(window, rawCommand,
-                "git UI commands are outside the editor-control sandbox");
+        case "git", "jfr", "blame" -> blockEditorDriveCommand(window, rawCommand,
+                "plugin workspaces are outside the editor-control sandbox");
         case "tab-rename", "rename-tab", "rename-window",
                 "tab-move", "move-tab", "move-window",
                 "tab-swap-left", "tab-swap-right" -> blockEditorDriveCommand(window, rawCommand,
@@ -1271,6 +1297,15 @@ public class CommandView extends View {
         return text.substring(start, end).toLowerCase(Locale.ROOT);
     }
 
+    private static int firstWhitespaceIndex(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            if (Character.isWhitespace(text.charAt(index))) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
     private void refreshChrome() {
         var window = Window.getInstance();
         if (window != null) {
@@ -1376,6 +1411,54 @@ public class CommandView extends View {
         }
         if (!Window.getInstance().showPluginWorkspace(pluginId, panel)) {
             _message = "Unable to open Git workspace";
+        }
+    }
+
+    private void openJfr(String argument) {
+        var window = Window.getInstance();
+        var recordingPaths = new ArrayList<Path>();
+        if (!argument.isBlank()) {
+            for (String rawPath : argument.split(",", -1)) {
+                if (rawPath.isBlank()) {
+                    _message = "JFR file path is empty";
+                    return;
+                }
+                Path recordingPath = window.resolvePathRelativeToActiveBuffer(rawPath);
+                if (!Files.isRegularFile(recordingPath)) {
+                    _message = "JFR file does not exist: " + recordingPath;
+                    return;
+                }
+                if (!recordingPath.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jfr")) {
+                    _message = "Not a JFR recording: " + recordingPath;
+                    return;
+                }
+                recordingPaths.add(recordingPath);
+            }
+        }
+        String pluginId = "swim-jfr";
+        SwimRuntime.loadPlugin(pluginId);
+        var panel = SwimRuntime.getPanel(pluginId);
+        if (panel == null) {
+            _message = "JFR plugin unavailable";
+            return;
+        }
+        if (!recordingPaths.isEmpty()) {
+            var result = panel.openPaths(List.copyOf(recordingPaths));
+            if (!result.handled()) {
+                _message = result.message() == null || result.message().isBlank()
+                        ? "Unable to open JFR recordings" : result.message();
+                return;
+            }
+        } else {
+            var result = panel.openDefault();
+            if (!result.handled()) {
+                _message = result.message() == null || result.message().isBlank()
+                        ? "Unable to start JFR recording" : result.message();
+                return;
+            }
+        }
+        if (!window.showPluginWorkspace(pluginId, panel)) {
+            _message = "Unable to open JFR workspace";
         }
     }
 
@@ -1900,9 +1983,9 @@ public class CommandView extends View {
         var terminalContext = TerminalContext.getInstance();
         var graphics = terminalContext.getTerminalGraphics();
         int width = rect.getSize().getWidth();
-        var line = new AttributedString();
 
         if (_message != null) {
+            var line = new AttributedString();
             TextColor tone = _message.startsWith("Unknown")
                     || _message.startsWith("Failed")
                     || _message.startsWith("Wrong")
@@ -1911,18 +1994,35 @@ public class CommandView extends View {
                             : UiTheme.COMMAND_SUCCESS;
             line.append(" notice ", UiTheme.TEXT_ON_ACCENT, tone);
             line.append(" " + _message, UiTheme.TEXT_PRIMARY, UiTheme.COMMAND_INACTIVE_BACKGROUND);
+            UiTheme.drawLine(graphics, rect.getPoint(), width, line, UiTheme.TEXT_MUTED,
+                    UiTheme.COMMAND_INACTIVE_BACKGROUND);
         } else if (_command != null) {
             TextColor promptTone = isSearch() ? UiTheme.COMMAND_SEARCH : UiTheme.COMMAND_PROMPT;
             String label = isSearch() ? " search " : " command ";
-            line.append(label, UiTheme.TEXT_ON_ACCENT, promptTone);
-            line.append(" " + _prompt + _command, UiTheme.COMMAND_FOREGROUND, UiTheme.COMMAND_BACKGROUND);
+            List<String> rows = wrappedCommandRows(width);
+            int firstVisibleRow = firstVisibleCommandRow(width, rect.getSize().getHeight());
+            for (int row = 0; row < rect.getSize().getHeight(); row++) {
+                var line = new AttributedString();
+                int sourceRow = firstVisibleRow + row;
+                if (sourceRow == 0 && width >= label.length()) {
+                    line.append(label, UiTheme.TEXT_ON_ACCENT, promptTone);
+                    String firstRowText = rows.isEmpty() || rows.get(0).length() <= label.length()
+                            ? "" : rows.get(0).substring(label.length());
+                    line.append(firstRowText, UiTheme.COMMAND_FOREGROUND, UiTheme.COMMAND_BACKGROUND);
+                } else if (sourceRow < rows.size()) {
+                    line.append(rows.get(sourceRow), UiTheme.COMMAND_FOREGROUND, UiTheme.COMMAND_BACKGROUND);
+                }
+                UiTheme.drawLine(graphics, Point.create(rect.getPoint().getX(), rect.getPoint().getY() + row), width, line,
+                        UiTheme.COMMAND_FOREGROUND, UiTheme.COMMAND_BACKGROUND);
+            }
         } else {
+            var line = new AttributedString();
             line.append(" normal ", UiTheme.TEXT_ON_ACCENT, UiTheme.SURFACE_ACCENT);
             line.append(" : commands  / search  ? reverse-search ", UiTheme.TEXT_MUTED,
                     UiTheme.COMMAND_INACTIVE_BACKGROUND);
+            UiTheme.drawLine(graphics, rect.getPoint(), width, line, UiTheme.TEXT_MUTED,
+                    UiTheme.COMMAND_INACTIVE_BACKGROUND);
         }
-        UiTheme.drawLine(graphics, rect.getPoint(), width, line, UiTheme.TEXT_MUTED,
-                _command != null ? UiTheme.COMMAND_BACKGROUND : UiTheme.COMMAND_INACTIVE_BACKGROUND);
     }
 
     @Override
@@ -1934,9 +2034,60 @@ public class CommandView extends View {
         Point origin = absoluteOrigin();
         int width = Math.max(1, getBounds().getSize().getWidth());
         String label = isSearch() ? " search " : " command ";
-        int cursorIndex = _command == null ? 0 : _commandCursorIndex;
-        int x = Math.min(width - 1, label.length() + 1 + (_prompt == null ? 0 : _prompt.length()) + cursorIndex);
-        return Point.create(origin.getX() + Math.max(0, x), origin.getY());
+        String beforeCursor = label + " " + (_prompt == null ? "" : _prompt)
+                + (_command == null ? "" : _command.substring(0, _commandCursorIndex));
+        List<String> rows = wrapFixed(beforeCursor, width);
+        int row = Math.max(0, rows.size() - 1);
+        int x = rows.isEmpty() ? 0 : rows.get(row).length();
+        if (x >= width) {
+            x = width - 1;
+        }
+        int visibleRow = row - firstVisibleCommandRow(width, getBounds().getSize().getHeight());
+        return Point.create(origin.getX() + Math.max(0, x), origin.getY() + visibleRow);
+    }
+
+    int preferredHeight(int width) {
+        if (_command == null) {
+            return 1;
+        }
+        return Math.max(1, Math.min(6, wrappedCommandRows(width).size()));
+    }
+
+    private List<String> wrappedCommandRows(int width) {
+        String label = isSearch() ? " search " : " command ";
+        return wrapFixed(label + " " + (_prompt == null ? "" : _prompt)
+                + (_command == null ? "" : _command.toString()), Math.max(1, width));
+    }
+
+    private int firstVisibleCommandRow(int width, int height) {
+        if (_command == null || height <= 0) {
+            return 0;
+        }
+        String label = isSearch() ? " search " : " command ";
+        String beforeCursor = label + " " + (_prompt == null ? "" : _prompt)
+                + _command.substring(0, _commandCursorIndex);
+        int cursorRow = Math.max(0, wrapFixed(beforeCursor, Math.max(1, width)).size() - 1);
+        return Math.max(0, cursorRow - height + 1);
+    }
+
+    private static List<String> wrapFixed(String text, int width) {
+        var rows = new ArrayList<String>();
+        var row = new StringBuilder();
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == '\n') {
+                rows.add(row.toString());
+                row.setLength(0);
+            } else {
+                if (row.length() == width) {
+                    rows.add(row.toString());
+                    row.setLength(0);
+                }
+                row.append(character);
+            }
+        }
+        rows.add(row.toString());
+        return rows;
     }
 
     private Point absoluteOrigin() {

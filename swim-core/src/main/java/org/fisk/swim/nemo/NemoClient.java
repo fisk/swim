@@ -161,6 +161,25 @@ public class NemoClient {
         return _instance;
     }
 
+    /** Flushes durable conversation state before SWIM replaces its core module. */
+    public synchronized void checkpointForReload() {
+        ensureSessionsLoaded();
+        persistSessions();
+    }
+
+    /**
+     * Ends runtime-only resources while preserving the conversation transcript
+     * for the replacement core to restore after a rebuild.
+     */
+    public synchronized void shutdownForReload() {
+        checkpointForReload();
+        for (Conversation conversation : _conversations.values()) {
+            stopWorker(conversation);
+        }
+        _mcpClient.shutdownAll();
+        _editorControlLease = null;
+    }
+
     synchronized void resetForTests() {
         for (var conversation : _conversations.values()) {
             stopWorker(conversation);
@@ -438,14 +457,58 @@ public class NemoClient {
     }
 
     public void run(BufferContext context, String question) {
-        run(context, question, false);
+        run(context, question, false, false);
     }
 
+    /** Opens a deliberately fresh conversation in a dedicated Nemo workspace. */
     public void runWorkspace(BufferContext context, String question) {
-        run(context, question, true);
+        run(context, question, true, true);
     }
 
-    private void run(BufferContext context, String question, boolean workspaceMode) {
+    /** Identifies a rendered chat so the editor can restore its exact workspace. */
+    public synchronized String conversationIdForPanel(ChatPanelView panel) {
+        if (panel == null) {
+            return null;
+        }
+        for (Conversation conversation : _conversations.values()) {
+            if (conversation._panelView == panel) {
+                return conversation._id;
+            }
+        }
+        return null;
+    }
+
+    /** Recreates a chat panel without changing the editor's current workspace. */
+    public synchronized ChatPanelView restoreConversationPanel(String conversationId, BufferContext context) {
+        if (conversationId == null || conversationId.isBlank()) {
+            return null;
+        }
+        ensureSessionsLoaded();
+        Conversation conversation = _conversations.get(conversationId);
+        if (conversation == null) {
+            return null;
+        }
+        bindConversation(conversation, context, loadConfiguration(getConfigPath()));
+        if (conversation._panelView == null) {
+            conversation._panelView = createPanelView(conversation);
+        }
+        populatePanel(conversation);
+        return conversation._panelView;
+    }
+
+    /** Restores the dedicated ! overlay after the editor workspaces are live. */
+    public synchronized void restoreOverlayConversation(String conversationId, BufferContext context) {
+        ChatPanelView panel = restoreConversationPanel(conversationId, context);
+        if (panel == null) {
+            return;
+        }
+        Conversation conversation = _conversations.get(conversationId);
+        if (conversation != null) {
+            showConversation(conversation);
+        }
+    }
+
+    private void run(BufferContext context, String question, boolean workspaceMode, boolean newConversation) {
         question = question.trim();
         if (mailVisibleToNemo()) {
             Window window = Window.getInstance();
@@ -455,7 +518,7 @@ public class NemoClient {
             return;
         }
         Configuration configuration = loadConfiguration(getConfigPath());
-        var conversation = ensureConversation(context, configuration, workspaceMode);
+        var conversation = ensureConversation(context, configuration, workspaceMode, newConversation);
         if (question.startsWith(":")) {
             handleCommand(conversation, question);
         } else if (!question.equals("")) {
@@ -2371,6 +2434,11 @@ public class NemoClient {
         return Paths.get(System.getProperty("user.home"), ".nemo").toAbsolutePath().normalize();
     }
 
+    /** SWIM's own configuration and editor source live outside a project workspace. */
+    static Path defaultSwimDirectory() {
+        return Paths.get(System.getProperty("user.home"), ".swim").toAbsolutePath().normalize();
+    }
+
     static String webSearch(JsonObject arguments) {
         String query = stringArgument(arguments, "query", "").trim();
         if (query.isBlank()) {
@@ -3202,6 +3270,7 @@ public class NemoClient {
         var directories = topLevelDirectoryGrants(root).stream().map(DirectoryGrant::directory).toList();
         var accessible = new ArrayList<String>();
         accessible.add(defaultNemoDirectory().toString() + " (default Nemo directory)");
+        accessible.add(defaultSwimDirectory().toString() + " (default SWIM directory)");
         accessible.addAll(directories);
         return "workspace plus " + String.join(", ", accessible);
     }
@@ -3256,6 +3325,7 @@ public class NemoClient {
     private static boolean isPathInsideImplicitWorkspace(Path workspaceRoot, Path path) {
         if (path.startsWith(workspaceRoot)) return true;
         if (path.startsWith(defaultNemoDirectory())) return true;
+        if (path.startsWith(defaultSwimDirectory())) return true;
         SwimProjectConfig project = SwimProjectConfig.load(workspaceRoot);
         return project != null && project.nemoWorkspaceWriteRoots().stream().anyMatch(path::startsWith);
     }
@@ -3263,6 +3333,8 @@ public class NemoClient {
     private static String implicitAccessDescription(Path workspaceRoot, Path path) {
         return path.startsWith(defaultNemoDirectory())
                 ? "the default Nemo directory permission"
+                : path.startsWith(defaultSwimDirectory())
+                        ? "the default SWIM directory permission"
                 : "the workspace's implicit project permissions";
     }
 
@@ -5015,6 +5087,9 @@ public class NemoClient {
         Path nemoDirectory = defaultNemoDirectory();
         Files.createDirectories(nemoDirectory);
         addSandboxWritableRoot(roots, nemoDirectory);
+        Path swimDirectory = defaultSwimDirectory();
+        Files.createDirectories(swimDirectory);
+        addSandboxWritableRoot(roots, swimDirectory);
         for (Path grant : _instance.writableDirectoryGrants(workspaceRoot)) {
             addSandboxWritableRoot(roots, grant);
         }
@@ -5868,12 +5943,23 @@ public class NemoClient {
     }
 
     private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration) {
-        return ensureConversation(context, configuration, false);
+        return ensureConversation(context, configuration, false, false);
     }
 
     private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration, boolean workspaceMode) {
+        return ensureConversation(context, configuration, workspaceMode, false);
+    }
+
+    private synchronized Conversation ensureConversation(BufferContext context, Configuration configuration, boolean workspaceMode,
+            boolean newConversation) {
         ensureSessionsLoaded();
         Path workspaceRoot = resolveWorkspaceRoot(configuration, context).toAbsolutePath().normalize();
+        if (newConversation) {
+            Conversation conversation = createConversation(workspaceRoot, "");
+            bindConversation(conversation, context, configuration);
+            showConversationWorkspace(conversation);
+            return conversation;
+        }
         Conversation conversation = currentVisibleConversation();
         if (conversation != null && conversation._workspaceRoot.equals(workspaceRoot)) {
             bindConversation(conversation, context, configuration);
@@ -6010,6 +6096,13 @@ public class NemoClient {
 
     private void replayConversationIntoVisiblePanel(Conversation conversation) {
         if (!isPanelVisible(conversation)) {
+            return;
+        }
+        populatePanel(conversation);
+    }
+
+    private void populatePanel(Conversation conversation) {
+        if (conversation == null || conversation._panelView == null) {
             return;
         }
         conversation._panelView.setMessages(mapTurnsToMessages(conversation));
@@ -6204,6 +6297,7 @@ public class NemoClient {
             new CommandSpec("conversations", List.of("chats"), "", "list Nemo conversations for this workspace"),
             new CommandSpec("workers", List.of(), "", "list active Nemo workers"),
             new CommandSpec("new", List.of(), "[title]", "create a new Nemo conversation"),
+            new CommandSpec("nemo", List.of(), "[question]", "open a new Nemo conversation in a workspace tab"),
             new CommandSpec("switch", List.of(), "<conversation-id>", "switch to another Nemo conversation"),
             new CommandSpec("rename", List.of(), "<title>", "rename the current Nemo conversation"),
             new CommandSpec("clear", List.of(), "", "clear the current Nemo conversation"),
@@ -6321,7 +6415,7 @@ public class NemoClient {
     private synchronized void handleCommand(Conversation conversation, String command) {
         String trimmed = command.trim();
         appendTurn(conversation, new ChatTurn("me", trimmed, false));
-        int split = trimmed.indexOf(' ');
+        int split = firstWhitespaceIndex(trimmed);
         String name = split < 0 ? trimmed : trimmed.substring(0, split);
         String argument = split < 0 ? "" : trimmed.substring(split + 1).trim();
 
@@ -6338,6 +6432,9 @@ public class NemoClient {
             return;
         case ":new":
             handleNewSessionCommand(conversation, argument);
+            return;
+        case ":nemo":
+            handleNemoWorkspaceCommand(conversation, argument);
             return;
         case ":switch":
             handleSwitchCommand(conversation, argument);
@@ -6422,6 +6519,15 @@ public class NemoClient {
         default:
             appendAssistantNote(conversation, "Unknown command: " + trimmed);
         }
+    }
+
+    private static int firstWhitespaceIndex(String text) {
+        for (int index = 0; index < text.length(); index++) {
+            if (Character.isWhitespace(text.charAt(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private void handleModelCommand(Conversation conversation, String argument) {
@@ -6916,6 +7022,18 @@ public class NemoClient {
         bindConversation(created, conversation._context, conversation._configuration);
         showConversation(created);
         appendAssistantNote(created, "Created " + created._id + " (" + created._title + ").");
+    }
+
+    /** Mirrors editor {@code :nemo}: begin an isolated conversation in a tab. */
+    private void handleNemoWorkspaceCommand(Conversation conversation, String question) {
+        var created = createConversation(conversation._workspaceRoot, "");
+        bindConversation(created, conversation._context, conversation._configuration);
+        showConversationWorkspace(created);
+        if (question.isBlank()) {
+            appendAssistantNote(created, "Created " + created._id + " (" + created._title + ").");
+        } else {
+            submit(created, question);
+        }
     }
 
     private void handleSwitchCommand(Conversation conversation, String argument) {

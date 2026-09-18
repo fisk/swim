@@ -493,14 +493,7 @@ public final class UiTheme {
         AttributedString output = line.length() > width ? line.slice(0, width) : AttributedString.create(line);
         int remaining = width - output.length();
         if (remaining > 0) output.append(repeat(" ", remaining), paddingForeground, paddingBackground);
-        int column = point.getX();
-        for (var fragment : output.getFragments()) {
-            var attributes = fragment.getAttributes();
-            graphics.putString(column, point.getY(), fragment.toString(), new AnsiStyle(
-                    AnsiColour.fromTextColor(attributes.foregroundColour()),
-                    AnsiColour.fromTextColor(attributes.backgroundColour()), false, false, false));
-            column += fragment.toString().length();
-        }
+        output.drawAt(point, graphics);
     }
 
     static TextColor modeColor(String modeName) {

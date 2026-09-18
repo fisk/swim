@@ -2,9 +2,13 @@ package org.fisk.swim.nemo;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -79,6 +83,98 @@ class NemoChatIT {
             }
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void nemoWorkspaceStartsFreshConversationInsteadOfReusingOverlayConversation() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        try (var harness = HeadlessWindowHarness.create(writeFile("workspace-session.txt", "class Demo {}\n"), 80, 16)) {
+            var window = harness.getWindow();
+
+            NemoClient.getInstance().run(window.getBufferContext(), "");
+            var overlay = assertInstanceOf(ChatPanelView.class, window.getPanelView());
+
+            NemoClient.getInstance().runWorkspace(window.getBufferContext(), "");
+            var workspace = assertInstanceOf(ChatPanelView.class, window.getActiveView());
+
+            assertNotSame(overlay, workspace);
+            assertFalse(window.isShowingPanel());
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void nemoChatCommandStartsFreshConversationInWorkspaceTab() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        try (var harness = HeadlessWindowHarness.create(writeFile("chat-command-session.txt", "class Demo {}\n"), 80, 16)) {
+            var window = harness.getWindow();
+            NemoClient.getInstance().run(window.getBufferContext(), "");
+            var overlay = assertInstanceOf(ChatPanelView.class, window.getPanelView());
+
+            for (char character : ":nemo First line".toCharArray()) {
+                dispatch(overlay, new KeyStroke(character, false, false));
+            }
+            dispatch(overlay, new KeyStroke(KeyType.Enter, false, false, true));
+            for (char character : "Second line".toCharArray()) {
+                dispatch(overlay, new KeyStroke(character, false, false));
+            }
+            dispatch(overlay, new KeyStroke(KeyType.Enter));
+
+            var workspace = assertInstanceOf(ChatPanelView.class, window.getActiveView());
+            assertNotSame(overlay, workspace);
+            assertFalse(window.isShowingPanel());
+            assertTrue(Files.readString(tempDir.resolve(".swim/nemo/sessions.json"))
+                    .contains("First line\\nSecond line"));
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    void reloadRestoresTheExactOverlayAndNemoWorkspaceConversations() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        try (var harness = HeadlessWindowHarness.create(writeFile("reload-nemo.txt", "class Demo {}\n"), 80, 16)) {
+            var window = harness.getWindow();
+            NemoClient nemo = NemoClient.getInstance();
+            nemo.run(window.getBufferContext(), "");
+            String overlayId = nemo.conversationIdForPanel(assertInstanceOf(ChatPanelView.class, window.getPanelView()));
+
+            nemo.runWorkspace(window.getBufferContext(), "");
+            String workspaceId = nemo.conversationIdForPanel(assertInstanceOf(ChatPanelView.class, window.getActiveView()));
+            assertNotSame(overlayId, workspaceId);
+            nemo.restoreOverlayConversation(overlayId, window.getBufferContext());
+
+            Method createSession = window.getClass().getDeclaredMethod("createSession");
+            createSession.setAccessible(true);
+            var session = (org.fisk.swim.config.EditorSession) createSession.invoke(window);
+            assertTrue(session.workspaces().stream().anyMatch(workspace -> "NEMO".equals(workspace.kind())
+                    && workspaceId.equals(workspace.conversationId())));
+            nemo.checkpointForReload();
+            nemo.resetForTests();
+
+            Method restoreSessionWorkspaces = window.getClass().getDeclaredMethod("restoreSessionWorkspaces",
+                    org.fisk.swim.config.EditorSession.class);
+            restoreSessionWorkspaces.setAccessible(true);
+            restoreSessionWorkspaces.invoke(window, session);
+
+            assertEquals(overlayId, nemo.conversationIdForPanel(assertInstanceOf(ChatPanelView.class, window.getPanelView())));
+            Field workspaceOrder = window.getClass().getDeclaredField("_workspaceOrder");
+            workspaceOrder.setAccessible(true);
+            boolean restoredWorkspace = false;
+            for (Object workspace : (List<?>) workspaceOrder.get(window)) {
+                Field kind = workspace.getClass().getDeclaredField("_kind");
+                Field nemoView = workspace.getClass().getDeclaredField("_nemoView");
+                kind.setAccessible(true);
+                nemoView.setAccessible(true);
+                if ("NEMO".equals(String.valueOf(kind.get(workspace)))) {
+                    restoredWorkspace |= workspaceId.equals(nemo.conversationIdForPanel((ChatPanelView) nemoView.get(workspace)));
+                }
+            }
+            assertTrue(restoredWorkspace);
+        } finally {
+            System.setProperty("user.home", originalUserHome);
         }
     }
 

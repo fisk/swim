@@ -2560,6 +2560,28 @@ public class Window implements Drawable {
         return _bufferContext;
     }
 
+    /**
+     * Returns a source-buffer context suitable for a Nemo prompt. A Nemo
+     * browse buffer is an internal rendering of a chat transcript and must
+     * never become the current file for a different conversation.
+     */
+    public BufferContext getNemoRequestContext() {
+        ensureLayoutState();
+        if (_currentWorkspace == null || _currentWorkspace._kind != WorkspaceKind.NEMO) {
+            return _bufferContext;
+        }
+        if (_lastWorkspace != null && _lastWorkspace._kind == WorkspaceKind.BUFFER
+                && _lastWorkspace._bufferContext != null) {
+            return _lastWorkspace._bufferContext;
+        }
+        for (WorkspaceState workspace : _workspaceHistory) {
+            if (workspace._kind == WorkspaceKind.BUFFER && workspace._bufferContext != null) {
+                return workspace._bufferContext;
+            }
+        }
+        return _bufferContext;
+    }
+
     public void toggleGitBlame() {
         BufferContext context = getBufferContext();
         if (context == null || context.getBuffer().getPath() == null) {
@@ -3316,6 +3338,11 @@ public class Window implements Drawable {
         if (active != null && !active.isBlank()) {
             setBufferPath(Path.of(active));
         }
+        for (WorkspaceState workspace : _workspaceHistory) {
+            if (workspace != _currentWorkspace) {
+                hibernateCleanBuffers(workspace);
+            }
+        }
         return !session.openBuffers().isEmpty();
     }
 
@@ -3339,7 +3366,10 @@ public class Window implements Drawable {
             }
         }
         int activeWorkspaceIndex = _currentWorkspace == null ? 0 : Math.max(0, _workspaceOrder.indexOf(_currentWorkspace));
-        return new EditorSession(buffers, active, workspaces, activeWorkspaceIndex);
+        String nemoOverlayConversationId = _panelView instanceof ChatPanelView chatPanelView
+                ? org.fisk.swim.nemo.NemoClient.getInstance().conversationIdForPanel(chatPanelView)
+                : null;
+        return new EditorSession(buffers, active, workspaces, activeWorkspaceIndex, nemoOverlayConversationId);
     }
 
     private SessionWorkspace snapshotWorkspace(WorkspaceState workspace) {
@@ -3360,6 +3390,12 @@ public class Window implements Drawable {
                     ? browser.getDirectory().toAbsolutePath().normalize().toString()
                     : null;
             yield path == null ? null : new SessionWorkspace("DIRECTORY", path, path, null, workspace._customTabLabel);
+        }
+        case NEMO -> {
+            String conversationId = workspace._nemoView == null ? null
+                    : org.fisk.swim.nemo.NemoClient.getInstance().conversationIdForPanel(workspace._nemoView);
+            yield conversationId == null ? null
+                    : new SessionWorkspace("NEMO", null, null, null, workspace._customTabLabel, conversationId);
         }
         default -> null;
         };
@@ -3432,7 +3468,16 @@ public class Window implements Drawable {
             return;
         }
         int index = Math.max(0, Math.min(session.activeWorkspaceIndex(), _workspaceHistory.size() - 1));
+        for (int i = 0; i < _workspaceHistory.size(); i++) {
+            if (i != index) {
+                hibernateCleanBuffers(_workspaceHistory.get(i));
+            }
+        }
         activateWorkspace(_workspaceHistory.get(index));
+        if (session.nemoOverlayConversationId() != null) {
+            org.fisk.swim.nemo.NemoClient.getInstance()
+                    .restoreOverlayConversation(session.nemoOverlayConversationId(), getNemoRequestContext());
+        }
     }
 
     private WorkspaceState restoreWorkspace(SessionWorkspace workspace) {
@@ -3444,6 +3489,11 @@ public class Window implements Drawable {
         case "DIRECTORY" -> workspace.path() == null ? null
                 : createViewWorkspace(new DirectoryBrowserView(Rect.create(0, 0, 0, 0), Path.of(workspace.path())),
                         WorkspaceKind.DIRECTORY);
+        case "NEMO" -> {
+            ChatPanelView panel = org.fisk.swim.nemo.NemoClient.getInstance()
+                    .restoreConversationPanel(workspace.conversationId(), getNemoRequestContext());
+            yield panel == null ? null : createViewWorkspace(panel, WorkspaceKind.NEMO);
+        }
         default -> null;
         };
         if (restored != null) {
@@ -3528,22 +3578,36 @@ public class Window implements Drawable {
 
     public void dispose() {
         ensureLayoutState();
-        disposeMailPanels(_workspaceView);
+        for (WorkspaceState workspace : List.copyOf(_workspaceHistory)) {
+            disposeMailPanels(workspace._workspaceView);
+            disposeMailPanels(workspace._panelView);
+        }
         disposeMailPanels(_panelView);
         if (_editorConfig != null && Boolean.getBoolean("swim.session.restore_on_reload")) {
             saveSessionForReload();
         }
-        if (_bufferContextsByView != null) {
-            for (var context : new HashSet<>(_bufferContextsByView.values())) {
-                context.getBuffer().close();
-            }
-            _bufferContextsByView.clear();
-        } else if (_bufferContext != null) {
-            _bufferContext.getBuffer().close();
+        for (BufferContext context : openBufferContextsSnapshot()) {
+            context.getBuffer().close();
         }
+        if (_bufferContextsByView != null) _bufferContextsByView.clear();
         if (_bufferViewCounts != null) {
             _bufferViewCounts.clear();
         }
+        for (WorkspaceState workspace : _workspaceHistory) {
+            if (workspace._bufferContextsByView != null) workspace._bufferContextsByView.clear();
+            if (workspace._bufferViewCounts != null) workspace._bufferViewCounts.clear();
+            workspace._bufferContext = null;
+            workspace._activeBufferView = null;
+            workspace._activeView = null;
+            workspace._workspaceView = null;
+            workspace._panelView = null;
+        }
+        _workspaceHistory.clear();
+        _workspaceOrder.clear();
+        _workspaceView = null;
+        _activeBufferView = null;
+        _bufferContext = null;
+        _activeView = null;
         if (_modeLineView != null) {
             _modeLineView.close();
         }
@@ -3639,6 +3703,9 @@ public class Window implements Drawable {
      * open buffers, which can block the event thread on network filesystems.
      */
     public void refreshCommandPromptChrome() {
+        if (_size != null) {
+            applyLayout(_size);
+        }
         if (_keyMenuView != null) {
             EventResponder responder = _rootView == null ? null : _rootView.getFirstResponder();
             _keyMenuView.setModeName(modeNameForDisplay());
@@ -5204,8 +5271,9 @@ public class Window implements Drawable {
         if (_keyMenuView != null) {
             menuHeight = _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
         }
+        int commandRows = _commandView == null ? 1 : _commandView.preferredHeight(size.getWidth());
         WindowChromeLayout layout = WindowChromeLayout.compute(size, menuHeight,
-                WindowChromeLayout.standardFooterBars(_tabBarView != null));
+                WindowChromeLayout.standardFooterBars(_tabBarView != null), commandRows);
         _rootView.setBounds(layout.root());
         if (_keyMenuView != null) {
             _keyMenuView.setBounds(layout.topMenu());
@@ -6104,6 +6172,15 @@ public class Window implements Drawable {
             if (context != null && activated.put(context, Boolean.TRUE) == null) {
                 context.getBuffer().activateIfDormant();
             }
+        }
+    }
+
+    private static void hibernateCleanBuffers(WorkspaceState workspace) {
+        if (workspace == null || workspace._bufferContextsByView == null) {
+            return;
+        }
+        for (BufferContext context : new HashSet<>(workspace._bufferContextsByView.values())) {
+            context.getBuffer().hibernateIfClean();
         }
     }
 

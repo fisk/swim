@@ -697,7 +697,7 @@ class NormalModeTest {
             buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key(' '),
-                    HeadlessWindowHarness.key('j'));
+                    HeadlessWindowHarness.key('J'));
             assertEquals("""
                     one
                     three
@@ -747,7 +747,7 @@ class NormalModeTest {
             buffer.getCursor().setPosition(buffer.getString().indexOf("two"));
 
             HeadlessWindowHarness.dispatch(window.getNormalMode(), HeadlessWindowHarness.key('3'),
-                    HeadlessWindowHarness.key(' '), HeadlessWindowHarness.key('j'));
+                    HeadlessWindowHarness.key(' '), HeadlessWindowHarness.key('J'));
 
             assertEquals("""
                     one
