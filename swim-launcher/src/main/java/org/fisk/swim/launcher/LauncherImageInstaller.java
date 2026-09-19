@@ -27,16 +27,18 @@ public final class LauncherImageInstaller {
     private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
     private static final List<String> CLIENT_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx128M");
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+ZAdaptiveHeapSizing");
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+ZAdaptiveHeapSizing",
             "-XX:+UseStringDeduplication",
-            "-Xmx4G",
-            "-XX:SoftMaxHeapSize=1G",
             "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx128M",
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+ZAdaptiveHeapSizing",
             "--enable-native-access=org.fisk.swim.session");
     private static final List<String> NETBEANS_RUNTIME_MODULES = List.of(
             "java.base", "java.compiler", "java.datatransfer", "java.desktop", "java.instrument",
@@ -73,8 +75,8 @@ public final class LauncherImageInstaller {
         Path launcherJar = findLauncherJar(launcherTarget);
         deleteRecursively(stagedImageRoot);
         runJlink(swimHome, launcherJar, launcherTarget.resolve("runtime-libs"), stagedImageRoot);
-        installJavaLauncher(stagedImageRoot);
-        Files.writeString(stagedImageRoot.resolve("build-java-home"), System.getProperty("java.home"));
+        installJavaLauncher(stagedImageRoot, javaHome(swimHome));
+        Files.writeString(stagedImageRoot.resolve("build-java-home"), javaHome(swimHome).toString());
 
         Path previousImageRoot = imageRoot.resolveSibling(imageRoot.getFileName() + ".previous");
         deleteRecursively(previousImageRoot);
@@ -110,17 +112,23 @@ public final class LauncherImageInstaller {
 
     static void runJlink(Path swimHome, Path launcherJar, Path runtimeLibs, Path output) throws IOException {
         List<String> launcherOptions = resolveNetBeansJvmArgs(swimHome);
-        runTool("jlink", jlinkArgs(launcherJar, runtimeLibs, output, launcherOptions));
+        runTool(javaHome(swimHome).resolve("bin").resolve("jlink"),
+                jlinkArgs(launcherJar, runtimeLibs, output, launcherOptions, javaHomeJmods(javaHome(swimHome))));
     }
 
     static List<String> jlinkArgs(Path launcherJar, Path runtimeLibs, Path output, List<String> launcherOptions) {
+        return jlinkArgs(launcherJar, runtimeLibs, output, launcherOptions, javaHomeJmods(currentJavaHome()));
+    }
+
+    private static List<String> jlinkArgs(Path launcherJar, Path runtimeLibs, Path output,
+            List<String> launcherOptions, Path jmods) {
         var args = new ArrayList<String>();
         args.add("--module-path");
         args.add(String.join(
                 System.getProperty("path.separator"),
                 launcherJar.toString(),
                 runtimeLibs.toString(),
-                javaHomeJmods()));
+                jmods.toString()));
         args.add("--add-modules");
         args.add(String.join(",", collectJlinkModules(launcherOptions)));
         args.add("--launcher");
@@ -242,41 +250,40 @@ public final class LauncherImageInstaller {
         return true;
     }
 
-    private static String javaHomeJmods() {
-        String javaHome = System.getProperty("java.home");
-        Path javaHomePath = Paths.get(javaHome);
-        Path direct = javaHomePath.resolve("jmods");
-        if (Files.isDirectory(direct)) {
-            return direct.toString();
-        }
-        Path parent = javaHomePath.getParent();
-        if (parent != null) {
-            Path sibling = parent.resolve("jmods");
-            if (Files.isDirectory(sibling)) {
-                return sibling.toString();
-            }
-        }
-        throw new IllegalStateException("Unable to locate JDK jmods for " + javaHomePath);
+    private static Path currentJavaHome() {
+        return Paths.get(System.getProperty("java.home"));
     }
 
-    private static Path javaHomeBin() {
-        Path javaHomePath = Paths.get(System.getProperty("java.home"));
-        Path direct = javaHomePath.resolve("bin");
+    private static Path javaHome(Path swimHome) {
+        Path bundled = swimHome.resolve("jdk").toAbsolutePath().normalize();
+        if (Files.isExecutable(bundled.resolve("bin").resolve("java"))
+                && Files.isExecutable(bundled.resolve("bin").resolve("jlink"))) {
+            return bundled;
+        }
+        return currentJavaHome();
+    }
+
+    private static Path javaHomeJmods(Path javaHomePath) {
+        Path direct = javaHomePath.resolve("jmods");
         if (Files.isDirectory(direct)) {
             return direct;
         }
         Path parent = javaHomePath.getParent();
         if (parent != null) {
-            Path sibling = parent.resolve("bin");
+            Path sibling = parent.resolve("jmods");
             if (Files.isDirectory(sibling)) {
                 return sibling;
             }
         }
-        throw new IllegalStateException("Unable to locate JDK bin directory for " + javaHomePath);
+        throw new IllegalStateException("Unable to locate JDK jmods for " + javaHomePath);
     }
 
     static void installJavaLauncher(Path imageRoot) throws IOException {
-        Path source = javaHomeBin().resolve(javaExecutableName());
+        installJavaLauncher(imageRoot, currentJavaHome());
+    }
+
+    private static void installJavaLauncher(Path imageRoot, Path javaHome) throws IOException {
+        Path source = javaHome.resolve("bin").resolve(javaExecutableName());
         Path target = imageRoot.resolve("bin").resolve(javaExecutableName());
         Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
         target.toFile().setExecutable(true, false);
@@ -895,7 +902,25 @@ public final class LauncherImageInstaller {
                 javaStringLiteral(embeddedJava.toString()));
     }
 
-    private static void runTool(String name, List<String> args) throws IOException {
+    private static void runTool(Path toolPath, List<String> args) throws IOException {
+        if (Files.isExecutable(toolPath)) {
+            var command = new ArrayList<String>();
+            command.add(toolPath.toString());
+            command.addAll(args);
+            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            try {
+                int exit = process.waitFor();
+                if (exit != 0) {
+                    throw new IOException(toolPath.getFileName() + " failed with exit code " + exit + "\n" + output);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted running " + toolPath, e);
+            }
+            return;
+        }
+        String name = toolPath.getFileName().toString();
         ToolProvider tool = ToolProvider.findFirst(name)
                 .orElseThrow(() -> new IOException("JDK tool not available: " + name));
         var stdout = new StringWriter();

@@ -9,6 +9,8 @@ import java.util.List;
 import org.fisk.swim.api.SwimKeyBindingHint;
 import org.fisk.swim.api.SwimPanel;
 import org.fisk.swim.api.SwimPanelResult;
+import org.fisk.swim.api.SwimPanelLine;
+import org.fisk.swim.api.SwimTextSpan;
 
 final class JfrPanel implements SwimPanel {
     private static final String EXPLICIT_RECORDINGS_PREFIX = "swim-jfr-recordings:";
@@ -21,13 +23,36 @@ final class JfrPanel implements SwimPanel {
     private boolean live;
     private boolean followActivePath = true;
     private long lastLiveRefreshNanos;
+    private static final java.util.concurrent.ExecutorService LOADER =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread thread = new Thread(r, "swim-jfr-loader");
+                thread.setDaemon(true);
+                return thread;
+            });
+    private record LoadResult(List<Source> sources, String error) { }
+    private java.util.concurrent.Future<LoadResult> pending;
+    private List<Path> requestedPaths = List.of();
+    private List<String> cachedLines;
+    private int cachedWidth, cachedHeight;
 
     JfrPanel(Path path) { loadPaths(path == null ? List.of() : List.of(path)); }
     @Override public String getId() { return JfrPlugin.PLUGIN_ID; }
     @Override public String getTitle() { return "JFR Metrics"; }
 
     @Override public List<String> render(int width, int height) {
+        collectLoaded();
         refreshLiveRecordingIfDue();
+        if (cachedLines == null || cachedWidth != width || cachedHeight != height) {
+            cachedWidth = width;
+            cachedHeight = height;
+            cachedLines = List.copyOf(renderContent(width, height));
+        }
+        return cachedLines;
+    }
+
+    private List<String> renderContent(int width, int height) {
+        chartStyles.clear();
+        if (pending != null && sources.isEmpty()) return List.of("JFR Metrics", "Loading recording metrics…");
         if (error != null) return List.of("JFR Metrics", error, "Use :jfr [recording.jfr[,other.jfr]].");
         if (sources.isEmpty() || sources.stream().allMatch(source -> source.recording().samples().isEmpty())) {
             return List.of("JFR Metrics", "No CPU or committed-heap samples found.");
@@ -39,38 +64,49 @@ final class JfrPanel implements SwimPanel {
             Source source = sources.get(index);
             lines.add(" [" + (index + 1) + "] " + source.path().getFileName() + "  " + duration(source.recording()));
         }
-        long maximumCommitted = sources.stream().flatMap(source -> source.recording().samples().stream())
-                .mapToLong(JfrMetrics.Sample::heapCommitted).max().orElse(1);
-        int labelWidth = Math.max("100%".length(), bytes(maximumCommitted).length());
-        int chartWidth = Math.max(1, width - labelWidth - 2); // Label plus " │"
-        lines.add("CPU utilization (JVM user + system, %; time normalized per recording)");
-        lines.addAll(chart(chartWidth, labelWidth, 100.0, JfrMetrics.Sample::cpuPercent));
-        lines.add("Committed heap memory (scale is largest committed heap across recordings)");
-        lines.addAll(chart(chartWidth, labelWidth, maximumCommitted, sample -> sample.heapCommitted()));
+        double elapsedSeconds = sources.stream().mapToDouble(source -> elapsedSeconds(source.recording())).max().orElse(0);
+        int rows = chartRows(height, sources.size());
+        lines.add("JVM · CPU (green, left) / heap capacity (red, right)");
+        lines.addAll(dualChart(width, rows, elapsedSeconds, lines, JfrMetrics.Sample::cpuPercent,
+                sample -> sample.heapCommitted()));
+        lines.add("System · CPU (green, left) / memory used (red, right)");
+        lines.addAll(dualChart(width, rows, elapsedSeconds, lines, JfrMetrics.Sample::systemCpuPercent,
+                sample -> sample.systemMemoryUsed()));
         for (int index = 0; index < sources.size(); index++) {
             Source source = sources.get(index);
             if (!source.recording().samples().isEmpty()) {
                 JfrMetrics.Sample last = source.recording().samples().getLast();
-                lines.add(String.format(" [%d] latest CPU %.1f%%  committed heap %s", index + 1,
-                        last.cpuPercent(), bytes(last.heapCommitted())));
+                lines.add(String.format(" [%d] latest CPU %s  committed heap %s", index + 1,
+                        Double.isFinite(last.cpuPercent()) && last.cpuPercent() >= 0
+                                ? String.format(java.util.Locale.ROOT, "%.1f%%", last.cpuPercent()) : "unavailable",
+                        last.heapCommitted() >= 0 ? bytes(last.heapCommitted()) : "unavailable")
+                        + (!Double.isFinite(last.systemCpuPercent()) ? " · system CPU unavailable" : "")
+                        + (last.systemMemoryUsed() < 0 ? " · system memory unavailable" : ""));
             }
         }
-        lines.add("Braille traces preserve crossings within a character. r reloads; q closes.");
+        lines.add("Elapsed from each recording start · gold = overlap · r reload · q close");
         return lines;
     }
 
     @Override public SwimPanelResult handleInput(String input, int width, int height) {
         if (!"r".equals(input)) return SwimPanelResult.ignored();
         if (live) return refreshLiveRecording();
-        loadPaths(sources.stream().map(Source::path).toList());
-        return SwimPanelResult.successMessage(error == null ? "JFR recordings reloaded" : error);
+        loadPaths(requestedPaths);
+        return SwimPanelResult.successMessage("Reloading JFR recordings…");
     }
     @Override public List<SwimKeyBindingHint> keyBindingHints() {
         return List.of(new SwimKeyBindingHint("r", "JFR", "reload recordings"), new SwimKeyBindingHint("q", "Panel", "close"));
     }
     @Override public void syncToCurrentPath(Path current) {
-        if (current == null) {
+        boolean explicitLive = current != null && "swim-jfr-live:".equals(current.toString());
+        if (current == null || explicitLive) {
+            if (!explicitLive && !followActivePath) return;
             followActivePath = false;
+            if (!live) {
+                if (pending != null) pending.cancel(true);
+                pending = null;
+                sources = List.of();
+            }
             refreshLiveRecording();
             return;
         }
@@ -83,52 +119,75 @@ final class JfrPanel implements SwimPanel {
         }
         if (!followActivePath) return;
         live = false;
-        loadPaths(splitPaths(current));
+        List<Path> paths = splitPaths(current);
+        if (!paths.equals(requestedPaths)) loadPaths(paths);
     }
 
     private SwimPanelResult refreshLiveRecording() {
-        try {
-            loadPaths(List.of(JfrLiveRecording.snapshot()), LIVE_HISTORY);
-            live = error == null;
-            lastLiveRefreshNanos = System.nanoTime();
-            return error == null ? SwimPanelResult.successMessage("Live JFR recording refreshed")
-                    : new SwimPanelResult(false, null, error);
-        } catch (IOException | RuntimeException e) {
-            live = false;
-            error = "Unable to create live JFR snapshot: " + e.getMessage();
-            return new SwimPanelResult(false, null, error);
+        live = true;
+        if (pending == null) {
+            error = null;
+            cachedLines = null;
+            pending = LOADER.submit(() -> {
+                try {
+                    return readPaths(List.of(JfrLiveRecording.snapshot()), LIVE_HISTORY);
+                } catch (IOException | RuntimeException e) {
+                    return new LoadResult(List.of(), "Unable to create live JFR snapshot: " + e.getMessage());
+                }
+            });
         }
+        return SwimPanelResult.successMessage("Refreshing live JFR metrics…");
+    }
+
+    private void collectLoaded() {
+        if (pending == null || !pending.isDone()) return;
+        try {
+            LoadResult result = pending.get();
+            if (result.error() == null) sources = result.sources();
+            error = result.error();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            error = "JFR loading interrupted";
+        } catch (java.util.concurrent.ExecutionException e) {
+            error = "Unable to load JFR metrics: " + e.getCause().getMessage();
+        }
+        pending = null;
+        lastLiveRefreshNanos = System.nanoTime();
+        cachedLines = null;
     }
 
     private void refreshLiveRecordingIfDue() {
-        if (live && System.nanoTime() - lastLiveRefreshNanos >= LIVE_REFRESH_NANOS) {
+        if (live && pending == null && System.nanoTime() - lastLiveRefreshNanos >= LIVE_REFRESH_NANOS) {
             refreshLiveRecording();
         }
     }
 
     private void loadPaths(List<Path> paths) {
-        loadPaths(paths, null);
-    }
-
-    private void loadPaths(List<Path> paths, Duration history) {
+        requestedPaths = paths == null ? List.of() : List.copyOf(paths);
+        if (pending != null) pending.cancel(true);
+        pending = null;
         sources = List.of();
         error = null;
-        if (paths == null || paths.isEmpty()) return;
+        cachedLines = null;
+        if (!requestedPaths.isEmpty()) {
+            List<Path> request = requestedPaths;
+            pending = LOADER.submit(() -> readPaths(request, null));
+        }
+    }
+
+    private static LoadResult readPaths(List<Path> paths, Duration history) {
         var loaded = new ArrayList<Source>();
         for (Path path : paths) {
-            if (!isJfr(path)) {
-                error = "Not a .jfr recording: " + path;
-                return;
-            }
+            if (Thread.currentThread().isInterrupted()) return new LoadResult(List.of(), "JFR loading cancelled");
+            if (!isJfr(path)) return new LoadResult(List.of(), "Not a .jfr recording: " + path);
             try {
                 JfrMetrics.Recording recording = JfrMetrics.read(path);
                 loaded.add(new Source(path, history == null ? recording : JfrMetrics.mostRecent(recording, history)));
             } catch (IOException | RuntimeException e) {
-                error = "Unable to read " + path.getFileName() + ": " + e.getMessage();
-                return;
+                return new LoadResult(List.of(), "Unable to read " + path.getFileName() + ": " + e.getMessage());
             }
         }
-        sources = List.copyOf(loaded);
+        return new LoadResult(List.copyOf(loaded), null);
     }
 
     private String legend(int width) {
@@ -150,11 +209,71 @@ final class JfrPanel implements SwimPanel {
                 .toList();
     }
 
-    private List<String> chart(int width, int labelWidth, double maximum,
+    private final java.util.Map<Integer, SwimPanelLine> chartStyles = new java.util.HashMap<>();
+
+    private List<String> richSourceLines;
+    private List<SwimPanelLine> richLines;
+
+    @Override public List<SwimPanelLine> renderRich(int width, int height) {
+        List<String> plain = render(width, height);
+        if (plain != richSourceLines) {
+            richLines = java.util.stream.IntStream.range(0, plain.size())
+                    .mapToObj(row -> chartStyles.getOrDefault(row, SwimPanelLine.plain(plain.get(row)))).toList();
+            richSourceLines = plain;
+        }
+        return richLines;
+    }
+
+    private List<String> dualChart(int width, int rows, double seconds, List<String> lines,
+            java.util.function.ToDoubleFunction<JfrMetrics.Sample> cpu,
+            java.util.function.ToDoubleFunction<JfrMetrics.Sample> memory) {
+        boolean cpuAvailable = sources.stream().flatMap(source -> source.recording().samples().stream())
+                .mapToDouble(cpu).anyMatch(value -> Double.isFinite(value) && value >= 0);
+        boolean memoryAvailable = sources.stream().flatMap(source -> source.recording().samples().stream())
+                .mapToDouble(memory).anyMatch(value -> Double.isFinite(value) && value >= 0);
+        double maximum = sources.stream().flatMap(source -> source.recording().samples().stream())
+                .mapToDouble(memory).filter(value -> Double.isFinite(value) && value >= 0).max().orElse(0);
+        int rightWidth = Math.max(3, bytes((long) maximum).length());
+        int plotWidth = Math.max(1, width - 9 - rightWidth);
+        List<String> cpuRows = chart(plotWidth, 4, rows, 100, true, seconds, cpu);
+        List<String> memoryRows = chart(plotWidth, rightWidth, rows, maximum, false, seconds, memory);
+        var result = new ArrayList<String>();
+        for (int row = 0; row < rows; row++) {
+            String left = cpuAvailable ? cpuRows.get(row).substring(0, 6) : pad(row == 0 ? "N/A" : "", 4) + " │";
+            String right = "│ " + pad(!memoryAvailable ? row == 0 ? "N/A" : "" : row == 0 ? bytes((long) maximum) : row == rows - 1 ? "0 B"
+                    : rows >= 5 && row == rows / 2 ? bytes((long) (maximum / 2)) : "", rightWidth);
+            var spans = new ArrayList<SwimTextSpan>();
+            spans.add(SwimTextSpan.styled(left, "#69db7c", null));
+            for (int column = 0; column < plotWidth; column++) {
+                char c = cpuRows.get(row).charAt(6 + column);
+                char m = memoryRows.get(row).charAt(rightWidth + 2 + column);
+                int cpuDots = c == ' ' ? 0 : c - 0x2800;
+                int memoryDots = m == ' ' ? 0 : m - 0x2800;
+                // A terminal cell has one foreground: retain both dot masks and mark overlap gold.
+                char merged = (char) (0x2800 | cpuDots | memoryDots);
+                String color = cpuDots != 0 && memoryDots != 0 ? "#ffd166" : memoryDots != 0 ? "#ff6b6b" : "#69db7c";
+                spans.add(SwimTextSpan.styled(String.valueOf(merged), color, null));
+            }
+            spans.add(SwimTextSpan.styled(right, "#ff6b6b", null));
+            SwimPanelLine rich = new SwimPanelLine(spans);
+            result.add(rich.text());
+            chartStyles.put(lines.size() + row, rich);
+        }
+        result.add(cpuRows.get(rows));
+        result.add(cpuRows.get(rows + 1));
+        if (!cpuAvailable || !memoryAvailable) {
+            int titleRow = lines.size() - 1;
+            lines.set(titleRow, lines.get(titleRow) + " · " + (!cpuAvailable ? "CPU unavailable" : "")
+                    + (!cpuAvailable && !memoryAvailable ? " · " : "")
+                    + (!memoryAvailable ? "Memory unavailable" : ""));
+        }
+        return result;
+    }
+
+    private List<String> chart(int width, int labelWidth, int rows, double maximum, boolean percent, double elapsedSeconds,
             java.util.function.ToDoubleFunction<JfrMetrics.Sample> value) {
-        final int rows = 10;
-        final String maximumLabel = maximum == 100.0 ? "100%" : bytes((long) maximum);
-        final String minimumLabel = maximum == 100.0 ? "0%" : "";
+        final String maximumLabel = percent ? "100%" : bytes((long) maximum);
+        final String minimumLabel = percent ? "0%" : "0 B";
         // A Braille cell contains two columns by four rows of independently
         // addressable dots. Render at that resolution so crossings and nearby
         // series remain visible when they share a terminal character.
@@ -165,12 +284,12 @@ final class JfrPanel implements SwimPanel {
             int[] counts = new int[dotColumns];
             JfrMetrics.Recording recording = source.recording();
             if (recording.start() != null && recording.end() != null) {
-                long duration = Math.max(1, Duration.between(recording.start(), recording.end()).toNanos());
                 for (JfrMetrics.Sample sample : recording.samples()) {
-                    long offset = Math.max(0, Duration.between(recording.start(), sample.time()).toNanos());
-                    int column = Math.min(dotColumns - 1,
-                            (int) Math.floor(offset / (double) duration * dotColumns));
-                    totals[column] += value.applyAsDouble(sample);
+                    double offset = Math.max(0, Duration.between(recording.start(), sample.time()).toNanos() / 1_000_000_000.0);
+                    int column = elapsedColumn(offset, elapsedSeconds, dotColumns);
+                    double sampleValue = value.applyAsDouble(sample);
+                    if (!Double.isFinite(sampleValue) || sampleValue < 0) continue;
+                    totals[column] += sampleValue;
                     counts[column]++;
                 }
             }
@@ -201,30 +320,66 @@ final class JfrPanel implements SwimPanel {
             }
         }
         for (int row = rows; row >= 1; row--) {
-            String label = row == rows ? maximumLabel : row == 1 ? minimumLabel : "";
+            String label = row == rows ? maximumLabel : row == 1 ? minimumLabel
+                    : rows >= 5 && row == (rows + 1) / 2
+                            ? percent ? "50%" : bytes((long) (maximum / 2)) : "";
             result.add(pad(label, labelWidth) + " │" + canvas.row(rows - row));
         }
         result.add(" ".repeat(labelWidth) + " └" + "─".repeat(width));
-        result.add(" ".repeat(labelWidth + 2) + normalizedTimeLabels(width));
+        result.add(" ".repeat(labelWidth + 2) + elapsedTimeLabels(width, elapsedSeconds));
         return result;
     }
 
-    static String normalizedTimeLabels(int width) {
-        record Tick(double position, String label) { }
-        List<Tick> ticks = width >= 24
-                ? List.of(new Tick(0, "0%"), new Tick(.25, "25%"), new Tick(.5, "50%"), new Tick(.75, "75%"), new Tick(1, "100%"))
-                : width >= 11 ? List.of(new Tick(0, "0%"), new Tick(.5, "50%"), new Tick(1, "100%"))
-                : List.of(new Tick(0, "0%"), new Tick(1, "100%"));
+    // Header, source descriptions, chart titles/axes, latest values and footer.
+    static int chartRows(int height, int sourceCount) {
+        return Math.max(2, Math.min(24, (height - 9 - 2 * sourceCount) / 2));
+    }
+
+    static double elapsedSeconds(JfrMetrics.Recording recording) {
+        if (recording.start() == null || recording.end() == null) return 0;
+        return Math.max(0, Duration.between(recording.start(), recording.end()).toNanos() / 1_000_000_000.0);
+    }
+
+    static int elapsedColumn(double offsetSeconds, double longestSeconds, int columns) {
+        if (columns <= 1 || longestSeconds <= 0) return 0;
+        return (int) Math.round(Math.max(0, Math.min(1, offsetSeconds / longestSeconds)) * (columns - 1));
+    }
+
+    static String elapsedTimeLabels(int width, double seconds) {
+        if (width <= 0) return "";
         char[] labels = new char[width];
         java.util.Arrays.fill(labels, ' ');
-        for (Tick tick : ticks) {
-            int center = (int) Math.round(tick.position() * (width - 1));
-            int start = Math.max(0, Math.min(width - tick.label().length(), center - tick.label().length() / 2));
-            for (int column = 0; column < tick.label().length() && start + column < width; column++) {
-                labels[start + column] = tick.label().charAt(column);
+        String end = timeLabel(seconds);
+        if (end.length() + 3 > width) {
+            String start = "0s";
+            return start.substring(0, Math.min(width, start.length())) + " ".repeat(Math.max(0, width - start.length()));
+        }
+        placeLabel(labels, 0, "0s");
+        int endStart = width - end.length();
+        placeLabel(labels, endStart, end);
+        int previousEnd = 2;
+        int intervals = width >= 48 ? 4 : 2;
+        for (int tick = 1; tick < intervals; tick++) {
+            String text = timeLabel(seconds * tick / intervals);
+            int start = (int) Math.round((width - 1.0) * tick / intervals) - text.length() / 2;
+            if (start > previousEnd && start + text.length() < endStart) {
+                placeLabel(labels, start, text);
+                previousEnd = start + text.length();
             }
         }
         return new String(labels);
+    }
+
+    private static void placeLabel(char[] labels, int start, String text) {
+        text.getChars(0, text.length(), labels, start);
+    }
+
+    private static String timeLabel(double seconds) {
+        if (seconds == 0) return "0s";
+        double amount = seconds >= 3600 ? seconds / 3600 : seconds >= 60 ? seconds / 60
+                : seconds < 1 ? seconds * 1000 : seconds;
+        String unit = seconds >= 3600 ? "h" : seconds >= 60 ? "m" : seconds < 1 ? "ms" : "s";
+        return String.format(java.util.Locale.ROOT, amount == Math.rint(amount) ? "%.0f%s" : "%.1f%s", amount, unit);
     }
 
     private static int scaleToDotRow(double value, double scale, int dotHeight) {

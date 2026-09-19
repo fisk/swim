@@ -197,7 +197,8 @@ class MainTest {
                 Path.of("image"), List.of("--add-opens=java.base/java.net=ALL-UNNAMED"));
 
         assertTrue(args.contains("--add-options=-XX:+UseZGC"));
-        assertTrue(args.contains("--add-options=-Xmx128M"));
+        assertTrue(args.contains("--add-options=-XX:+ZAdaptiveHeapSizing"));
+        assertFalse(args.contains("--add-options=-Xmx128M"));
         assertFalse(args.contains("--add-options=-Xmx1g"));
         assertFalse(args.contains("--add-options=-Xmx4G"));
         assertFalse(args.contains("--add-options=-XX:SoftMaxHeapSize=1G"));
@@ -209,7 +210,8 @@ class MainTest {
         List<String> command = SwimJavaCommand.serverCommand(Path.of("server.sock"), Path.of("swim-root"));
 
         assertTrue(command.contains("-XX:+UseZGC"));
-        assertTrue(command.contains("-Xmx128M"));
+        assertTrue(command.contains("-XX:+ZAdaptiveHeapSizing"));
+        assertFalse(command.contains("-Xmx128M"));
         assertFalse(command.contains("-Xmx4G"));
         assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
         assertFalse(command.contains("--sun-misc-unsafe-memory-access=allow"));
@@ -225,8 +227,9 @@ class MainTest {
         List<String> command = SwimJavaCommand.appCommand(List.of("file.txt"));
 
         assertTrue(command.contains("-XX:+UseZGC"));
-        assertTrue(command.contains("-Xmx4G"));
-        assertTrue(command.contains("-XX:SoftMaxHeapSize=1G"));
+        assertTrue(command.contains("-XX:+ZAdaptiveHeapSizing"));
+        assertFalse(command.contains("-Xmx4G"));
+        assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
         assertTrue(command.contains("--sun-misc-unsafe-memory-access=allow"));
         assertEquals(
                 Runtime.version().feature() >= 26,
@@ -275,13 +278,13 @@ class MainTest {
         String content = Files.readString(launcher);
         embeddedJava = embeddedJava.toAbsolutePath().normalize();
         assertTrue(content.startsWith("#!/bin/sh\n// 2>/dev/null; exec '" + embeddedJava
-                + "' -XX:+UseZGC -Xmx128M --source 25 \"$0\" \"$@\"\n"));
+                + "' -XX:+UseZGC -XX:+IgnoreUnrecognizedVMOptions -XX:+ZAdaptiveHeapSizing --source 25 \"$0\" \"$@\"\n"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
         assertTrue(content.contains("private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = \"--illegal-final-field-mutation=allow\""));
-        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+UseStringDeduplication\", \"-Xmx4G\", \"-XX:SoftMaxHeapSize=1G\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
-        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-Xmx128M\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"-XX:+UseStringDeduplication\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final Path EMBEDDED_JAVA = Path.of(\"" + embeddedJava + "\")"));
         assertFalse(content.contains("launcher.getParent().resolve(\"java\")"));
         assertTrue(content.contains("Runtime.version().feature() >= 26"));

@@ -48,14 +48,14 @@ class JfrPanelTest {
     }
 
     @Test
-    void normalizedTimeAxisUsesLabelsThatFitTheChart() {
-        String labels = JfrPanel.normalizedTimeLabels(30);
+    void elapsedTimeAxisUsesLabelsThatFitTheChart() {
+        String labels = JfrPanel.elapsedTimeLabels(60, 120);
 
-        assertEquals(30, labels.length());
-        assertTrue(labels.contains("0%"));
-        assertTrue(labels.contains("25%"));
-        assertTrue(labels.contains("50%"));
-        assertTrue(labels.contains("75%"));
-        assertTrue(labels.contains("100%"));
+        assertEquals(60, labels.length());
+        assertTrue(labels.startsWith("0s"));
+        assertTrue(labels.contains("30s"));
+        assertTrue(labels.contains("1m"));
+        assertTrue(labels.contains("1.5m"));
+        assertTrue(labels.endsWith("2m"));
     }
 }

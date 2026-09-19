@@ -14,13 +14,14 @@ final class SwimJavaCommand {
     private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+ZAdaptiveHeapSizing",
             "-XX:+UseStringDeduplication",
-            "-Xmx4G",
-            "-XX:SoftMaxHeapSize=1G",
             "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SESSION_SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
-            "-Xmx128M");
+            "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:+ZAdaptiveHeapSizing");
 
     private SwimJavaCommand() {
     }
@@ -71,6 +72,7 @@ final class SwimJavaCommand {
                 .filter(arg -> !arg.startsWith("--sun-misc-unsafe-memory-access="))
                 .filter(arg -> !arg.startsWith("--enable-final-field-mutation="))
                 .filter(arg -> !arg.startsWith("--illegal-final-field-mutation="))
+                .filter(arg -> !"-XX:+ZAdaptiveHeapSizing".equals(arg))
                 .filter(arg -> !isCollectorSelectionOption(arg))
                 .toList();
     }

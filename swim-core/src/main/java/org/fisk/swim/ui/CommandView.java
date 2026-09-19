@@ -1449,9 +1449,8 @@ public class CommandView extends View {
             panel.syncToCurrentPath(Path.of("swim-jfr-recordings:" + String.join(",",
                     recordingPaths.stream().map(Path::toString).toList())));
         } else {
-            // null is the established panel callback for "no active file".
-            // The JFR panel uses it to start or refresh its live recording.
-            panel.syncToCurrentPath(null);
+            // Distinguish an explicit live request from ordinary null-buffer synchronization.
+            panel.syncToCurrentPath(Path.of("swim-jfr-live:"));
         }
         if (!window.showPluginWorkspace(pluginId, panel)) {
             _message = "Unable to open JFR workspace";
