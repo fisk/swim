@@ -16,7 +16,9 @@ public record AnsiColour(int red, int green, int blue, boolean defaultColour) {
 
     /** Temporary migration bridge from the current renderer's colour type. */
     public static AnsiColour fromTextColor(org.fisk.swim.terminal.TextColor colour) {
-        if (colour == null || colour == org.fisk.swim.terminal.TextColor.ANSI.DEFAULT) return DEFAULT;
+        if (colour == null || colour == org.fisk.swim.terminal.TextColor.ANSI.DEFAULT) {
+          return DEFAULT;
+        }
         return rgb(colour.getRed(), colour.getGreen(), colour.getBlue());
     }
 }

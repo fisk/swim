@@ -25,8 +25,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.fisk.swim.session.SwimServerSession;
 import org.fisk.swim.session.SwimServerHeapUsage;
+import org.fisk.swim.session.SwimServerSession;
 import org.fisk.swim.session.SwimServerSessions;
 import org.fisk.swim.session.SwimServerTerminalSize;
 
@@ -250,7 +250,9 @@ final class SwimSessionServer {
         ManagedSession target = _sessions.get(SwimServerSessions.normalizeName(input.readUTF()));
         long used = input.readLong();
         long committed = input.readLong();
-        if (target != null) target.setClientHeapUsage(used, committed);
+        if (target != null) {
+            target.setClientHeapUsage(used, committed);
+        }
         output.writeUTF("OK");
         output.flush();
     }

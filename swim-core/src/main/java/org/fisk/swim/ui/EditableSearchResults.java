@@ -103,7 +103,9 @@ final class EditableSearchResults implements Buffer.ContentChangeListener {
     }
 
     private void highlightQuery(List<AttributedString.FormatRange> ranges, String line, int lineStart, int bodyStart) {
-        if (_query.isBlank() || bodyStart > line.length()) return;
+        if (_query.isBlank() || bodyStart > line.length()) {
+          return;
+        }
         // The prefix is stable; only the editable suffix receives hit colouring.
         String body = line.substring(bodyStart);
         String needle = _query.toLowerCase(java.util.Locale.ROOT);

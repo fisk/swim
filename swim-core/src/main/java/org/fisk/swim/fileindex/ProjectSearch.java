@@ -18,11 +18,8 @@ import java.util.concurrent.Phaser;
 import java.util.stream.Stream;
 
 public final class ProjectSearch {
-    /** Bounds file buffers and virtual-thread objects on very large trees. */
     static final int MAX_IN_FLIGHT_FILES = 16;
-    /** Avoid retaining pathological minified/generated lines in result previews. */
     static final long MAX_FILE_BYTES = 4L * 1024 * 1024;
-    /** A result list must remain inexpensive to render, sort, and navigate. */
     public static final int MAX_MATCHES = 10_000;
     public record Match(Path path, Path relativePath, int lineNumber, int columnNumber, String lineText) {
         public String displayString() {
@@ -61,12 +58,10 @@ public final class ProjectSearch {
         return matches;
     }
 
-    /** Searches files as they are discovered, without waiting to enumerate the whole project. */
     public void search(String query, Consumer<List<Match>> onMatches, BooleanSupplier cancelled) {
         if (_root == null || query == null || query.isBlank()) {
             return;
         }
-
         String needle = query;
         String normalizedNeedle = needle.toLowerCase(Locale.ROOT);
         boolean caseSensitive = !needle.equals(normalizedNeedle);
@@ -74,16 +69,21 @@ public final class ProjectSearch {
         var filePermits = new Semaphore(MAX_IN_FLIGHT_FILES);
         Phaser tasks = new Phaser(1);
         try (Stream<Path> files = Files.find(_root, Integer.MAX_VALUE, (path, attributes) -> attributes.isRegularFile())) {
-            files
-                    .filter(path -> _fileFilter.isIncluded(_root.relativize(path), false))
+            files.filter(path -> _fileFilter.isIncluded(_root.relativize(path), false))
                     .takeWhile(path -> !cancelled.getAsBoolean() && matchBudget.get() > 0)
                     .forEach(path -> {
-                        if (!acquireFilePermit(filePermits, cancelled)) return;
+                        if (!acquireFilePermit(filePermits, cancelled)) {
+                            return;
+                        }
                         tasks.register();
                         Thread.ofVirtual().start(() -> {
                             try {
                                 searchFile(path, needle, normalizedNeedle, caseSensitive, matchBudget, cancelled,
-                                        matches -> { if (!matches.isEmpty()) onMatches.accept(matches); });
+                                        matches -> {
+                                            if (!matches.isEmpty()) {
+                                                onMatches.accept(matches);
+                                            }
+                                        });
                             } finally {
                                 filePermits.release();
                                 tasks.arriveAndDeregister();
@@ -91,9 +91,7 @@ public final class ProjectSearch {
                         });
                     });
         } catch (IOException | UncheckedIOException e) {
-            // A project can disappear while an asynchronous panel search is
-            // walking it (notably while a workspace is closing). Treat that
-            // as a cancelled/incomplete search rather than leaking a worker.
+            // Treat disappearing projects as cancelled searches.
         } finally {
             tasks.arriveAndAwaitAdvance();
         }
@@ -102,7 +100,9 @@ public final class ProjectSearch {
     private void searchFile(Path path, String needle, String normalizedNeedle, boolean caseSensitive,
             AtomicInteger matchBudget, BooleanSupplier cancelled, Consumer<List<Match>> onMatches) {
         try {
-            if (Files.size(path) > MAX_FILE_BYTES) return;
+            if (Files.size(path) > MAX_FILE_BYTES) {
+                return;
+            }
         } catch (IOException e) {
             return;
         }
@@ -111,9 +111,13 @@ public final class ProjectSearch {
         try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
             for (int lineNumber = 1; !cancelled.getAsBoolean() && matchBudget.get() > 0; lineNumber++) {
                 String line = reader.readLine();
-                if (line == null) break;
+                if (line == null) {
+                    break;
+                }
                 int start = caseSensitive ? line.indexOf(needle) : line.toLowerCase(Locale.ROOT).indexOf(normalizedNeedle);
-                if (start < 0 || !reserveMatch(matchBudget)) continue;
+                if (start < 0 || !reserveMatch(matchBudget)) {
+                    continue;
+                }
                 batch.add(new Match(path, relativePath, lineNumber, start + 1, line));
                 if (batch.size() == 64) {
                     onMatches.accept(List.copyOf(batch));
@@ -123,12 +127,16 @@ public final class ProjectSearch {
         } catch (IOException e) {
             return;
         }
-        if (!batch.isEmpty() && !cancelled.getAsBoolean()) onMatches.accept(List.copyOf(batch));
+        if (!batch.isEmpty() && !cancelled.getAsBoolean()) {
+            onMatches.accept(List.copyOf(batch));
+        }
     }
 
     private static boolean reserveMatch(AtomicInteger budget) {
         for (int remaining; (remaining = budget.get()) > 0;) {
-            if (budget.compareAndSet(remaining, remaining - 1)) return true;
+            if (budget.compareAndSet(remaining, remaining - 1)) {
+                return true;
+            }
         }
         return false;
     }
@@ -136,7 +144,9 @@ public final class ProjectSearch {
     private static boolean acquireFilePermit(Semaphore permits, BooleanSupplier cancelled) {
         while (!cancelled.getAsBoolean()) {
             try {
-                if (permits.tryAcquire(25, java.util.concurrent.TimeUnit.MILLISECONDS)) return true;
+                if (permits.tryAcquire(25, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    return true;
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return false;
@@ -144,5 +154,4 @@ public final class ProjectSearch {
         }
         return false;
     }
-
 }

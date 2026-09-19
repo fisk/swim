@@ -46,7 +46,9 @@ public class VisualMode extends Mode {
         var buffer = bufferContext.getBuffer();
         var cursor = buffer.getCursor();
         installRegisterSelectionResponder();
-        _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> { window.switchToMode(window.getNormalMode()); }));
+        _rootResponder.addEventResponder("<ESC>", allowed("exit visual mode", () -> {
+            window.switchToMode(window.getNormalMode());
+        }));
         _rootResponder.addEventResponder(":", "Commands", "substitute selection",
                 allowed("open command prompt", () -> window.getCommandView().activate(":")));
         _rootResponder.addEventResponder("o", () -> {

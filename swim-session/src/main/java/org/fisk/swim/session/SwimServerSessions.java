@@ -191,7 +191,9 @@ public final class SwimServerSessions {
             output.flush();
             var input = new DataInputStream(Channels.newInputStream(channel));
             readOk(input);
-            if (!input.readBoolean()) return Optional.empty();
+            if (!input.readBoolean()) {
+                return Optional.empty();
+            }
             return Optional.of(new SwimServerHeapUsage(input.readLong(), input.readLong()));
         }
     }

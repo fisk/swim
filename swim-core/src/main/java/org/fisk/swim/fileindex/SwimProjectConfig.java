@@ -53,10 +53,14 @@ public final class SwimProjectConfig {
     }
 
     /** The project build command, when configured in a regular .swim file. */
-    public String compileCommand() { return _compileCommand; }
+    public String compileCommand() {
+        return _compileCommand;
+    }
 
     /** The project debugger command, when configured in a regular .swim file. */
-    public String debugCommand() { return _debugCommand; }
+    public String debugCommand() {
+        return _debugCommand;
+    }
 
     public static void saveCompileCommand(Path root, String command) throws IOException {
         saveCommand(root, "compile.command", command);
@@ -95,7 +99,9 @@ public final class SwimProjectConfig {
         return _clangdRemoveCompileArguments;
     }
 
-    public List<Path> nemoWorkspaceWriteRoots() { return _nemoWorkspaceWriteRoots; }
+    public List<Path> nemoWorkspaceWriteRoots() {
+        return _nemoWorkspaceWriteRoots;
+    }
 
     private static List<String> parseClangdRemoveCompileArguments(Path marker) {
         try {
@@ -140,14 +146,18 @@ public final class SwimProjectConfig {
             var roots = new java.util.ArrayList<Path>();
             for (String line : Files.readAllLines(marker)) {
                 String[] pair = line.split("=", 2);
-                if (pair.length != 2 || !"nemo.workspace_write_roots".equals(pair[0].trim())) continue;
+                if (pair.length != 2 || !"nemo.workspace_write_roots".equals(pair[0].trim())) {
+                  continue;
+                }
                 for (String value : pair[1].split(",")) {
                     Path path = Path.of(value.trim());
                     roots.add((path.isAbsolute() ? path : root.resolve(path)).toAbsolutePath().normalize());
                 }
             }
             return roots;
-        } catch (IOException e) { return List.of(); }
+        } catch (IOException e) {
+            return List.of();
+        }
     }
 
     private static Path parseCompileCommandsPath(Path root, Path marker) {

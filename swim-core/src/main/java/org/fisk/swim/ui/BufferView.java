@@ -3,629 +3,690 @@ package org.fisk.swim.ui;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
-
-import org.fisk.swim.terminal.TextColor;
-import org.fisk.swim.event.MouseAction;
-import org.fisk.swim.event.MouseActionType;
-
 import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.fisk.swim.event.EventResponder;
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.MouseAction;
+import org.fisk.swim.event.MouseActionType;
 import org.fisk.swim.event.Response;
 import org.fisk.swim.lsp.DiagnosticService;
 import org.fisk.swim.terminal.TerminalContext;
+import org.fisk.swim.terminal.TextColor;
 import org.fisk.swim.text.AttributedString;
 import org.fisk.swim.text.BufferContext;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
 public class BufferView extends View {
-    private static final int MIN_DECORATED_WIDTH = 6;
-    private static final int MAX_BLAME_WIDTH = 24;
-    private static final String GUTTER_SEPARATOR = "│";
-    private static final String SCROLLBAR_TRACK = "│";
-    private static final String SCROLLBAR_THUMB = "█";
-    private BufferContext _bufferContext;
-    private static final Logger _log = LogFactory.createLog();
-    private int _startLine = 0;
-    private Integer _mouseSelectionAnchorPosition;
-    private Function<EventResponder, EventResponder> _firstResponderDecorator;
-    private List<String> _blameAnnotations = List.of();
-    private int _blameRequest;
-    private boolean _gitBlameEnabled;
+  private static final int MIN_DECORATED_WIDTH = 6;
+  private static final int MAX_BLAME_WIDTH = 24;
+  private static final String GUTTER_SEPARATOR = "│";
+  private static final String SCROLLBAR_TRACK = "│";
+  private static final String SCROLLBAR_THUMB = "█";
+  private BufferContext _bufferContext;
+  private static final Logger _log = LogFactory.createLog();
+  private int _startLine = 0;
+  private Integer _mouseSelectionAnchorPosition;
+  private Function<EventResponder, EventResponder> _firstResponderDecorator;
+  private List<String> _blameAnnotations = List.of();
+  private int _blameRequest;
+  private boolean _gitBlameEnabled;
 
-    public int getStartLine() {
-        return _startLine;
-    }
+  public int getStartLine() {
+    return _startLine;
+  }
 
-    public int getViewportHeight() {
-        return getBounds().getSize().getHeight();
-    }
+  public int getViewportHeight() {
+    return getBounds().getSize().getHeight();
+  }
 
-    public int getTextColumnStart() {
-        return getLineNumberGutterWidth();
-    }
+  public int getTextColumnStart() {
+    return getLineNumberGutterWidth();
+  }
 
-    public int getTextWidth() {
-        int totalWidth = getBounds().getSize().getWidth();
-        return Math.max(1, totalWidth - getLineNumberGutterWidth() - getScrollbarWidth());
-    }
+  public int getTextWidth() {
+    int totalWidth = getBounds().getSize().getWidth();
+    return Math.max(1, totalWidth - getLineNumberGutterWidth() - getScrollbarWidth());
+  }
 
-    public List<String> snapshotVisibleTextLines() {
-        var textLayout = _bufferContext.getTextLayout();
-        textLayout.calculate();
-        int width = getTextWidth();
-        var result = new ArrayList<String>();
-        for (var line : textLayout.getVisibleLogicalLines()) {
-            char[] row = " ".repeat(width).toCharArray();
-            for (var glyph : line.getGlyphs()) {
-                if (glyph.isSynthetic() || glyph.getX() < 0 || glyph.getX() >= width || "\n".equals(glyph.getCharacter())) {
-                    continue;
-                }
-                String character = glyph.getCharacter();
-                row[glyph.getX()] = character == null || character.isEmpty() ? ' ' : character.charAt(0);
-            }
-            result.add(stripTrailingSpaces(new String(row)));
+  public List<String> snapshotVisibleTextLines() {
+    var textLayout = _bufferContext.getTextLayout();
+    textLayout.calculate();
+    int width = getTextWidth();
+    var result = new ArrayList<String>();
+    for (var line : textLayout.getVisibleLogicalLines()) {
+      char[] row = " ".repeat(width).toCharArray();
+      for (var glyph : line.getGlyphs()) {
+        if (glyph.isSynthetic()
+            || glyph.getX() < 0
+            || glyph.getX() >= width
+            || "\n".equals(glyph.getCharacter())) {
+          continue;
         }
-        return result;
+        String character = glyph.getCharacter();
+        row[glyph.getX()] = character == null || character.isEmpty() ? ' ' : character.charAt(0);
+      }
+      result.add(stripTrailingSpaces(new String(row)));
     }
+    return result;
+  }
 
-    public BufferView(Rect rect, BufferContext bufferContext) {
-        super(rect);
-        _bufferContext = bufferContext;
-        setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
+  public BufferView(Rect rect, BufferContext bufferContext) {
+    super(rect);
+    _bufferContext = bufferContext;
+    setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
+  }
+
+  public AttributedString getString() {
+    return AttributedString.create(
+        _bufferContext.getBuffer().getString(), _backgroundColour, TextColor.ANSI.DEFAULT);
+  }
+
+  BufferContext getBufferContext() {
+    return _bufferContext;
+  }
+
+  public void setFirstResponderDecorator(Function<EventResponder, EventResponder> decorator) {
+    _firstResponderDecorator = decorator;
+  }
+
+  int beginGitBlame() {
+    _blameAnnotations = List.of();
+    _gitBlameEnabled = true;
+    return ++_blameRequest;
+  }
+
+  boolean applyGitBlame(int request, List<String> annotations) {
+    if (!_gitBlameEnabled || request != _blameRequest) {
+      return false;
     }
+    _blameAnnotations = annotations == null ? List.of() : List.copyOf(annotations);
+    setNeedsRedraw();
+    return true;
+  }
 
-    public AttributedString getString() {
-        return AttributedString.create(_bufferContext.getBuffer().getString(), _backgroundColour, TextColor.ANSI.DEFAULT);
+  void clearGitBlame() {
+    _blameRequest++;
+    _gitBlameEnabled = false;
+    _blameAnnotations = List.of();
+    setNeedsRedraw();
+  }
+
+  boolean isGitBlameEnabled() {
+    return _gitBlameEnabled;
+  }
+
+  EventResponder firstResponderForMode(EventResponder mode) {
+    if (_firstResponderDecorator == null) {
+      return mode;
     }
+    EventResponder decorated = _firstResponderDecorator.apply(mode);
+    return decorated == null ? mode : decorated;
+  }
 
-    BufferContext getBufferContext() {
-        return _bufferContext;
+  @Override
+  public Response processEvent(KeyStrokes events) {
+    if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
+      handleMouseAction(mouseAction);
+      return Response.YES;
     }
-
-    public void setFirstResponderDecorator(Function<EventResponder, EventResponder> decorator) {
-        _firstResponderDecorator = decorator;
+    if (Window.getInstance() != null) {
+      Window.getInstance().hideHoverDiagnostics();
     }
+    return super.processEvent(events);
+  }
 
-    int beginGitBlame() {
-        _blameAnnotations = List.of();
-        _gitBlameEnabled = true;
-        return ++_blameRequest;
+  @Override
+  public void setBounds(Rect rect) {
+    var previous = getBounds();
+    super.setBounds(rect);
+    if (previous != null
+        && previous.getSize().equals(rect.getSize())
+        && previous.getPoint().equals(rect.getPoint())) {
+      return;
     }
-
-    boolean applyGitBlame(int request, List<String> annotations) {
-        if (!_gitBlameEnabled || request != _blameRequest) return false;
-        _blameAnnotations = annotations == null ? List.of() : List.copyOf(annotations);
-        setNeedsRedraw();
-        return true;
+    var textLayout = _bufferContext.getTextLayout();
+    if (textLayout != null) {
+      textLayout.calculate();
+      // A session cursor may have been restored while this view had its
+      // placeholder one-column width. Recalculate it after the text
+      // layout has the real wrapping width, before any viewport/cursor
+      // placement uses its visual row.
+      _bufferContext.getBuffer().getCursor().refreshForLayout();
+      int maxStartLine = maxStartLine(textLayout);
+      _startLine = Math.max(0, Math.min(_startLine, maxStartLine));
     }
+  }
 
-    void clearGitBlame() {
-        _blameRequest++;
-        _gitBlameEnabled = false;
-        _blameAnnotations = List.of();
-        setNeedsRedraw();
+  @Override
+  public void draw(Rect rect) {
+    super.draw(rect);
+    var terminalContext = TerminalContext.getInstance();
+    var textGraphics = terminalContext.getTerminalGraphics();
+    _log.debug("Draw buffer view");
+    var window = Window.getInstance();
+    var mode = window.getCurrentMode();
+    // Modes own the active buffer context.  A split may be drawing a different
+    // buffer, where applying the active visual selection would paint its rows.
+    boolean modeApplies = _bufferContext == window.getBufferContext();
+    if (modeApplies) {
+      mode.draw(rect);
     }
-
-    boolean isGitBlameEnabled() {
-        return _gitBlameEnabled;
-    }
-
-    EventResponder firstResponderForMode(EventResponder mode) {
-        if (_firstResponderDecorator == null) {
-            return mode;
+    var attrString = _bufferContext.getBuffer().getAttributedString();
+    _log.debug("Attributed string length: " + attrString.length());
+    var textLayout = _bufferContext.getTextLayout();
+    var visibleLines = textLayout.getVisibleLogicalLines();
+    drawLineNumberGutter(rect, textGraphics, textLayout, visibleLines);
+    drawScrollbar(rect, textGraphics, textLayout);
+    int textX = rect.getPoint().getX() + getTextColumnStart();
+    for (var line : visibleLines) {
+      for (var glyph : line.getGlyphs()) {
+        AttributedString character = null;
+        if (!glyph.isSynthetic()
+            && glyph.getPosition() >= 0
+            && glyph.getPosition() < attrString.length()) {
+          character = attrString.getCharacter(glyph.getPosition());
+          if (!character.toString().equals(glyph.getCharacter())) {
+            character = null;
+          }
         }
-        EventResponder decorated = _firstResponderDecorator.apply(mode);
-        return decorated == null ? mode : decorated;
-    }
-
-    @Override
-    public Response processEvent(KeyStrokes events) {
-        if (events.remaining() == 0 && events.current() instanceof MouseAction mouseAction) {
-            handleMouseAction(mouseAction);
-            return Response.YES;
+        if (character == null) {
+          character =
+              AttributedString.create(glyph.getCharacter(), UiTheme.TEXT_MUTED, _backgroundColour);
         }
-        if (Window.getInstance() != null) {
-            Window.getInstance().hideHoverDiagnostics();
-        }
-        return super.processEvent(events);
-    }
-
-    @Override
-    public void setBounds(Rect rect) {
-        var previous = getBounds();
-        super.setBounds(rect);
-        if (previous != null
-                && previous.getSize().equals(rect.getSize())
-                && previous.getPoint().equals(rect.getPoint())) {
-            return;
-        }
-        var textLayout = _bufferContext.getTextLayout();
-        if (textLayout != null) {
-            textLayout.calculate();
-            // A session cursor may have been restored while this view had its
-            // placeholder one-column width. Recalculate it after the text
-            // layout has the real wrapping width, before any viewport/cursor
-            // placement uses its visual row.
-            _bufferContext.getBuffer().getCursor().refreshForLayout();
-            int maxStartLine = maxStartLine(textLayout);
-            _startLine = Math.max(0, Math.min(_startLine, maxStartLine));
-        }
-    }
-
-    @Override
-    public void draw(Rect rect) {
-        super.draw(rect);
-        var terminalContext = TerminalContext.getInstance();
-        var textGraphics = terminalContext.getTerminalGraphics();
-        _log.debug("Draw buffer view");
-        var window = Window.getInstance();
-        var mode = window.getCurrentMode();
-        // Modes own the active buffer context.  A split may be drawing a different
-        // buffer, where applying the active visual selection would paint its rows.
-        boolean modeApplies = _bufferContext == window.getBufferContext();
+        character = applyDiagnosticBackground(glyph, character);
         if (modeApplies) {
-            mode.draw(rect);
-        }
-        var attrString = _bufferContext.getBuffer().getAttributedString();
-        _log.debug("Attributed string length: " + attrString.length());
-        var textLayout = _bufferContext.getTextLayout();
-        var visibleLines = textLayout.getVisibleLogicalLines();
-        drawLineNumberGutter(rect, textGraphics, textLayout, visibleLines);
-        drawScrollbar(rect, textGraphics, textLayout);
-        int textX = rect.getPoint().getX() + getTextColumnStart();
-        for (var line : visibleLines) {
-            for (var glyph : line.getGlyphs()) {
-                AttributedString character = null;
-                if (!glyph.isSynthetic()
-                        && glyph.getPosition() >= 0
-                        && glyph.getPosition() < attrString.length()) {
-                    character = attrString.getCharacter(glyph.getPosition());
-                    if (!character.toString().equals(glyph.getCharacter())) {
-                        character = null;
-                    }
-                }
-                if (character == null) {
-                    character = AttributedString.create(glyph.getCharacter(), UiTheme.TEXT_MUTED, _backgroundColour);
-                }
-                character = applyDiagnosticBackground(glyph, character);
-                if (modeApplies) {
-                    character = mode.decorate(glyph, character);
-                } else if (window.hasActiveLinkedCursorAt(_bufferContext, glyph.getPosition())) {
-                    var attributes = character.attributesAt(0);
-                    character.format(0, character.length(), attributes.foregroundColour(),
-                            UiTheme.PANEL_SELECTION_BACKGROUND);
-                }
-                if (window.isLiveSubstitutePreviewMatch(_bufferContext, glyph.getPosition())) {
-                    character = AttributedString.create(glyph.getCharacter(), UiTheme.DIFF_ADDED_FOREGROUND,
-                            UiTheme.DIFF_ADDED_BACKGROUND);
-                }
-                var point = Point.create(textX + glyph.getX(), rect.getPoint().getY() + glyph.getY() - _startLine);
-                character.drawAt(point, textGraphics);
-            }
-        }
-    }
-
-    @Override
-    public Cursor getCursor() {
-        return _bufferContext.getBuffer().getCursor();
-    }
-
-    public void adaptCursorToView() {
-        int cursorY = getCursor().getYAbsolute();
-        var height = getBounds().getSize().getHeight();
-        if (cursorY >= _startLine + height) {
-            getCursor().goUp();
-        } else if (cursorY < _startLine) {
-            getCursor().goDown();
-        }
-    }
-
-    public void adaptViewToCursor() {
-        int cursorY = getCursor().getYAbsolute();
-        var height = getBounds().getSize().getHeight();
-        _log.debug("Cursor Y" + cursorY  + " height: " + height + " _startLine: " + _startLine);
-        if (cursorY >= _startLine + height) {
-            _startLine = cursorY - height + 1;
-        } else if (cursorY < _startLine) {
-            _startLine = cursorY;
-        }
-    }
-
-    public void scrollUp() {
-        if (_startLine <= 0) {
-            return;
-        }
-        _startLine--;
-        adaptCursorToView();
-        setNeedsRedraw();
-    }
-
-    public void scrollDown() {
-        var textLayout = _bufferContext.getTextLayout();
-        int maxStartLine = maxStartLine(textLayout);
-        if (_startLine >= maxStartLine) {
-            return;
-        }
-        _startLine++;
-        adaptCursorToView();
-        setNeedsRedraw();
-    }
-
-    public void scrollPageUp() {
-        int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
-        for (int i = 0; i < amount; i++) {
-            scrollUp();
-        }
-    }
-
-    public void scrollPageDown() {
-        int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
-        for (int i = 0; i < amount; i++) {
-            scrollDown();
-        }
-    }
-
-    public void alignCursorLine(ViewportAnchor anchor) {
-        if (anchor == null) {
-            return;
-        }
-        int cursorY = getCursor().getYAbsolute();
-        int height = Math.max(1, getBounds().getSize().getHeight());
-        int targetStart = switch (anchor) {
-        case TOP -> cursorY;
-        case MIDDLE -> cursorY - height / 2;
-        case BOTTOM -> cursorY - height + 1;
-        };
-        _startLine = Math.max(0, Math.min(targetStart, maxStartLine(_bufferContext.getTextLayout())));
-        setNeedsRedraw();
-    }
-
-    public enum ViewportAnchor {
-        TOP,
-        MIDDLE,
-        BOTTOM
-    }
-
-    private AttributedString applyDiagnosticBackground(org.fisk.swim.text.TextLayout.Glyph glyph, AttributedString character) {
-        if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
-            return character;
-        }
-        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(glyph.getPosition()).getY();
-        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, sourceLine);
-        TextColor background = null;
-        if (DiagnosticSeverity.Error.equals(severity)) {
-            background = UiTheme.DIAGNOSTIC_ERROR_BACKGROUND;
-        } else if (DiagnosticSeverity.Warning.equals(severity)) {
-            background = UiTheme.DIAGNOSTIC_WARNING_BACKGROUND;
-        }
-        if (background == null) {
-            return character;
-        }
-        var attributes = character.getFragments().get(0).getAttributes();
-        return AttributedString.create(character.toString(), attributes.foregroundColour(), background);
-    }
-
-    private void handleMouseAction(MouseAction action) {
-        var window = Window.getInstance();
-        if (window == null) {
-            return;
-        }
-        if (action.getActionType() != MouseActionType.MOVE
-                && action.getActionType() != MouseActionType.DRAG
-                && action.getActionType() != MouseActionType.CLICK_DOWN
-                && action.getActionType() != MouseActionType.CLICK_RELEASE
-                && action.getActionType() != MouseActionType.SCROLL_UP
-                && action.getActionType() != MouseActionType.SCROLL_DOWN) {
-            return;
-        }
-        Point origin = absoluteOrigin();
-        int localX = action.getPosition().getColumn() - origin.getX();
-        int localY = action.getPosition().getRow() - origin.getY();
-        int textStart = getTextColumnStart();
-        if (localX < 0 || localY < 0
-                || localX >= getBounds().getSize().getWidth()
-                || localY >= getBounds().getSize().getHeight()) {
-            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
-                _mouseSelectionAnchorPosition = null;
-            }
-            window.hideHoverDiagnostics();
-            return;
-        }
-        if (action.getActionType() == MouseActionType.SCROLL_UP) {
-            window.allowEditorDriveAction("scroll buffer");
-            window.hideHoverDiagnostics();
-            scrollUp();
-            return;
-        }
-        if (action.getActionType() == MouseActionType.SCROLL_DOWN) {
-            window.allowEditorDriveAction("scroll buffer");
-            window.hideHoverDiagnostics();
-            scrollDown();
-            return;
-        }
-        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
-            window.activateView(this);
-        }
-        var visibleLines = _bufferContext.getTextLayout().getVisibleLogicalLines();
-        if (localY < 0 || localY >= visibleLines.size()) {
-            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
-                _mouseSelectionAnchorPosition = null;
-            }
-            window.hideHoverDiagnostics();
-            return;
-        }
-        var wrappedLine = visibleLines.get(localY);
-        int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
-        if (action.getActionType() == MouseActionType.MOVE) {
-            window.updateHoveredDiagnostics(_bufferContext,
-                    sourceLine,
-                    Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
-            return;
-        }
-        if (action.getActionType() != MouseActionType.CLICK_RELEASE) {
-            window.hideHoverDiagnostics();
-        }
-        int textX = localX - textStart;
-        boolean insideTextColumns = textX >= 0 && textX < getTextWidth();
-        if (!insideTextColumns && action.getActionType() == MouseActionType.CLICK_DOWN) {
-            return;
-        }
-        if (!insideTextColumns && _mouseSelectionAnchorPosition == null) {
-            if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
-                showDiagnosticsAtMouse(window, sourceLine, action);
-            }
-            return;
-        }
-        textX = Math.max(0, Math.min(textX, getTextWidth()));
-        int mousePosition = positionForMouse(wrappedLine, textX);
-        if (action.getActionType() == MouseActionType.CLICK_DOWN) {
-            window.allowEditorDriveAction("mouse cursor");
-            beginMouseSelection(window, mousePosition);
-        } else if (action.getActionType() == MouseActionType.DRAG) {
-            window.allowEditorDriveAction("mouse visual selection");
-            updateVisualSelectionForDrag(window, mousePosition);
-        } else if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
-            Integer anchor = _mouseSelectionAnchorPosition;
-            window.allowEditorDriveAction("mouse visual selection");
-            updateVisualSelectionForRelease(window, mousePosition);
-            if (anchor == null || anchor == mousePosition) {
-                showDiagnosticsAtMouse(window, sourceLine, action);
-            } else {
-                window.hideHoverDiagnostics();
-            }
-        }
-    }
-
-    private void showDiagnosticsAtMouse(Window window, int sourceLine, MouseAction action) {
-        window.updateHoveredDiagnostics(_bufferContext,
-                sourceLine,
-                Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
-    }
-
-    private void beginMouseSelection(Window window, int position) {
-        _mouseSelectionAnchorPosition = position;
-        if (window.getCurrentMode() == window.getVisualMode()) {
-            var cursors = _bufferContext.getBuffer().getCursors();
-            if (cursors.size() > 1) {
-                cursors.get(1).setPosition(position);
-            }
-        }
-        moveCursorToClick(position);
-    }
-
-    private void moveCursorToClick(int position) {
-        setCursorPositionForMouse(position);
-    }
-
-    private void updateVisualSelectionForDrag(Window window, int position) {
-        if (_mouseSelectionAnchorPosition == null) {
-            return;
-        }
-        startOrUpdateVisualSelection(window, position);
-    }
-
-    private void updateVisualSelectionForRelease(Window window, int position) {
-        Integer anchor = _mouseSelectionAnchorPosition;
-        _mouseSelectionAnchorPosition = null;
-        if (anchor == null || anchor == position) {
-            return;
-        }
-        startOrUpdateVisualSelection(window, position);
-    }
-
-    private void startOrUpdateVisualSelection(Window window, int position) {
-        if (window.getCurrentMode() == window.getNormalMode()) {
-            window.switchToMode(window.getVisualMode());
-        }
-        if (window.getCurrentMode() != window.getVisualMode()) {
-            return;
-        }
-        setCursorPositionForMouse(position);
-    }
-
-    private void setCursorPositionForMouse(int position) {
-        _bufferContext.getBuffer().getCursor().setPosition(position);
-        adaptViewToCursor();
-        setNeedsRedraw();
-    }
-
-    private int positionForMouse(org.fisk.swim.text.TextLayout.Line line, int textX) {
-        int position = line.getStartPosition();
-        for (var glyph : line.getGlyphs()) {
-            if (glyph.isSynthetic()) {
-                continue;
-            }
-            if (textX <= glyph.getX()) {
-                return Math.max(0, glyph.getPosition());
-            }
-            position = glyph.getPosition() + 1;
-        }
-        return Math.max(0, Math.min(position, _bufferContext.getBuffer().getLength()));
-    }
-
-    private Point absoluteOrigin() {
-        int x = getBounds().getPoint().getX();
-        int y = getBounds().getPoint().getY();
-        for (var parent = getParent(); parent != null; parent = parent.getParent()) {
-            x += parent.getBounds().getPoint().getX();
-            y += parent.getBounds().getPoint().getY();
-        }
-        return Point.create(x, y);
-    }
-
-    private int maxStartLine(org.fisk.swim.text.TextLayout textLayout) {
-        // Permit the viewport to travel beyond the final screenful, leaving
-        // blank rows below EOF, but stop once the final logical line reaches
-        // the top row.  This keeps a growing file comfortably scrollable
-        // without allowing an unbounded empty viewport.
-        return Math.max(0, textLayout.getLogicalLineCount() - 1);
-    }
-
-    private int getScrollbarWidth() {
-        return decorationsEnabled() ? 1 : 0;
-    }
-
-    private int getLineNumberGutterWidth() {
-        int totalWidth = getBounds().getSize().getWidth();
-        if (!decorationsEnabled()) {
-            return 0;
-        }
-        int scrollbarWidth = getScrollbarWidth();
-        int maxGutterWidth = Math.max(0, totalWidth - scrollbarWidth - 1);
-        if (maxGutterWidth <= 0) {
-            return 0;
-        }
-        return Math.min(requestedLineNumberGutterWidth(), maxGutterWidth);
-    }
-
-    private int requestedLineNumberGutterWidth() {
-        var textLayout = _bufferContext.getTextLayout();
-        int lineCount;
-        if (textLayout != null) {
-            lineCount = textLayout.getPhysicalLineCount();
+          character = mode.decorate(glyph, character);
         } else {
-            lineCount = countPhysicalLines(_bufferContext.getBuffer().getString());
+          if (window.hasActiveLinkedCursorAt(_bufferContext, glyph.getPosition())) {
+            var attributes = character.attributesAt(0);
+            character.format(
+                0,
+                character.length(),
+                attributes.foregroundColour(),
+                UiTheme.PANEL_SELECTION_BACKGROUND);
+          }
         }
-        int lineNumberWidth = digitCount(Math.max(1, lineCount)) + 1;
-        return lineNumberWidth + (isGitBlameEnabled() ? blameGutterWidth() + 1 : 0);
+        if (window.isLiveSubstitutePreviewMatch(_bufferContext, glyph.getPosition())) {
+          character =
+              AttributedString.create(
+                  glyph.getCharacter(),
+                  UiTheme.DIFF_ADDED_FOREGROUND,
+                  UiTheme.DIFF_ADDED_BACKGROUND);
+        }
+        var point =
+            Point.create(textX + glyph.getX(), rect.getPoint().getY() + glyph.getY() - _startLine);
+        character.drawAt(point, textGraphics);
+      }
     }
+  }
 
-    private void drawLineNumberGutter(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,
-            org.fisk.swim.text.TextLayout textLayout,
-            java.util.List<org.fisk.swim.text.TextLayout.Line> visibleLines) {
-        int gutterWidth = getLineNumberGutterWidth();
-        if (gutterWidth <= 0) {
-            return;
-        }
-        int currentPhysicalLine = _bufferContext.getBuffer().getCursor().getPhysicalLine().getY();
-        for (int row = 0; row < visibleLines.size(); row++) {
-            var line = visibleLines.get(row);
-            var physicalLine = textLayout.getPhysicalLineAt(line.getStartPosition());
-            boolean firstSegment = line.getStartPosition() == physicalLine.getStartPosition();
-            TextColor foreground = lineNumberForeground(physicalLine.getY(), currentPhysicalLine);
-            AttributedString gutter = createLineNumberString(firstSegment ? physicalLine.getY() + 1 : null, physicalLine.getY(), gutterWidth, foreground);
-            gutter.drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + row), graphics);
-        }
-    }
+  @Override
+  public Cursor getCursor() {
+    return _bufferContext.getBuffer().getCursor();
+  }
 
-    private AttributedString createLineNumberString(Integer lineNumber, int physicalLine, int gutterWidth, TextColor foreground) {
-        var gutter = new AttributedString();
-        if (gutterWidth <= 0) {
-            return gutter;
-        }
-        if (gutterWidth == 1) {
-            gutter.append(lineNumber == null ? " " : Integer.toString(lineNumber).substring(Integer.toString(lineNumber).length() - 1),
-                    foreground, UiTheme.SURFACE_MUTED);
-            return gutter;
-        }
-        int blameWidth = isGitBlameEnabled() ? Math.min(blameGutterWidth(), Math.max(0, gutterWidth - 2)) : 0;
-        if (blameWidth > 0) {
-            String blame = physicalLine < _blameAnnotations.size() ? _blameAnnotations.get(physicalLine) : "Loading…";
-            if (blame.length() > blameWidth) blame = blame.substring(0, blameWidth);
-            gutter.append(blame + " ".repeat(Math.max(0, blameWidth - blame.length())), UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
-            gutter.append(" ", UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
-        }
-        int numberWidth = gutterWidth - blameWidth - 1;
-        String number = lineNumber == null ? "" : Integer.toString(lineNumber);
-        if (number.length() > numberWidth) {
-            number = number.substring(number.length() - numberWidth);
-        }
-        String padded = " ".repeat(Math.max(0, numberWidth - number.length())) + number;
-        gutter.append(padded, foreground, UiTheme.SURFACE_MUTED);
-        gutter.append(GUTTER_SEPARATOR, UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
-        return gutter;
+  public void adaptCursorToView() {
+    int cursorY = getCursor().getYAbsolute();
+    var height = getBounds().getSize().getHeight();
+    if (cursorY >= _startLine + height) {
+      getCursor().goUp();
+    } else {
+      if (cursorY < _startLine) {
+        getCursor().goDown();
+      }
     }
+  }
 
-    private int blameGutterWidth() {
-        int width = 12;
-        for (String annotation : _blameAnnotations) {
-            width = Math.max(width, annotation == null ? 0 : annotation.length());
-        }
-        return Math.min(MAX_BLAME_WIDTH, width);
+  public void adaptViewToCursor() {
+    int cursorY = getCursor().getYAbsolute();
+    var height = getBounds().getSize().getHeight();
+    _log.debug("Cursor Y" + cursorY + " height: " + height + " _startLine: " + _startLine);
+    if (cursorY >= _startLine + height) {
+      _startLine = cursorY - height + 1;
+    } else {
+      if (cursorY < _startLine) {
+        _startLine = cursorY;
+      }
     }
+  }
 
-    private void drawScrollbar(Rect rect, org.fisk.swim.terminal.TerminalGraphics graphics,
-            org.fisk.swim.text.TextLayout textLayout) {
-        int scrollbarWidth = getScrollbarWidth();
-        if (scrollbarWidth <= 0) {
-            return;
-        }
-        int height = getViewportHeight();
-        int totalLines = Math.max(1, textLayout.getLogicalLineCount());
-        int visibleLines = Math.min(height, totalLines);
-        int thumbHeight = totalLines <= height ? height : Math.max(1, (int) Math.round((visibleLines * (double) height) / totalLines));
-        int maxStart = maxStartLine(textLayout);
-        int thumbStart = maxStart == 0 ? 0
-                : (int) Math.round((_startLine * (double) Math.max(0, height - thumbHeight)) / maxStart);
-        int x = rect.getPoint().getX() + getTextColumnStart() + getTextWidth();
-        for (int row = 0; row < height; row++) {
-            boolean thumb = row >= thumbStart && row < thumbStart + thumbHeight;
-            AttributedString column = AttributedString.create(thumb ? SCROLLBAR_THUMB : SCROLLBAR_TRACK,
-                    thumb ? UiTheme.ACCENT_BLUE : UiTheme.TEXT_SUBTLE,
-                    UiTheme.SURFACE_MUTED);
-            column.drawAt(Point.create(x, rect.getPoint().getY() + row), graphics);
-        }
+  public void scrollUp() {
+    if (_startLine <= 0) {
+      return;
     }
+    _startLine--;
+    adaptCursorToView();
+    setNeedsRedraw();
+  }
 
-    private static int digitCount(int value) {
-        return Integer.toString(Math.max(1, value)).length();
+  public void scrollDown() {
+    var textLayout = _bufferContext.getTextLayout();
+    int maxStartLine = maxStartLine(textLayout);
+    if (_startLine >= maxStartLine) {
+      return;
     }
+    _startLine++;
+    adaptCursorToView();
+    setNeedsRedraw();
+  }
 
-    private boolean decorationsEnabled() {
-        return getBounds().getSize().getWidth() >= MIN_DECORATED_WIDTH;
+  public void scrollPageUp() {
+    int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
+    for (int i = 0; i < amount; i++) {
+      scrollUp();
     }
+  }
 
-    private TextColor lineNumberForeground(int physicalLine, int currentPhysicalLine) {
-        var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, physicalLine);
-        if (DiagnosticSeverity.Error.equals(severity)) {
-            return UiTheme.DIAGNOSTIC_ERROR_FOREGROUND;
-        }
-        if (DiagnosticSeverity.Warning.equals(severity)) {
-            return UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;
-        }
-        return currentPhysicalLine == physicalLine ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
+  public void scrollPageDown() {
+    int amount = Math.max(1, getBounds().getSize().getHeight() - 1);
+    for (int i = 0; i < amount; i++) {
+      scrollDown();
     }
+  }
 
-    private static int countPhysicalLines(String text) {
-        if (text == null || text.isEmpty()) {
-            return 1;
-        }
-        int lines = 1;
-        for (int index = 0; index < text.length(); index++) {
-            if (text.charAt(index) == '\n') {
-                lines++;
-            }
-        }
-        return lines;
+  public void alignCursorLine(ViewportAnchor anchor) {
+    if (anchor == null) {
+      return;
     }
+    int cursorY = getCursor().getYAbsolute();
+    int height = Math.max(1, getBounds().getSize().getHeight());
+    int targetStart =
+        switch (anchor) {
+          case TOP -> cursorY;
+          case MIDDLE -> cursorY - height / 2;
+          case BOTTOM -> cursorY - height + 1;
+        };
+    _startLine = Math.max(0, Math.min(targetStart, maxStartLine(_bufferContext.getTextLayout())));
+    setNeedsRedraw();
+  }
 
-    private static String stripTrailingSpaces(String text) {
-        int end = text.length();
-        while (end > 0 && text.charAt(end - 1) == ' ') {
-            end--;
-        }
-        return text.substring(0, end);
+  public enum ViewportAnchor {
+    TOP,
+    MIDDLE,
+    BOTTOM
+  }
+
+  private AttributedString applyDiagnosticBackground(
+      org.fisk.swim.text.TextLayout.Glyph glyph, AttributedString character) {
+    if (glyph.isSynthetic() || character.getFragments().isEmpty()) {
+      return character;
     }
+    int sourceLine = _bufferContext.getTextLayout().getPhysicalLineAt(glyph.getPosition()).getY();
+    var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, sourceLine);
+    TextColor background = null;
+    if (DiagnosticSeverity.Error.equals(severity)) {
+      background = UiTheme.DIAGNOSTIC_ERROR_BACKGROUND;
+    } else {
+      if (DiagnosticSeverity.Warning.equals(severity)) {
+        background = UiTheme.DIAGNOSTIC_WARNING_BACKGROUND;
+      }
+    }
+    if (background == null) {
+      return character;
+    }
+    var attributes = character.getFragments().get(0).getAttributes();
+    return AttributedString.create(character.toString(), attributes.foregroundColour(), background);
+  }
+
+  private void handleMouseAction(MouseAction action) {
+    var window = Window.getInstance();
+    if (window == null) {
+      return;
+    }
+    if (action.getActionType() != MouseActionType.MOVE
+        && action.getActionType() != MouseActionType.DRAG
+        && action.getActionType() != MouseActionType.CLICK_DOWN
+        && action.getActionType() != MouseActionType.CLICK_RELEASE
+        && action.getActionType() != MouseActionType.SCROLL_UP
+        && action.getActionType() != MouseActionType.SCROLL_DOWN) {
+      return;
+    }
+    Point origin = absoluteOrigin();
+    int localX = action.getPosition().getColumn() - origin.getX();
+    int localY = action.getPosition().getRow() - origin.getY();
+    int textStart = getTextColumnStart();
+    if (localX < 0
+        || localY < 0
+        || localX >= getBounds().getSize().getWidth()
+        || localY >= getBounds().getSize().getHeight()) {
+      if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+        _mouseSelectionAnchorPosition = null;
+      }
+      window.hideHoverDiagnostics();
+      return;
+    }
+    if (action.getActionType() == MouseActionType.SCROLL_UP) {
+      window.allowEditorDriveAction("scroll buffer");
+      window.hideHoverDiagnostics();
+      scrollUp();
+      return;
+    }
+    if (action.getActionType() == MouseActionType.SCROLL_DOWN) {
+      window.allowEditorDriveAction("scroll buffer");
+      window.hideHoverDiagnostics();
+      scrollDown();
+      return;
+    }
+    if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+      window.activateView(this);
+    }
+    var visibleLines = _bufferContext.getTextLayout().getVisibleLogicalLines();
+    if (localY < 0 || localY >= visibleLines.size()) {
+      if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+        _mouseSelectionAnchorPosition = null;
+      }
+      window.hideHoverDiagnostics();
+      return;
+    }
+    var wrappedLine = visibleLines.get(localY);
+    int sourceLine =
+        _bufferContext.getTextLayout().getPhysicalLineAt(wrappedLine.getStartPosition()).getY();
+    if (action.getActionType() == MouseActionType.MOVE) {
+      window.updateHoveredDiagnostics(
+          _bufferContext,
+          sourceLine,
+          Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+      return;
+    }
+    if (action.getActionType() != MouseActionType.CLICK_RELEASE) {
+      window.hideHoverDiagnostics();
+    }
+    int textX = localX - textStart;
+    boolean insideTextColumns = textX >= 0 && textX < getTextWidth();
+    if (!insideTextColumns && action.getActionType() == MouseActionType.CLICK_DOWN) {
+      return;
+    }
+    if (!insideTextColumns && _mouseSelectionAnchorPosition == null) {
+      if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+        showDiagnosticsAtMouse(window, sourceLine, action);
+      }
+      return;
+    }
+    textX = Math.max(0, Math.min(textX, getTextWidth()));
+    int mousePosition = positionForMouse(wrappedLine, textX);
+    if (action.getActionType() == MouseActionType.CLICK_DOWN) {
+      window.allowEditorDriveAction("mouse cursor");
+      beginMouseSelection(window, mousePosition);
+    } else {
+      if (action.getActionType() == MouseActionType.DRAG) {
+        window.allowEditorDriveAction("mouse visual selection");
+        updateVisualSelectionForDrag(window, mousePosition);
+      } else {
+        if (action.getActionType() == MouseActionType.CLICK_RELEASE) {
+          Integer anchor = _mouseSelectionAnchorPosition;
+          window.allowEditorDriveAction("mouse visual selection");
+          updateVisualSelectionForRelease(window, mousePosition);
+          if (anchor == null || anchor == mousePosition) {
+            showDiagnosticsAtMouse(window, sourceLine, action);
+          } else {
+            window.hideHoverDiagnostics();
+          }
+        }
+      }
+    }
+  }
+
+  private void showDiagnosticsAtMouse(Window window, int sourceLine, MouseAction action) {
+    window.updateHoveredDiagnostics(
+        _bufferContext,
+        sourceLine,
+        Point.create(action.getPosition().getColumn(), action.getPosition().getRow()));
+  }
+
+  private void beginMouseSelection(Window window, int position) {
+    _mouseSelectionAnchorPosition = position;
+    if (window.getCurrentMode() == window.getVisualMode()) {
+      var cursors = _bufferContext.getBuffer().getCursors();
+      if (cursors.size() > 1) {
+        cursors.get(1).setPosition(position);
+      }
+    }
+    moveCursorToClick(position);
+  }
+
+  private void moveCursorToClick(int position) {
+    setCursorPositionForMouse(position);
+  }
+
+  private void updateVisualSelectionForDrag(Window window, int position) {
+    if (_mouseSelectionAnchorPosition == null) {
+      return;
+    }
+    startOrUpdateVisualSelection(window, position);
+  }
+
+  private void updateVisualSelectionForRelease(Window window, int position) {
+    Integer anchor = _mouseSelectionAnchorPosition;
+    _mouseSelectionAnchorPosition = null;
+    if (anchor == null || anchor == position) {
+      return;
+    }
+    startOrUpdateVisualSelection(window, position);
+  }
+
+  private void startOrUpdateVisualSelection(Window window, int position) {
+    if (window.getCurrentMode() == window.getNormalMode()) {
+      window.switchToMode(window.getVisualMode());
+    }
+    if (window.getCurrentMode() != window.getVisualMode()) {
+      return;
+    }
+    setCursorPositionForMouse(position);
+  }
+
+  private void setCursorPositionForMouse(int position) {
+    _bufferContext.getBuffer().getCursor().setPosition(position);
+    adaptViewToCursor();
+    setNeedsRedraw();
+  }
+
+  private int positionForMouse(org.fisk.swim.text.TextLayout.Line line, int textX) {
+    int position = line.getStartPosition();
+    for (var glyph : line.getGlyphs()) {
+      if (glyph.isSynthetic()) {
+        continue;
+      }
+      if (textX <= glyph.getX()) {
+        return Math.max(0, glyph.getPosition());
+      }
+      position = glyph.getPosition() + 1;
+    }
+    return Math.max(0, Math.min(position, _bufferContext.getBuffer().getLength()));
+  }
+
+  private Point absoluteOrigin() {
+    int x = getBounds().getPoint().getX();
+    int y = getBounds().getPoint().getY();
+    for (var parent = getParent(); parent != null; parent = parent.getParent()) {
+      x += parent.getBounds().getPoint().getX();
+      y += parent.getBounds().getPoint().getY();
+    }
+    return Point.create(x, y);
+  }
+
+  private int maxStartLine(org.fisk.swim.text.TextLayout textLayout) {
+    // Permit the viewport to travel beyond the final screenful, leaving
+    // blank rows below EOF, but stop once the final logical line reaches
+    // the top row.  This keeps a growing file comfortably scrollable
+    // without allowing an unbounded empty viewport.
+    return Math.max(0, textLayout.getLogicalLineCount() - 1);
+  }
+
+  private int getScrollbarWidth() {
+    return decorationsEnabled() ? 1 : 0;
+  }
+
+  private int getLineNumberGutterWidth() {
+    int totalWidth = getBounds().getSize().getWidth();
+    if (!decorationsEnabled()) {
+      return 0;
+    }
+    int scrollbarWidth = getScrollbarWidth();
+    int maxGutterWidth = Math.max(0, totalWidth - scrollbarWidth - 1);
+    if (maxGutterWidth <= 0) {
+      return 0;
+    }
+    return Math.min(requestedLineNumberGutterWidth(), maxGutterWidth);
+  }
+
+  private int requestedLineNumberGutterWidth() {
+    var textLayout = _bufferContext.getTextLayout();
+    int lineCount;
+    if (textLayout != null) {
+      lineCount = textLayout.getPhysicalLineCount();
+    } else {
+      lineCount = countPhysicalLines(_bufferContext.getBuffer().getString());
+    }
+    int lineNumberWidth = digitCount(Math.max(1, lineCount)) + 1;
+    return lineNumberWidth + (isGitBlameEnabled() ? blameGutterWidth() + 1 : 0);
+  }
+
+  private void drawLineNumberGutter(
+      Rect rect,
+      org.fisk.swim.terminal.TerminalGraphics graphics,
+      org.fisk.swim.text.TextLayout textLayout,
+      java.util.List<org.fisk.swim.text.TextLayout.Line> visibleLines) {
+    int gutterWidth = getLineNumberGutterWidth();
+    if (gutterWidth <= 0) {
+      return;
+    }
+    int currentPhysicalLine = _bufferContext.getBuffer().getCursor().getPhysicalLine().getY();
+    for (int row = 0; row < visibleLines.size(); row++) {
+      var line = visibleLines.get(row);
+      var physicalLine = textLayout.getPhysicalLineAt(line.getStartPosition());
+      boolean firstSegment = line.getStartPosition() == physicalLine.getStartPosition();
+      TextColor foreground = lineNumberForeground(physicalLine.getY(), currentPhysicalLine);
+      AttributedString gutter =
+          createLineNumberString(
+              firstSegment ? physicalLine.getY() + 1 : null,
+              physicalLine.getY(),
+              gutterWidth,
+              foreground);
+      gutter.drawAt(Point.create(rect.getPoint().getX(), rect.getPoint().getY() + row), graphics);
+    }
+  }
+
+  private AttributedString createLineNumberString(
+      Integer lineNumber, int physicalLine, int gutterWidth, TextColor foreground) {
+    var gutter = new AttributedString();
+    if (gutterWidth <= 0) {
+      return gutter;
+    }
+    if (gutterWidth == 1) {
+      gutter.append(
+          lineNumber == null
+              ? " "
+              : Integer.toString(lineNumber).substring(Integer.toString(lineNumber).length() - 1),
+          foreground,
+          UiTheme.SURFACE_MUTED);
+      return gutter;
+    }
+    int blameWidth =
+        isGitBlameEnabled() ? Math.min(blameGutterWidth(), Math.max(0, gutterWidth - 2)) : 0;
+    if (blameWidth > 0) {
+      String blame =
+          physicalLine < _blameAnnotations.size()
+              ? _blameAnnotations.get(physicalLine)
+              : "Loading…";
+      if (blame.length() > blameWidth) {
+        blame = blame.substring(0, blameWidth);
+      }
+      gutter.append(
+          blame + " ".repeat(Math.max(0, blameWidth - blame.length())),
+          UiTheme.TEXT_SUBTLE,
+          UiTheme.SURFACE_MUTED);
+      gutter.append(" ", UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
+    }
+    int numberWidth = gutterWidth - blameWidth - 1;
+    String number = lineNumber == null ? "" : Integer.toString(lineNumber);
+    if (number.length() > numberWidth) {
+      number = number.substring(number.length() - numberWidth);
+    }
+    String padded = " ".repeat(Math.max(0, numberWidth - number.length())) + number;
+    gutter.append(padded, foreground, UiTheme.SURFACE_MUTED);
+    gutter.append(GUTTER_SEPARATOR, UiTheme.TEXT_SUBTLE, UiTheme.SURFACE_MUTED);
+    return gutter;
+  }
+
+  private int blameGutterWidth() {
+    int width = 12;
+    for (String annotation : _blameAnnotations) {
+      width = Math.max(width, annotation == null ? 0 : annotation.length());
+    }
+    return Math.min(MAX_BLAME_WIDTH, width);
+  }
+
+  private void drawScrollbar(
+      Rect rect,
+      org.fisk.swim.terminal.TerminalGraphics graphics,
+      org.fisk.swim.text.TextLayout textLayout) {
+    int scrollbarWidth = getScrollbarWidth();
+    if (scrollbarWidth <= 0) {
+      return;
+    }
+    int height = getViewportHeight();
+    int totalLines = Math.max(1, textLayout.getLogicalLineCount());
+    int visibleLines = Math.min(height, totalLines);
+    int thumbHeight =
+        totalLines <= height
+            ? height
+            : Math.max(1, (int) Math.round((visibleLines * (double) height) / totalLines));
+    int maxStart = maxStartLine(textLayout);
+    int thumbStart =
+        maxStart == 0
+            ? 0
+            : (int)
+                Math.round((_startLine * (double) Math.max(0, height - thumbHeight)) / maxStart);
+    int x = rect.getPoint().getX() + getTextColumnStart() + getTextWidth();
+    for (int row = 0; row < height; row++) {
+      boolean thumb = row >= thumbStart && row < thumbStart + thumbHeight;
+      AttributedString column =
+          AttributedString.create(
+              thumb ? SCROLLBAR_THUMB : SCROLLBAR_TRACK,
+              thumb ? UiTheme.ACCENT_BLUE : UiTheme.TEXT_SUBTLE,
+              UiTheme.SURFACE_MUTED);
+      column.drawAt(Point.create(x, rect.getPoint().getY() + row), graphics);
+    }
+  }
+
+  private static int digitCount(int value) {
+    return Integer.toString(Math.max(1, value)).length();
+  }
+
+  private boolean decorationsEnabled() {
+    return getBounds().getSize().getWidth() >= MIN_DECORATED_WIDTH;
+  }
+
+  private TextColor lineNumberForeground(int physicalLine, int currentPhysicalLine) {
+    var severity = DiagnosticService.getInstance().lineSeverity(_bufferContext, physicalLine);
+    if (DiagnosticSeverity.Error.equals(severity)) {
+      return UiTheme.DIAGNOSTIC_ERROR_FOREGROUND;
+    }
+    if (DiagnosticSeverity.Warning.equals(severity)) {
+      return UiTheme.DIAGNOSTIC_WARNING_FOREGROUND;
+    }
+    return currentPhysicalLine == physicalLine ? UiTheme.TEXT_PRIMARY : UiTheme.TEXT_MUTED;
+  }
+
+  private static int countPhysicalLines(String text) {
+    if (text == null || text.isEmpty()) {
+      return 1;
+    }
+    int lines = 1;
+    for (int index = 0; index < text.length(); index++) {
+      if (text.charAt(index) == '\n') {
+        lines++;
+      }
+    }
+    return lines;
+  }
+
+  private static String stripTrailingSpaces(String text) {
+    int end = text.length();
+    while (end > 0 && text.charAt(end - 1) == ' ') {
+      end--;
+    }
+    return text.substring(0, end);
+  }
 }

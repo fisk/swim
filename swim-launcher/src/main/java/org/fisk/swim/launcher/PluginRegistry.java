@@ -502,27 +502,47 @@ final class PluginRegistry implements Main.PluginController {
         private volatile boolean _closed;
 
         @Override public Thread start(Runnable task) {
-            if (_closed) throw new IllegalStateException("Plugin has been unloaded");
-            Thread thread = new Thread(() -> { try { task.run(); } finally { _threads.remove(Thread.currentThread()); } });
+            if (_closed) {
+                throw new IllegalStateException("Plugin has been unloaded");
+            }
+            Thread thread = new Thread(() -> {
+                try {
+                    task.run();
+                } finally {
+                    _threads.remove(Thread.currentThread());
+                }
+            });
             thread.setDaemon(true);
             _threads.add(thread);
             thread.start();
             return thread;
         }
-        @Override public boolean isClosed() { return _closed; }
+        @Override public boolean isClosed() {
+            return _closed;
+        }
         @Override public void close() {
             _closed = true;
             var workers = List.copyOf(_threads);
-            for (Thread thread : workers) thread.interrupt();
+            for (Thread thread : workers) {
+                thread.interrupt();
+            }
             long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(JOIN_MILLIS);
             for (Thread thread : workers) {
                 long remaining = deadline - System.nanoTime();
-                if (remaining <= 0) break;
-                try { thread.join(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining)); }
-                catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+                if (remaining <= 0) {
+                    break;
+                }
+                try {
+                    thread.join(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(remaining));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
             _threads.removeIf(thread -> !thread.isAlive());
-            if (!_threads.isEmpty()) throw new IllegalStateException("Plugin worker did not stop: " + _threads.iterator().next());
+            if (!_threads.isEmpty()) {
+                throw new IllegalStateException("Plugin worker did not stop: " + _threads.iterator().next());
+            }
         }
     }
 
@@ -694,7 +714,9 @@ final class PluginRegistry implements Main.PluginController {
                 plugin.close();
             } finally {
                 try {
-                    if (_context != null) _context.closeWorkers();
+                    if (_context != null) {
+                        _context.closeWorkers();
+                    }
                 } finally {
                     _context = null;
                     SwimNemoToolRegistry.unregisterPlugin(_id);

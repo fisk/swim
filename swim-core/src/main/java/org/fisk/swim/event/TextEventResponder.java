@@ -125,10 +125,10 @@ public class TextEventResponder implements EventResponder, KeyBindingHintProvide
         }
     }
 
-	@Override
-	public void respond() {
+    @Override
+    public void respond() {
       _action.run();
-	}
+    }
 
     @Override
     public List<KeyBindingHint> keyBindingHints() {

@@ -70,7 +70,9 @@ public final class LanguagePluginRegistry {
             return null;
         }
         Registration extensionRegistration = REGISTRATIONS.get(normalizeExtension(fileName.substring(index + 1)));
-        if (extensionRegistration != null) return extensionRegistration;
+        if (extensionRegistration != null) {
+            return extensionRegistration;
+        }
         for (PathRegistration registration : PATH_REGISTRATIONS) {
             if (registration.matcher().test(path)) {
                 return new Registration("", registration.pluginId(), registration.factory());
@@ -81,12 +83,18 @@ public final class LanguagePluginRegistry {
 
     /** Applies lexical plugin colouring to standalone text, without a buffer or LSP document. */
     public static boolean applySnippetColouring(String language, AttributedString text) {
-        if (language == null || language.isBlank() || text == null) return false;
+        if (language == null || language.isBlank() || text == null) {
+            return false;
+        }
         String extension = normalizeSnippetLanguage(language);
         Registration registration = REGISTRATIONS.get(extension);
-        if (registration == null) return false;
+        if (registration == null) {
+            return false;
+        }
         LanguageMode mode = registration.factory().create(Path.of("snippet." + registration.extension()));
-        if (mode == null) return false;
+        if (mode == null) {
+            return false;
+        }
         mode.applyColouring(null, text);
         return true;
     }

@@ -10,7 +10,7 @@ import org.fisk.swim.ui.UiTheme;
 import org.fisk.swim.ui.Window;
 
 import org.fisk.swim.terminal.TextColor;
-import org.fisk.swim.event.KeyType;
+
 
 public class FancyJumpResponder implements EventResponder, KeyBindingHintProvider {
     private static final String HINT_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";

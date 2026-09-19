@@ -8,7 +8,7 @@ import org.fisk.swim.ui.Window;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import org.fisk.swim.event.KeyType;
+
 
 public class FindResponder implements EventResponder, KeyBindingHintProvider {
     private static final Logger _log = LogFactory.createLog();
@@ -21,7 +21,9 @@ public class FindResponder implements EventResponder, KeyBindingHintProvider {
 
     public FindResponder(BufferContext context, String prefix, boolean forward) {
         _context = context;
-        _prefix = new MotionResponder(prefix, (int count) -> { _count = count;});
+        _prefix = new MotionResponder(prefix, (int count) -> {
+            _count = count;
+        });
         _forward = forward;
     }
 

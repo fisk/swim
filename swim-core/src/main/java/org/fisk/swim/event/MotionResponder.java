@@ -5,7 +5,7 @@ import java.util.List;
 import org.fisk.swim.utils.LogFactory;
 import org.slf4j.Logger;
 
-import org.fisk.swim.event.KeyType;
+
 
 public class MotionResponder implements EventResponder, KeyBindingHintProvider {
     private static final Logger _log = LogFactory.createLog();

@@ -399,7 +399,9 @@ public class Main implements SwimHost {
         try {
             Path javaHome = Path.of(Files.readString(buildRoot.resolve("image").resolve("build-java-home")).trim());
             Path javaBin = javaHome.resolve("bin");
-            if (!Files.isExecutable(javaBin.resolve("javac"))) return;
+            if (!Files.isExecutable(javaBin.resolve("javac"))) {
+                return;
+            }
             var environment = processBuilder.environment();
             environment.put("JAVA_HOME", javaHome.toString());
             environment.put("PATH", javaBin + System.getProperty("path.separator") + environment.getOrDefault("PATH", ""));

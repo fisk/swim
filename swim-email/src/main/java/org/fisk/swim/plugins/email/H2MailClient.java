@@ -298,7 +298,11 @@ final class H2MailClient implements MailClient {
         Thread backfill = _backfillThread;
         if (backfill != null) {
             backfill.interrupt();
-            try { backfill.join(2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try {
+                backfill.join(2_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
         synchronized (_writeLock) {
             try {

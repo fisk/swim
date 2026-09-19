@@ -3,7 +3,7 @@ package org.fisk.swim.event;
 import java.util.Iterator;
 import java.util.List;
 
-import org.fisk.swim.event.KeyStroke;
+
 
 public class KeyStrokes implements Iterator<KeyStroke>, Iterable<KeyStroke> {
     private List<KeyStroke> _events;

@@ -182,7 +182,9 @@ public class ModeLineView extends View {
     private void refreshClientHeapUsage() {
         try {
             var usage = SwimServerSessions.clientHeapUsage().orElse(null);
-            if (usage == null) return;
+            if (usage == null) {
+              return;
+            }
             _clientHeapUsage = new MemoryUsage(0, usage.usedBytes(), usage.committedBytes(), usage.committedBytes());
         } catch (IOException | RuntimeException ignored) {
             _clientHeapUsage = null;
@@ -376,8 +378,12 @@ public class ModeLineView extends View {
     }
 
     private static TextColor diagnosticBackground(DiagnosticCounts counts, TextColor fallback) {
-        if (counts != null && counts.errors() > 0) return UiTheme.ACCENT_RED;
-        if (counts != null && counts.warnings() > 0) return UiTheme.ACCENT_GOLD;
+        if (counts != null && counts.errors() > 0) {
+          return UiTheme.ACCENT_RED;
+        }
+        if (counts != null && counts.warnings() > 0) {
+          return UiTheme.ACCENT_GOLD;
+        }
         return fallback;
     }
 

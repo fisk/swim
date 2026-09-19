@@ -169,7 +169,9 @@ public final class DebuggerPanelView extends View {
 
     private void promptForDebuggerCommand() {
         var window = org.fisk.swim.ui.Window.getInstance();
-        if (window == null) return;
+        if (window == null) {
+            return;
+        }
         window.showBottomInputPrompt("Debugger", "command", "", command -> {
             try {
                 String result = DebuggerManager.executeCommand(command);

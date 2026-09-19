@@ -68,7 +68,9 @@ final class JfrMetrics {
                 }
             }
         }
-        if (start == null) return new Recording(null, null, List.of());
+        if (start == null) {
+            return new Recording(null, null, List.of());
+        }
         var samples = new ArrayList<Sample>(updates.size());
         double latestCpu = Double.NaN, systemCpu = Double.NaN;
         long memoryUsed = -1, memoryTotal = -1;

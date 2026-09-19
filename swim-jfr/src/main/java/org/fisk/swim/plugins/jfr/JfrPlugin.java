@@ -10,8 +10,15 @@ public final class JfrPlugin implements SwimPlugin {
     static final String PLUGIN_ID = "swim-jfr";
     private SwimHost host;
 
-    @Override public String getId() { return PLUGIN_ID; }
-    @Override public boolean loadOnStartup() { return false; }
+    @Override
+    public String getId() {
+        return PLUGIN_ID;
+    }
+
+    @Override
+    public boolean loadOnStartup() {
+        return false;
+    }
 
     @Override
     public void preload(SwimPluginPreloadContext context) {
@@ -27,7 +34,9 @@ public final class JfrPlugin implements SwimPlugin {
 
     @Override
     public void close() {
-        if (host != null) host.unregisterPanel(getId());
+        if (host != null) {
+            host.unregisterPanel(getId());
+        }
         host = null;
     }
 }

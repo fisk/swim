@@ -1,8 +1,8 @@
 package org.fisk.swim.mail;
 
 import org.fisk.swim.SwimRuntime;
-import org.fisk.swim.ui.MailPanelView;
-import org.fisk.swim.ui.Rect;
+
+
 import org.fisk.swim.ui.Window;
 
 public final class MailUiSupport {

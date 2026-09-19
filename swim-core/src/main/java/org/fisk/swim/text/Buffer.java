@@ -1749,9 +1749,13 @@ public class Buffer {
             int found = 0;
             while (matcher.find()) {
                 found++;
-                if (!global) break;
+                if (!global) {
+                  break;
+                }
             }
-            if (found == 0) continue;
+            if (found == 0) {
+              continue;
+            }
             String replaced = global ? pattern.matcher(source).replaceAll(replacement)
                     : pattern.matcher(source).replaceFirst(replacement);
             _undoLog.recordRemove(start, end);
@@ -2323,7 +2327,9 @@ public class Buffer {
      * The expected version prevents a delayed analysis result from colouring newer buffer contents.
      */
     public boolean setSyntaxFormatOverlays(int expectedVersion, List<AttributedString.FormatRange> overlays) {
-        if (_version != expectedVersion) return false;
+        if (_version != expectedVersion) {
+          return false;
+        }
         _syntaxFormatOverlays = overlays == null ? List.of() : List.copyOf(overlays);
         if (_attributedStringCache != null && _attributedStringCacheVersion == expectedVersion) {
             // Parser work arrives concurrently.  Do not blank the known prior
@@ -2380,7 +2386,9 @@ public class Buffer {
             int separator = ours < 0 ? -1 : text.indexOf("=======", ours);
             int theirs = separator < 0 ? -1 : text.indexOf('\n', separator);
             int end = theirs < 0 ? -1 : text.indexOf(">>>>>>>", theirs);
-            if (ours < 0 || separator < 0 || theirs < 0 || end < 0) break;
+            if (ours < 0 || separator < 0 || theirs < 0 || end < 0) {
+              break;
+            }
             ranges.add(new AttributedString.FormatRange(ours + 1, separator, UiTheme.TEXT_PRIMARY,
                     UiTheme.DIFF_ADDED_BACKGROUND));
             ranges.add(new AttributedString.FormatRange(theirs + 1, end, UiTheme.TEXT_PRIMARY,

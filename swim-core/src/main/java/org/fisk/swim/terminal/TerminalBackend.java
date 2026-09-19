@@ -34,5 +34,7 @@ public interface TerminalBackend extends AutoCloseable {
     default void setCursorShape(TerminalCursorShape shape) { }
 
     @Override
-    default void close() throws IOException { stop(); }
+    default void close() throws IOException {
+        stop();
+    }
 }

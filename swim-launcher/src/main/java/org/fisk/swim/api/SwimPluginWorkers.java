@@ -17,8 +17,11 @@ public interface SwimPluginWorkers extends AutoCloseable {
                 thread.start();
                 return thread;
             }
-            @Override public boolean isClosed() { return false; }
-            @Override public void close() { }
+            @Override public boolean isClosed() {
+                return false;
+            }
+            @Override public void close() {
+            }
         };
     }
 }
