@@ -3317,7 +3317,8 @@ public class Window implements Drawable {
             return !_workspaceHistory.isEmpty();
         }
         if (session.openBuffers().isEmpty()) {
-            return false;
+            restoreNemoOverlay(session);
+            return _panelView instanceof ChatPanelView;
         }
         String active = session.activeBuffer();
         if (active != null && !active.isBlank()) {
@@ -3343,7 +3344,15 @@ public class Window implements Drawable {
                 hibernateCleanBuffers(workspace);
             }
         }
+        restoreNemoOverlay(session);
         return !session.openBuffers().isEmpty();
+    }
+
+    private void restoreNemoOverlay(EditorSession session) {
+        if (session.nemoOverlayConversationId() != null) {
+            org.fisk.swim.nemo.NemoClient.getInstance()
+                    .restoreOverlayConversation(session.nemoOverlayConversationId(), getNemoRequestContext(), this);
+        }
     }
 
     private EditorSession createSession() {
@@ -3474,10 +3483,7 @@ public class Window implements Drawable {
             }
         }
         activateWorkspace(_workspaceHistory.get(index));
-        if (session.nemoOverlayConversationId() != null) {
-            org.fisk.swim.nemo.NemoClient.getInstance()
-                    .restoreOverlayConversation(session.nemoOverlayConversationId(), getNemoRequestContext(), this);
-        }
+        restoreNemoOverlay(session);
     }
 
     private WorkspaceState restoreWorkspace(SessionWorkspace workspace) {

@@ -249,6 +249,44 @@ class NemoChatIT {
     }
 
     @Test
+    void reloadRestoresTheExactOverlayWhenNoWorkspaceWasSerializable() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        String restoreProperty = "swim.session.restore_on_reload";
+        String previousRestore = System.getProperty(restoreProperty);
+        org.fisk.swim.terminal.TerminalContextTestSupport.install(80, 20);
+        try {
+            System.clearProperty(restoreProperty);
+            Path file = writeFile("overlay-only-reload.txt", "overlay sentinel\n");
+            org.fisk.swim.ui.Window.createInstance(file);
+            var window = org.fisk.swim.ui.Window.getInstance();
+            NemoClient nemo = NemoClient.getInstance();
+            nemo.run(window.getBufferContext(), "");
+            String overlayId = nemo.conversationIdForPanel(
+                    assertInstanceOf(ChatPanelView.class, window.getPanelView()));
+            nemo.checkpointForReload();
+            org.fisk.swim.config.EditorConfigStore.saveSession(org.fisk.swim.config.EditorPaths.fromUserHome(),
+                    new org.fisk.swim.config.EditorSession(List.of(), null, List.of(), 0, overlayId));
+            window.dispose();
+            nemo.resetForTests();
+
+            System.setProperty(restoreProperty, "true");
+            org.fisk.swim.ui.Window.createInstance(file);
+            window = org.fisk.swim.ui.Window.getInstance();
+
+            assertEquals(overlayId, nemo.conversationIdForPanel(
+                    assertInstanceOf(ChatPanelView.class, window.getPanelView())));
+        } finally {
+            System.clearProperty(restoreProperty);
+            if (org.fisk.swim.ui.Window.getInstance() != null) {
+                org.fisk.swim.ui.Window.getInstance().dispose();
+            }
+            org.fisk.swim.terminal.TerminalContext.shutdownInstance();
+            if (previousRestore != null) System.setProperty(restoreProperty, previousRestore);
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     @Timeout(15)
     void goalCommandPersistsAndAddsTheObjectiveToEveryRequest() throws Exception {
         var requestCount = new AtomicInteger();

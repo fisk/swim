@@ -2,6 +2,7 @@ package org.fisk.swim.plugins.jfrmetrics;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,5 +48,20 @@ final class JfrMetrics {
             samples.add(new Sample(time, latestCpu, latestHeap[0], latestHeap[1]));
         }
         return new Recording(start, end, List.copyOf(samples));
+    }
+
+    /** Limits a live recording to the most recent interval without changing file-backed recordings. */
+    static Recording mostRecent(Recording recording, Duration duration) {
+        if (recording == null || recording.end() == null || duration == null || duration.isNegative() || duration.isZero()) {
+            return recording;
+        }
+        Instant start = recording.end().minus(duration);
+        if (recording.start() != null && recording.start().isAfter(start)) {
+            start = recording.start();
+        }
+        Instant cutoff = start;
+        return new Recording(start, recording.end(), recording.samples().stream()
+                .filter(sample -> !sample.time().isBefore(cutoff))
+                .toList());
     }
 }
