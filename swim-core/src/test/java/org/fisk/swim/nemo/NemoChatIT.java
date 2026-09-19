@@ -90,8 +90,10 @@ class NemoChatIT {
     @Test
     void nemoWorkspaceStartsFreshConversationInsteadOfReusingOverlayConversation() throws Exception {
         String originalUserHome = switchToTempUserHome();
+        Files.createDirectories(tempDir.resolve(".git"));
         try (var harness = HeadlessWindowHarness.create(writeFile("workspace-session.txt", "class Demo {}\n"), 80, 16)) {
             var window = harness.getWindow();
+            var context = window.getBufferContext();
 
             NemoClient.getInstance().run(window.getBufferContext(), "");
             var overlay = assertInstanceOf(ChatPanelView.class, window.getPanelView());
@@ -101,6 +103,23 @@ class NemoChatIT {
 
             assertNotSame(overlay, workspace);
             assertFalse(window.isShowingPanel());
+
+            NemoClient.getInstance().run(context, "");
+            assertSame(overlay, window.getPanelView());
+            window.hidePanel();
+            window.switchToWorkspaceIndex(0);
+            NemoClient.getInstance().run(window.getBufferContext(), "");
+            assertSame(overlay, window.getPanelView());
+
+            String overlayId = NemoClient.getInstance().conversationIdForPanel(overlay);
+            window.hidePanel();
+            NemoClient.getInstance().runWorkspace(window.getBufferContext(), "");
+            NemoClient.getInstance().checkpointForReload();
+            NemoClient.getInstance().resetForTests();
+            window.switchToWorkspaceIndex(0);
+            NemoClient.getInstance().run(window.getBufferContext(), "");
+            assertEquals(overlayId, NemoClient.getInstance().conversationIdForPanel(
+                    assertInstanceOf(ChatPanelView.class, window.getPanelView())));
         } finally {
             System.setProperty("user.home", originalUserHome);
         }

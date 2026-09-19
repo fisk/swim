@@ -138,6 +138,7 @@ public class NemoClient {
     private final java.util.Set<String> _loadedConversationIds = new HashSet<>();
     private final Map<String, DailyTokenUsage> _dailyTokenUsage = new LinkedHashMap<>();
     private final Map<String, String> _workspaceSessionIds = new LinkedHashMap<>();
+    private final Map<String, String> _overlaySessionIds = new LinkedHashMap<>();
     private final Map<String, PendingApproval> _pendingApprovals = new LinkedHashMap<>();
     private final Map<String, AsyncShell> _asyncShells = new LinkedHashMap<>();
     private final NemoLspAnalysisLeaseManager _lspAnalysisLeases = new NemoLspAnalysisLeaseManager();
@@ -190,6 +191,7 @@ public class NemoClient {
         _loadedConversationIds.clear();
         _dailyTokenUsage.clear();
         _workspaceSessionIds.clear();
+        _overlaySessionIds.clear();
         _pendingApprovals.clear();
         stopAsyncShellsForTests();
         _asyncShells.clear();
@@ -5313,6 +5315,7 @@ public class NemoClient {
         }
 
         _sessionsLoaded = true;
+        _overlaySessionIds.clear();
         _conversations.clear();
         _loadedConversationIds.clear();
         _dailyTokenUsage.clear();
@@ -5335,6 +5338,12 @@ public class NemoClient {
             }
 
             JsonObject workspaceSessions = root.getAsJsonObject("workspace_sessions");
+            JsonObject overlaySessions = root.getAsJsonObject("overlay_sessions");
+            if (overlaySessions != null) {
+                for (String key : overlaySessions.keySet()) {
+                    _overlaySessionIds.put(key, overlaySessions.get(key).getAsString());
+                }
+            }
             if (workspaceSessions != null) {
                 for (String key : workspaceSessions.keySet()) {
                     _workspaceSessionIds.put(key, workspaceSessions.get(key).getAsString());
@@ -5408,12 +5417,14 @@ public class NemoClient {
                 _activeSessionId = null;
             }
             _workspaceSessionIds.entrySet().removeIf(entry -> !_conversations.containsKey(entry.getValue()));
+            _overlaySessionIds.entrySet().removeIf(entry -> !_conversations.containsKey(entry.getValue()));
         } catch (Exception e) {
             _log.error("Unable to load Nemo sessions from {}", statePath, e);
             _conversations.clear();
             _loadedConversationIds.clear();
             _dailyTokenUsage.clear();
             _workspaceSessionIds.clear();
+            _overlaySessionIds.clear();
             _activeSessionId = null;
             _nextSessionNumber = 1;
         }
@@ -5433,6 +5444,13 @@ public class NemoClient {
             }
         }
         root.add("workspace_sessions", workspaceSessions);
+        var overlaySessions = new JsonObject();
+        for (var entry : _overlaySessionIds.entrySet()) {
+            if (_conversations.containsKey(entry.getValue())) {
+                overlaySessions.addProperty(entry.getKey(), entry.getValue());
+            }
+        }
+        root.add("overlay_sessions", overlaySessions);
 
         var dailyTokenUsage = new JsonObject();
         for (var entry : _dailyTokenUsage.entrySet()) {
@@ -5965,6 +5983,15 @@ public class NemoClient {
             showConversationWorkspace(conversation);
             return conversation;
         }
+        if (!workspaceMode) {
+            Conversation overlay = _conversations.get(_overlaySessionIds.get(workspaceRoot.toString()));
+            if (overlay == null) {
+                overlay = createConversation(workspaceRoot, "");
+            }
+            bindConversation(overlay, context, configuration);
+            showConversation(overlay);
+            return overlay;
+        }
         Conversation conversation = currentVisibleConversation();
         if (conversation != null && conversation._workspaceRoot.equals(workspaceRoot)) {
             bindConversation(conversation, context, configuration);
@@ -6053,6 +6080,7 @@ public class NemoClient {
             throw new IllegalStateException("No active window");
         }
 
+        _overlaySessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
         if (isPanelVisible(conversation)) {
             _activeSessionId = conversation._id;
             _workspaceSessionIds.put(conversation._workspaceRoot.toString(), conversation._id);
@@ -7124,6 +7152,7 @@ public class NemoClient {
         stopWorker(target);
         _conversations.remove(target._id);
         _workspaceSessionIds.entrySet().removeIf(entry -> target._id.equals(entry.getValue()));
+        _overlaySessionIds.entrySet().removeIf(entry -> target._id.equals(entry.getValue()));
         if (target._id.equals(_activeSessionId)) {
             _activeSessionId = null;
         }
