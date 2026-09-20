@@ -1293,6 +1293,33 @@ public class Window implements Drawable {
     }
   }
 
+  /** Opens the newest launcher-created GC log as a live read-only buffer. */
+  public boolean showGcLog() {
+    Path log = gcLogPath();
+    if (log == null || !setBufferPath(log)) {
+      return false;
+    }
+    getBufferContext().getBuffer().setReadOnly(true);
+    return true;
+  }
+
+  /** Returns the absolute path selected by :gclog, or null when unavailable. */
+  public Path gcLogPath() {
+    if (blockEditorDriveAction("GC log path", "SWIM logs are outside the editor-control sandbox")) {
+      return null;
+    }
+    Path log = null;
+    try (var files = Files.list(Path.of(System.getProperty("user.home"), ".swim", "logs"))) {
+      log = files.filter(path -> path.getFileName().toString().startsWith("gclog-")
+              && path.getFileName().toString().endsWith(".log"))
+          .filter(Files::isRegularFile)
+          .max(Comparator.comparingLong(path -> path.toFile().lastModified()))
+          .orElse(null);
+    } catch (IOException ignored) {
+    }
+    return log == null ? null : log.toAbsolutePath().normalize();
+  }
+
   /** Hides the modal compilation buffer without interrupting its process. */
   public boolean hideCompilationOutput() {
     if (_compileOutputContext == null

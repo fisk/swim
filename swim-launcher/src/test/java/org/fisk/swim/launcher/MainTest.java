@@ -283,6 +283,7 @@ class MainTest {
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
         assertTrue(content.contains("private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = \"--illegal-final-field-mutation=allow\""));
+        assertTrue(content.contains("private static final String GC_LOG_OPTION = \"-Xlog:gc*:file=%s:time,uptime,level,tags:filesize=10M,filecount=2\""));
         assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"-XX:+UseStringDeduplication\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
         assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final Path EMBEDDED_JAVA = Path.of(\"" + embeddedJava + "\")"));
@@ -290,6 +291,8 @@ class MainTest {
         assertTrue(content.contains("Runtime.version().feature() >= 26"));
         assertTrue(content.contains("options.add(FINAL_FIELD_MUTATION_OPTION)"));
         assertTrue(content.contains("options.add(ILLEGAL_FINAL_FIELD_MUTATION_OPTION)"));
+        assertTrue(content.contains("command.add(gcLogOption())"));
+        assertTrue(content.contains("Files.createDirectories(directory)"));
         assertTrue(content.contains("private static final String MAGIC = \"SWIM_SESSION_6\""));
         assertTrue(content.contains("clientWorkingDirectory()"));
         assertTrue(content.contains("clientEnvironment()"));

@@ -332,7 +332,10 @@ final class JfrPanel implements SwimPanel {
             .filter(value -> Double.isFinite(value) && value >= 0)
             .max()
             .orElse(0);
-    int rightWidth = Math.max(3, bytes((long) maximum).length());
+    // The midpoint may use a smaller unit and need more space (1.0 GiB vs
+    // 512.0 MiB). Every label must fit before extracting the plot columns.
+    int rightWidth =
+        Math.max(3, Math.max(bytes((long) maximum).length(), bytes((long) (maximum / 2)).length()));
     int plotWidth = Math.max(1, width - 9 - rightWidth);
     List<String> cpuRows = chart(plotWidth, 4, rows, 100, true, seconds, cpu);
     List<String> memoryRows = chart(plotWidth, rightWidth, rows, maximum, false, seconds, memory);
@@ -359,7 +362,11 @@ final class JfrPanel implements SwimPanel {
         int cpuDots = c == ' ' ? 0 : c - 0x2800;
         int memoryDots = m == ' ' ? 0 : m - 0x2800;
         // A terminal cell has one foreground: retain both dot masks and mark overlap gold.
-        char merged = (char) (0x2800 | cpuDots | memoryDots);
+        int dots = cpuDots | memoryDots;
+        // U+2800 is the Unicode Braille blank, not an ordinary space. Some
+        // terminal renderers show it as a visible glyph, so preserve a real
+        // space where neither series has a dot.
+        char merged = dots == 0 ? ' ' : (char) (0x2800 | dots);
         String color =
             cpuDots != 0 && memoryDots != 0 ? "#ffd166" : memoryDots != 0 ? "#ff6b6b" : "#69db7c";
         spans.add(SwimTextSpan.styled(String.valueOf(merged), color, null));

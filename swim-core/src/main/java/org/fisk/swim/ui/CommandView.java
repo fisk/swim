@@ -120,6 +120,8 @@ public class CommandView extends View {
           new CommandSpec(
               "compile-follow", List.of(), "[on|off]", "follow live compilation output"),
           new CommandSpec("compile-status", List.of(), "", "show compilation process status"),
+           new CommandSpec("gclog", List.of(), "", "open the live read-only SWIM GC log"),
+           new CommandSpec("gclogpath", List.of(), "", "show the absolute SWIM GC log path"),
           new CommandSpec("help", List.of("h"), "", "open the built-in help"),
           new CommandSpec("detach", List.of(), "", "detach the current client"),
           new CommandSpec("sessions", List.of(), "", "show live SWIM server sessions"),
@@ -633,6 +635,19 @@ public class CommandView extends View {
       case "compile-status":
         _message = Window.getInstance().compilationStatus();
         break;
+      case "gclogpath":
+        if (!argument.isBlank()) {
+          _message = "Usage: :gclogpath";
+        } else {
+          Path log = Window.getInstance().gcLogPath();
+          _message = log == null ? "No SWIM GC log is available" : log.toString();
+        }
+        break;
+      case "gclog":
+        if (!argument.isBlank() || !Window.getInstance().showGcLog()) {
+          _message = "No SWIM GC log is available";
+        }
+        break;
       case "h":
       case "help":
         if (!Window.getInstance().showHelpWorkspace()) {
@@ -1028,6 +1043,9 @@ public class CommandView extends View {
           "compile-status" ->
           blockEditorDriveCommand(
               window, rawCommand, "opening shell input through drive_editor is not allowed");
+      case "gclog", "gclogpath" ->
+          blockEditorDriveCommand(
+              window, rawCommand, "SWIM logs are outside the editor-control sandbox");
       case "reload", "restart", "rebuild", "upgrade" ->
           blockEditorDriveCommand(
               window, rawCommand, "reload and rebuild commands require host action");

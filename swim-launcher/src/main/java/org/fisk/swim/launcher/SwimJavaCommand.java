@@ -1,7 +1,9 @@
 package org.fisk.swim.launcher;
 
 import java.lang.management.ManagementFactory;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -12,6 +14,7 @@ final class SwimJavaCommand {
     private static final String NATIVE_ACCESS_OPTION = "--enable-native-access=org.fisk.swim.session";
     private static final String FINAL_FIELD_MUTATION_OPTION = "--enable-final-field-mutation=ALL-UNNAMED";
     private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = "--illegal-final-field-mutation=allow";
+    private static final String GC_LOG_OPTION = "-Xlog:gc*:file=%s:time,uptime,level,tags:filesize=10M,filecount=2";
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
@@ -43,6 +46,13 @@ final class SwimJavaCommand {
     private static List<String> command(String module, List<String> appArgs, boolean nativeAccess) {
         var command = new ArrayList<String>();
         command.add(javaExecutable().toString());
+        Path gcLogDirectory = Path.of(System.getProperty("user.home"), ".swim", "logs");
+        try {
+            Files.createDirectories(gcLogDirectory);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to create SWIM GC log directory", e);
+        }
+        command.add(String.format(GC_LOG_OPTION, gcLogDirectory.resolve("gclog-%%p.log").toString()));
         var jvmArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
         if (nativeAccess) {
             command.addAll(inheritedNonMemoryPolicyJvmArgs(jvmArgs));

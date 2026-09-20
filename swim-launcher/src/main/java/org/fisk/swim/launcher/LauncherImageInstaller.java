@@ -49,7 +49,7 @@ public final class LauncherImageInstaller {
             "jdk.crypto.cryptoki", "jdk.dynalink", "jdk.editpad", "jdk.httpserver", "jdk.internal.ed",
             "jdk.internal.jvmstat", "jdk.internal.le", "jdk.internal.md", "jdk.internal.opt", "jdk.jartool",
             "jdk.javadoc", "jdk.jconsole", "jdk.jdeps", "jdk.jdi", "jdk.jdwp.agent", "jdk.jfr",
-            "jdk.jlink", "jdk.jshell", "jdk.jsobject", "jdk.jstatd", "jdk.localedata", "jdk.management",
+            "jdk.jlink", "jdk.jshell", "jdk.jstatd", "jdk.localedata", "jdk.management",
             "jdk.management.agent", "jdk.management.jfr", "jdk.naming.dns", "jdk.naming.rmi", "jdk.net",
             "jdk.nio.mapmode", "jdk.sctp", "jdk.security.auth", "jdk.security.jgss", "jdk.unsupported",
             "jdk.unsupported.desktop", "jdk.xml.dom", "jdk.zipfs");
@@ -353,6 +353,7 @@ public final class LauncherImageInstaller {
                     private static final String SERVER_MODULE = "org.fisk.swim.session/org.fisk.swim.session.server.SwimSessionServerMain";
                     private static final String FINAL_FIELD_MUTATION_OPTION = %s;
                     private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = %s;
+                    private static final String GC_LOG_OPTION = "-Xlog:gc*:file=%%s:time,uptime,level,tags:filesize=10M,filecount=2";
                     private static final List<String> APP_JVM_OPTIONS = %s;
                     private static final List<String> SERVER_JVM_OPTIONS = %s;
                     private static final Path EMBEDDED_JAVA = Path.of(%s);
@@ -649,9 +650,10 @@ public final class LauncherImageInstaller {
                         }
                     }
 
-                    private static List<String> serverCommand(Path java, Path socket, Path swimHome) {
+                    private static List<String> serverCommand(Path java, Path socket, Path swimHome) throws IOException {
                         var command = new ArrayList<String>();
                         command.add(java.toString());
+                        command.add(gcLogOption());
                         command.addAll(SERVER_JVM_OPTIONS);
                         command.add("-m");
                         command.add(SERVER_MODULE);
@@ -660,15 +662,22 @@ public final class LauncherImageInstaller {
                         return List.copyOf(command);
                     }
 
-                    private static List<String> appCommand(Path java, List<String> launchArgs) {
+                    private static List<String> appCommand(Path java, List<String> launchArgs) throws IOException {
                         var command = new ArrayList<String>();
                         command.add(java.toString());
+                        command.add(gcLogOption());
                         command.addAll(appJvmOptions());
                         command.add("-m");
                         command.add(APP_MODULE);
                         command.add("--swim-app");
                         command.addAll(launchArgs);
                         return List.copyOf(command);
+                    }
+
+                    private static String gcLogOption() throws IOException {
+                        Path directory = Path.of(System.getProperty("user.home"), ".swim", "logs");
+                        Files.createDirectories(directory);
+                        return String.format(GC_LOG_OPTION, directory.resolve("gclog-%%p.log"));
                     }
 
                     private static List<String> appJvmOptions() {

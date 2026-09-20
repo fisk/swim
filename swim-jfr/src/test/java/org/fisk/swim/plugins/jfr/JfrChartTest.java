@@ -50,7 +50,32 @@ class JfrChartTest {
         assertTrue(rich.stream().flatMap(line -> line.spans().stream()).anyMatch(span -> "#69db7c".equals(span.foreground())));
         assertTrue(rich.stream().flatMap(line -> line.spans().stream()).anyMatch(span -> "#ff6b6b".equals(span.foreground())));
         assertTrue(rich.stream().anyMatch(line -> line.text().contains("20s")));
+        assertFalse(rich.stream().anyMatch(line -> line.text().contains("\u2800")));
         assertEquals(panel.render(80, 40), rich.stream().map(org.fisk.swim.api.SwimPanelLine::text).toList());
+    }
+
+    @Test void memoryUnitTransitionsKeepPlotCellsAligned() throws Exception {
+        for (long maximum : new long[] {1024, 1024 * 1024, 1024L * 1024 * 1024}) {
+            var panel = new JfrPanel(null);
+            var start = java.time.Instant.EPOCH;
+            setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
+                    new JfrMetrics.Sample(start, 0, 0, maximum, 0, maximum, maximum),
+                    new JfrMetrics.Sample(start.plusSeconds(20), 0, 0, maximum, 0, maximum, maximum))));
+            var lines = panel.render(80, 40);
+            for (String line : lines) {
+                int left = line.indexOf('│');
+                int right = line.lastIndexOf('│');
+                if (left < 0 || right == left) {
+                    continue;
+                }
+                assertTrue(line.length() <= 80, line);
+                String plot = line.substring(left + 1, right);
+                assertTrue(plot.chars().allMatch(c -> c == ' ' || (c >= 0x2801 && c <= 0x28ff)), line);
+                if (line.startsWith(" 50%")) {
+                    assertTrue(plot.isBlank(), line);
+                }
+            }
+        }
     }
 
     @Test void absentSystemEventsAreExplicitlyUnavailable() throws Exception {
