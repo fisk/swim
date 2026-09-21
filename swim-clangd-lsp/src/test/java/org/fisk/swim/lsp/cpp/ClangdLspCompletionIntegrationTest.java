@@ -41,7 +41,12 @@ class ClangdLspCompletionIntegrationTest {
         Path project = tempDir.resolve("cpp-project");
         Path file = project.resolve("src/main.cpp");
         Files.createDirectories(file.getParent());
-        Files.writeString(project.resolve("compile_commands.json"), "[]\n");
+        // Completion is enabled only for files present in the compilation database.
+        Files.writeString(project.resolve("compile_commands.json"),
+                new com.google.gson.Gson().toJson(List.of(java.util.Map.of(
+                        "directory", project.toString(),
+                        "file", file.toString(),
+                        "arguments", List.of("clang++", "-c", file.toString())))));
         Files.writeString(file, "");
 
         var client = new TestClangdLspClient();

@@ -183,6 +183,13 @@ class JavaDiagnosticUiIntegrationTest {
 
             terminal.drawCalls().clear();
             buffer.remove(0, buffer.getString().indexOf("class Main"));
+            // Diagnostic ranges are shifted when the queued didChange batch flushes.
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (org.fisk.swim.lsp.DiagnosticService.getInstance()
+                    .lineSeverity(window.getBufferContext(), 1) != DiagnosticSeverity.Warning
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
             window.update(true);
 
             assertEquals(WARNING_COLOR, foregroundAt(terminal.drawCalls(), 0, 3));
@@ -205,7 +212,7 @@ class JavaDiagnosticUiIntegrationTest {
     }
 
     private static TextColor foregroundAt(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int x, int y) {
-        for (var call : drawCalls) {
+        for (var call : drawCalls.reversed()) {
             if (call.y() != y) {
                 continue;
             }

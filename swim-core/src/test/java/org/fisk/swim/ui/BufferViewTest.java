@@ -545,7 +545,8 @@ class BufferViewTest {
     }
 
     private static TextColor foregroundAt(List<org.fisk.swim.terminal.TerminalContextTestSupport.DrawCall> drawCalls, int x, int y) {
-        for (var call : drawCalls) {
+        // Later draws overwrite the initial background fill.
+        for (var call : drawCalls.reversed()) {
             if (call.y() != y) {
                 continue;
             }

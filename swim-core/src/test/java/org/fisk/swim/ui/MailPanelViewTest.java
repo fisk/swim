@@ -590,7 +590,7 @@ class MailPanelViewTest {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 100, 1, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 100, 1, "2026-05-13T11:00:00Z", "")),
                         sampleThreads(100),
                         "");
             }
@@ -1325,7 +1325,7 @@ class MailPanelViewTest {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 2, 1, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 2, 1, "2026-05-13T11:00:00Z", "")),
                         List.of(
                                 new MailThreadSummary(7L, "work", "Re: Quarterly review", "Boss", "Approved",
                                         "2026-05-13T10:00:05Z", true, 3, List.of("vip"), true),
@@ -1375,6 +1375,8 @@ class MailPanelViewTest {
             }
         });
 
+        // Include tagged conversations; the initial filter is #unsorted.
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.left(), HeadlessWindowHarness.down(), HeadlessWindowHarness.right());
         @SuppressWarnings("unchecked")
         List<Object> rows = (List<Object>) HeadlessWindowHarness.getField(panel, "_threadRows");
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
@@ -1397,7 +1399,7 @@ class MailPanelViewTest {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 1, 1, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 1, 1, "2026-05-13T11:00:00Z", "")),
                         List.of(new MailThreadSummary(7L, "work", "Re: Quarterly review", "Boss", "Approved",
                                 "2026-05-13T10:00:05Z", true, 3, List.of())),
                         "");
@@ -1527,11 +1529,12 @@ class MailPanelViewTest {
     void movingToBottomLoadsAdditionalThreadPages() throws Exception {
         var offsets = new ArrayList<Integer>();
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
+        AtomicReference<Thread> initialLoader = new AtomicReference<>();
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 150, 5, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 150, 5, "2026-05-13T11:00:00Z", "")),
                         sampleThreads(100),
                         "");
             }
@@ -1555,6 +1558,7 @@ class MailPanelViewTest {
 
             @Override
             public MailMessageDetail loadMessage(long threadId) {
+                initialLoader.compareAndSet(null, Thread.currentThread());
                 lastLoadedThread.set(threadId);
                 return new MailMessageDetail(threadId, threadId, "Thread " + threadId, "Boss <boss@example.com>",
                         "me@example.com", "2026-05-13T08:00:00Z", "Body", List.of());
@@ -1570,6 +1574,15 @@ class MailPanelViewTest {
             }
         });
 
+        // With no event loop, callbacks run on the loader thread. Let the initial
+        // row expansion finish before manipulating pagination on the test thread.
+        long initialDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (initialLoader.get() == null && System.nanoTime() < initialDeadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(initialLoader.get() != null);
+        initialLoader.get().join(2000);
+        assertTrue(!initialLoader.get().isAlive());
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('G'));
 
         long loadDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
@@ -1796,7 +1809,7 @@ class MailPanelViewTest {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 3, 1, "2026-05-13T11:00:00Z", "")),
                         List.of(
                                 new MailThreadSummary(1L, "work", "Read thread", "Alice <alice@example.com>",
                                         "read snippet", "2026-05-13T08:00:00Z", false, 1, List.of()),

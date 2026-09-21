@@ -1443,12 +1443,14 @@ class WindowTest {
 
     @Test
     void topBarShowsProjectLocalBufferMruWhileTabOrderRemainsStable() throws Exception {
+        Files.createDirectory(tempDir.resolve(".git"));
         Path directory = tempDir.resolve("browse-order");
         Files.createDirectories(directory);
         Path file = writeFile("window.txt", "abc");
 
         try (var harness = HeadlessWindowHarness.create(file, 40, 12)) {
             var window = harness.getWindow();
+            window.renameCurrentTab("window.txt");
 
             assertTrue(window.showDirectoryBrowser(directory));
             assertTrue(tabLabels(window).contains("Browse: browse-order"));
@@ -2201,8 +2203,11 @@ class WindowTest {
             Window.createInstance(first);
             var window = Window.getInstance();
             var responder = EventThread.getInstance().getResponder();
+            window.renameCurrentTab("tmux-manage-0.txt");
             assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second));
+            window.renameCurrentTab("tmux-manage-1.txt");
             assertTrue((Boolean) invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, third));
+            window.renameCurrentTab("tmux-manage-2.txt");
             assertTrue(window.switchToWorkspaceIndex(0));
 
             assertEquals(Response.YES, HeadlessWindowHarness.dispatch(responder,

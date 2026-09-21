@@ -502,7 +502,7 @@ class JavaLSPClientTest {
     }
 
     @Test
-    void insertedTextUsesAdjacentCachedSemanticColourWhileRefreshIsPending() throws Exception {
+    void insertedTextUsesLexicalColourWhileSemanticRefreshIsPending() throws Exception {
         Path file = tempDir.resolve("SemanticMutation.txt");
         Files.writeString(file, "class Demo {}\n");
         var context = new BufferContext(Rect.create(0, 0, 80, 20), file);
@@ -558,7 +558,10 @@ class JavaLSPClientTest {
         var coloured = org.fisk.swim.text.AttributedString.create(context.getBuffer().getString(), TextColor.ANSI.DEFAULT, TextColor.ANSI.DEFAULT);
         client.applyColouring(context, coloured);
 
-        assertEquals(JavaLSPClient.SEMANTIC_TYPE, foregroundColour(coloured.getCharacter(insertPosition)));
+        // Edits invalidate cached semantic ranges; lexical highlighting supplies
+        // immediate colours without transforming every token on each keystroke.
+        assertEquals(TextColor.ANSI.DEFAULT, foregroundColour(coloured.getCharacter(insertPosition)));
+        assertEquals(org.fisk.swim.ui.UiTheme.SEMANTIC_KEYWORD, foregroundColour(coloured.getCharacter(0)));
     }
 
     @Test

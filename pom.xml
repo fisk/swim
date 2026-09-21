@@ -180,6 +180,13 @@
           <groupId>org.jacoco</groupId>
           <artifactId>jacoco-maven-plugin</artifactId>
           <version>0.8.14</version>
+          <configuration>
+            <!-- Measure SWIM code (compiled with release 25), not newer JDK
+                 classes or dynamically compiled test fixtures. -->
+            <includes>
+              <include>org/fisk/swim/**</include>
+            </includes>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

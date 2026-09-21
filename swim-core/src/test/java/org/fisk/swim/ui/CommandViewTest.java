@@ -409,6 +409,7 @@ class CommandViewTest {
         SwimRuntime.setHost(host);
         try (var harness = HeadlessWindowHarness.create(path, 50, 12)) {
             var window = harness.getWindow();
+            window.renameCurrentTab("quit-window.txt");
             window.splitActiveBufferHorizontally();
 
             invokeRunCommand(window.getCommandView(), "q");
@@ -431,6 +432,7 @@ class CommandViewTest {
         SwimRuntime.setHost(host);
         try (var harness = HeadlessWindowHarness.create(first, 50, 12)) {
             var window = harness.getWindow();
+            window.renameCurrentTab("quit-first.txt");
             invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second);
 
             invokeRunCommand(window.getCommandView(), "q");

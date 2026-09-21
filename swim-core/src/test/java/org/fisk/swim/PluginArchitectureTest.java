@@ -34,6 +34,10 @@ class PluginArchitectureTest {
         for (String pluginModule : pluginModules) {
             Set<String> siblingPlugins = new LinkedHashSet<>(pluginModules);
             siblingPlugins.remove(pluginModule);
+            // Language plugins share the tree-sitter parsing implementation.
+            if (Set.of("swim-java-lsp", "swim-clangd-lsp").contains(pluginModule)) {
+                siblingPlugins.remove("swim-treesitter");
+            }
             assertNoPluginDependencies(root.resolve(pluginModule).resolve("pom.xml"), siblingPlugins);
         }
     }
