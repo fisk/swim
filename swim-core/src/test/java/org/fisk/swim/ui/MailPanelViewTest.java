@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1144,13 +1145,14 @@ class MailPanelViewTest {
 
     @Test
     void constructorLoadsAdditionalPagesWhenDefaultFilteredViewIsSparse() throws Exception {
-        var offsets = new ArrayList<Integer>();
+        // Refresh callbacks may record requests while the test inspects them.
+        var offsets = new CopyOnWriteArrayList<Integer>();
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
             @Override
             public MailSnapshot snapshot() {
                 return new MailSnapshot(
-                        List.of(new MailAccountSummary("work", "Work", "IMAP", 400, 20, "", "")),
+                        List.of(new MailAccountSummary("work", "Work", "IMAP", 400, 20, "2026-05-13T11:00:00Z", "")),
                         sparseDirectAddressPage(0, 100, 400, MailThreadFilter.unsorted()).threads(),
                         "");
             }
@@ -1527,7 +1529,7 @@ class MailPanelViewTest {
 
     @Test
     void movingToBottomLoadsAdditionalThreadPages() throws Exception {
-        var offsets = new ArrayList<Integer>();
+        var offsets = new CopyOnWriteArrayList<Integer>();
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         AtomicReference<Thread> initialLoader = new AtomicReference<>();
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
@@ -1596,7 +1598,7 @@ class MailPanelViewTest {
 
     @Test
     void movingPastInitialTotalRetriesWhenBackgroundBackfillAddsMoreThreads() throws Exception {
-        var offsets = new ArrayList<Integer>();
+        var offsets = new CopyOnWriteArrayList<Integer>();
         AtomicReference<Integer> totalCount = new AtomicReference<>(250);
         AtomicReference<Long> lastLoadedThread = new AtomicReference<>(0L);
         var panel = new MailPanelView(Rect.create(0, 0, 80, 20), new MailClient() {
