@@ -21,6 +21,8 @@ final class JfrPanel implements SwimPanel {
 
   private List<Source> sources = List.of();
   private String error;
+  private boolean external;
+  private String externalTitle;
   private boolean live;
   private boolean followActivePath = true;
   private long lastLiveRefreshNanos;
@@ -43,6 +45,22 @@ final class JfrPanel implements SwimPanel {
     loadPaths(path == null ? List.of() : List.of(path));
   }
 
+  // Used by the public live chart adapter; no recording or filesystem activity.
+  JfrPanel(String title) {
+    external = true;
+    externalTitle = title;
+    followActivePath = false;
+  }
+
+  void setRuns(List<String> names, List<JfrMetrics.Recording> recordings) {
+    var updated = new ArrayList<Source>();
+    for (int i = 0; i < names.size(); i++) {
+      updated.add(new Source(Path.of(names.get(i)), recordings.get(i)));
+    }
+    sources = List.copyOf(updated);
+    cachedLines = null;
+  }
+
   @Override
   public String getId() {
     return JfrPlugin.PLUGIN_ID;
@@ -50,7 +68,7 @@ final class JfrPanel implements SwimPanel {
 
   @Override
   public String getTitle() {
-    return "JFR Metrics";
+    return external ? externalTitle : "JFR Metrics";
   }
 
   @Override
@@ -75,10 +93,10 @@ final class JfrPanel implements SwimPanel {
     }
     if (sources.isEmpty()
         || sources.stream().allMatch(source -> source.recording().samples().isEmpty())) {
-      return List.of("JFR Metrics", "No CPU or committed-heap samples found.");
+      return List.of(getTitle(), external ? "Waiting for samples…" : "No CPU or committed-heap samples found.");
     }
     var lines = new ArrayList<String>();
-    lines.add("JFR Metrics  " + sources.size() + " recording" + (sources.size() == 1 ? "" : "s"));
+    lines.add(getTitle() + "  " + sources.size() + (external ? " run" : " recording") + (sources.size() == 1 ? "" : "s"));
     lines.add(legend(width));
     for (int index = 0; index < sources.size(); index++) {
       Source source = sources.get(index);
@@ -92,16 +110,19 @@ final class JfrPanel implements SwimPanel {
     }
     double elapsedSeconds =
         sources.stream().mapToDouble(source -> elapsedSeconds(source.recording())).max().orElse(0);
-    int rows = chartRows(height, sources.size());
-    lines.add("JVM · CPU (green, left) / heap capacity (red, right)");
-    lines.addAll(
-        dualChart(
-            width,
-            rows,
-            elapsedSeconds,
-            lines,
-            JfrMetrics.Sample::cpuPercent,
-            sample -> sample.heapCommitted()));
+    int rows = external ? liveChartRows(height, sources.size())
+        + (int) sources.stream().filter(source -> source.recording().samples().isEmpty()).count() : chartRows(height, sources.size());
+    if (!external) {
+      lines.add("JVM · CPU (green, left) / heap capacity (red, right)");
+      lines.addAll(
+          dualChart(
+              width,
+              rows,
+              elapsedSeconds,
+              lines,
+              JfrMetrics.Sample::cpuPercent,
+              sample -> sample.heapCommitted()));
+    }
     lines.add("System · CPU (green, left) / memory used (red, right)");
     lines.addAll(
         dualChart(
@@ -115,19 +136,28 @@ final class JfrPanel implements SwimPanel {
       Source source = sources.get(index);
       if (!source.recording().samples().isEmpty()) {
         JfrMetrics.Sample last = source.recording().samples().getLast();
-        lines.add(
-            String.format(
-                    " [%d] latest CPU %s  committed heap %s",
-                    index + 1,
-                    Double.isFinite(last.cpuPercent()) && last.cpuPercent() >= 0
-                        ? String.format(java.util.Locale.ROOT, "%.1f%%", last.cpuPercent())
-                        : "unavailable",
-                    last.heapCommitted() >= 0 ? bytes(last.heapCommitted()) : "unavailable")
-                + (!Double.isFinite(last.systemCpuPercent()) ? " · system CPU unavailable" : "")
-                + (last.systemMemoryUsed() < 0 ? " · system memory unavailable" : ""));
+        if (external) {
+          lines.add(String.format(java.util.Locale.ROOT,
+              " [%d] latest system CPU %s  memory used %s", index + 1,
+              Double.isFinite(last.systemCpuPercent()) && last.systemCpuPercent() >= 0
+                  ? String.format(java.util.Locale.ROOT, "%.1f%%", last.systemCpuPercent())
+                  : "unavailable",
+              last.systemMemoryUsed() >= 0 ? bytes(last.systemMemoryUsed()) : "unavailable"));
+        } else {
+          lines.add(
+              String.format(
+                      " [%d] latest CPU %s  committed heap %s",
+                      index + 1,
+                      Double.isFinite(last.cpuPercent()) && last.cpuPercent() >= 0
+                            ? String.format(java.util.Locale.ROOT, "%.1f%%", last.cpuPercent())
+                            : "unavailable",
+                      last.heapCommitted() >= 0 ? bytes(last.heapCommitted()) : "unavailable")
+                  + (!Double.isFinite(last.systemCpuPercent()) ? " · system CPU unavailable" : "")
+                  + (last.systemMemoryUsed() < 0 ? " · system memory unavailable" : ""));
+        }
       }
     }
-    lines.add("Elapsed from each recording start · gold = overlap · r reload · q close");
+    lines.add(external ? "Elapsed from each run start · gold = overlap · q close" : "Elapsed from each recording start · gold = overlap · r reload · q close");
     return lines;
   }
 
@@ -269,7 +299,7 @@ final class JfrPanel implements SwimPanel {
   }
 
   private String legend(int width) {
-    var text = new StringBuilder("Legend (traces in both charts): ");
+    var text = new StringBuilder(external ? "Legend (traces): " : "Legend (traces in both charts): ");
     for (int index = 0; index < sources.size(); index++) {
       if (index > 0) {
         text.append("  ");
@@ -474,6 +504,11 @@ final class JfrPanel implements SwimPanel {
   // Header, source descriptions, chart titles/axes, latest values and footer.
   static int chartRows(int height, int sourceCount) {
     return Math.max(2, Math.min(24, (height - 9 - 2 * sourceCount) / 2));
+  }
+
+  // One chart: header + legend + sources + title + two axis rows + latest values + footer.
+  static int liveChartRows(int height, int sourceCount) {
+    return Math.max(2, height - 6 - 2 * sourceCount);
   }
 
   static double elapsedSeconds(JfrMetrics.Recording recording) {

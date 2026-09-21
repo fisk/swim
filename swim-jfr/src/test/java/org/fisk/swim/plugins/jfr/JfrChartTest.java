@@ -37,7 +37,7 @@ class JfrChartTest {
         assertTrue(JfrPanel.elapsedTimeLabels(30, 7200).endsWith("2h"));
     }
     @Test void dualChartsHaveColoredAxesAndCachedRichOutput() throws Exception {
-        var panel = new JfrPanel(null);
+        var panel = new JfrPanel((java.nio.file.Path) null);
         var start = java.time.Instant.EPOCH;
         var recording = new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
                 new JfrMetrics.Sample(start, 25, 512, 1024, 75, 2048, 4096),
@@ -56,7 +56,7 @@ class JfrChartTest {
 
     @Test void memoryUnitTransitionsKeepPlotCellsAligned() throws Exception {
         for (long maximum : new long[] {1024, 1024 * 1024, 1024L * 1024 * 1024}) {
-            var panel = new JfrPanel(null);
+            var panel = new JfrPanel((java.nio.file.Path) null);
             var start = java.time.Instant.EPOCH;
             setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
                     new JfrMetrics.Sample(start, 0, 0, maximum, 0, maximum, maximum),
@@ -79,7 +79,7 @@ class JfrChartTest {
     }
 
     @Test void absentSystemEventsAreExplicitlyUnavailable() throws Exception {
-        var panel = new JfrPanel(null);
+        var panel = new JfrPanel((java.nio.file.Path) null);
         var start = java.time.Instant.EPOCH;
         setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(1), java.util.List.of(
                 new JfrMetrics.Sample(start, 20, 512, 1024))));
@@ -87,7 +87,7 @@ class JfrChartTest {
     }
 
     @Test void identicalTextRowsRetainTheirOwnMetricColors() throws Exception {
-        var panel = new JfrPanel(null);
+        var panel = new JfrPanel((java.nio.file.Path) null);
         var start = java.time.Instant.EPOCH;
         setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
                 new JfrMetrics.Sample(start, 25, 0, 100, 100, 25, 100),
@@ -107,7 +107,7 @@ class JfrChartTest {
     }
 
     @Test void missingMetricsKeepBothTimeAxesAndHideSentinels() throws Exception {
-        var panel = new JfrPanel(null);
+        var panel = new JfrPanel((java.nio.file.Path) null);
         var start = java.time.Instant.EPOCH;
         setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
                 new JfrMetrics.Sample(start, Double.NaN, -1, -1, 50, -1, -1))));

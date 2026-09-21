@@ -12,7 +12,11 @@ This README is a project map. Day-to-day editor usage, beginner tutorials, and p
 git clone <your-fork-or-this-repo-url> ~/.swim
 cd ~/.swim
 
-# 3. Build the editor and runtime image.
+# 3. Use the JDK at ~/.swim/jdk (with ZGC adaptive heap sizing support).
+export JAVA_HOME="$HOME/.swim/jdk"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+# Build the editor, all plugins, and runtime image.
 mvn package
 
 # 4. Put the public launcher on PATH.
@@ -80,7 +84,11 @@ Each live editor session is a separate app process. When a client attaches, it s
 
 Detaching a client, such as with `:detach` or the tmux-style `Ctrl-b d` binding, leaves the server-side session running. `:q` follows Vim window semantics: it closes the current frame first, then the current tab, and only exits the app process when the last tab is gone. The tmux-style `Ctrl-b &` binding closes the current tab directly. App process exit removes the session from the server.
 
-The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal. The client and session-server JVMs use `-XX:+UseZGC` with `-Xmx128M`; editor app JVMs use the larger app policy, including `-Xmx4G`, `-XX:SoftMaxHeapSize=1G`, `--sun-misc-unsafe-memory-access=allow`, and, on Java 26+, `--enable-final-field-mutation=ALL-UNNAMED --illegal-final-field-mutation=allow`.
+The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal.
+
+The client, session server, and editor app JVMs use `-XX:+UseZGC -XX:+ZAdaptiveHeapSizing`. SWIM no longer sets fixed `-Xmx128M` or `-Xmx4G` limits or a `SoftMaxHeapSize=1G` target; the collector adjusts heap capacity adaptively. Use the JDK installed at `~/.swim/jdk`, which must support `ZAdaptiveHeapSizing`, for both Maven builds and the generated runtime image. A generic JDK 25+ is not sufficient to guarantee this feature: launch options include `-XX:+IgnoreUnrecognizedVMOptions`, so an unsupported adaptive-sizing flag can otherwise be silently ignored. The installed launcher runs `~/.swim/image/bin/java`, built from that JDK.
+
+Editor app JVMs also enable string deduplication and `--sun-misc-unsafe-memory-access=allow`, and, on Java 26+, `--enable-final-field-mutation=ALL-UNNAMED --illegal-final-field-mutation=allow`. Use `:gclog` to inspect the GC log or `:gclogpath` to display its absolute path. The GC initialization entry `Heap Sizing: Adaptive (Implicit Boundaries)` confirms adaptive sizing is active.
 
 ## Runtime Layout
 
