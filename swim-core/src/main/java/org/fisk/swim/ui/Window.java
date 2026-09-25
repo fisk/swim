@@ -4073,6 +4073,9 @@ public class Window implements Drawable {
     }
     if (_tabBarView != null) {
       _tabBarView.setTabs(tabEntries());
+      if (_size != null) {
+        applyLayout(_size);
+      }
       _tabBarView.setNeedsRedraw();
     }
     if (_commandMenuView != null) {
@@ -5922,12 +5925,16 @@ public class Window implements Drawable {
       menuHeight = _keyMenuView.preferredHeight(size.getWidth(), size.getHeight());
     }
     int commandRows = _commandView == null ? 1 : _commandView.preferredHeight(size.getWidth());
+    if (_tabBarView != null) {
+      _tabBarView.setTabs(tabEntries());
+    }
     WindowChromeLayout layout =
         WindowChromeLayout.compute(
             size,
             menuHeight,
             WindowChromeLayout.standardFooterBars(_tabBarView != null),
-            commandRows);
+            commandRows,
+            _tabBarView == null ? 1 : Math.min(_tabBarView.preferredHeight(size.getWidth()), Math.max(1, size.getHeight() / 3)));
     _rootView.setBounds(layout.root());
     if (_keyMenuView != null) {
       _keyMenuView.setBounds(layout.topMenu());
@@ -6986,6 +6993,9 @@ public class Window implements Drawable {
     if (custom != null) {
       return custom;
     }
+    if (workspace._kind == WorkspaceKind.NEMO) {
+      return compactNemoTabLabel(workspaceLabel(workspace));
+    }
     if (workspace._kind == WorkspaceKind.BUFFER) {
       return projectTabLabel(workspace._bufferContext);
     }
@@ -6994,6 +7004,17 @@ public class Window implements Drawable {
 
   private static String normalizeTabLabel(String label) {
     return label == null || label.isBlank() ? null : label.trim();
+  }
+
+  static String compactNemoTabLabel(String title) {
+    if (title == null || !title.contains(" | ")) {
+      return "Nemo";
+    }
+    String name = title.substring(title.indexOf(" | ") + 3).strip();
+    if (name.isEmpty() || name.matches("Session \\d+")) {
+      return "Nemo";
+    }
+    return "Nemo: " + (name.length() > 24 ? name.substring(0, 23) + "…" : name);
   }
 
   private static String projectTabLabel(BufferContext context) {

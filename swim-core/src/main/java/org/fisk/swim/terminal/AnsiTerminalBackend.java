@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.ArrayDeque;
 import java.util.function.Supplier;
 import org.fisk.swim.EventThread;
 import org.fisk.swim.event.KeyStroke;
@@ -23,10 +24,6 @@ public final class AnsiTerminalBackend implements TerminalBackend {
    */
   private static final long INPUT_CONTINUATION_WAIT_MILLIS = 120L;
 
-  /** A queued SSH/tmux burst has near-zero inter-key spacing, unlike ordinary key repeat. */
-  private static final long STALE_REPEAT_GAP_NANOS = 2_000_000L;
-
-  private static final long STALE_REPEAT_QUIET_NANOS = 100_000_000L;
   private static final String ENTER_ALTERNATE_SCREEN = "\u001b[?1049h";
   private static final String EXIT_ALTERNATE_SCREEN = "\u001b[?1049l";
   private static final String HIDE_CURSOR = "\u001b[?25l";
@@ -55,10 +52,13 @@ public final class AnsiTerminalBackend implements TerminalBackend {
   private final TerminalUtf8Decoder utf8Decoder = new TerminalUtf8Decoder();
   private boolean decodingUtf8;
   private boolean utf8Alt;
-  private long lastInputNanos;
-  private long repeatBurstStartedNanos;
-  private KeyStroke repeatBurstKey;
-  private boolean bracketedPaste;
+  private boolean pendingEscape;
+  private final ArrayDeque<KeyStroke> pendingText = new ArrayDeque<>();
+  private final StringBuilder inputSequence = new StringBuilder();
+  private int sequencePrefix;
+  private boolean sequenceOverflow;
+  private boolean stringEscape;
+  private int pendingByte = -1;
   private boolean started;
 
   public AnsiTerminalBackend(
@@ -157,81 +157,101 @@ public final class AnsiTerminalBackend implements TerminalBackend {
 
   @Override
   public KeyStroke pollInput() throws IOException {
-    KeyStroke stroke;
-    do {
-      stroke = pollOneInput();
-    } while (stroke != null && suppressStaleRepeat(stroke));
-    return stroke;
+    return pollOneInput();
   }
 
   private KeyStroke pollOneInput() throws IOException {
-    if (input == null || input.available() == 0) {
+    if (!pendingText.isEmpty()) {
+      return pendingText.removeFirst();
+    }
+    if (input == null) {
       return null;
     }
-    int first = input.read();
+    if (sequencePrefix != 0) {
+      return continueSequence();
+    }
+    if (!pendingEscape && pendingByte < 0 && input.available() == 0) {
+      return null;
+    }
+    int first = pendingEscape ? 0x1b : pendingByte >= 0 ? pendingByte : input.read();
+    pendingEscape = false;
+    pendingByte = -1;
     if (first < 0) {
       return new KeyStroke(KeyType.EOF);
     }
-    if (first != 0x1b) {
+    if (decodingUtf8 || first != 0x1b) {
       return readTextInput(first, false);
     }
     int second = readContinuationByte();
     if (second < 0) {
       return new KeyStroke(KeyType.Escape);
     }
-    if (second != '[' && second != 'O') {
-      return readTextInput(second, true);
-    }
-    int third = readContinuationByte();
-    if (third < 0) {
+    if (second == 0x1b) {
+      // Escape followed by an arrow (or another Escape) is two keypresses.
+      // Keep the second prefix for the next poll instead of leaking its tail
+      // into the editor as printable input such as "[D".
+      pendingEscape = true;
       return new KeyStroke(KeyType.Escape);
     }
-    if (second == 'O') {
-      return ss3Key((char) third);
+    if (second == '[' || second == 'O' || second == ']' || second == 'P'
+        || second == '_' || second == '^' || second == 'X'
+        || second >= 0x20 && second <= 0x2f) {
+      sequencePrefix = second;
+      return continueSequence();
     }
-    if (third == '<') {
-      return readSgrMouse();
-    }
-    if (third >= '0' && third <= '9') {
-      return readCsi((char) third);
-    }
-    return cursorKey((char) third, false, false, false);
+    return readTextInput(second, true);
   }
 
-  private boolean suppressStaleRepeat(KeyStroke stroke) {
-    long now = System.nanoTime();
-    long gap = lastInputNanos == 0 ? Long.MAX_VALUE : now - lastInputNanos;
-    lastInputNanos = now;
-    if (stroke.getKeyType() == KeyType.F18) {
-      bracketedPaste = true;
-      repeatBurstKey = null;
-      return false;
+  /** Once a prefix is known, a transport pause must not turn its tail into typing. */
+  private KeyStroke continueSequence() throws IOException {
+    while (true) {
+      int value = readContinuationByte();
+      if (value < 0) {
+        return null;
+      }
+      boolean controlString = sequencePrefix == ']' || sequencePrefix == 'P'
+          || sequencePrefix == '_' || sequencePrefix == '^' || sequencePrefix == 'X';
+      if (controlString) {
+        if ((sequencePrefix == ']' && value == 7) || (stringEscape && value == '\\')) {
+          resetSequence();
+          return new KeyStroke(KeyType.Unknown);
+        }
+        stringEscape = value == 0x1b;
+        continue;
+      }
+      if (value == 0x1b || value == 0x18 || value == 0x1a) {
+        resetSequence();
+        pendingEscape = value == 0x1b;
+        return new KeyStroke(KeyType.Unknown);
+      }
+      if (inputSequence.length() < 128) {
+        inputSequence.append((char) value);
+      } else {
+        sequenceOverflow = true;
+      }
+      int minimumFinal = sequencePrefix >= 0x20 && sequencePrefix <= 0x2f ? 0x30 : 0x40;
+      if (value >= minimumFinal && value <= 0x7e) {
+        int prefix = sequencePrefix;
+        String sequence = inputSequence.toString();
+        boolean overflow = sequenceOverflow;
+        resetSequence();
+        if (overflow) {
+          return new KeyStroke(KeyType.Unknown);
+        }
+        if (prefix == '[') {
+          return decodeCsi(sequence);
+        }
+        return prefix == 'O' && sequence.length() == 1
+            ? ss3Key((char) value) : new KeyStroke(KeyType.Unknown);
+      }
     }
-    if (stroke.getKeyType() == KeyType.F19) {
-      bracketedPaste = false;
-      repeatBurstKey = null;
-      return false;
-    }
-    if (bracketedPaste
-        || stroke.getKeyType() != KeyType.Character
-        || stroke.isCtrlDown()
-        || stroke.isAltDown()) {
-      repeatBurstKey = null;
-      return false;
-    }
-    if (repeatBurstKey != null
-        && repeatBurstKey.equals(stroke)
-        && now - repeatBurstStartedNanos <= STALE_REPEAT_QUIET_NANOS
-        && gap <= STALE_REPEAT_GAP_NANOS) {
-      return true;
-    }
-    if (gap >= STALE_REPEAT_QUIET_NANOS) {
-      repeatBurstKey = stroke;
-      repeatBurstStartedNanos = now;
-    } else {
-      repeatBurstKey = null;
-    }
-    return false;
+  }
+
+  private void resetSequence() {
+    sequencePrefix = 0;
+    inputSequence.setLength(0);
+    sequenceOverflow = false;
+    stringEscape = false;
   }
 
   private static KeyStroke decodeByte(int value, boolean alt) {
@@ -296,6 +316,12 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     if (!decodingUtf8 && value < 0x80) {
       return decodeByte(value, alt);
     }
+    if (decodingUtf8 && (value & 0xc0) != 0x80) {
+      utf8Decoder.flush();
+      decodingUtf8 = false;
+      pendingByte = value;
+      return new KeyStroke('\ufffd', false, utf8Alt);
+    }
     if (!decodingUtf8) {
       decodingUtf8 = true;
       utf8Alt = alt;
@@ -305,13 +331,12 @@ public final class AnsiTerminalBackend implements TerminalBackend {
       return null;
     }
     decodingUtf8 = false;
-    // KeyStroke currently represents BMP character input.  Reject an
-    // invalid/multi-code-point sequence rather than inserting its raw
-    // transport bytes into a buffer.
-    if (decoded.codePointCount(0, decoded.length()) != 1 || decoded.length() != 1) {
-      return new KeyStroke(KeyType.Unknown, false, utf8Alt);
+    // The editor's text model uses UTF-16 units. Preserve every decoded unit,
+    // including both halves of supplementary characters, in order.
+    for (int i = 0; i < decoded.length(); i++) {
+      pendingText.addLast(new KeyStroke(decoded.charAt(i), false, utf8Alt));
     }
-    return new KeyStroke(decoded.charAt(0), false, utf8Alt);
+    return pendingText.removeFirst();
   }
 
   private static KeyStroke ss3Key(char key) {
@@ -324,27 +349,18 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     };
   }
 
-  private KeyStroke readCsi(char initial) throws IOException {
-    var sequence = new StringBuilder().append(initial);
-    while (sequence.length() < 32) {
-      int continuation = readContinuationByte();
-      if (continuation < 0) {
-        break;
-      }
-      char character = (char) continuation;
-      sequence.append(character);
-      if (character >= '@' && character <= '~') {
-        break;
-      }
-    }
-    if (sequence.isEmpty()) {
-      return new KeyStroke(KeyType.Escape);
-    }
+  private KeyStroke decodeCsi(String sequence) {
     char finalCharacter = sequence.charAt(sequence.length() - 1);
     if (finalCharacter < '@' || finalCharacter > '~') {
-      return new KeyStroke(KeyType.Escape);
+      return new KeyStroke(KeyType.Unknown);
     }
     String parameters = sequence.substring(0, sequence.length() - 1);
+    if (parameters.startsWith("<") && (finalCharacter == 'M' || finalCharacter == 'm')) {
+      return decodeSgrMouse(sequence.substring(1));
+    }
+    if (!parameters.matches("[0-9;]*")) {
+      return new KeyStroke(KeyType.Unknown);
+    }
     if (finalCharacter == '~') {
       return tildeKey(parameters);
     }
@@ -368,11 +384,11 @@ public final class AnsiTerminalBackend implements TerminalBackend {
       case 'H' -> new KeyStroke(KeyType.Home, ctrl, alt, shift);
       case 'F' -> new KeyStroke(KeyType.End, ctrl, alt, shift);
       case 'Z' -> new KeyStroke(KeyType.ReverseTab, ctrl, alt, true);
-      default -> new KeyStroke(KeyType.Escape);
+      default -> new KeyStroke(KeyType.Unknown);
     };
   }
 
-  private static KeyStroke tildeKey(String parameters) {
+  private KeyStroke tildeKey(String parameters) {
     String[] parts = parameters.split(";", -1);
     int code = integer(parts, 0);
     int modifier = integer(parts, 1);
@@ -402,7 +418,7 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     return new KeyStroke(type, ctrl, alt, shift);
   }
 
-  private static KeyStroke kittyKey(String parameters) {
+  private KeyStroke kittyKey(String parameters) {
     String[] parts = parameters.split(";", -1);
     int code = integer(parts, 0);
     int modifier = integer(parts, 1);
@@ -415,10 +431,15 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     return characterKey(code, ctrl, alt, shift);
   }
 
-  private static KeyStroke characterKey(int codePoint, boolean ctrl, boolean alt, boolean shift) {
-    return Character.isValidCodePoint(codePoint) && Character.charCount(codePoint) == 1
-        ? new KeyStroke((char) codePoint, ctrl, alt, shift)
-        : new KeyStroke(KeyType.Unknown, ctrl, alt, shift);
+  private KeyStroke characterKey(int codePoint, boolean ctrl, boolean alt, boolean shift) {
+    if (!Character.isValidCodePoint(codePoint) || codePoint >= 0xd800 && codePoint <= 0xdfff) {
+      return new KeyStroke(KeyType.Unknown, ctrl, alt, shift);
+    }
+    char[] units = Character.toChars(codePoint);
+    if (units.length == 2) {
+      pendingText.addLast(new KeyStroke(units[1], ctrl, alt, shift));
+    }
+    return new KeyStroke(units[0], ctrl, alt, shift);
   }
 
   private static KeyType functionKey(int code) {
@@ -466,43 +487,31 @@ public final class AnsiTerminalBackend implements TerminalBackend {
     }
   }
 
-  private KeyStroke readSgrMouse() throws IOException {
-    var sequence = new StringBuilder();
-    while (sequence.length() < 32) {
-      int continuation = readContinuationByte();
-      if (continuation < 0) {
-        break;
-      }
-      char character = (char) continuation;
-      sequence.append(character);
-      if (character == 'M' || character == 'm') {
-        break;
-      }
-    }
+  private KeyStroke decodeSgrMouse(String sequence) {
     if (sequence.isEmpty()) {
-      return new KeyStroke(KeyType.Escape);
+      return new KeyStroke(KeyType.Unknown);
     }
     char terminator = sequence.charAt(sequence.length() - 1);
     if (terminator != 'M' && terminator != 'm') {
-      return new KeyStroke(KeyType.Escape);
+      return new KeyStroke(KeyType.Unknown);
     }
     String[] parts = sequence.substring(0, sequence.length() - 1).split(";", -1);
     if (parts.length != 3) {
-      return new KeyStroke(KeyType.Escape);
+      return new KeyStroke(KeyType.Unknown);
     }
     try {
       int code = Integer.parseInt(parts[0]);
       int column = Integer.parseInt(parts[1]) - 1;
       int row = Integer.parseInt(parts[2]) - 1;
       if (column < 0 || row < 0) {
-        return new KeyStroke(KeyType.Escape);
+        return new KeyStroke(KeyType.Unknown);
       }
       return new MouseAction(
           mouseActionType(code, terminator == 'm'),
           mouseButton(code),
           new MouseAction.Position(column, row));
     } catch (NumberFormatException e) {
-      return new KeyStroke(KeyType.Escape);
+      return new KeyStroke(KeyType.Unknown);
     }
   }
 

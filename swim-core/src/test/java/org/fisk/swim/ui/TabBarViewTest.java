@@ -13,6 +13,38 @@ import org.fisk.swim.terminal.TextColor;
 
 class TabBarViewTest {
     @Test
+    void wrapsWholeTabsAndShrinksWhenWidened() {
+        var view = new TabBarView(Rect.create(0, 0, 16, 3));
+        view.setTabs(List.of(new TabBarView.Tab(1, "one", false, null),
+                new TabBarView.Tab(2, "two", true, null), new TabBarView.Tab(3, "three", false, null)));
+        assertEquals(2, view.preferredHeight(16));
+        assertEquals(" 1:one " + Powerline.SYMBOL_FILLED_RIGHT_ARROW
+                + " 2:two " + Powerline.SYMBOL_FILLED_RIGHT_ARROW, view.buildLines(16).getFirst().toString());
+        assertEquals(" 3:three " + Powerline.SYMBOL_FILLED_RIGHT_ARROW, view.buildLines(16).getLast().toString());
+        assertEquals(1, view.preferredHeight(80));
+        assertEquals(3, view.preferredHeight(4));
+        for (var line : view.buildLines(4)) {
+            assertEquals(4, line.length());
+        }
+    }
+
+    @Test
+    void nemoTabLabelsOmitSessionIdentifiers() {
+        assertEquals("Nemo", Window.compactNemoTabLabel("Nemo session-1788272724537 | Session 1788272724537"));
+        assertEquals("Nemo: Fix tests", Window.compactNemoTabLabel("Nemo session-123 | Fix tests"));
+    }
+
+    @Test
+    void wrappedRowsKeepTheirClickTargets() {
+        var selected = new java.util.concurrent.atomic.AtomicInteger();
+        var view = new TabBarView(Rect.create(0, 0, 8, 2));
+        view.setTabs(List.of(new TabBarView.Tab(1, "one", false, () -> selected.set(1)),
+                new TabBarView.Tab(2, "two", true, () -> selected.set(2))));
+        view.buildLines(8).get(1).clickAt(3);
+        assertEquals(2, selected.get());
+    }
+
+    @Test
     void adjacentTabsUsePowerlineTransitionsWithoutSpacer() throws Exception {
         var view = new TabBarView(Rect.create(0, 0, 80, 1));
         view.setTabs(List.of(

@@ -44,6 +44,11 @@ final class WindowChromeLayout {
 
     static WindowChromeLayout compute(
             Size size, int topMenuHeight, Set<FooterBar> requestedFooterBars, int commandRows) {
+        return compute(size, topMenuHeight, requestedFooterBars, commandRows, 1);
+    }
+
+    static WindowChromeLayout compute(
+            Size size, int topMenuHeight, Set<FooterBar> requestedFooterBars, int commandRows, int tabRows) {
         int width = size == null ? 0 : Math.max(0, size.getWidth());
         int height = size == null ? 0 : Math.max(0, size.getHeight());
         int menuHeight = Math.min(Math.max(0, topMenuHeight), height);
@@ -68,7 +73,8 @@ final class WindowChromeLayout {
                     rowsReservedForOtherBars++;
                 }
             }
-            int desiredHeight = bar == FooterBar.COMMAND ? requestedCommandRows : 1;
+            int desiredHeight = bar == FooterBar.COMMAND ? requestedCommandRows
+                    : bar == FooterBar.TAB_BAR ? Math.max(1, tabRows) : 1;
             int availableForBar = Math.max(1, remainingFooterRows - rowsReservedForOtherBars);
             int actualHeight = Math.min(desiredHeight, availableForBar);
             footerHeights.put(bar, actualHeight);

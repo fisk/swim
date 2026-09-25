@@ -30,6 +30,23 @@ class ModeResponderTest {
     Path tempDir;
 
     @Test
+    void terminalSupplementaryTextReachesInsertModeIntact() throws IOException {
+        try (var harness = HeadlessWindowHarness.create(writeFile("unicode.txt", ""), 20, 7)) {
+            var window = harness.getWindow();
+            HeadlessWindowHarness.dispatch(window.getCurrentMode(), HeadlessWindowHarness.key('i'));
+            String text = "A😀𐐀ööB";
+            var backend = new org.fisk.swim.terminal.AnsiTerminalBackend(
+                    new java.io.ByteArrayInputStream(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    new java.io.ByteArrayOutputStream(),
+                    () -> new org.fisk.swim.terminal.TerminalDimensions(20, 7));
+            for (org.fisk.swim.event.KeyStroke key; (key = backend.pollInput()) != null;) {
+                HeadlessWindowHarness.dispatch(window.getCurrentMode(), key);
+            }
+            assertEquals(text, window.getBufferContext().getBuffer().getString());
+        }
+    }
+
+    @Test
     void normalModeNavigationAndModeSwitchingWorkHeadlessly() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("mode.txt", "alpha\nbeta\ngamma"), 20, 4)) {
             Window window = harness.getWindow();

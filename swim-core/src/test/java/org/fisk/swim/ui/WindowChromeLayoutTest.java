@@ -6,6 +6,15 @@ import org.junit.jupiter.api.Test;
 
 class WindowChromeLayoutTest {
     @Test
+    void wrappedTabsReserveMultipleFooterRows() {
+        var layout = WindowChromeLayout.compute(Size.create(60, 16), 2,
+                WindowChromeLayout.standardFooterBars(true), 1, 3);
+        assertEquals("{0, 2, 60, 9}", layout.workspace().toString());
+        assertEquals("{0, 13, 60, 3}", layout.tabBar().toString());
+        assertEquals(5, layout.footerInsetRows());
+    }
+
+    @Test
     void standardLayoutStacksModeCommandAndTabsBelowWorkspace() {
         var layout = WindowChromeLayout.compute(Size.create(60, 16), 2,
                 WindowChromeLayout.standardFooterBars(true));
