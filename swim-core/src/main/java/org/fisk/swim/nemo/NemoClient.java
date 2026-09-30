@@ -7299,7 +7299,9 @@ public class NemoClient {
   private synchronized void appendTurn(Conversation conversation, ChatTurn turn) {
     conversation._turns.add(turn);
     conversation._updatedAtMillis = System.currentTimeMillis();
-    if (isPanelVisible(conversation)) {
+    // Workspace tabs retain their panel while detached. Keep that panel's model
+    // current: tab activation reattaches it without replaying the conversation.
+    if (conversation._panelView != null) {
       conversation._panelView.appendMessage(turn.speaker(), turn.text());
     }
     persistSessions();
@@ -7339,7 +7341,7 @@ public class NemoClient {
     clearStuck(conversation);
     long requestId = ++conversation._requestSequence;
     conversation._activeRequestId = requestId;
-    if (isPanelVisible(conversation)) {
+    if (conversation._panelView != null) {
       conversation._panelView.setPending(true, conversation._pendingStartedAtMillis);
       conversation._panelView.setContextUsagePercent(null);
     }
@@ -8439,7 +8441,7 @@ public class NemoClient {
     conversation._contextUsagePercent = null;
     conversation._updatedAtMillis = System.currentTimeMillis();
     persistSessions();
-    if (isPanelVisible(conversation)) {
+    if (conversation._panelView != null) {
       conversation._panelView.setMessages(List.of());
       conversation._panelView.setPending(false);
       conversation._panelView.setContextUsagePercent(null);
@@ -8622,7 +8624,7 @@ public class NemoClient {
     clearStuck(conversation);
     Thread worker = conversation._worker;
     conversation._worker = null;
-    if (isPanelVisible(conversation)) {
+    if (conversation._panelView != null) {
       conversation._panelView.setPending(false);
       conversation._panelView.setContextUsagePercent(conversation._contextUsagePercent);
     }
@@ -8654,7 +8656,7 @@ public class NemoClient {
       appendTurn(conversation, new ChatTurn("tool", trace.displayText(), false));
     }
     appendTurn(conversation, new ChatTurn("nemo", response.text()));
-    if (isPanelVisible(conversation)) {
+    if (conversation._panelView != null) {
       conversation._panelView.setPending(false);
       conversation._panelView.setContextUsagePercent(response.contextUsagePercent());
       conversation._panelView.setDailyTokenUsage(compactDailyTokenUsage());
@@ -8692,7 +8694,7 @@ public class NemoClient {
     } else {
       showMessage(response);
     }
-    if (isPanelVisible(conversation)) {
+    if (conversation._panelView != null) {
       conversation._panelView.setPending(false);
       conversation._panelView.setContextUsagePercent(null);
     }

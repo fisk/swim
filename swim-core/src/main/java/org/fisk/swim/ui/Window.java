@@ -2486,6 +2486,18 @@ public class Window implements Drawable {
     SwimRuntime.exit();
   }
 
+  public void exitEditor(boolean discardUnsaved) {
+    if (blockEditorDriveAction("editor exit", "quitting SWIM is not allowed")) {
+      return;
+    }
+    if (!discardUnsaved
+        && openBufferContextsSnapshot().stream().anyMatch(context -> context.getBuffer().isModified())) {
+      _commandView.setMessage("Unsaved changes. Save them first, or use :exit! to discard them.");
+      return;
+    }
+    SwimRuntime.exit();
+  }
+
   public void quitCurrentWindowOrExit() {
     if (blockEditorDriveAction(
         "window close", "closing windows through drive_editor is not allowed")) {

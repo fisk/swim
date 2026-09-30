@@ -447,6 +447,68 @@ class CommandViewTest {
     }
 
     @Test
+    void exitCommandExitsWithMultipleWorkspacesAndSplits() throws Exception {
+        Path first = tempDir.resolve("exit-first.txt");
+        Path second = tempDir.resolve("exit-second.txt");
+        Files.writeString(first, "first");
+        Files.writeString(second, "second");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(first, 50, 12)) {
+            var window = harness.getWindow();
+            invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second);
+            window.splitActiveBufferHorizontally();
+            var tabs = tabLabels(window);
+            invokeRunCommand(window.getCommandView(), "exit");
+            assertTrue(host.exitRequested);
+            assertEquals(tabs, tabLabels(window));
+            assertEquals(2, leafViews(window).size());
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void exitProtectsUnsavedEditsInInactiveWorkspaceUnlessForced() throws Exception {
+        Path first = tempDir.resolve("dirty.txt");
+        Path second = tempDir.resolve("clean.txt");
+        Files.writeString(first, "original");
+        Files.writeString(second, "clean");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(first, 50, 12)) {
+            var window = harness.getWindow();
+            window.getBufferContext().getBuffer().insert("unsaved");
+            invoke(window, "openBufferWorkspace", new Class<?>[] { Path.class }, second);
+            invokeRunCommand(window.getCommandView(), "exit");
+            assertFalse(host.exitRequested);
+            invokeRunCommand(window.getCommandView(), "exit!");
+            assertTrue(host.exitRequested);
+            assertEquals("original", Files.readString(first));
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
+    void exitCommandsAreBlockedFromEditorControl() throws Exception {
+        Path file = tempDir.resolve("exit-sandbox.txt");
+        Files.writeString(file, "project text");
+        RecordingHost host = new RecordingHost();
+        SwimRuntime.setHost(host);
+        try (var harness = HeadlessWindowHarness.create(file, 50, 12)) {
+            var window = harness.getWindow();
+            for (String command : List.of("exit", "exit!")) {
+                var result = window.driveEditorInput(":" + command + "<ENTER>", 64);
+                assertFalse(host.exitRequested);
+                assertTrue(result.toString().contains("quitting SWIM is not allowed"));
+            }
+        } finally {
+            SwimRuntime.clear();
+        }
+    }
+
+    @Test
     void quitCommandExitsWhenLastTabCloses() throws Exception {
         Path path = tempDir.resolve("quit-last.txt");
         Files.writeString(path, "abc");

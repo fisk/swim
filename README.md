@@ -84,6 +84,8 @@ Each live editor session is a separate app process. When a client attaches, it s
 
 Detaching a client, such as with `:detach` or the tmux-style `Ctrl-b d` binding, leaves the server-side session running. `:q` follows Vim window semantics: it closes the current frame first, then the current tab, and only exits the app process when the last tab is gone. The tmux-style `Ctrl-b &` binding closes the current tab directly. App process exit removes the session from the server.
 
+Use `:exit` to shut down the editor without closing each workspace or split first. It refuses to exit if any open buffer has unsaved edits; save them first, or use `:exit!` to explicitly discard them. Neither command saves buffer contents automatically.
+
 The session server is intentionally a separate `swim-session` module. It exposes the live-session API used by the editor and Nemo, implements the Unix-domain socket protocol, and detaches itself from the terminal.
 
 The client, session server, and editor app JVMs use `-XX:+UseZGC -XX:+ZAdaptiveHeapSizing`. SWIM no longer sets fixed `-Xmx128M` or `-Xmx4G` limits or a `SoftMaxHeapSize=1G` target; the collector adjusts heap capacity adaptively. Use the JDK installed at `~/.swim/jdk`, which must support `ZAdaptiveHeapSizing`, for both Maven builds and the generated runtime image. A generic JDK 25+ is not sufficient to guarantee this feature: launch options include `-XX:+IgnoreUnrecognizedVMOptions`, so an unsupported adaptive-sizing flag can otherwise be silently ignored. The installed launcher runs `~/.swim/image/bin/java`, built from that JDK.

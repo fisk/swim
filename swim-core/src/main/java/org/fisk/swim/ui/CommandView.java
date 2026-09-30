@@ -60,6 +60,8 @@ public class CommandView extends View {
   private static final List<CommandSpec> COMMAND_SPECS =
       List.of(
           new CommandSpec("q", List.of(), "", "close current window; exit on last tab"),
+          new CommandSpec("exit", List.of(), "", "exit the editor with all workspaces open"),
+          new CommandSpec("exit!", List.of(), "", "exit the editor, discarding unsaved edits"),
           new CommandSpec("e", List.of(), "<path>", "open or create a file"),
           new CommandSpec(
               "debug",
@@ -473,6 +475,10 @@ public class CommandView extends View {
       argument = rawCommand.substring(splitIndex + 1).trim();
     }
     switch (command) {
+      case "exit":
+      case "exit!":
+        Window.getInstance().exitEditor(command.equals("exit!"));
+        break;
       case "q":
         Window.getInstance().quitCurrentWindowOrExit();
         break;
@@ -1024,7 +1030,7 @@ public class CommandView extends View {
       case "read", "r" -> sandboxedEditorReadCommand(window, rawCommand, argument);
       case "w", "saveas", "sav", "saveas!" ->
           sandboxedEditorWriteCommand(window, rawCommand, argument);
-      case "q", "q!", "wq", "x" ->
+      case "q", "q!", "wq", "x", "exit", "exit!" ->
           blockEditorDriveCommand(window, rawCommand, "quitting SWIM is not allowed");
       case "mail", "todo", "slack", "nemo" ->
           blockEditorDriveCommand(

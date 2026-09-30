@@ -50,6 +50,69 @@ class NemoChatIT {
     }
 
     @Test
+    void detachedWorkspaceClearsThinkingWhenRequestCompletes() throws Exception {
+        checkDetachedWorkspaceTerminalState("handleResponse");
+    }
+
+    @Test
+    void detachedWorkspaceClearsThinkingWhenRequestFails() throws Exception {
+        checkDetachedWorkspaceTerminalState("handleFailure");
+    }
+
+    @Test
+    void detachedWorkspaceClearsThinkingWhenRequestIsAborted() throws Exception {
+        checkDetachedWorkspaceTerminalState("abortConversation");
+    }
+
+    private void checkDetachedWorkspaceTerminalState(String transition) throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Files.createDirectories(tempDir.resolve(".git"));
+        try (var harness = HeadlessWindowHarness.create(writeFile("background.txt", "text"), 80, 16)) {
+            var window = harness.getWindow();
+            var client = NemoClient.getInstance();
+            client.runWorkspace(window.getBufferContext(), "");
+            var panel = assertInstanceOf(ChatPanelView.class, window.getActiveView());
+            var conversations = (Map<?, ?>) HeadlessWindowHarness.getField(client, "_conversations");
+            Object conversation = conversations.get(client.conversationIdForPanel(panel));
+            for (var entry : Map.<String, Object>of("_pending", true, "_activeRequestId", 1L,
+                    "_pendingStartedAtMillis", System.currentTimeMillis(), "_worker", new Thread()).entrySet()) {
+                Field field = conversation.getClass().getDeclaredField(entry.getKey());
+                field.setAccessible(true);
+                field.set(conversation, entry.getValue());
+            }
+            panel.setPending(true);
+            assertTrue(window.switchToWorkspaceIndex(0));
+            assertEquals(null, panel.getParent());
+
+            Method method;
+            if (transition.equals("handleResponse")) {
+                method = NemoClient.class.getDeclaredMethod(transition, conversation.getClass(),
+                        long.class, NemoClient.ResponseResult.class);
+                method.setAccessible(true);
+                method.invoke(client, conversation, 1L, new NemoClient.ResponseResult("Background answer", 12));
+            } else if (transition.equals("handleFailure")) {
+                method = NemoClient.class.getDeclaredMethod(transition, conversation.getClass(), long.class, String.class);
+                method.setAccessible(true);
+                method.invoke(client, conversation, 1L, "Nemo failed: test failure");
+            } else {
+                method = NemoClient.class.getDeclaredMethod(transition, conversation.getClass());
+                method.setAccessible(true);
+                assertEquals(true, method.invoke(client, conversation));
+            }
+
+            assertEquals(false, HeadlessWindowHarness.getField(panel, "_pending"));
+            assertTrue(window.switchToWorkspaceIndex(1));
+            assertSame(panel, window.getActiveView());
+            assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("*thinking*")));
+            if (transition.equals("handleResponse")) {
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains("Background answer")));
+            }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     @Timeout(15)
     void chatsAcrossMultipleTurnsAndCompletesToolRoundWithoutErrors() throws Exception {
         var requestCount = new AtomicInteger();
