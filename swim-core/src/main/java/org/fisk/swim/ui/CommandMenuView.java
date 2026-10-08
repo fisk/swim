@@ -6,6 +6,7 @@ import java.util.List;
 import org.fisk.swim.terminal.TerminalContext;
 import org.fisk.swim.text.AttributedString;
 
+/** Presents caller-supplied menu state; it never discovers or adds commands. */
 public class CommandMenuView extends View {
     private static final int MIN_WIDTH = 28;
     private static final int MIN_BODY_ROWS = 1;

@@ -28,6 +28,59 @@ class ChatPanelViewTest {
     Path tempDir;
 
     @Test
+    void multilineMessagesKeepOneBackgroundIncludingBlankLines() throws Exception {
+        var view = new ChatPanelView(Rect.create(0, 0, 40, 12), "Nemo", ignored -> {});
+        view.appendMessage("me", "alpha\nbeta\n");
+        view.appendMessage("nemo", "gamma\ndelta");
+        view.appendMessage("nemo", "next message");
+        assertEquals(List.of(UiTheme.SURFACE_BACKGROUND, UiTheme.SURFACE_BACKGROUND,
+                UiTheme.SURFACE_BACKGROUND, UiTheme.SURFACE_ELEVATED,
+                UiTheme.SURFACE_ELEVATED, UiTheme.SURFACE_BACKGROUND), rowBackgrounds(view));
+    }
+
+    @Test
+    void wrappedMessageKeepsItsBackgroundAfterResizeAndScroll() throws Exception {
+        var view = new ChatPanelView(Rect.create(0, 0, 18, 6), "Nemo", ignored -> {});
+        view.appendMessage("me", "one two three four five six seven eight nine ten");
+        view.appendMessage("nemo", "done");
+        for (int width : List.of(18, 25, 12)) {
+            view.setBounds(Rect.create(0, 0, width, 6));
+            var backgrounds = rowBackgrounds(view);
+            assertTrue(backgrounds.size() > 2);
+            assertTrue(backgrounds.subList(0, backgrounds.size() - 1).stream()
+                    .allMatch(UiTheme.SURFACE_BACKGROUND::equals));
+            assertEquals(UiTheme.SURFACE_ELEVATED, backgrounds.getLast());
+            var startLine = ChatPanelView.class.getDeclaredField("_startLine");
+            startLine.setAccessible(true);
+            startLine.setInt(view, 1);
+            assertEquals(backgrounds, rowBackgrounds(view));
+        }
+    }
+
+    @Test
+    void codeAndDiffHighlightingPreservesSurroundingMessageColour() throws Exception {
+        var view = new ChatPanelView(Rect.create(0, 0, 60, 12), "Nemo", ignored -> {});
+        view.appendMessage("me", "question");
+        view.appendMessage("nemo", "before\n```java\nint x;\n```\nafter\n```diff\n+added\n-removed\n```");
+        assertEquals(List.of(UiTheme.SURFACE_BACKGROUND, UiTheme.SURFACE_ELEVATED,
+                UiTheme.SURFACE_MUTED, UiTheme.SURFACE_ELEVATED,
+                UiTheme.DIFF_ADDED_BACKGROUND, UiTheme.DIFF_REMOVED_BACKGROUND), rowBackgrounds(view));
+    }
+
+    private static List<TextColor> rowBackgrounds(ChatPanelView view) throws Exception {
+        var rowsMethod = ChatPanelView.class.getDeclaredMethod("getDisplayRows");
+        rowsMethod.setAccessible(true);
+        var rows = (List<?>) rowsMethod.invoke(view);
+        var result = new java.util.ArrayList<TextColor>();
+        for (Object row : rows) {
+            var background = ChatPanelView.class.getDeclaredMethod("rowBackground", row.getClass());
+            background.setAccessible(true);
+            result.add((TextColor) background.invoke(null, row));
+        }
+        return result;
+    }
+
+    @Test
     void enterSubmitsTypedMessageAndClearsInput() {
         var submitted = new AtomicReference<String>();
         var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", submitted::set);
@@ -441,14 +494,19 @@ class ChatPanelViewTest {
 
     @Test
     void commandMenuStateAppearsOnlyForColonPrefixedInput() {
-        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        java.util.function.Function<String, CommandView.CommandMenuState> menu = text ->
+                CommandView.CommandMenuState.forCommandText(text, 0,
+                        List.of(new CommandView.CommandSpec("switch", List.of(), "", "switch session")));
+        var view = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {},
+                ignored -> {}, ignored -> {}, menu);
 
         dispatch(view, new KeyStroke('h', false, false));
         dispatch(view, new KeyStroke('i', false, false));
         assertFalse(view.isCommandInputActive());
         assertFalse(view.getCommandMenuState().visible());
 
-        var commandView = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {});
+        var commandView = new ChatPanelView(Rect.create(0, 0, 20, 5), "Nemo", ignored -> {},
+                ignored -> {}, ignored -> {}, menu);
         dispatch(commandView, new KeyStroke(':', false, false));
         dispatch(commandView, new KeyStroke('s', false, false));
 
@@ -494,6 +552,59 @@ class ChatPanelViewTest {
         assertEquals(":deny approval-1", view.getInputText());
         assertEquals(view.getInputText().length(), view.getCursorOffset());
         assertEquals(":deny approval-1", changed.get());
+    }
+
+    @Test
+    void approvalMenusExcludePluginsButEditorMenuIncludesThemOnce() throws Exception {
+        try (var first = registerMenuTestCommand("mach5"); var second = registerMenuTestCommand("ahs")) {
+            var decisions = List.of(
+                    new CommandView.CommandSpec("approve", List.of(), "approval-1", "allow once",
+                            "approve approval-1", true, "Approve once"),
+                    new CommandView.CommandSpec("deny", List.of(), "approval-1", "deny",
+                            "deny approval-1", true, "Deny"));
+            var submitted = new AtomicReference<String>();
+            var view = new ChatPanelView(Rect.create(0, 0, 40, 10), "Nemo", ignored -> {},
+                    submitted::set, ignored -> {}, text -> CommandView.CommandMenuState.forCommandText(
+                            text, 0, decisions, "approval options"));
+            assertTrue(view.openCommandInputIfEmpty());
+            assertEquals(decisions, view.getCommandMenuState().matches());
+            dispatch(view, new KeyStroke(KeyType.ArrowDown));
+            dispatch(view, new KeyStroke(KeyType.Enter));
+            assertEquals(":deny approval-1", submitted.get());
+
+            // Filtering a context must never discover a command from outside it.
+            assertTrue(CommandView.CommandMenuState.forCommandText("mach", 0, decisions).matches().isEmpty());
+            assertTrue(CommandView.CommandMenuState.forCommandText("", 0, List.of()).matches().isEmpty());
+            var nemoCommands = List.of(new CommandView.CommandSpec("abort", List.of(), "", "stop worker"));
+            assertEquals(nemoCommands,
+                    CommandView.CommandMenuState.forCommandText("", 0, nemoCommands).matches());
+            var global = CommandView.editorCommandMenuState("").matches();
+            for (String name : List.of("mach5", "ahs")) {
+                assertEquals(1L, global.stream().filter(spec -> spec.primaryName().equals(name)).count());
+                assertEquals(name, CommandView.editorCommandMenuState(name).selectedMatch().primaryName());
+            }
+        }
+    }
+
+    private static AutoCloseable registerMenuTestCommand(String name) {
+        return org.fisk.swim.api.SwimCommandRegistry.register("menu-test-" + name,
+                new org.fisk.swim.api.SwimCommand() {
+                    @Override public String name() { return name; }
+                    @Override public String description() { return "Unrelated editor command"; }
+                    @Override public String execute(org.fisk.swim.api.SwimCommandInvocation invocation) {
+                        throw new AssertionError("Approval menu must not execute plugin commands");
+                    }
+                });
+    }
+
+    @Test
+    void chatWithoutMenuProviderDoesNotDiscoverCommands() throws Exception {
+        try (var registration = registerMenuTestCommand("ahs")) {
+            var view = new ChatPanelView(Rect.create(0, 0, 40, 10), "Chat", ignored -> {});
+            assertTrue(view.openCommandInputIfEmpty());
+            assertFalse(view.getCommandMenuState().visible());
+            assertTrue(view.getCommandMenuState().matches().isEmpty());
+        }
     }
 
     @Test

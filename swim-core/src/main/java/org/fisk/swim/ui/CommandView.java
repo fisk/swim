@@ -1440,12 +1440,19 @@ public class CommandView extends View {
         "");
   }
 
-  private static List<CommandSpec> matchingCommandSpecs(String prefix) {
-    return matchingCommandSpecs(prefix, null, COMMAND_SPECS);
+  /** The editor command prompt owns discovery of built-in and plugin commands. */
+  static CommandMenuState editorCommandMenuState(String text) {
+    String prefix = commandPrefix(text == null ? "" : text);
+    return CommandMenuState.forCommandText(text, 0, matchingCommandSpecs(prefix, (String) null));
   }
 
   private static List<CommandSpec> matchingCommandSpecs(String prefix, String lastCommand) {
-    return matchingCommandSpecs(prefix, lastCommand, COMMAND_SPECS);
+    var specs = new ArrayList<>(COMMAND_SPECS);
+    for (var registration : SwimCommandRegistry.list()) {
+      var command = registration.command();
+      specs.add(new CommandSpec(command.name(), List.of(), "", command.description()));
+    }
+    return matchingCommandSpecs(prefix, lastCommand, specs);
   }
 
   private static List<CommandSpec> matchingCommandSpecs(
@@ -1460,13 +1467,6 @@ public class CommandView extends View {
       matches.add(CommandSpec.lastCommand(lastCommand));
     }
     for (var spec : commandSpecs) {
-      if (prefix.isBlank() || spec.matches(prefix)) {
-        matches.add(spec);
-      }
-    }
-    for (var registration : SwimCommandRegistry.list()) {
-      var command = registration.command();
-      var spec = new CommandSpec(command.name(), List.of(), "", command.description());
       if (prefix.isBlank() || spec.matches(prefix)) {
         matches.add(spec);
       }
@@ -2663,15 +2663,6 @@ public class CommandView extends View {
       return new CommandMenuState(false, "", List.of(), 0);
     }
 
-    public static CommandMenuState forCommandText(String text) {
-      return forCommandText(text, 0);
-    }
-
-    public static CommandMenuState forCommandText(String text, int selection) {
-      return forCommandText(
-          text, selection, matchingCommandSpecs(commandPrefix(text == null ? "" : text)));
-    }
-
     public static CommandMenuState forCommandText(
         String text, int selection, List<CommandSpec> commandSpecs) {
       return forCommandText(text, selection, commandSpecs, "command matches");
@@ -2679,6 +2670,8 @@ public class CommandView extends View {
 
     public static CommandMenuState forCommandText(
         String text, int selection, List<CommandSpec> commandSpecs, String title) {
+      // An explicit list defines the whole context (for example approval
+      // decisions). Never augment it with unrelated global/plugin commands.
       String prefix = commandPrefix(text == null ? "" : text);
       var matches = List.copyOf(matchingCommandSpecs(prefix, commandSpecs));
       int normalizedSelection =

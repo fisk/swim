@@ -82,7 +82,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     DIFF_CONTEXT
   }
 
-  private record DisplayLine(String text, DisplayKind kind, String language) {}
+  private record DisplayLine(String text, DisplayKind kind, String language, int messageIndex) {}
 
   private record CodeRenderKey(
       DisplayLine line,
@@ -175,7 +175,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         onSubmit,
         ignored -> {},
         ignored -> {},
-        CommandView.CommandMenuState::forCommandText,
+        ignored -> CommandView.CommandMenuState.hidden(),
         PromptStyle.nemo());
   }
 
@@ -187,7 +187,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         onSubmit,
         onCommand,
         ignored -> {},
-        CommandView.CommandMenuState::forCommandText,
+        ignored -> CommandView.CommandMenuState.hidden(),
         PromptStyle.nemo());
   }
 
@@ -203,7 +203,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
         onSubmit,
         onCommand,
         onCommandInputChanged,
-        CommandView.CommandMenuState::forCommandText,
+        ignored -> CommandView.CommandMenuState.hidden(),
         PromptStyle.nemo());
   }
 
@@ -357,8 +357,8 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     int width = Math.max(1, getBounds().getSize().getWidth());
     if (_transcriptRowsDirty || _cachedTranscriptWidth != width) {
       var rows = new ArrayList<DisplayLine>();
-      for (var message : _messages) {
-        appendMessageRows(rows, message, width);
+      for (int index = 0; index < _messages.size(); index++) {
+        appendMessageRows(rows, _messages.get(index), width, index);
       }
       _cachedTranscriptRows = List.copyOf(rows);
       _cachedTranscriptWidth = width;
@@ -372,12 +372,12 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     if (_pending) {
       rows.add(
           new DisplayLine(
-              NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL, ""));
+              NEMO_PREFIX + formatThinkingText(elapsedSeconds()), DisplayKind.NORMAL, "", _messages.size()));
     }
     return rows;
   }
 
-  private void appendMessageRows(List<DisplayLine> rows, ChatMessage message, int width) {
+  private void appendMessageRows(List<DisplayLine> rows, ChatMessage message, int width, int messageIndex) {
     String prefix = prefixForSpeaker(message.speaker());
     String continuation = " ".repeat(prefix.length());
     boolean first = true;
@@ -421,18 +421,9 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
               width,
               kind,
               codeLike,
-              codeLanguage);
+              codeLanguage,
+              messageIndex);
     }
-  }
-
-  private boolean appendWrappedRows(
-      List<DisplayLine> rows,
-      String prefix,
-      String continuation,
-      String text,
-      int width,
-      DisplayKind kind) {
-    return appendWrappedRows(rows, prefix, continuation, text, width, kind, false, "");
   }
 
   private boolean appendWrappedRows(
@@ -443,27 +434,28 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
       int width,
       DisplayKind kind,
       boolean fixedWidth,
-      String language) {
+      String language,
+      int messageIndex) {
     int firstWidth = Math.max(1, width - prefix.length());
     int laterWidth = Math.max(1, width - continuation.length());
     List<String> wrapped =
         fixedWidth ? wrapFixed(text, firstWidth) : TextPanelView.wrapText(text, firstWidth);
     if (wrapped.isEmpty()) {
-      rows.add(new DisplayLine(prefix, kind, language));
+      rows.add(new DisplayLine(prefix, kind, language, messageIndex));
       return false;
     }
-    rows.add(new DisplayLine(prefix + wrapped.get(0), kind, language));
+    rows.add(new DisplayLine(prefix + wrapped.get(0), kind, language, messageIndex));
     for (int i = 1; i < wrapped.size(); i++) {
       List<String> continuationWrapped =
           fixedWidth
               ? wrapFixed(wrapped.get(i), laterWidth)
               : TextPanelView.wrapText(wrapped.get(i), laterWidth);
       if (continuationWrapped.isEmpty()) {
-        rows.add(new DisplayLine(continuation, kind, language));
+        rows.add(new DisplayLine(continuation, kind, language, messageIndex));
         continue;
       }
       for (String line : continuationWrapped) {
-        rows.add(new DisplayLine(continuation + line, kind, language));
+        rows.add(new DisplayLine(continuation + line, kind, language, messageIndex));
       }
     }
     return false;
@@ -515,13 +507,13 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     return inLooseDiff ? diffKind(line) : DisplayKind.NORMAL;
   }
 
-  private static TextColor rowBackground(DisplayLine line, int rowIndex) {
+  private static TextColor rowBackground(DisplayLine line) {
     return switch (line.kind()) {
       case CODE_HEADER, CODE -> UiTheme.SURFACE_MUTED;
       case DIFF_ADDED -> UiTheme.DIFF_ADDED_BACKGROUND;
       case DIFF_REMOVED -> UiTheme.DIFF_REMOVED_BACKGROUND;
       case DIFF_HEADER, DIFF_HUNK, DIFF_CONTEXT -> UiTheme.SURFACE_MUTED;
-      case NORMAL -> rowIndex % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
+      case NORMAL -> line.messageIndex() % 2 == 0 ? UiTheme.SURFACE_BACKGROUND : UiTheme.SURFACE_ELEVATED;
     };
   }
 
@@ -1479,7 +1471,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     int bodyHeight = bodyHeight();
     for (int i = 0; i < bodyHeight && _startLine + i < lines.size(); i++) {
       DisplayLine line = lines.get(_startLine + i);
-      TextColor background = rowBackground(line, i);
+      TextColor background = rowBackground(line);
       UiTheme.drawLine(
           graphics,
           Point.create(rect.getPoint().getX(), rect.getPoint().getY() + 1 + i),
