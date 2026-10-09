@@ -190,7 +190,9 @@ public class NemoClient {
   }
 
   synchronized void resetForTests() {
+    _modelCatalogLoader = NemoModelCatalog::load;
     for (var conversation : _conversations.values()) {
+      cancelModelPicker(conversation);
       stopWorker(conversation);
     }
     _mcpClient.shutdownAll();
@@ -455,6 +457,8 @@ public class NemoClient {
     private Configuration _configuration;
     private String _modelOverride = "";
     private String _reasoningEffortOverride = "";
+    private long _modelPickerGeneration;
+    private Thread _modelCatalogWorker;
     private String _goal = "";
     private ChatPanelView _panelView;
     private boolean _pending;
@@ -7139,7 +7143,8 @@ public class NemoClient {
       configuration = configuration.withModel(conversation._modelOverride);
     }
     if (!conversation._reasoningEffortOverride.isBlank()) {
-      configuration = configuration.withReasoningEffort(conversation._reasoningEffortOverride);
+      configuration = configuration.withReasoningEffort(
+          "default".equals(conversation._reasoningEffortOverride) ? "" : conversation._reasoningEffortOverride);
     }
     conversation._configuration = configuration;
   }
@@ -7468,12 +7473,7 @@ public class NemoClient {
           new CommandSpec(
               "usage", List.of("tokens"), "", "show today's Nemo input and output token usage"),
           new CommandSpec(
-              "model", List.of(), "[name]", "show or select the model for this conversation"),
-          new CommandSpec(
-              "reasoning",
-              List.of("reasoning-effort"),
-              "[level]",
-              "show or select the reasoning effort for this conversation"),
+              "model", List.of("reasoning", "reasoning-effort"), "", "choose model, then reasoning level"),
           new CommandSpec(
               "goal",
               List.of(),
@@ -7767,29 +7767,116 @@ public class NemoClient {
   }
 
   private void handleModelCommand(Conversation conversation, String argument) {
-    handleRuntimeOptionCommand(
-        conversation,
-        argument,
-        "model",
-        conversation._configuration.model(),
-        conversation._configuration.modelOptions(),
-        value -> {
-          conversation._modelOverride = value;
-          conversation._configuration = conversation._configuration.withModel(value);
-        });
+    var window = Window.getInstance();
+    if (window != null && window.blockEditorDriveAction("Nemo model selection", "Nemo settings require host action")) return;
+    if (conversation._panelView == null) return;
+    cancelModelPicker(conversation);
+    long generation = conversation._modelPickerGeneration;
+    var configuration = conversation._configuration;
+    var loader = _modelCatalogLoader;
+    Runnable cancel = () -> cancelModelPicker(conversation);
+    conversation._panelView.showChoices("Loading models… · Esc to cancel",
+        List.of(new ChatPanelView.Choice("Cancel", "Keep current model and reasoning", cancel)), cancel);
+    var worker = new Thread(() -> {
+      List<NemoModelCatalog.Model> models;
+      String notice = "";
+      try {
+        models = loader.load(configuration);
+        if (models.isEmpty()) throw new IOException("Empty model catalog");
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      } catch (Exception e) {
+        // Do not display raw provider errors, which can contain credentials.
+        models = NemoModelCatalog.configuredModels(configuration);
+        notice = "Discovery unavailable; configured models (capabilities unverified)";
+      }
+      var available = List.copyOf(models);
+      String status = notice;
+      EventThread.getInstance().enqueue(new RunnableEvent(() ->
+          showModelChoices(conversation, generation, configuration, available, argument.trim(), status)));
+    }, "swim-nemo-model-catalog");
+    worker.setDaemon(true);
+    conversation._modelCatalogWorker = worker;
+    worker.start();
   }
 
   private void handleReasoningCommand(Conversation conversation, String argument) {
-    handleRuntimeOptionCommand(
-        conversation,
-        argument,
-        "reasoning effort",
-        conversation._configuration.reasoningEffort(),
-        conversation._configuration.reasoningEffortOptions(),
-        value -> {
-          conversation._reasoningEffortOverride = value;
-          conversation._configuration = conversation._configuration.withReasoningEffort(value);
-        });
+    handleModelCommand(conversation, "");
+  }
+
+  private NemoModelCatalog.Loader _modelCatalogLoader = NemoModelCatalog::load;
+
+  synchronized void setModelCatalogLoaderForTests(NemoModelCatalog.Loader loader) {
+    _modelCatalogLoader = loader;
+  }
+
+  private synchronized void cancelModelPicker(Conversation conversation) {
+    conversation._modelPickerGeneration++;
+    if (conversation._modelCatalogWorker != null) conversation._modelCatalogWorker.interrupt();
+    conversation._modelCatalogWorker = null;
+  }
+
+  private boolean modelPickerCurrent(Conversation conversation, long generation) {
+    return _conversations.get(conversation._id) == conversation
+        && conversation._modelPickerGeneration == generation;
+  }
+
+  private synchronized void showModelChoices(Conversation conversation, long generation,
+      Configuration configuration, List<NemoModelCatalog.Model> models, String requested, String notice) {
+    if (!modelPickerCurrent(conversation, generation)) return;
+    conversation._modelCatalogWorker = null;
+    if (!requested.isBlank()) {
+      for (var model : models) {
+        if (model.id().equals(requested)) {
+          showReasoningChoices(conversation, generation, model);
+          return;
+        }
+      }
+      appendAssistantNote(conversation, "Unavailable model: " + requested);
+    }
+    var choices = new ArrayList<ChatPanelView.Choice>();
+    for (var model : models) {
+      choices.add(new ChatPanelView.Choice(model.label() + (model.id().equals(configuration.model()) ? " (current)" : ""),
+          model.id(), () -> showReasoningChoices(conversation, generation, model)));
+    }
+    if (choices.isEmpty()) choices.add(new ChatPanelView.Choice("Cancel", "No models available", () -> cancelModelPicker(conversation)));
+    conversation._panelView.showChoices("Model · 1/2 · type to filter · Esc cancels"
+        + (notice.isBlank() ? "" : "\n" + notice), choices, () -> cancelModelPicker(conversation));
+  }
+
+  private synchronized void showReasoningChoices(Conversation conversation, long generation, NemoModelCatalog.Model model) {
+    if (!modelPickerCurrent(conversation, generation)) return;
+    var choices = new ArrayList<ChatPanelView.Choice>();
+    if (model.efforts().isEmpty()) {
+      choices.add(new ChatPanelView.Choice("Provider default", "No reasoning capability metadata; omit the effort override",
+          () -> applyModelChoice(conversation, generation, model, "")));
+    } else {
+      for (var effort : model.efforts()) {
+        var choice = new ChatPanelView.Choice(effort.value()
+            + (effort.value().equals(model.defaultEffort()) ? " (default)" : ""), effort.description(),
+            () -> applyModelChoice(conversation, generation, model, effort.value()));
+        if (effort.value().equals(model.defaultEffort())) choices.addFirst(choice);
+        else choices.add(choice);
+      }
+    }
+    conversation._panelView.showChoices("Reasoning · 2/2 · " + model.label() + " · Esc cancels",
+        choices, () -> cancelModelPicker(conversation));
+  }
+
+  private synchronized void applyModelChoice(Conversation conversation, long generation, NemoModelCatalog.Model model, String effort) {
+    if (!modelPickerCurrent(conversation, generation)) return;
+    var window = Window.getInstance();
+    if (window != null && window.blockEditorDriveAction("Nemo model selection", "Nemo settings require host action")) return;
+    conversation._modelOverride = model.id();
+    // Persist an explicit default so reopening does not resurrect the old configured effort.
+    conversation._reasoningEffortOverride = effort.isBlank() ? "default" : effort;
+    conversation._configuration = conversation._configuration.withModel(model.id()).withReasoningEffort(effort);
+    conversation._updatedAtMillis = System.currentTimeMillis();
+    cancelModelPicker(conversation);
+    persistSessions();
+    appendAssistantNote(conversation, "Using model: " + model.id() + "; reasoning: "
+        + (effort.isBlank() ? "provider default" : effort) + ". Applies to the next Nemo request.");
   }
 
   private void handleGoalCommand(Conversation conversation, String argument) {
@@ -7817,77 +7904,6 @@ public class NemoClient {
     conversation._updatedAtMillis = System.currentTimeMillis();
     persistSessions();
     appendAssistantNote(conversation, "Active goal set: " + goal);
-  }
-
-  private void handleRuntimeOptionCommand(
-      Conversation conversation,
-      String argument,
-      String label,
-      String current,
-      List<String> configuredOptions,
-      java.util.function.Consumer<String> select) {
-    String requested = argument.trim();
-    if (requested.isBlank()) {
-      appendAssistantNote(conversation, formatRuntimeOptions(label, current, configuredOptions));
-      return;
-    }
-    if (requested.contains(" ")) {
-      appendAssistantNote(
-          conversation,
-          "Usage: :"
-              + ("model".equals(label) ? "model" : "reasoning")
-              + " <"
-              + ("model".equals(label) ? "name" : "level")
-              + ">\n\n"
-              + formatRuntimeOptions(label, current, configuredOptions));
-      return;
-    }
-    if (!configuredOptions.isEmpty() && !configuredOptions.contains(requested)) {
-      appendAssistantNote(
-          conversation,
-          "Unavailable "
-              + label
-              + ": "
-              + requested
-              + "\n\n"
-              + formatRuntimeOptions(label, current, configuredOptions));
-      return;
-    }
-    select.accept(requested);
-    persistSessions();
-    appendAssistantNote(
-        conversation,
-        "Using "
-            + label
-            + ": "
-            + requested
-            + ". This applies to the next Nemo request in this conversation.");
-  }
-
-  private static String formatRuntimeOptions(
-      String label, String current, List<String> configuredOptions) {
-    String displayCurrent = current == null || current.isBlank() ? "default" : current;
-    var lines = new ArrayList<String>();
-    lines.add("Current " + label + ": " + displayCurrent);
-    if (configuredOptions == null || configuredOptions.isEmpty()) {
-      lines.add("Available " + label + " options are not configured.");
-      lines.add(
-          "Set any provider-supported value with :"
-              + ("model".equals(label) ? "model" : "reasoning")
-              + " <"
-              + ("model".equals(label) ? "name" : "level")
-              + ">.");
-      lines.add(
-          "To restrict and list choices, set "
-              + ("model".equals(label) ? "model_options" : "reasoning_effort_options")
-              + " in nemo.conf.");
-      return String.join("\n", lines);
-    }
-    lines.add("Available " + label + (configuredOptions.size() == 1 ? ":" : " options:"));
-    for (String option : configuredOptions) {
-      lines.add(option.equals(displayCurrent) ? "[" + option + "]" : option);
-    }
-    return String.join("\n", lines);
   }
 
   private void handlePermissionsCommand(Conversation conversation, String argument) {

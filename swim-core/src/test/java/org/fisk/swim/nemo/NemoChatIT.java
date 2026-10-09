@@ -1724,7 +1724,7 @@ class NemoChatIT {
 
     @Test
     @Timeout(15)
-    void modelAndReasoningCommandsListAndSelectConfiguredConversationOptions() throws Exception {
+    void modelPickerDiscoversCapabilitiesAndAppliesBothChoicesAtomically() throws Exception {
         String originalUserHome = switchToTempUserHome();
         Path configDir = tempDir.resolve(".swim");
         Files.createDirectories(configDir.resolve("nemo"));
@@ -1743,29 +1743,75 @@ class NemoChatIT {
                 NemoClient.getInstance().run(window.getBufferContext(), "");
                 var panel = waitForPanel(window);
 
+                var calls = new AtomicInteger();
+                NemoClient.getInstance().setModelCatalogLoaderForTests(config -> {
+                    calls.incrementAndGet();
+                    return List.of(new NemoModelCatalog.Model("new-model", "New model", List.of(
+                        new NemoModelCatalog.Effort("low", "fast"),
+                        new NemoModelCatalog.Effort("new-effort", "new capability")), "new-effort"));
+                });
                 submit(panel, ":model");
-                waitForLine(panel, "Current model: gpt-5.6-terra");
-                waitForLine(panel, "Available model options:");
-                waitForLine(panel, "[gpt-5.6-terra]");
-                waitForLine(panel, "gpt-5.6-sol");
+                waitForMenu(panel, "Model · 1/2");
+                assertEquals("New model", panel.getCommandMenuState().selectedMatch().displayLabel());
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                assertTrue(panel.getCommandMenuState().title().startsWith("Reasoning · 2/2"));
+                assertEquals(2, panel.getCommandMenuState().matches().size());
+                assertEquals("new-effort (default)", panel.getCommandMenuState().selectedMatch().displayLabel());
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Using model: new-model")));
+                dispatch(panel, new KeyStroke(KeyType.Escape));
+                assertFalse(displayLines(panel).stream().anyMatch(line -> line.contains("Using model: new-model")));
 
-                submit(panel, ":model gpt-5.6-sol");
-                waitForLine(panel, "Using model: gpt-5.6-sol.");
-
-                NemoClient.getInstance().run(window.getBufferContext(), "");
-                submit(panel, ":model");
-                waitForLine(panel, "Current model: gpt-5.6-sol");
-
-                submit(panel, ":reasoning");
-                waitForLine(panel, "Current reasoning effort: medium");
-                waitForLine(panel, "Available reasoning effort options:");
-
-                submit(panel, ":reasoning high");
-                waitForLine(panel, "Using reasoning effort: high.");
-
-                submit(panel, ":model unsupported");
-                waitForLine(panel, "Unavailable model: unsupported");
+                submit(panel, ":reasoning"); // compatibility alias, same two-step picker
+                waitForMenu(panel, "Model · 1/2");
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                waitForLine(panel, "Using model: new-model; reasoning: new-effort.");
+                assertEquals(2, calls.get());
+                String sessions = Files.readString(tempDir.resolve(".swim/nemo/sessions.json"));
+                assertTrue(sessions.contains("new-model"));
+                assertTrue(sessions.contains("new-effort"));
             }
+        } finally {
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    private void waitForMenu(ChatPanelView panel, String title) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (panel.getCommandMenuState().title().startsWith(title)) return;
+            Thread.sleep(20);
+        }
+        throw new AssertionError("Timed out waiting for menu: " + title);
+    }
+
+    @Test
+    void modelPickerFailureOffersExplicitDefaultAndDoesNotRestoreOldEffort() throws Exception {
+        String originalUserHome = switchToTempUserHome();
+        Path config = tempDir.resolve(".swim/nemo/nemo.conf");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "provider=chatgpt\nmodel=current-model\nreasoning_effort=high\n");
+        try (var harness = HeadlessWindowHarness.create(writeFile("fallback.txt", "text"), 80, 18)) {
+            EventThread.getInstance().start();
+            var window = harness.getWindow();
+            var client = NemoClient.getInstance();
+            client.run(window.getBufferContext(), "");
+            var panel = waitForPanel(window);
+            client.setModelCatalogLoaderForTests(ignored -> { throw new IOException("secret-test-marker"); });
+            submit(panel, ":model");
+            waitForMenu(panel, "Model · 1/2");
+            assertTrue(panel.getCommandMenuState().title().contains("Discovery unavailable"));
+            assertFalse(panel.getCommandMenuState().title().contains("secret-test-marker"));
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            assertEquals(List.of("Provider default"), panel.getCommandMenuState().matches().stream()
+                .map(org.fisk.swim.ui.CommandView.CommandSpec::displayLabel).toList());
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            waitForLine(panel, "reasoning: provider default");
+            client.run(window.getBufferContext(), "");
+            var conversations = (Map<?, ?>) HeadlessWindowHarness.getField(client, "_conversations");
+            var conversation = conversations.get(client.conversationIdForPanel(panel));
+            var configuration = (NemoClient.Configuration) HeadlessWindowHarness.getField(conversation, "_configuration");
+            assertEquals("", configuration.reasoningEffort());
         } finally {
             System.setProperty("user.home", originalUserHome);
         }

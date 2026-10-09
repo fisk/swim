@@ -9,6 +9,7 @@ import org.fisk.swim.EventThread;
 import org.fisk.swim.event.KeyBindingHint;
 import org.fisk.swim.event.KeyBindingHintProvider;
 import org.fisk.swim.event.KeyStrokes;
+import org.fisk.swim.event.KeyStroke;
 import org.fisk.swim.event.KeyType;
 import org.fisk.swim.event.MouseAction;
 import org.fisk.swim.event.MouseActionType;
@@ -167,6 +168,67 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
   private String _dailyTokenUsage = "";
   private long _pendingRefreshGeneration;
   private Runnable _responseAction;
+  /** A caller-owned choice; selecting it does not submit a chat/colon command. */
+  public record Choice(String label, String detail, Runnable action) {}
+  private List<Choice> _choices;
+  private String _choiceTitle = "";
+  private String _choiceFilter = "";
+  private int _choiceSelection;
+  private Runnable _cancelChoices = () -> {};
+
+  public void showChoices(String title, List<Choice> choices, Runnable onCancel) {
+    if (Window.getInstance() != null
+        && Window.getInstance().blockEditorDriveAction("choice menu", "choice menus require host action")) return;
+    _choices = List.copyOf(choices);
+    _choiceTitle = title;
+    _choiceFilter = "";
+    _choiceSelection = 0;
+    _cancelChoices = onCancel == null ? () -> {} : onCancel;
+    refreshChrome();
+    setNeedsRedraw();
+  }
+
+  private List<Choice> matchingChoices() {
+    return _choices.stream().filter(choice -> (choice.label() + " " + choice.detail()).toLowerCase(java.util.Locale.ROOT)
+        .contains(_choiceFilter.toLowerCase(java.util.Locale.ROOT))).toList();
+  }
+
+  private void closeChoices(boolean cancel) {
+    Runnable onCancel = _cancelChoices;
+    _choices = null;
+    _cancelChoices = () -> {};
+    refreshChrome();
+    if (cancel) onCancel.run();
+  }
+
+  private void handleChoiceKey(KeyStroke key) {
+    if (Window.getInstance() != null
+        && Window.getInstance().blockEditorDriveAction("choice menu", "choice menus require host action")) return;
+    var matches = matchingChoices();
+    switch (key.getKeyType()) {
+      case Escape -> closeChoices(true);
+      case ArrowDown, Tab -> _choiceSelection = Math.min(Math.max(0, matches.size() - 1), _choiceSelection + 1);
+      case ArrowUp -> _choiceSelection = Math.max(0, _choiceSelection - 1);
+      case Enter -> {
+        if (!matches.isEmpty()) {
+          var selected = matches.get(Math.min(_choiceSelection, matches.size() - 1));
+          closeChoices(false);
+          selected.action().run();
+        }
+      }
+      case Backspace -> {
+        if (!_choiceFilter.isEmpty()) _choiceFilter = _choiceFilter.substring(0, _choiceFilter.length() - 1);
+        _choiceSelection = 0;
+      }
+      case Character -> {
+        if (!key.isCtrlDown() && !key.isAltDown()) _choiceFilter += key.getCharacter();
+        _choiceSelection = 0;
+      }
+      default -> { }
+    }
+    refreshChrome();
+    setNeedsRedraw();
+  }
 
   public ChatPanelView(Rect bounds, String title, Consumer<String> onSubmit) {
     this(
@@ -586,6 +648,12 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
   }
 
   public CommandView.CommandMenuState getCommandMenuState() {
+    if (_choices != null) {
+      var specs = matchingChoices().stream().map(choice -> new CommandView.CommandSpec(
+          choice.label(), List.of(), "", choice.detail(), "", true, choice.label())).toList();
+      return new CommandView.CommandMenuState(true, _choiceFilter, specs,
+          Math.min(_choiceSelection, Math.max(0, specs.size() - 1)), _choiceTitle);
+    }
     String text = _input.toString();
     if (!text.startsWith(":")) {
       return CommandView.CommandMenuState.hidden();
@@ -603,7 +671,7 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
   }
 
   public boolean isCommandInputActive() {
-    return _input.toString().startsWith(":");
+    return _choices != null || _input.toString().startsWith(":");
   }
 
   /** Rows at the bottom of this panel that must remain clear for its prompt. */
@@ -1089,6 +1157,10 @@ public class ChatPanelView extends View implements KeyBindingHintProvider {
     }
 
     var event = events.current();
+    if (_choices != null) {
+      _responseAction = () -> handleChoiceKey(event);
+      return Response.YES;
+    }
     if (_goToTopPending && event.getKeyType() != KeyType.Character) {
       _goToTopPending = false;
     }

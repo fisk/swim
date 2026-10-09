@@ -28,6 +28,67 @@ class ChatPanelViewTest {
     Path tempDir;
 
     @Test
+    void callerOwnedChoicesFilterAndTransitionWithoutSubmittingChat() {
+        var selected = new AtomicReference<String>();
+        var submitted = new AtomicReference<String>();
+        var view = new ChatPanelView(Rect.create(0, 0, 40, 10), "Chat", submitted::set);
+        dispatch(view, new KeyStroke('d', false, false));
+        view.showChoices("Model", List.of(
+            new ChatPanelView.Choice("First", "first detail", () -> selected.set("first")),
+            new ChatPanelView.Choice("Second", "second detail", () -> view.showChoices("Reasoning",
+                List.of(new ChatPanelView.Choice("high", "deep", () -> selected.set("second/high"))), () -> {}))), () -> {});
+        dispatch(view, new KeyStroke('s', false, false));
+        dispatch(view, new KeyStroke('e', false, false));
+        assertEquals(1, view.getCommandMenuState().matches().size());
+        dispatch(view, new KeyStroke(KeyType.Enter));
+        assertEquals("Reasoning", view.getCommandMenuState().title());
+        dispatch(view, new KeyStroke(KeyType.Enter));
+        assertEquals("second/high", selected.get());
+        assertEquals("d", view.getInputText());
+        assertEquals(null, submitted.get());
+        assertFalse(view.getCommandMenuState().visible());
+    }
+
+    @Test
+    void escapingChoiceMenuCancelsWithoutClosingChatOrChangingDraft() {
+        var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
+        var view = new ChatPanelView(Rect.create(0, 0, 40, 10), "Chat", ignored -> {});
+        dispatch(view, new KeyStroke('x', false, false));
+        view.showChoices("Model", List.of(new ChatPanelView.Choice("one", "", () -> {
+            throw new AssertionError("Must not select on Escape");
+        })), () -> cancelled.set(true));
+        dispatch(view, new KeyStroke(KeyType.Escape));
+        assertTrue(cancelled.get());
+        assertEquals("x", view.getInputText());
+        assertFalse(view.getCommandMenuState().visible());
+    }
+
+    @Test
+    void choiceActionsCannotBeSelectedThroughEditorControl() throws Exception {
+        Path file = tempDir.resolve("choices.txt");
+        Files.writeString(file, "project text");
+        try (var harness = HeadlessWindowHarness.create(file, 60, 16)) {
+            var selected = new java.util.concurrent.atomic.AtomicBoolean();
+            var panel = new ChatPanelView(Rect.create(0, 0, 40, 10), "Choices", ignored -> {});
+            harness.getWindow().showNemoWorkspace(panel);
+            panel.showChoices("Model", List.of(new ChatPanelView.Choice("one", "", () -> selected.set(true))), () -> {});
+            var result = harness.getWindow().driveEditorInput("<ENTER>", 10);
+            assertFalse(result.accepted());
+            assertFalse(selected.get());
+            var driveActive = Window.class.getDeclaredField("_editorDriveInputActive");
+            driveActive.setAccessible(true);
+            driveActive.setBoolean(harness.getWindow(), true);
+            try {
+                dispatch(panel, new KeyStroke(KeyType.Enter));
+                assertFalse(selected.get());
+                assertTrue(panel.getCommandMenuState().visible());
+            } finally {
+                driveActive.setBoolean(harness.getWindow(), false);
+            }
+        }
+    }
+
+    @Test
     void multilineMessagesKeepOneBackgroundIncludingBlankLines() throws Exception {
         var view = new ChatPanelView(Rect.create(0, 0, 40, 12), "Nemo", ignored -> {});
         view.appendMessage("me", "alpha\nbeta\n");
