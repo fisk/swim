@@ -61,6 +61,23 @@ public final class LiveTimeSeriesPanel implements SwimPanel {
    * nondecreasing. NaN CPU and negative memory mean unavailable. CPU uses 0..100.
    */
   public synchronized void append(String name, double elapsedSeconds, double cpuPercent, long memoryBytes) {
+    append(name, elapsedSeconds, cpuPercent, memoryBytes, Double.NaN);
+  }
+
+  /** Appends a sample with optional nonnegative ZGC demand ratio. */
+  public synchronized void append(
+      String name, double elapsedSeconds, double cpuPercent, long memoryBytes, double gcDemand) {
+    append(name, elapsedSeconds, cpuPercent, memoryBytes, gcDemand, -1);
+  }
+
+  /** Selects the cyan series: GC demand on the left axis, or heap capacity on the right. */
+  public synchronized void showHeapCapacity(boolean enabled) {
+    chart.showExternalHeapCapacity(enabled);
+  }
+
+  public synchronized void append(
+      String name, double elapsedSeconds, double cpuPercent, long memoryBytes, double gcDemand,
+      long heapCapacityBytes) {
     var samples = runs.get(name);
     if (samples == null) throw new IllegalArgumentException("Unknown run: " + name);
     if (!Double.isFinite(elapsedSeconds) || elapsedSeconds < 0 || elapsedSeconds > Long.MAX_VALUE / 1e9) {
@@ -69,12 +86,15 @@ public final class LiveTimeSeriesPanel implements SwimPanel {
     if (!Double.isNaN(cpuPercent) && (!Double.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100)) {
       throw new IllegalArgumentException("CPU must be 0..100 or NaN");
     }
+    if (!Double.isNaN(gcDemand) && (!Double.isFinite(gcDemand) || gcDemand < 0)) {
+      throw new IllegalArgumentException("GC demand must be nonnegative or NaN");
+    }
     Instant time = Instant.EPOCH.plusNanos((long) (elapsedSeconds * 1e9));
     if (!samples.isEmpty() && time.isBefore(samples.getLast().time())) {
       throw new IllegalArgumentException("Samples must be in elapsed-time order");
     }
     if (samples.size() == maxSamplesPerRun) samples.removeFirst();
-    samples.add(new JfrMetrics.Sample(time, Double.NaN, -1, -1, cpuPercent, memoryBytes, -1));
+    samples.add(new JfrMetrics.Sample(time, Double.NaN, -1, heapCapacityBytes, cpuPercent, memoryBytes, -1, gcDemand));
     dirty = true;
   }
 

@@ -14,6 +14,13 @@ public final class FakeMcpServer {
     }
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0) {
+            java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), "started\n",
+                    java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        }
+        if (args.length > 1 && args[1].equals("fail")) {
+            throw new IllegalStateException("Simulated broken MCP installation");
+        }
         try (var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
@@ -22,6 +29,10 @@ public final class FakeMcpServer {
                     continue;
                 }
                 String method = request.get("method").getAsString();
+                if (args.length > 0 && method.equals("tools/call")) {
+                    java.nio.file.Files.writeString(java.nio.file.Path.of(args[0] + ".calls"), "called\n",
+                            java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                }
                 JsonElement id = request.get("id");
                 JsonObject response = switch (method) {
                 case "initialize" -> response(id, initializeResult());

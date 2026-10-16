@@ -23,6 +23,7 @@ record NemoMcpServerConfig(
         args = args == null ? List.of() : List.copyOf(args);
         env = env == null ? Map.of() : Map.copyOf(env);
         cwd = cwd == null ? null : cwd.toAbsolutePath().normalize();
-        timeoutSeconds = Math.max(1, timeoutSeconds);
+        // Zero explicitly disables the response deadline (for example rr replay).
+        timeoutSeconds = Math.max(0, timeoutSeconds);
     }
 }

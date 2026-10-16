@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -1773,6 +1774,123 @@ class NemoChatIT {
             }
         } finally {
             System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void accountPickerKeepsHistoryAndSwitchesCredentialsAtomically() throws Exception {
+        String originalHome = switchToTempUserHome();
+        var firstCount = new AtomicInteger();
+        var secondCount = new AtomicInteger();
+        var firstBody = new AtomicReference<String>("");
+        var secondBody = new AtomicReference<String>("");
+        var secondAuth = new AtomicReference<String>("");
+        var first = startResponsesServer(firstCount, firstBody, List.of(responsesTextResponse("Original answer")));
+        var second = startResponsesServer("/responses", secondCount, secondBody, secondAuth,
+                List.of(responsesTextResponse("Research answer")));
+        Path config = tempDir.resolve(".swim/nemo/nemo.conf");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "account.default.provider=responses\naccount.default.api_key=first-secret\naccount.default.model=first-model\naccount.default.base_url=http://localhost:"
+                + first.getAddress().getPort() + "\n");
+        Files.writeString(config, Files.readString(config)
+                + "account.research.provider=responses\naccount.research.api_key=second-secret\naccount.research.model=second-model\naccount.research.base_url=http://localhost:"
+                + second.getAddress().getPort() + "\n");
+        try (var harness = HeadlessWindowHarness.create(writeFile("accounts.txt", "synthetic context"), 100, 24)) {
+            EventThread.getInstance().start();
+            var window = harness.getWindow();
+            var client = NemoClient.getInstance();
+            client.run(window.getBufferContext(), "Original question");
+            var panel = waitForPanel(window);
+            waitForLine(panel, "Original answer");
+            String id = client.conversationIdForPanel(panel);
+            var conversations = (Map<?, ?>) HeadlessWindowHarness.getField(client, "_conversations");
+            Object conversation = conversations.get(id);
+            client.setModelCatalogLoaderForTests(connection -> List.of(new NemoModelCatalog.Model(
+                    connection.model(), connection.model(), List.of(), "")));
+            submit(panel, ":account");
+            waitForMenu(panel, "Account");
+            dispatch(panel, new KeyStroke(KeyType.Escape));
+            submit(panel, ":account research");
+            waitForMenu(panel, "Model · 1/2");
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            dispatch(panel, new KeyStroke(KeyType.Escape));
+            assertEquals("default", HeadlessWindowHarness.getField(conversation, "_account"));
+            submit(panel, ":account research");
+            waitForMenu(panel, "Model · 1/2");
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            waitForLine(panel, "Using account: research");
+            assertEquals(id, client.conversationIdForPanel(panel));
+            assertEquals(1, conversations.size());
+            client.run(window.getBufferContext(), ""); // rebinding must retain the selected account
+            submit(panel, "Follow-up question");
+            waitForLine(panel, "Research answer");
+            assertEquals("Bearer second-secret", secondAuth.get());
+            assertTrue(secondBody.get().contains("Original question"));
+            assertTrue(secondBody.get().contains("Original answer"));
+            assertTrue(secondBody.get().contains("Follow-up question"));
+            assertTrue(secondBody.get().contains("second-model"));
+            assertEquals(1, firstCount.get());
+            assertEquals(1, secondCount.get());
+            String saved = Files.readString(config.getParent().resolve("sessions.json"));
+            assertTrue(saved.contains("research"));
+            assertFalse(saved.contains("first-secret"));
+            assertFalse(saved.contains("second-secret"));
+            assertFalse(displayLines(panel).toString().contains("second-secret"));
+            String profileText = Files.readString(config);
+            Files.writeString(config, profileText.lines().filter(line -> !line.startsWith("account.research."))
+                    .collect(java.util.stream.Collectors.joining("\n")));
+            client.restoreConversationPanel(id, window.getBufferContext());
+            submit(panel, "Do not route this through the default account");
+            waitForLine(panel, "Selected account is unavailable");
+            assertEquals(1, firstCount.get());
+            assertEquals(1, secondCount.get());
+            Files.writeString(config, profileText);
+            submit(panel, ":account default");
+            waitForMenu(panel, "Model · 1/2");
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            dispatch(panel, new KeyStroke(KeyType.Enter));
+            waitForLine(panel, "Using account: default");
+            assertEquals("first-secret", ((NemoClient.Configuration)
+                    HeadlessWindowHarness.getField(conversation, "_configuration")).apiKey());
+        } finally {
+            first.stop(0);
+            second.stop(0);
+            System.setProperty("user.home", originalHome);
+        }
+    }
+
+    @Test
+    void accountPickerCannotBeOpenedByEditorControl() throws Exception {
+        String originalHome = switchToTempUserHome();
+        Path config = tempDir.resolve(".swim/nemo/nemo.conf");
+        Files.createDirectories(config.getParent());
+        Files.writeString(config, "provider=responses\napi_key=synthetic-private-key\n");
+        try (var harness = HeadlessWindowHarness.create(writeFile("account-policy.txt", "project context"), 80, 18)) {
+            EventThread.getInstance().start();
+            var client = NemoClient.getInstance();
+            var window = harness.getWindow();
+            client.run(window.getBufferContext(), "");
+            var panel = waitForPanel(window);
+            var conversations = (Map<?, ?>) HeadlessWindowHarness.getField(client, "_conversations");
+            Object conversation = conversations.get(client.conversationIdForPanel(panel));
+            var handler = NemoClient.class.getDeclaredMethod("handleAccountCommand", conversation.getClass(), String.class);
+            handler.setAccessible(true);
+            var drive = window.getClass().getDeclaredField("_editorDriveInputActive");
+            drive.setAccessible(true);
+            drive.setBoolean(window, true);
+            try {
+                handler.invoke(client, conversation, "research");
+                assertEquals("default", HeadlessWindowHarness.getField(conversation, "_account"));
+                assertNull(HeadlessWindowHarness.getField(conversation, "_modelCatalogWorker"));
+                assertFalse(panel.getCommandMenuState().visible());
+                assertFalse(displayLines(panel).toString().contains("synthetic-private-key"));
+            } finally {
+                drive.setBoolean(window, false);
+            }
+        } finally {
+            System.setProperty("user.home", originalHome);
         }
     }
 

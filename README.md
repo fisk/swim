@@ -80,6 +80,56 @@ In Nemo, `:model` opens a model picker followed by a reasoning-level picker. Typ
 
 For `provider=chatgpt`, Nemo discovers models and their supported reasoning levels through the signed-in `codex app-server` account (`codex` must be on PATH). It asks for a fresh catalog whenever the picker opens; it does not start a Codex conversation or send an inference request. This uses the Codex account, so it should be the same account used by Nemo's ChatGPT credentials. API-key OpenAI/Responses connections query their configured `/models` endpoint, which does not advertise reasoning capabilities; those models offer **Provider default**, omitting the reasoning override. If discovery fails, the menu explicitly falls back to configured model names without guessing OpenAI reasoning capabilities. Other providers continue to use `model_options` and `reasoning_effort_options` from `nemo.conf`.
 
+### Multiple Nemo accounts
+
+`:account` opens an account picker, then that account's model and reasoning
+pickers. `:account research` skips directly to the named account's models.
+The existing conversation and history stay intact; subsequent requests send
+that history to the chosen backend. Escape cancels the entire selection.
+Finish or abort any active request before changing accounts. `:model` continues
+to use the currently selected account.
+
+All accounts live in `~/.swim/nemo/nemo.conf`. The first account declared is the
+default for new conversations; ordering is not alphabetical. Use names made of
+letters, digits, underscores and hyphens:
+
+```properties
+# ~/.swim/nemo/nemo.conf
+account.personal.provider=chatgpt
+account.personal.base_url=https://chatgpt.com/backend-api/codex
+# Keep your existing ChatGPT credential command under account.personal.api_key_command.
+
+account.research.provider=responses
+account.research.base_url=https://api.openai.com/v1
+account.research.api_key=YOUR_API_KEY
+
+# Shared settings stay outside account prefixes.
+tool.permission_mode=workspace-write
+```
+
+Enter API keys directly in the account's `api_key` setting locally. Environment
+variables and separate account files are not required. Keep `nemo.conf` private
+(for example, `chmod 600 ~/.swim/nemo/nemo.conf`) and out of version control;
+never paste it or its keys into a conversation. Existing ChatGPT OAuth credential
+commands can remain under that account's `api_key_command` setting.
+Each profile independently supplies credentials, headers, organization/project,
+endpoint, model options and generation settings; credentials and connection
+headers are never inherited from the previous account. Tool permissions, MCP
+configuration, workspace and system prompt remain those of the conversation.
+JSON configuration uses an ordered `"accounts"` object mapping names to ordinary
+connection-settings objects. Existing flat single-account configs remain readable
+as a legacy `default` account. Old saved `default` selections migrate to the first
+named account; after selection, the actual name is saved, so reordering the file
+does not change an existing conversation's account. Separate account files are
+no longer read.
+
+The selected account name, model and reasoning level are saved with the session,
+not its credentials. Missing saved profiles block requests instead of silently
+falling back to another account. Account menus and changes are host-only.
+The API-key catalog reflects the configured endpoint's model list, not a guarantee
+that every listed model supports Nemo's text/tool workflow. No special model IDs
+or account entitlements are assumed.
+
 ## Architecture
 
 SWIM is split into a small launch boundary, a session server, and versioned editor runtimes. The launcher should stay deliberately thin: it resolves the build/image location, starts or connects to the session server, builds an app launch command for the version being invoked, sends explicit attach/kill requests, and relays raw terminal I/O. The session server owns live sessions, terminal attachment, detachment, switching, and process-tree termination. App processes are launched directly with stdio pipes; SWIM does not depend on an external `script`/PTY wrapper between the server and editor runtime.

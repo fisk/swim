@@ -22,6 +22,12 @@ final class JfrPanel implements SwimPanel {
   private List<Source> sources = List.of();
   private String error;
   private boolean external;
+  private boolean externalHeapCapacity;
+
+  void showExternalHeapCapacity(boolean enabled) {
+    externalHeapCapacity = enabled;
+    cachedLines = null;
+  }
   private String externalTitle;
   private boolean live;
   private boolean followActivePath = true;
@@ -110,10 +116,17 @@ final class JfrPanel implements SwimPanel {
     }
     double elapsedSeconds =
         sources.stream().mapToDouble(source -> elapsedSeconds(source.recording())).max().orElse(0);
+    boolean hasGcDemand = sources.stream()
+        .flatMap(source -> source.recording().samples().stream())
+        .anyMatch(sample -> Double.isFinite(sample.gcDemand()) && sample.gcDemand() >= 0);
     int rows = external ? liveChartRows(height, sources.size())
-        + (int) sources.stream().filter(source -> source.recording().samples().isEmpty()).count() : chartRows(height, sources.size());
+        + (int) sources.stream().filter(source -> source.recording().samples().isEmpty()).count()
+        : chartRows(height, sources.size());
     if (!external) {
-      lines.add("JVM · CPU (green, left) / heap capacity (red, right)");
+      lines.add(
+          hasGcDemand
+              ? "JVM · CPU (green) / GC demand (cyan), left / heap capacity (red, right)"
+              : "JVM · CPU (green, left) / heap capacity (red, right)");
       lines.addAll(
           dualChart(
               width,
@@ -121,9 +134,15 @@ final class JfrPanel implements SwimPanel {
               elapsedSeconds,
               lines,
               JfrMetrics.Sample::cpuPercent,
-              sample -> sample.heapCommitted()));
+              sample -> sample.heapCommitted(),
+              hasGcDemand ? sample -> sample.gcDemand() * 100.0 : null));
     }
-    lines.add("System · CPU (green, left) / memory used (red, right)");
+    lines.add(
+        external && externalHeapCapacity
+            ? "System · CPU (green, left) / heap capacity (cyan) + memory used (red), right"
+            : external && hasGcDemand
+            ? "System · CPU (green) / GC demand (cyan), left / memory used (red, right)"
+            : "System · CPU (green, left) / memory used (red, right)");
     lines.addAll(
         dualChart(
             width,
@@ -131,7 +150,10 @@ final class JfrPanel implements SwimPanel {
             elapsedSeconds,
             lines,
             JfrMetrics.Sample::systemCpuPercent,
-            sample -> sample.systemMemoryUsed()));
+            sample -> sample.systemMemoryUsed(),
+            external && externalHeapCapacity ? sample -> sample.heapCommitted()
+                : external && hasGcDemand ? sample -> sample.gcDemand() * 100.0 : null,
+            external && externalHeapCapacity));
     for (int index = 0; index < sources.size(); index++) {
       Source source = sources.get(index);
       if (!source.recording().samples().isEmpty()) {
@@ -152,6 +174,9 @@ final class JfrPanel implements SwimPanel {
                             ? String.format(java.util.Locale.ROOT, "%.1f%%", last.cpuPercent())
                             : "unavailable",
                       last.heapCommitted() >= 0 ? bytes(last.heapCommitted()) : "unavailable")
+                  + (hasGcDemand && Double.isFinite(last.gcDemand())
+                      ? String.format(java.util.Locale.ROOT, " · GC demand %.1f%%", last.gcDemand() * 100.0)
+                      : "")
                   + (!Double.isFinite(last.systemCpuPercent()) ? " · system CPU unavailable" : "")
                   + (last.systemMemoryUsed() < 0 ? " · system memory unavailable" : ""));
         }
@@ -344,7 +369,16 @@ final class JfrPanel implements SwimPanel {
       double seconds,
       List<String> lines,
       java.util.function.ToDoubleFunction<JfrMetrics.Sample> cpu,
-      java.util.function.ToDoubleFunction<JfrMetrics.Sample> memory) {
+      java.util.function.ToDoubleFunction<JfrMetrics.Sample> memory,
+      java.util.function.ToDoubleFunction<JfrMetrics.Sample> demand) {
+    return dualChart(width, rows, seconds, lines, cpu, memory, demand, false);
+  }
+
+  private List<String> dualChart(
+      int width, int rows, double seconds, List<String> lines,
+      java.util.function.ToDoubleFunction<JfrMetrics.Sample> cpu,
+      java.util.function.ToDoubleFunction<JfrMetrics.Sample> memory,
+      java.util.function.ToDoubleFunction<JfrMetrics.Sample> demand, boolean demandOnRight) {
     boolean cpuAvailable =
         sources.stream()
             .flatMap(source -> source.recording().samples().stream())
@@ -362,17 +396,48 @@ final class JfrPanel implements SwimPanel {
             .filter(value -> Double.isFinite(value) && value >= 0)
             .max()
             .orElse(0);
+    if (demandOnRight && demand != null) {
+      double capacityMaximum = sources.stream().flatMap(source -> source.recording().samples().stream())
+          .mapToDouble(demand).filter(value -> Double.isFinite(value) && value >= 0).max().orElse(-1);
+      memoryAvailable |= capacityMaximum >= 0;
+      maximum = Math.max(maximum, capacityMaximum);
+    }
+    double percentMaximum =
+        Math.max(
+            100.0,
+            demand == null || demandOnRight
+                ? 0
+                : sources.stream()
+                    .flatMap(source -> source.recording().samples().stream())
+                    .mapToDouble(demand)
+                    .filter(value -> Double.isFinite(value) && value >= 0)
+                    .max()
+                    .orElse(0));
     // The midpoint may use a smaller unit and need more space (1.0 GiB vs
     // 512.0 MiB). Every label must fit before extracting the plot columns.
+    // Demand is not capped at 100%, so its left labels need the same treatment.
+    int leftWidth =
+        Math.max(
+            4,
+            Math.max(
+                percent(percentMaximum, false).length(),
+                percent(percentMaximum / 2, false).length()));
     int rightWidth =
         Math.max(3, Math.max(bytes((long) maximum).length(), bytes((long) (maximum / 2)).length()));
-    int plotWidth = Math.max(1, width - 9 - rightWidth);
-    List<String> cpuRows = chart(plotWidth, 4, rows, 100, true, seconds, cpu);
-    List<String> memoryRows = chart(plotWidth, rightWidth, rows, maximum, false, seconds, memory);
+    int plotWidth = Math.max(1, width - leftWidth - rightWidth - 4);
+    List<String> cpuRows = chart(plotWidth, leftWidth, rows, percentMaximum, true, false, seconds, cpu);
+    List<String> memoryRows = chart(plotWidth, rightWidth, rows, maximum, false, false, seconds, memory);
+    List<String> demandRows =
+        demand == null
+            ? null
+            : chart(plotWidth, demandOnRight ? rightWidth : leftWidth, rows, demandOnRight ? maximum : percentMaximum,
+                !demandOnRight, false, seconds, demand);
     var result = new ArrayList<String>();
     for (int row = 0; row < rows; row++) {
       String left =
-          cpuAvailable ? cpuRows.get(row).substring(0, 6) : pad(row == 0 ? "N/A" : "", 4) + " │";
+          cpuAvailable
+              ? cpuRows.get(row).substring(0, leftWidth + 2)
+              : pad(row == 0 ? "N/A" : "", leftWidth) + " │";
       String right =
           "│ "
               + pad(
@@ -387,18 +452,22 @@ final class JfrPanel implements SwimPanel {
       var spans = new ArrayList<SwimTextSpan>();
       spans.add(SwimTextSpan.styled(left, "#69db7c", null));
       for (int column = 0; column < plotWidth; column++) {
-        char c = cpuRows.get(row).charAt(6 + column);
+        char c = cpuRows.get(row).charAt(leftWidth + 2 + column);
         char m = memoryRows.get(row).charAt(rightWidth + 2 + column);
+        char d = demandRows == null ? ' ' : demandRows.get(row).charAt((demandOnRight ? rightWidth : leftWidth) + 2 + column);
         int cpuDots = c == ' ' ? 0 : c - 0x2800;
         int memoryDots = m == ' ' ? 0 : m - 0x2800;
-        // A terminal cell has one foreground: retain both dot masks and mark overlap gold.
-        int dots = cpuDots | memoryDots;
+        int demandDots = d == ' ' ? 0 : d - 0x2800;
+        // A terminal cell has one foreground: retain all dot masks and mark overlap gold.
+        int dots = cpuDots | memoryDots | demandDots;
         // U+2800 is the Unicode Braille blank, not an ordinary space. Some
         // terminal renderers show it as a visible glyph, so preserve a real
         // space where neither series has a dot.
         char merged = dots == 0 ? ' ' : (char) (0x2800 | dots);
         String color =
-            cpuDots != 0 && memoryDots != 0 ? "#ffd166" : memoryDots != 0 ? "#ff6b6b" : "#69db7c";
+            (cpuDots != 0 ? 1 : 0) + (memoryDots != 0 ? 1 : 0) + (demandDots != 0 ? 1 : 0) > 1
+                ? "#ffd166"
+                : demandDots != 0 ? "#4cc9f0" : memoryDots != 0 ? "#ff6b6b" : "#69db7c";
         spans.add(SwimTextSpan.styled(String.valueOf(merged), color, null));
       }
       spans.add(SwimTextSpan.styled(right, "#ff6b6b", null));
@@ -421,15 +490,17 @@ final class JfrPanel implements SwimPanel {
     return result;
   }
 
+
   private List<String> chart(
       int width,
       int labelWidth,
       int rows,
       double maximum,
       boolean percent,
+      boolean percentIsRatio,
       double elapsedSeconds,
       java.util.function.ToDoubleFunction<JfrMetrics.Sample> value) {
-    final String maximumLabel = percent ? "100%" : bytes((long) maximum);
+    final String maximumLabel = percent ? percent(maximum, percentIsRatio) : bytes((long) maximum);
     final String minimumLabel = percent ? "0%" : "0 B";
     // A Braille cell contains two columns by four rows of independently
     // addressable dots. Render at that resolution so crossings and nearby
@@ -492,7 +563,7 @@ final class JfrPanel implements SwimPanel {
               : row == 1
                   ? minimumLabel
                   : rows >= 5 && row == (rows + 1) / 2
-                      ? percent ? "50%" : bytes((long) (maximum / 2))
+                      ? percent ? percent(maximum / 2, percentIsRatio) : bytes((long) (maximum / 2))
                       : "";
       result.add(pad(label, labelWidth) + " │" + canvas.row(rows - row));
     }
@@ -504,6 +575,12 @@ final class JfrPanel implements SwimPanel {
   // Header, source descriptions, chart titles/axes, latest values and footer.
   static int chartRows(int height, int sourceCount) {
     return Math.max(2, Math.min(24, (height - 9 - 2 * sourceCount) / 2));
+  }
+
+
+  private static String percent(double value, boolean isRatio) {
+    double percentage = isRatio ? value * 100.0 : value;
+    return String.format(java.util.Locale.ROOT, percentage == Math.rint(percentage) ? "%.0f%%" : "%.1f%%", percentage);
   }
 
   // One chart: header + legend + sources + title + two axis rows + latest values + footer.

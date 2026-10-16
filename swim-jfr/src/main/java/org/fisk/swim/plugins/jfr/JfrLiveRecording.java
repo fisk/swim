@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import jdk.jfr.FlightRecorder;
 import jdk.jfr.Recording;
 import jdk.jfr.RecordingState;
 
@@ -29,6 +30,9 @@ final class JfrLiveRecording {
         throw failure;
       }
     }
+    // A plugin reload can retain an owned recording that was started before
+    // this JDK gained ZGCDemand. Update only SWIM's own recording on demand.
+    enableZgcDemandIfAvailable(ownedRecording);
     return ownedRecording;
   }
 
@@ -50,9 +54,19 @@ final class JfrLiveRecording {
     recording.enable("jdk.CPULoad").withPeriod(Duration.ofSeconds(1));
     recording.enable("jdk.GCHeapSummary").withoutStackTrace();
     recording.enable("jdk.PhysicalMemory").withPeriod(Duration.ofSeconds(1));
+    enableZgcDemandIfAvailable(recording);
     // Match the live panel's hour of history and prevent unbounded disk growth.
     recording.setMaxAge(Duration.ofHours(1));
     recording.setMaxSize(64L * 1024 * 1024);
     return recording;
+  }
+
+  private static void enableZgcDemandIfAvailable(Recording recording) {
+    boolean available =
+        FlightRecorder.getFlightRecorder().getEventTypes().stream()
+            .anyMatch(event -> "jdk.ZGCDemand".equals(event.getName()));
+    if (available && !"true".equals(recording.getSettings().get("jdk.ZGCDemand#enabled"))) {
+      recording.enable("jdk.ZGCDemand").withoutStackTrace();
+    }
   }
 }

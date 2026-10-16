@@ -15,9 +15,14 @@ import jdk.jfr.consumer.RecordingFile;
 /** Extracts the periodic JVM CPU samples and heap summaries from a recording. */
 final class JfrMetrics {
     record Sample(Instant time, double cpuPercent, long heapUsed, long heapCommitted,
-                  double systemCpuPercent, long systemMemoryUsed, long systemMemoryTotal) {
+                  double systemCpuPercent, long systemMemoryUsed, long systemMemoryTotal, double gcDemand) {
         Sample(Instant time, double cpuPercent, long heapUsed, long heapCommitted) {
-            this(time, cpuPercent, heapUsed, heapCommitted, Double.NaN, -1, -1);
+            this(time, cpuPercent, heapUsed, heapCommitted, Double.NaN, -1, -1, Double.NaN);
+        }
+        Sample(Instant time, double cpuPercent, long heapUsed, long heapCommitted,
+               double systemCpuPercent, long systemMemoryUsed, long systemMemoryTotal) {
+            this(time, cpuPercent, heapUsed, heapCommitted, systemCpuPercent, systemMemoryUsed,
+                 systemMemoryTotal, Double.NaN);
         }
     }
     record Recording(Instant start, Instant end, List<Sample> samples) { }
@@ -32,6 +37,8 @@ final class JfrMetrics {
         boolean hasHeap;
         long heapUsed;
         long heapCommitted;
+        boolean hasGcDemand;
+        double gcDemand;
     }
 
     static Recording read(Path path) throws IOException {
@@ -65,6 +72,10 @@ final class JfrMetrics {
                     update.hasHeap = true;
                     update.heapUsed = event.getLong("heapUsed");
                     update.heapCommitted = space.getLong("committedSize");
+                } else if ("jdk.ZGCDemand".equals(name)) {
+                    Update update = updates.computeIfAbsent(time, ignored -> new Update());
+                    update.hasGcDemand = true;
+                    update.gcDemand = event.getFloat("gcDemand");
                 }
             }
         }
@@ -75,6 +86,10 @@ final class JfrMetrics {
         double latestCpu = Double.NaN, systemCpu = Double.NaN;
         long memoryUsed = -1, memoryTotal = -1;
         long heapUsed = -1, heapCommitted = -1;
+        // ZGCDemand is emitted only when the director reevaluates its worker
+        // demand. Preserve its latest value at CPU/memory timestamps so a live
+        // chart remains populated between those sparse events.
+        double gcDemand = Double.NaN;
         for (var entry : updates.entrySet()) {
             checkInterrupted();
             Update update = entry.getValue();
@@ -90,8 +105,11 @@ final class JfrMetrics {
                 heapUsed = update.heapUsed;
                 heapCommitted = update.heapCommitted;
             }
+            if (update.hasGcDemand) {
+                gcDemand = update.gcDemand;
+            }
             samples.add(new Sample(entry.getKey(), latestCpu, heapUsed, heapCommitted,
-                    systemCpu, memoryUsed, memoryTotal));
+                    systemCpu, memoryUsed, memoryTotal, gcDemand));
         }
         return new Recording(start, end, List.copyOf(samples));
     }

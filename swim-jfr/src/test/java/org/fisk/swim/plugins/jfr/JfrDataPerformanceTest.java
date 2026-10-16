@@ -36,7 +36,7 @@ class JfrDataPerformanceTest {
             assertEquals("true", recording.getSettings().get("jdk.GCHeapSummary#enabled"));
             assertTrue(recording.getSettings().keySet().stream().allMatch(key ->
                     key.startsWith("jdk.CPULoad#") || key.startsWith("jdk.GCHeapSummary#")
-                            || key.startsWith("jdk.PhysicalMemory#")));
+                            || key.startsWith("jdk.PhysicalMemory#") || key.startsWith("jdk.ZGCDemand#")));
         }
     }
 

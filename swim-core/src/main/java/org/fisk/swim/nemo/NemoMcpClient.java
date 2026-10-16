@@ -35,12 +35,15 @@ final class NemoMcpClient {
     private static final Pattern SAFE_NAME_CHARS = Pattern.compile("[^A-Za-z0-9_-]");
 
     private final Map<String, Session> _sessions = new LinkedHashMap<>();
+    private final Map<String, ToolDescriptor> _routes = new LinkedHashMap<>();
+    private List<NemoMcpServerConfig> _discoveredConfigs;
 
     record ToolDescriptor(String exposedName, String serverName, String toolName, String title, String description,
             JsonObject inputSchema) {
     }
 
     synchronized List<ToolDescriptor> listTools(List<NemoMcpServerConfig> configs) {
+        beginDiscovery(configs);
         var descriptors = new ArrayList<ToolDescriptor>();
         var usedNames = new LinkedHashSet<String>();
         for (NemoMcpServerConfig config : configs) {
@@ -49,10 +52,14 @@ final class NemoMcpClient {
             }
             try {
                 Session session = session(config);
-                descriptors.addAll(session.listTools(usedNames));
+                List<ToolDescriptor> tools = session.listTools(usedNames);
+                descriptors.addAll(tools);
+                tools.forEach(tool -> _routes.put(tool.exposedName(), tool));
             } catch (IOException | InterruptedException e) {
                 if (e instanceof InterruptedException) {
+                    _discoveredConfigs = null;
                     Thread.currentThread().interrupt();
+                    break;
                 }
                 _log.warn("Unable to list MCP tools for {}", config.name(), e);
             }
@@ -62,24 +69,28 @@ final class NemoMcpClient {
 
     synchronized String callTool(List<NemoMcpServerConfig> configs, String exposedName, JsonObject arguments,
             int maxOutputChars) throws IOException, InterruptedException {
-        for (NemoMcpServerConfig config : configs) {
-            if (!config.enabled() || config.command().isBlank()) {
-                continue;
-            }
-            Session session = session(config);
-            ToolDescriptor descriptor = session.tool(exposedName);
-            if (descriptor == null) {
-                listTools(configs);
-                descriptor = session.tool(exposedName);
-            }
-            if (descriptor != null) {
-                return truncate(formatToolResult(session.callTool(descriptor.toolName(), arguments)), maxOutputChars);
-            }
+        if (!configs.equals(_discoveredConfigs)) {
+            listTools(configs);
         }
-        return "Unknown MCP tool: " + exposedName;
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException("MCP tool discovery interrupted");
+        }
+        ToolDescriptor descriptor = _routes.get(exposedName);
+        if (descriptor == null) {
+            return "Unknown MCP tool: " + exposedName;
+        }
+        // Resolve actual discovery ownership, not a parsed (possibly truncated or
+        // collision-suffixed) function name. Never start unrelated servers here.
+        Session owner = _sessions.get(descriptor.serverName());
+        try {
+            return truncate(formatToolResult(owner.callTool(descriptor.toolName(), arguments)), maxOutputChars);
+        } catch (IOException e) {
+            throw new IOException("MCP server '" + descriptor.serverName() + "': " + e.getMessage(), e);
+        }
     }
 
     synchronized String status(List<NemoMcpServerConfig> configs) {
+        beginDiscovery(configs);
         if (configs.isEmpty()) {
             return "No MCP servers configured.";
         }
@@ -98,13 +109,17 @@ final class NemoMcpClient {
             try {
                 Session session = session(config);
                 List<ToolDescriptor> tools = session.listTools(usedNames);
+                tools.forEach(tool -> _routes.put(tool.exposedName(), tool));
                 lines.add("- " + config.name() + " | " + commandLine(config) + " | tools=" + tools.size());
                 for (ToolDescriptor tool : tools) {
                     lines.add("  - " + tool.exposedName() + " -> " + tool.toolName());
                 }
             } catch (IOException | InterruptedException e) {
                 if (e instanceof InterruptedException) {
+                    _discoveredConfigs = null;
                     Thread.currentThread().interrupt();
+                    lines.add("- " + config.name() + " | interrupted");
+                    break;
                 }
                 lines.add("- " + config.name() + " | failed: " + e.getMessage());
             }
@@ -117,6 +132,22 @@ final class NemoMcpClient {
             session.close();
         }
         _sessions.clear();
+        _routes.clear();
+        _discoveredConfigs = null;
+    }
+
+    private void beginDiscovery(List<NemoMcpServerConfig> configs) {
+        _routes.clear();
+        _discoveredConfigs = List.copyOf(configs);
+        _sessions.entrySet().removeIf(entry -> {
+            Session session = entry.getValue();
+            if (!configs.contains(session.config()) || !session.config().enabled()
+                    || session.config().command().isBlank()) {
+                session.close();
+                return true;
+            }
+            return false;
+        });
     }
 
     private Session session(NemoMcpServerConfig config) throws IOException, InterruptedException {
@@ -276,7 +307,6 @@ final class NemoMcpClient {
         private final NemoMcpServerConfig _config;
         private final BlockingQueue<JsonObject> _messages = new LinkedBlockingQueue<>();
         private final StringBuilder _stderr = new StringBuilder();
-        private final Map<String, ToolDescriptor> _toolsByExposedName = new LinkedHashMap<>();
         private Process _process;
         private BufferedWriter _stdin;
         private long _nextId = 1;
@@ -312,7 +342,6 @@ final class NemoMcpClient {
         private synchronized List<ToolDescriptor> listTools(LinkedHashSet<String> usedNames)
                 throws IOException, InterruptedException {
             ensureStarted();
-            _toolsByExposedName.clear();
             var tools = new ArrayList<ToolDescriptor>();
             String cursor = "";
             do {
@@ -341,16 +370,11 @@ final class NemoMcpClient {
                                 stringMember(tool, "description"),
                                 ensureObjectSchema(inputSchema));
                         tools.add(descriptor);
-                        _toolsByExposedName.put(exposedName, descriptor);
                     }
                 }
                 cursor = stringMember(result, "nextCursor");
             } while (!cursor.isBlank());
             return tools;
-        }
-
-        private synchronized ToolDescriptor tool(String exposedName) {
-            return _toolsByExposedName.get(exposedName);
         }
 
         private synchronized JsonObject callTool(String toolName, JsonObject arguments)
@@ -405,12 +429,14 @@ final class NemoMcpClient {
         }
 
         private JsonObject waitForResponse(long id) throws IOException, InterruptedException {
+            boolean unlimited = _config.timeoutSeconds() == 0;
             long deadline = System.nanoTime() + Duration.ofSeconds(_config.timeoutSeconds()).toNanos();
-            while (System.nanoTime() < deadline) {
+            while (unlimited || System.nanoTime() < deadline) {
                 if (_process != null && !_process.isAlive() && _messages.isEmpty()) {
                     throw new IOException("MCP server exited with code " + _process.exitValue() + stderrSummary());
                 }
-                long remainingMillis = Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
+                long remainingMillis = unlimited ? 100
+                        : Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()));
                 JsonObject message = _messages.poll(Math.min(100, remainingMillis), TimeUnit.MILLISECONDS);
                 if (message == null) {
                     continue;
@@ -496,7 +522,6 @@ final class NemoMcpClient {
             _process = null;
             _stdin = null;
             _messages.clear();
-            _toolsByExposedName.clear();
         }
     }
 

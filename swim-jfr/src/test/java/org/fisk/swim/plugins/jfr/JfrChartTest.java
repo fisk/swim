@@ -118,6 +118,49 @@ class JfrChartTest {
         assertEquals(lines, panel.renderRich(80, 40).stream().map(org.fisk.swim.api.SwimPanelLine::text).toList());
     }
 
+
+    @Test void zgcDemandSharesTheJvmChartAndExpandsItsLeftAxis() throws Exception {
+        var panel = new JfrPanel((java.nio.file.Path) null);
+        var start = java.time.Instant.EPOCH;
+        setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
+                new JfrMetrics.Sample(start, 25, 512, 1024, 75, 2048, 4096, 1.25),
+                new JfrMetrics.Sample(start.plusSeconds(20), 50, 512, 1024, 60, 3072, 4096, 0.5))));
+        var rich = panel.renderRich(100, 50);
+        var lines = rich.stream().map(org.fisk.swim.api.SwimPanelLine::text).toList();
+        assertTrue(lines.stream().anyMatch(line -> line.startsWith("JVM · CPU (green) / GC demand (cyan)")));
+        assertFalse(lines.stream().anyMatch(line -> line.startsWith("ZGC ·")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("125%")));
+        assertTrue(lines.stream().anyMatch(line -> line.contains("GC demand 50.0%")));
+        assertTrue(rich.stream().flatMap(line -> line.spans().stream())
+                .anyMatch(span -> "#4cc9f0".equals(span.foreground())));
+    }
+
+    @Test void demandLabelsWiderThanOneHundredPercentKeepThePlotAligned() throws Exception {
+        var panel = new JfrPanel((java.nio.file.Path) null);
+        var start = java.time.Instant.EPOCH;
+        setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
+                new JfrMetrics.Sample(start, 25, 512, 1024, 75, 2048, 4096, 12.5),
+                new JfrMetrics.Sample(start.plusSeconds(20), 50, 512, 1024, 60, 3072, 4096, 6.25))));
+        var lines = panel.render(100, 50);
+        assertTrue(lines.stream().anyMatch(line -> line.contains("1250%")));
+        for (String line : lines) {
+            int left = line.indexOf('│');
+            int right = line.lastIndexOf('│');
+            if (left >= 0 && right > left) {
+                assertTrue(line.substring(left + 1, right).chars()
+                    .allMatch(c -> c == ' ' || (c >= 0x2801 && c <= 0x28ff)), line);
+            }
+        }
+    }
+
+    @Test void absentZgcDemandDoesNotChangeTheChartLayout() throws Exception {
+        var panel = new JfrPanel((java.nio.file.Path) null);
+        var start = java.time.Instant.EPOCH;
+        setRecording(panel, new JfrMetrics.Recording(start, start.plusSeconds(20), java.util.List.of(
+                new JfrMetrics.Sample(start, 25, 512, 1024, 75, 2048, 4096))));
+        assertFalse(panel.render(100, 50).stream().anyMatch(line -> line.contains("GC demand")));
+    }
+
     private static void setRecording(JfrPanel panel, JfrMetrics.Recording recording) throws Exception {
         Class<?> source = Class.forName(JfrPanel.class.getName() + "$Source");
         var constructor = source.getDeclaredConstructor(java.nio.file.Path.class, JfrMetrics.Recording.class);

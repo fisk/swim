@@ -456,6 +456,10 @@ public class NemoClient {
     private BufferContext _context;
     private Configuration _configuration;
     private String _modelOverride = "";
+    private String _account = "";
+    private boolean _accountUnavailable;
+    private Configuration _pickerConfiguration;
+    private String _pickerAccount;
     private String _reasoningEffortOverride = "";
     private long _modelPickerGeneration;
     private Thread _modelCatalogWorker;
@@ -588,6 +592,7 @@ public class NemoClient {
   }
 
   static final class Configuration {
+    private final String _accountProfile;
     private final String _provider;
     private final String _apiKey;
     private final String _model;
@@ -740,6 +745,7 @@ public class NemoClient {
       _thinkingFieldName = builder._thinkingFieldName;
       _toolMaxResults = builder._toolMaxResults;
       _toolMaxOutputChars = builder._toolMaxOutputChars;
+      _accountProfile = builder._accountProfile;
       _toolCommandTimeoutSeconds = builder._toolCommandTimeoutSeconds;
     }
 
@@ -753,6 +759,25 @@ public class NemoClient {
 
     Configuration withModel(String model) {
       return new Builder(this).model(model).build();
+    }
+
+    Configuration withConnection(Configuration account) {
+      return new Builder(this).provider(account._provider).apiKey(account._apiKey)
+          .baseUrl(account._baseUrl).headers(account._headers)
+          .organization(account._organization).project(account._project)
+          .queryParameters(account._queryParameters).customParameters(account._customParameters)
+          .model(account._model).modelOptions(account._modelOptions)
+          .reasoningEffort(account._reasoningEffort).reasoningEffortOptions(account._reasoningEffortOptions)
+          .contextWindowTokens(account._contextWindowTokens).maxOutputTokens(account._maxOutputTokens)
+          .temperature(account._temperature).topP(account._topP).build();
+    }
+
+    String accountProfile() { return _accountProfile; }
+
+    Configuration withAccountProfile(String name) {
+      var builder = new Builder(this);
+      builder._accountProfile = name;
+      return builder.build();
     }
 
     Configuration withReasoningEffort(String reasoningEffort) {
@@ -772,6 +797,7 @@ public class NemoClient {
     }
 
     static final class Builder {
+      private String _accountProfile = "default";
       private String _provider = _defaultProvider;
       private String _apiKey = "";
       private String _model = _defaultModel;
@@ -833,6 +859,7 @@ public class NemoClient {
         _apiKey = source._apiKey;
         _model = source._model;
         _modelOptions = new ArrayList<>(source._modelOptions);
+        _accountProfile = source._accountProfile;
         _baseUrl = source._baseUrl;
         _baseUrlExplicit = source._baseUrlExplicit;
         _organization = source._organization;
@@ -1538,12 +1565,14 @@ public class NemoClient {
       if (trimmed.isEmpty()) {
         return Configuration.builder().build();
       }
-      return trimmed.startsWith("{")
-          ? loadJsonConfiguration(trimmed)
-          : loadPropertiesConfiguration(raw);
+      return NemoAccounts.configuration(raw, null);
     } catch (IOException e) {
       throw new RuntimeException("Unable to read Nemo config " + configPath, e);
     }
+  }
+
+  static Configuration loadFlatConfiguration(String raw) throws IOException {
+    return raw.stripLeading().startsWith("{") ? loadJsonConfiguration(raw) : loadPropertiesConfiguration(raw);
   }
 
   private static Path migrateLegacyConfigIfNeeded(Path configPath) {
@@ -3471,6 +3500,9 @@ public class NemoClient {
     synchronized (this) {
       ensureSessionsLoaded();
       worker = createConversation(workspaceRoot, delegatedTitle(title, task));
+      worker._account = configuration._accountProfile;
+      worker._modelOverride = configuration.model();
+      worker._reasoningEffortOverride = configuration.reasoningEffort().isBlank() ? "default" : configuration.reasoningEffort();
       bindConversation(worker, context, configuration.forSubAgent());
       persistSessions();
     }
@@ -6406,6 +6438,12 @@ public class NemoClient {
             conversation._modelOverride =
                 compactRawBody(sessionObject.get("model_override").getAsString());
           }
+          if (sessionObject.has("account")) {
+            conversation._account = sessionObject.get("account").getAsString();
+            if (conversation._account.equals("default") && !sessionObject.has("account_format")) {
+              conversation._account = "";
+            }
+          }
           if (sessionObject.has("reasoning_effort_override")) {
             conversation._reasoningEffortOverride =
                 compactRawBody(sessionObject.get("reasoning_effort_override").getAsString());
@@ -6493,6 +6531,8 @@ public class NemoClient {
       session.addProperty("workspace_root", conversation._workspaceRoot.toString());
       session.addProperty("created_at_millis", conversation._createdAtMillis);
       session.addProperty("updated_at_millis", conversation._updatedAtMillis);
+      session.addProperty("account", conversation._account);
+      session.addProperty("account_format", 2);
       if (!conversation._modelOverride.isBlank()) {
         session.addProperty("model_override", conversation._modelOverride);
       }
@@ -7139,6 +7179,17 @@ public class NemoClient {
   private void bindConversation(
       Conversation conversation, BufferContext context, Configuration configuration) {
     conversation._context = context;
+    conversation._accountUnavailable = false;
+    if (!conversation._account.isBlank() || Files.isRegularFile(getConfigPath())) {
+      try {
+        configuration = NemoAccounts.load(getConfigPath(), conversation._account, configuration);
+        conversation._account = configuration.accountProfile();
+      } catch (RuntimeException e) {
+        // Never silently route a saved conversation through a different account.
+        conversation._accountUnavailable = true;
+      }
+    }
+    if (conversation._account.isBlank()) conversation._account = configuration.accountProfile();
     if (!conversation._modelOverride.isBlank()) {
       configuration = configuration.withModel(conversation._modelOverride);
     }
@@ -7333,6 +7384,10 @@ public class NemoClient {
 
   private synchronized void startRequest(
       Conversation conversation, List<ChatTurn> extraPromptTurns) {
+    if (conversation._accountUnavailable) {
+      appendAssistantNote(conversation, "Selected account is unavailable. Use :account to select an account.");
+      return;
+    }
     if (conversation._configuration.requiresApiKey()
         && conversation._configuration.apiKey().isBlank()) {
       appendAssistantNote(conversation, "Set api_key in " + getConfigPath() + " to use :nemo");
@@ -7474,6 +7529,7 @@ public class NemoClient {
               "usage", List.of("tokens"), "", "show today's Nemo input and output token usage"),
           new CommandSpec(
               "model", List.of("reasoning", "reasoning-effort"), "", "choose model, then reasoning level"),
+          new CommandSpec("account", List.of(), "[name]", "choose account and model for this conversation"),
           new CommandSpec(
               "goal",
               List.of(),
@@ -7679,6 +7735,9 @@ public class NemoClient {
       case ":model":
         handleModelCommand(conversation, argument);
         return;
+      case ":account":
+        handleAccountCommand(conversation, argument);
+        return;
       case ":reasoning":
       case ":reasoning-effort":
         handleReasoningCommand(conversation, argument);
@@ -7767,6 +7826,43 @@ public class NemoClient {
   }
 
   private void handleModelCommand(Conversation conversation, String argument) {
+    if (conversation._accountUnavailable) {
+      appendAssistantNote(conversation, "Selected account is unavailable. Use :account first.");
+      return;
+    }
+    openModelPicker(conversation, argument, null);
+  }
+
+  private void handleAccountCommand(Conversation conversation, String argument) {
+    var window = Window.getInstance();
+    if (window != null && window.blockEditorDriveAction("Nemo account selection", "Nemo settings require host action")) return;
+    if (conversation._panelView == null) return;
+    if (conversation._pending) {
+      appendAssistantNote(conversation, "Wait for the active request or :abort before switching accounts.");
+      return;
+    }
+    cancelModelPicker(conversation);
+    if (!argument.isBlank()) {
+      openModelPicker(conversation, "", argument.trim());
+      return;
+    }
+    try {
+      long generation = conversation._modelPickerGeneration;
+      var choices = new ArrayList<ChatPanelView.Choice>();
+      for (String account : NemoAccounts.list(getConfigPath())) {
+        choices.add(new ChatPanelView.Choice(account + (account.equals(conversation._account) ? " (current)" : ""),
+            "Use this account with the existing conversation history", () -> {
+              if (modelPickerCurrent(conversation, generation)) openModelPicker(conversation, "", account);
+            }));
+      }
+      conversation._panelView.showChoices("Account · current: " + conversation._account + " · Esc cancels",
+          choices, () -> cancelModelPicker(conversation));
+    } catch (IOException e) {
+      appendAssistantNote(conversation, "Unable to list account profiles.");
+    }
+  }
+
+  private void openModelPicker(Conversation conversation, String argument, String account) {
     var window = Window.getInstance();
     if (window != null && window.blockEditorDriveAction("Nemo model selection", "Nemo settings require host action")) return;
     if (conversation._panelView == null) return;
@@ -7778,23 +7874,42 @@ public class NemoClient {
     conversation._panelView.showChoices("Loading models… · Esc to cancel",
         List.of(new ChatPanelView.Choice("Cancel", "Keep current model and reasoning", cancel)), cancel);
     var worker = new Thread(() -> {
+      Configuration selected = configuration;
+      if (account != null) {
+        try {
+          selected = NemoAccounts.load(getConfigPath(), account, configuration);
+          if (selected.requiresApiKey() && selected.apiKey().isBlank()) throw new IllegalArgumentException();
+        } catch (RuntimeException e) {
+          EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+            if (!modelPickerCurrent(conversation, generation)) return;
+            conversation._panelView.showChoices("Account unavailable · credentials/configuration required",
+                List.of(new ChatPanelView.Choice("Cancel", "Keep current account", cancel)), cancel);
+          }));
+          return;
+        }
+      }
       List<NemoModelCatalog.Model> models;
       String notice = "";
       try {
-        models = loader.load(configuration);
+        models = loader.load(selected);
         if (models.isEmpty()) throw new IOException("Empty model catalog");
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         return;
       } catch (Exception e) {
         // Do not display raw provider errors, which can contain credentials.
-        models = NemoModelCatalog.configuredModels(configuration);
+        models = NemoModelCatalog.configuredModels(selected);
         notice = "Discovery unavailable; configured models (capabilities unverified)";
       }
       var available = List.copyOf(models);
       String status = notice;
-      EventThread.getInstance().enqueue(new RunnableEvent(() ->
-          showModelChoices(conversation, generation, configuration, available, argument.trim(), status)));
+      Configuration chosen = selected;
+      EventThread.getInstance().enqueue(new RunnableEvent(() -> {
+        if (!modelPickerCurrent(conversation, generation)) return;
+        conversation._pickerConfiguration = chosen;
+        conversation._pickerAccount = account;
+        showModelChoices(conversation, generation, chosen, available, argument.trim(), status);
+      }));
     }, "swim-nemo-model-catalog");
     worker.setDaemon(true);
     conversation._modelCatalogWorker = worker;
@@ -7815,6 +7930,8 @@ public class NemoClient {
     conversation._modelPickerGeneration++;
     if (conversation._modelCatalogWorker != null) conversation._modelCatalogWorker.interrupt();
     conversation._modelCatalogWorker = null;
+    conversation._pickerConfiguration = null;
+    conversation._pickerAccount = null;
   }
 
   private boolean modelPickerCurrent(Conversation conversation, long generation) {
@@ -7837,11 +7954,13 @@ public class NemoClient {
     }
     var choices = new ArrayList<ChatPanelView.Choice>();
     for (var model : models) {
-      choices.add(new ChatPanelView.Choice(model.label() + (model.id().equals(configuration.model()) ? " (current)" : ""),
+      choices.add(new ChatPanelView.Choice(model.label() + (model.id().equals(conversation._configuration.model())
+          && (conversation._pickerAccount == null || conversation._pickerAccount.equals(conversation._account)) ? " (current)" : ""),
           model.id(), () -> showReasoningChoices(conversation, generation, model)));
     }
     if (choices.isEmpty()) choices.add(new ChatPanelView.Choice("Cancel", "No models available", () -> cancelModelPicker(conversation)));
     conversation._panelView.showChoices("Model · 1/2 · type to filter · Esc cancels"
+        + " · account: " + (conversation._pickerAccount == null ? conversation._account : conversation._pickerAccount)
         + (notice.isBlank() ? "" : "\n" + notice), choices, () -> cancelModelPicker(conversation));
   }
 
@@ -7868,6 +7987,18 @@ public class NemoClient {
     if (!modelPickerCurrent(conversation, generation)) return;
     var window = Window.getInstance();
     if (window != null && window.blockEditorDriveAction("Nemo model selection", "Nemo settings require host action")) return;
+    boolean accountChanged = conversation._pickerAccount != null;
+    if (accountChanged && conversation._pending) {
+      cancelModelPicker(conversation);
+      appendAssistantNote(conversation, "Account unchanged: wait for the active request or :abort first.");
+      return;
+    }
+    if (accountChanged) {
+      conversation._account = conversation._pickerAccount;
+      conversation._accountUnavailable = false;
+      conversation._configuration = conversation._pickerConfiguration;
+      conversation._contextUsagePercent = null;
+    }
     conversation._modelOverride = model.id();
     // Persist an explicit default so reopening does not resurrect the old configured effort.
     conversation._reasoningEffortOverride = effort.isBlank() ? "default" : effort;
@@ -7875,6 +8006,8 @@ public class NemoClient {
     conversation._updatedAtMillis = System.currentTimeMillis();
     cancelModelPicker(conversation);
     persistSessions();
+    if (accountChanged) appendAssistantNote(conversation, "Using account: " + conversation._account
+        + ". Existing conversation history will be sent to this backend on your next request.");
     appendAssistantNote(conversation, "Using model: " + model.id() + "; reasoning: "
         + (effort.isBlank() ? "provider default" : effort) + ". Applies to the next Nemo request.");
   }
