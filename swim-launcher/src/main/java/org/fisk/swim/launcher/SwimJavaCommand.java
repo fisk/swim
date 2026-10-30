@@ -18,12 +18,14 @@ final class SwimJavaCommand {
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:NativeMemoryTracking=summary",
             "-XX:+ZAdaptiveHeapSizing",
             "-XX:+UseStringDeduplication",
             "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SESSION_SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:NativeMemoryTracking=summary",
             "-XX:+ZAdaptiveHeapSizing");
 
     private SwimJavaCommand() {

@@ -28,16 +28,19 @@ public final class LauncherImageInstaller {
     private static final List<String> CLIENT_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:NativeMemoryTracking=summary",
             "-XX:+ZAdaptiveHeapSizing");
     private static final List<String> APP_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:NativeMemoryTracking=summary",
             "-XX:+ZAdaptiveHeapSizing",
             "-XX:+UseStringDeduplication",
             "--sun-misc-unsafe-memory-access=allow");
     private static final List<String> SERVER_JVM_OPTIONS = List.of(
             "-XX:+UseZGC",
             "-XX:+IgnoreUnrecognizedVMOptions",
+            "-XX:NativeMemoryTracking=summary",
             "-XX:+ZAdaptiveHeapSizing",
             "--enable-native-access=org.fisk.swim.session");
     private static final List<String> NETBEANS_RUNTIME_MODULES = List.of(

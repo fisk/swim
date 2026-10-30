@@ -198,6 +198,7 @@ class MainTest {
 
         assertTrue(args.contains("--add-options=-XX:+UseZGC"));
         assertTrue(args.contains("--add-options=-XX:+ZAdaptiveHeapSizing"));
+        assertTrue(args.contains("--add-options=-XX:NativeMemoryTracking=summary"));
         assertFalse(args.contains("--add-options=-Xmx128M"));
         assertFalse(args.contains("--add-options=-Xmx1g"));
         assertFalse(args.contains("--add-options=-Xmx4G"));
@@ -211,6 +212,7 @@ class MainTest {
 
         assertTrue(command.contains("-XX:+UseZGC"));
         assertTrue(command.contains("-XX:+ZAdaptiveHeapSizing"));
+        assertTrue(command.contains("-XX:NativeMemoryTracking=summary"));
         assertFalse(command.contains("-Xmx128M"));
         assertFalse(command.contains("-Xmx4G"));
         assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
@@ -228,6 +230,7 @@ class MainTest {
 
         assertTrue(command.contains("-XX:+UseZGC"));
         assertTrue(command.contains("-XX:+ZAdaptiveHeapSizing"));
+        assertTrue(command.contains("-XX:NativeMemoryTracking=summary"));
         assertFalse(command.contains("-Xmx4G"));
         assertFalse(command.contains("-XX:SoftMaxHeapSize=1G"));
         assertTrue(command.contains("--sun-misc-unsafe-memory-access=allow"));
@@ -278,14 +281,14 @@ class MainTest {
         String content = Files.readString(launcher);
         embeddedJava = embeddedJava.toAbsolutePath().normalize();
         assertTrue(content.startsWith("#!/bin/sh\n// 2>/dev/null; exec '" + embeddedJava
-                + "' -XX:+UseZGC -XX:+IgnoreUnrecognizedVMOptions -XX:+ZAdaptiveHeapSizing --source 25 \"$0\" \"$@\"\n"));
+                + "' -XX:+UseZGC -XX:+IgnoreUnrecognizedVMOptions -XX:NativeMemoryTracking=summary -XX:+ZAdaptiveHeapSizing --source 25 \"$0\" \"$@\"\n"));
         assertFalse(content.startsWith("#!/usr/bin/env -S java"));
         assertTrue(content.contains("class swim"));
         assertTrue(content.contains("private static final String FINAL_FIELD_MUTATION_OPTION = \"--enable-final-field-mutation=ALL-UNNAMED\""));
         assertTrue(content.contains("private static final String ILLEGAL_FINAL_FIELD_MUTATION_OPTION = \"--illegal-final-field-mutation=allow\""));
         assertTrue(content.contains("private static final String GC_LOG_OPTION = \"-Xlog:gc*:file=%s:time,uptime,level,tags:filesize=10M,filecount=2\""));
-        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"-XX:+UseStringDeduplication\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
-        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:+ZAdaptiveHeapSizing\", \"--enable-native-access=org.fisk.swim.session\")"));
+        assertTrue(content.contains("private static final List<String> APP_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:NativeMemoryTracking=summary\", \"-XX:+ZAdaptiveHeapSizing\", \"-XX:+UseStringDeduplication\", \"--sun-misc-unsafe-memory-access=allow\", \"--add-opens=java.base/java.net=ALL-UNNAMED\", \"-Djava.awt.headless=true\")"));
+        assertTrue(content.contains("private static final List<String> SERVER_JVM_OPTIONS = List.of(\"-XX:+UseZGC\", \"-XX:+IgnoreUnrecognizedVMOptions\", \"-XX:NativeMemoryTracking=summary\", \"-XX:+ZAdaptiveHeapSizing\", \"--enable-native-access=org.fisk.swim.session\")"));
         assertTrue(content.contains("private static final Path EMBEDDED_JAVA = Path.of(\"" + embeddedJava + "\")"));
         assertFalse(content.contains("launcher.getParent().resolve(\"java\")"));
         assertTrue(content.contains("Runtime.version().feature() >= 26"));
