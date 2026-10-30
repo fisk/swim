@@ -4248,43 +4248,48 @@ public class NemoClient {
     Path start = resolvePathInsideWorkspace(root, rawPath);
     String query = stringArgument(arguments, "query", "");
     int maxResults = intArgument(arguments, "max_results", configuration.toolMaxResults());
-    var matches = new ArrayList<String>();
-    for (Path path : regularFilesUnder(start)) {
-      if (matches.size() >= maxResults) {
-        break;
-      }
-      try {
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-          String line;
-          int lineNumber = 0;
-          while ((line = reader.readLine()) != null && matches.size() < maxResults) {
-            lineNumber++;
-            if (line.contains(query)) {
-              matches.add(
-                  root.relativize(path) + ":" + lineNumber + ": " + searchLineSnippet(line, query));
-            }
-          }
-        }
-      } catch (IOException e) {
-        continue;
-      }
-    }
-    if (matches.isEmpty()) {
+    if (maxResults <= 0) {
       return "(no matches)";
     }
-    return truncateOutput(configuration, String.join("\n", matches));
-  }
+    var output = new StringBuilder();
+    var search = new NemoTextSearch(query);
+    int[] matchCount = {0};
+    Files.walkFileTree(
+        start,
+        new SimpleFileVisitor<>() {
+          @Override
+          public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            return isGitInternal(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+          }
 
-  private static String searchLineSnippet(String line, String query) {
-    final int limit = 512;
-    if (line.length() <= limit) {
-      return line;
-    }
-    int match = Math.max(0, line.indexOf(query));
-    int start = Math.max(0, match - limit / 3);
-    int end = Math.min(line.length(), start + limit);
-    start = Math.max(0, end - limit);
-    return (start > 0 ? "…" : "") + line.substring(start, end) + (end < line.length() ? "…" : "");
+          @Override
+          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            if (!attrs.isRegularFile() || isGitInternal(file)) {
+              return FileVisitResult.CONTINUE;
+            }
+            try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+              boolean complete = search.scan(reader, match -> {
+                if (!output.isEmpty()) {
+                  output.append('\n');
+                }
+                output.append(root.relativize(file)).append(':').append(match.lineNumber())
+                    .append(": ").append(match.snippet());
+                matchCount[0]++;
+                return matchCount[0] < maxResults
+                    && output.length() < configuration.toolMaxOutputChars();
+              });
+              return complete ? FileVisitResult.CONTINUE : FileVisitResult.TERMINATE;
+            } catch (IOException e) {
+              return FileVisitResult.CONTINUE;
+            }
+          }
+
+          @Override
+          public FileVisitResult visitFileFailed(Path file, IOException exc) {
+            return FileVisitResult.CONTINUE;
+          }
+        });
+    return output.isEmpty() ? "(no matches)" : truncateOutput(configuration, output.toString());
   }
 
   private static void rejectOversizedNemoTextFile(Path path) throws IOException {
