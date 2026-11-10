@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.TimeUnit;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 
 import org.eclipse.lsp4j.ClientCapabilities;
 import org.eclipse.lsp4j.InitializeParams;
@@ -144,11 +145,12 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         acceptThread.setDaemon(true);
         acceptThread.start();
 
+        Future<?> listening = null;
         try {
             languageServerSocket = socketFuture.get(timeoutSeconds, TimeUnit.SECONDS);
             _log.debug("Embedded NetBeans accepted language server socket on {}", serverSocket.getLocalPort());
             var launcher = LSPLauncher.createClientLauncher(client, languageServerSocket.getInputStream(), languageServerSocket.getOutputStream());
-            launcher.startListening();
+            listening = launcher.startListening();
             LanguageServer server = launcher.getRemoteProxy();
 
             var initParams = new InitializeParams();
@@ -162,17 +164,18 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
             server.initialized(new InitializedParams());
 
             Socket finalLanguageServerSocket = languageServerSocket;
+            Future<?> finalListening = listening;
             AutoCloseable closeable = () -> {
                 try {
                     server.shutdown().get(5, TimeUnit.SECONDS);
                 } catch (Exception e) {
                 }
-                closeBootstrapResources(finalLanguageServerSocket, serverSocket, bootThread, previousProperties);
+                closeBootstrapResources(finalLanguageServerSocket, serverSocket, bootThread, previousProperties, finalListening);
             };
 
             return new Session(server, initialized.getCapabilities(), closeable, "oracle-embedded");
         } catch (Exception e) {
-            closeBootstrapResources(languageServerSocket, serverSocket, bootThread, previousProperties);
+            closeBootstrapResources(languageServerSocket, serverSocket, bootThread, previousProperties, listening);
             if (allowWorkspaceReset && shouldResetWorkspace(workspacePath, e)) {
                 _log.warn("Resetting embedded Java LSP workspace at {} after recoverable bootstrap failure", workspacePath);
                 deleteRecursively(workspacePath);
@@ -299,11 +302,17 @@ final class EmbeddedOracleModuleLayerLspProvider implements JavaLspProvider {
         return false;
     }
 
-    private static void closeBootstrapResources(
+    static void closeBootstrapResources(
             Socket languageServerSocket,
             ServerSocket serverSocket,
             Thread bootThread,
-            java.util.Map<String, String> previousProperties) {
+            java.util.Map<String, String> previousProperties,
+            Future<?> listening) {
+        if (listening != null) {
+            // Tell LSP4j the listener is stopping before closing its input. Otherwise
+            // the expected SocketException is reported through JUL to the terminal.
+            listening.cancel(true);
+        }
         try {
             if (languageServerSocket != null) {
                 languageServerSocket.close();

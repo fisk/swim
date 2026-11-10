@@ -1,6 +1,7 @@
 package org.fisk.swim.lsp.java;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -402,7 +403,9 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private void recoverFromRequestFailure(Throwable error) {
-        if (!_enabled || !_recoveryPending.compareAndSet(false, true)) {
+        // Slow indexing, cancelled requests and server-side request errors do not
+        // mean the transport has failed. Closing it here interrupts healthy work.
+        if (!isConnectionFailure(error) || !_enabled || !_recoveryPending.compareAndSet(false, true)) {
             return;
         }
         var recoveryThread = new Thread(() -> {
@@ -451,6 +454,15 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
         }, "swim-java-lsp-recovery");
         recoveryThread.setDaemon(true);
         recoveryThread.start();
+    }
+
+    private static boolean isConnectionFailure(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof IOException && !(cause instanceof InterruptedIOException)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void restoreOpenDocuments() {
@@ -2419,16 +2431,28 @@ public class JavaLSPClient extends Thread implements LanguageMode, DiagnosticAct
     }
 
     private List<AsyncSemanticTokenHighlighter.Highlight> fetchSemanticHighlights(AsyncSemanticTokenHighlighter.Snapshot snapshot) {
+        CompletableFuture<SemanticTokens> request = null;
         try {
             var legend = _capabilities.getSemanticTokensProvider().getLegend();
             var params = new SemanticTokensParams(new TextDocumentIdentifier(snapshot.uri()));
-            var tokens = _server.getTextDocumentService().semanticTokensFull(params).get(2, TimeUnit.SECONDS);
+            request = _server.getTextDocumentService().semanticTokensFull(params);
+            var tokens = request.get(2, TimeUnit.SECONDS);
             return AsyncSemanticTokenHighlighter.decodeSemanticHighlights(
                     snapshot.text(),
                     tokens,
                     legend,
                     this::semanticTokenColor,
                     _log);
+        } catch (java.util.concurrent.TimeoutException e) {
+            request.cancel(true);
+            _log.debug("Semantic token request timed out; retrying without restarting Java LSP");
+            return List.of();
+        } catch (InterruptedException e) {
+            if (request != null) {
+                request.cancel(true);
+            }
+            Thread.currentThread().interrupt();
+            return List.of();
         } catch (Exception e) {
             _log.debug("Semantic token request failed", e);
             recoverFromRequestFailure(e);
