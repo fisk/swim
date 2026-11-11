@@ -36,14 +36,21 @@ final class NemoResponsesClient {
     NemoClient.ResponseResult request(NemoClient.Configuration configuration, BufferContext context,
             List<NemoClient.ChatTurn> turns, NemoClient.ToolExecutionSession executionSession)
             throws IOException, InterruptedException {
+        try (HttpClient httpClient = SwimHttpClients.newBuilder()
+                .connectTimeout(Duration.ofSeconds(Math.min(30, configuration.timeoutSeconds())))
+                .build()) {
+            return request(configuration, context, turns, executionSession, httpClient);
+        }
+    }
+
+    private NemoClient.ResponseResult request(NemoClient.Configuration configuration, BufferContext context,
+            List<NemoClient.ChatTurn> turns, NemoClient.ToolExecutionSession executionSession, HttpClient httpClient)
+            throws IOException, InterruptedException {
         Path workspaceRoot = NemoClient.resolveWorkspaceRoot(configuration, context);
         List<NemoSkillDocument> skills = NemoSkillLoader.loadApplicableSkills(context, workspaceRoot, configuration);
         JsonArray input = new JsonArray();
         input.add(userMessage(NemoPromptBuilder.buildInput(context, turns, configuration, skills)));
 
-        HttpClient httpClient = SwimHttpClients.newBuilder()
-                .connectTimeout(Duration.ofSeconds(configuration.timeoutSeconds()))
-                .build();
         JsonArray tools = tools(configuration);
         TokenUsage cumulativeUsage = null;
         var toolTraces = new ArrayList<NemoClient.ToolTrace>();

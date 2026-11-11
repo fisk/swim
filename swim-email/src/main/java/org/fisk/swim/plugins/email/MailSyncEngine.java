@@ -10,9 +10,16 @@ import java.util.Map;
 
 final class MailSyncEngine {
     private final MailSyncAdapterFactory _adapterFactory;
+    private final java.util.function.BiFunction<String, List<String>, java.util.Set<String>> _capturedKeys;
 
     MailSyncEngine(MailSyncAdapterFactory adapterFactory) {
+        this(adapterFactory, (account, keys) -> java.util.Set.of());
+    }
+
+    MailSyncEngine(MailSyncAdapterFactory adapterFactory,
+            java.util.function.BiFunction<String, List<String>, java.util.Set<String>> capturedKeys) {
         _adapterFactory = adapterFactory;
+        _capturedKeys = capturedKeys;
     }
 
     RefreshPlan prepare(EmailPaths paths, Map<String, AccountSyncState> syncStates) throws IOException {
@@ -36,13 +43,17 @@ final class MailSyncEngine {
                 if (result.batch().success()) {
                     MailDb.upsertAccountMessagesAndRefreshThreads(
                             connection, result.account().normalizedId(), result.batch().messages());
+                    MailDb.recordCapturedKeys(connection, result.account().normalizedId(), result.adapter().capturedKeysToRecord());
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), Instant.now().toString(),
                             result.batch().statusMessage().isBlank()
                                     ? result.batch().messages().size() + " messages"
                                     : result.batch().statusMessage(),
                             !result.adapter().hasMore(),
-                            Math.max(result.syncState().lastSeenUid(), result.batch().highWatermarkUid()),
+                            result.batch().uidValidity() > 0L && result.batch().uidValidity() != result.syncState().uidValidity()
+                                    ? result.batch().highWatermarkUid()
+                                    : Math.max(result.syncState().lastSeenUid(), result.batch().highWatermarkUid()),
                             result.adapter().hasMore() ? result.batch().nextBackfillUid() : 0L);
+                    MailDb.recordUidValidity(connection, result.account().normalizedId(), result.batch().uidValidity());
                 } else {
                     MailDb.recordAccountSyncState(connection, result.account().normalizedId(), null,
                             result.batch().statusMessage(),
@@ -64,6 +75,7 @@ final class MailSyncEngine {
     private AccountSyncResult fetchAccount(EmailAccountConfig account, AccountSyncState syncState) {
         try {
             MailSyncAdapter adapter = _adapterFactory.create(account);
+            adapter.useCapturedKeys(keys -> _capturedKeys.apply(account.normalizedId(), keys));
             return new AccountSyncResult(account, syncState, adapter, adapter.fetch(account, syncState));
         } catch (Exception e) {
             return new AccountSyncResult(account, syncState, _adapterFactory.create(account),

@@ -64,6 +64,10 @@ Run `:help` inside SWIM to open the dedicated help workspace. It has a chapter t
 
 The top context bar and `:` command popup discover available key bindings from the active view and configured remaps. Use them for quick local hints, and use `:help` for the fuller tutorial.
 
+Unexpected errors open a report in a split to the right of your source. Reports include the exception chain, operation, thread, editor location, runtime details, and log path. Focus the report and press `y` to copy it to the system clipboard, `[` / `]` to browse recent errors, or `q` to close it; `:errors` reopens the session's reports. Repeated failures share one report. Error details remain private to the host and are unavailable to Nemo's editor-control tools.
+
+Reports are also saved as plain text under `~/.swim/error-reports/`. Read `~/.swim/error-reports/latest.txt` for the latest saved error; up to 50 timestamped reports are retained across restarts. The report pane includes its saved path and shows any save failure. Set the JVM property `swim.error.dir` to choose another directory.
+
 Nemo can read the same documentation through the `swim_help` tool or the Nemo chat command `:swim-help [topic]`.
 
 ## Feature Areas

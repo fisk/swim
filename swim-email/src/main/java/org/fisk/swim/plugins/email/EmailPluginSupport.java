@@ -1,16 +1,14 @@
 package org.fisk.swim.plugins.email;
 
-import java.io.IOException;
-import java.sql.SQLException;
-
 import org.fisk.swim.api.SwimPluginContext;
+import org.fisk.swim.mail.MailClient;
 import org.fisk.swim.mail.MailPluginRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 final class EmailPluginSupport {
     private static final Logger LOG = LoggerFactory.getLogger(EmailPluginSupport.class);
-    private static H2MailClient _client;
+    private static MailClient _client;
 
     private EmailPluginSupport() {
     }
@@ -18,14 +16,10 @@ final class EmailPluginSupport {
     static synchronized void install(SwimPluginContext context) {
         shutdown();
         try {
-            _client = new H2MailClient(EmailPaths.fromUserHome(),
-                    new DefaultMailSyncAdapterFactory(),
-                    new SmtpMailSupport(EmailPaths.fromUserHome()),
-                    false, context.workers());
+            EmailPaths paths = EmailPaths.fromUserHome();
+            _client = new BackgroundMailClient(paths.emailHome(), () -> new H2MailClient(paths,
+                    new DefaultMailSyncAdapterFactory(), new SmtpMailSupport(paths), false, context.workers()), context.workers());
             MailPluginRegistry.register(_client);
-        } catch (IOException | SQLException e) {
-            LOG.error("Failed to initialize mail plugin", e);
-            throw new RuntimeException("Failed to initialize mail plugin: " + rootMessage(e), e);
         } catch (RuntimeException e) {
             LOG.error("Failed to initialize mail plugin", e);
             throw new RuntimeException("Failed to initialize mail plugin: " + rootMessage(e), e);

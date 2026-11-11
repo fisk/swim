@@ -104,7 +104,9 @@ public class NemoClient {
   private static final String _defaultApprovalPolicy = "on_escalation";
   private static final String _sandboxAvailabilityOverrideProperty =
       "swim.nemo.os_sandbox_available";
-  private static final int _defaultTimeoutSeconds = 60;
+  // Reasoning calls from parents and delegated workers can exceed one minute
+  // before the provider returns a response. Explicit configuration still wins.
+  private static final int _defaultTimeoutSeconds = 300;
   private static final int _defaultMaxRetries = 2;
   private static final int _defaultSkillsMaxFiles = 8;
   private static final int _defaultSkillsMaxChars = 12_000;
@@ -246,6 +248,13 @@ public class NemoClient {
   record ToolExecutionResult(String output, String displayPatch) {
     ToolExecutionResult(String output) {
       this(output, "");
+    }
+  }
+
+  /** An expected policy rejection, returned to Nemo for recovery. */
+  private static final class ToolRequestRejectedException extends IOException {
+    ToolRequestRejectedException(String message) {
+      super(message);
     }
   }
 
@@ -2303,7 +2312,13 @@ public class NemoClient {
     try {
       return executeToolDetailed(configuration, context, call, executionSession);
     } catch (IOException e) {
-      _log.warn("Nemo tool {} failed", call.name(), e);
+      if (e instanceof ToolRequestRejectedException) {
+        // The guard already handled this request. Keep the rejection visible to
+        // Nemo and in the log without raising an editor bug report.
+        _log.warn("Nemo tool {} rejected: {}", call.name(), e.getMessage());
+      } else {
+        _log.warn("Nemo tool {} failed", call.name(), e);
+      }
       return new ToolExecutionResult(formatToolError(call, e));
     }
   }
@@ -2553,8 +2568,10 @@ public class NemoClient {
     } else {
       message.append(detail);
     }
-    message.append(
-        ". Recover by inspecting the path and retrying with the correct tool for that path type.");
+    if (!(error instanceof ToolRequestRejectedException)) {
+      message.append(
+          ". Recover by inspecting the path and retrying with the correct tool for that path type.");
+    }
     return message.toString();
   }
 
@@ -3817,10 +3834,14 @@ public class NemoClient {
             ? requested.normalize()
             : workspaceRoot.resolve(requested).normalize();
     if (!isPathInsideWorkspaceOrGrantedDirectory(workspaceRoot, path)) {
-      throw new IOException("Path escapes workspace root: " + rawPath);
+      throw workspacePathRejected(workspaceRoot, rawPath, path);
     }
     Path fallback = maybeStripWorkspaceRootPrefix(workspaceRoot, requested, path);
     if (fallback != null) {
+      if (org.fisk.swim.ErrorReports.isSavedReportPath(fallback)) {
+        throw new ToolRequestRejectedException(
+            "Saved error reports are private and unavailable to Nemo");
+      }
       return fallback;
     }
     return path;
@@ -3840,9 +3861,24 @@ public class NemoClient {
     Path path =
         requested.isAbsolute() ? requested.normalize() : base.resolve(requested).normalize();
     if (!isPathInsideWorkspaceOrGrantedDirectory(workspaceRoot, path)) {
-      throw new IOException("Path escapes workspace root: " + rawPath);
+      throw workspacePathRejected(workspaceRoot, rawPath, path);
     }
     return path;
+  }
+
+  private static ToolRequestRejectedException workspacePathRejected(
+      Path workspaceRoot, String rawPath, Path path) {
+    if (org.fisk.swim.ErrorReports.isSavedReportPath(path)) {
+      return new ToolRequestRejectedException(
+          "Saved error reports are private and unavailable to Nemo");
+    }
+    return new ToolRequestRejectedException(
+        "Path escapes workspace root: "
+            + rawPath
+            + ". Workspace root: "
+            + workspaceRoot
+            + ". Use a path relative to this workspace, or use request_directory_access"
+            + " to request host approval for an additional directory.");
   }
 
   private static String requestDirectoryAccess(
@@ -4009,6 +4045,9 @@ public class NemoClient {
   }
 
   private static boolean isPathInsideWorkspaceOrGrantedDirectory(Path workspaceRoot, Path path) {
+    if (org.fisk.swim.ErrorReports.isSavedReportPath(path)) {
+      return false;
+    }
     return isPathInsideImplicitWorkspace(workspaceRoot, path)
         || _instance.isPathInsideGrantedDirectory(workspaceRoot, path);
   }
@@ -4104,12 +4143,13 @@ public class NemoClient {
         new SimpleFileVisitor<>() {
           @Override
           public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-            return isGitInternal(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+            return isGitInternal(dir) || org.fisk.swim.ErrorReports.isSavedReportPath(dir)
+                ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
           }
 
           @Override
           public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            if (attrs.isRegularFile() && !isGitInternal(file)) {
+            if (attrs.isRegularFile() && !isGitInternal(file) && !org.fisk.swim.ErrorReports.isSavedReportPath(file)) {
               files.add(file);
             }
             return FileVisitResult.CONTINUE;
@@ -4259,12 +4299,13 @@ public class NemoClient {
         new SimpleFileVisitor<>() {
           @Override
           public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-            return isGitInternal(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+            return isGitInternal(dir) || org.fisk.swim.ErrorReports.isSavedReportPath(dir)
+                ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
           }
 
           @Override
           public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            if (!attrs.isRegularFile() || isGitInternal(file)) {
+            if (!attrs.isRegularFile() || isGitInternal(file) || org.fisk.swim.ErrorReports.isSavedReportPath(file)) {
               return FileVisitResult.CONTINUE;
             }
             try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -7438,7 +7479,12 @@ public class NemoClient {
               } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
               } catch (Exception e) {
-                _log.error("Nemo request failed", e);
+                if (isRequestTimeout(e)) {
+                  _log.warn("Nemo model request timed out (timeout_seconds={}, provider={}, model={})",
+                      requestConfiguration.timeoutSeconds(), requestConfiguration.provider(), requestConfiguration.model());
+                } else {
+                  _log.error("Nemo request failed", e);
+                }
                 EventThread.getInstance()
                     .enqueue(
                         new RunnableEvent(
@@ -7446,7 +7492,7 @@ public class NemoClient {
                                 handleFailure(
                                     conversation,
                                     requestId,
-                                    "Nemo failed: " + exceptionSummary(e))));
+                                    requestFailureMessage(requestConfiguration, e))));
               }
             },
             "swim-nemo-" + conversation._id);
@@ -7487,6 +7533,27 @@ public class NemoClient {
       return message;
     }
     return e.getClass().getSimpleName();
+  }
+
+  private static boolean isRequestTimeout(Throwable failure) {
+    var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+    while (failure != null && seen.add(failure)) {
+      if (failure instanceof java.net.http.HttpTimeoutException
+          || failure instanceof java.net.SocketTimeoutException) {
+        return true;
+      }
+      failure = failure.getCause();
+    }
+    return false;
+  }
+
+  private static String requestFailureMessage(Configuration configuration, Exception failure) {
+    if (isRequestTimeout(failure)) {
+      return "Nemo failed: model request timed out (timeout_seconds=" + configuration.timeoutSeconds()
+          + "). This does not stop delegated workers; use :workers to inspect them."
+          + " Retry this conversation, or increase timeout_seconds in nemo.conf.";
+    }
+    return "Nemo failed: " + exceptionSummary(failure);
   }
 
   private synchronized List<ChatTurn> drainQueuedUserTurns(

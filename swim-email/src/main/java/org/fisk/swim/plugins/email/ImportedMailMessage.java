@@ -15,10 +15,25 @@ record ImportedMailMessage(
         String snippet,
         String bodyText,
         boolean unread,
-        long serverUid) {
+        long serverUid,
+        String syncKey) {
     ImportedMailMessage {
         recipients = recipients == null ? java.util.List.of() : java.util.List.copyOf(recipients);
         serverUid = Math.max(0L, serverUid);
+        syncKey = syncKey == null ? "" : syncKey;
+    }
+
+    ImportedMailMessage(String accountId, String folderName, String internetMessageId, String threadKey,
+            String subject, String fromName, String fromEmail, String toSummary,
+            java.util.List<ImportedMailRecipient> recipients, String sentAt, String receivedAt,
+            String snippet, String bodyText, boolean unread, long serverUid) {
+        this(accountId, folderName, internetMessageId, threadKey, subject, fromName, fromEmail, toSummary,
+                recipients, sentAt, receivedAt, snippet, bodyText, unread, serverUid, "");
+    }
+
+    ImportedMailMessage withSyncKey(String key) {
+        return new ImportedMailMessage(accountId, folderName, internetMessageId, threadKey, subject, fromName,
+                fromEmail, toSummary, recipients, sentAt, receivedAt, snippet, bodyText, unread, serverUid, key);
     }
 
     ImportedMailMessage(

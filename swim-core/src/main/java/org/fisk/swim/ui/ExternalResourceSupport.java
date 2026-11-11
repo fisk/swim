@@ -32,6 +32,11 @@ final class ExternalResourceSupport {
         return _textCopier.copy(text);
     }
 
+    // Keep private error text out of editor registers, which Nemo can inspect.
+    static boolean copyPrivateText(String text) {
+        return text != null && !text.isBlank() && _textCopier.copy(text);
+    }
+
     private static boolean openUrlWithSystem(String url) {
         if (url == null || url.isBlank()) {
             return false;

@@ -34,6 +34,7 @@ final class SwimLogging {
             if (existingAppender instanceof FileAppender fileAppender
                     && logPath.toString().equals(fileAppender.getFileName())) {
                 System.setProperty(LOG_PATH_PROPERTY, logPath.toString());
+                ErrorCapture.install();
                 return logPath;
             }
             if (existingAppender != null) {
@@ -62,6 +63,7 @@ final class SwimLogging {
             rootLogger.setLevel(logLevel);
             context.updateLoggers();
             System.setProperty(LOG_PATH_PROPERTY, logPath.toString());
+            ErrorCapture.install();
             return logPath;
         } catch (Throwable e) {
             System.err.println("swim: failed to initialize logging at " + logPath + ": " + e);

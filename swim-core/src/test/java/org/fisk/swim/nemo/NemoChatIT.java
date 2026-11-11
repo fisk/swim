@@ -475,6 +475,71 @@ class NemoChatIT {
     }
 
     @Test
+    @Timeout(15)
+    void parentModelTimeoutDoesNotCancelDelegatedWorker() throws Exception {
+        var releaseParent = new java.util.concurrent.CountDownLatch(1);
+        var executor = Executors.newVirtualThreadPerTaskExecutor();
+        var server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.setExecutor(executor);
+        server.createContext("/responses", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            JsonObject response;
+            if (body.contains("You are a Nemo sub-agent delegated")) {
+                response = responsesTextResponse("Delegated fixture completed.");
+            } else if (body.contains("Started sub-agent worker")) {
+                try {
+                    releaseParent.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.close();
+                return;
+            } else {
+                response = responsesTextResponse("");
+                var call = new JsonObject();
+                call.addProperty("type", "function_call");
+                call.addProperty("call_id", "delegate-fixture");
+                call.addProperty("name", "delegate_task");
+                call.addProperty("arguments", "{\"title\":\"Fixture\",\"task\":\"Return fixture completion.\"}");
+                response.getAsJsonArray("output").set(0, call);
+            }
+            byte[] bytes = response.toString().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream output = exchange.getResponseBody()) {
+                output.write(bytes);
+            }
+        });
+        server.start();
+        String originalUserHome = System.getProperty("user.home");
+        try {
+            writeResponsesConfig(server);
+            Files.writeString(tempDir.resolve(".swim/nemo/nemo.conf"),
+                    "\ntimeout_seconds=1\nmax_retries=0\n", java.nio.file.StandardOpenOption.APPEND);
+            switchToTempUserHome();
+            try (var harness = HeadlessWindowHarness.create(writeFile("chat.txt", "Fixture source\n"), 100, 24)) {
+                EventThread.getInstance().start();
+                var context = harness.getWindow().getBufferContext();
+                NemoClient.getInstance().run(context, "Delegate this fixture");
+                var panel = waitForPanel(harness.getWindow());
+                waitForLine(panel, "model request timed out (timeout_seconds=1)");
+                assertTrue(displayLines(panel).stream().anyMatch(line -> line.contains(":workers")));
+                var configuration = NemoClient.Configuration.builder().workspaceRoot(tempDir).build();
+                String worker = NemoClient.executeTool(configuration, context,
+                        new NemoClient.ToolCall("join-fixture", "join_worker", json(Map.of(
+                                "session_id", "session-2", "timeout_seconds", 3))));
+                assertTrue(worker.contains("Delegated fixture completed."));
+                assertFalse(worker.contains("Nemo failed:"));
+            }
+        } finally {
+            releaseParent.countDown();
+            server.stop(0);
+            executor.shutdownNow();
+            System.setProperty("user.home", originalUserHome);
+        }
+    }
+
+    @Test
     @Timeout(20)
     void parentPaneApprovesSubAgentCommandWithoutSwitchingSessions() throws Exception {
         var requestCount = new AtomicInteger();
@@ -1145,6 +1210,9 @@ class NemoChatIT {
                               "workspace_sessions": {
                                 "%s": "session-1"
                               },
+                              "overlay_sessions": {
+                                "%s": "session-1"
+                              },
                               "sessions": [
                                 {
                                   "id": "session-1",
@@ -1160,7 +1228,7 @@ class NemoChatIT {
                                 }
                               ]
                             }
-                            """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
+                            """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
             Path file = writeFile("chat.txt", "class Demo {}\n");
             try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
                 EventThread.getInstance().start();
@@ -1201,6 +1269,9 @@ class NemoChatIT {
                           "workspace_sessions": {
                             "%s": "session-1"
                           },
+                          "overlay_sessions": {
+                            "%s": "session-1"
+                          },
                           "sessions": [
                             {
                               "id": "session-1",
@@ -1215,7 +1286,7 @@ class NemoChatIT {
                             }
                           ]
                         }
-                        """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
+                        """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath(), tempDir.toAbsolutePath()));
         Path file = writeFile("chat.txt", "class Demo {}\n");
         try {
             try (var harness = HeadlessWindowHarness.create(file, 80, 18)) {
@@ -1247,6 +1318,10 @@ class NemoChatIT {
                   "workspace_sessions": {
                     "%s": "session-1"
                   },
+                  "overlay_sessions": {
+                    "%s": "session-1"
+                  },
+                  "daily_token_usage": {},
                   "sessions": [
                     {
                       "id": "session-1",
@@ -1254,6 +1329,8 @@ class NemoChatIT {
                       "workspace_root": "%s",
                       "created_at_millis": 1,
                       "updated_at_millis": 2,
+                      "account": "default",
+                      "account_format": 2,
                       "turns": [
                         { "speaker": "me", "text": "Earlier question", "include_in_prompt": true },
                         { "speaker": "nemo", "text": "Nemo failed: {\\n  \\"code\\" : \\"InvalidParameter\\"\\n}", "include_in_prompt": false }
@@ -1261,7 +1338,7 @@ class NemoChatIT {
                     }
                   ]
                 }
-                """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath());
+                """.formatted(tempDir.toAbsolutePath(), tempDir.toAbsolutePath(), tempDir.toAbsolutePath());
         Files.writeString(configDir.resolve("nemo/sessions.json"), originalState);
         Path file = writeFile("chat.txt", "class Demo {}\n");
         try {

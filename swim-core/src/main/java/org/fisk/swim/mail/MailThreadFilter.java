@@ -5,6 +5,7 @@ public record MailThreadFilter(Kind kind, String value) {
         ALL,
         UNSORTED,
         ACCOUNT,
+        ACCOUNT_UNSORTED,
         TAG
     }
 
@@ -25,6 +26,10 @@ public record MailThreadFilter(Kind kind, String value) {
         return new MailThreadFilter(Kind.ACCOUNT, accountId);
     }
 
+    public static MailThreadFilter accountUnsorted(String accountId) {
+        return new MailThreadFilter(Kind.ACCOUNT_UNSORTED, accountId);
+    }
+
     public static MailThreadFilter tag(String tag) {
         return new MailThreadFilter(Kind.TAG, tag);
     }
@@ -37,6 +42,7 @@ public record MailThreadFilter(Kind kind, String value) {
         case ALL -> true;
         case UNSORTED -> thread.tags().isEmpty() || thread.addressedToAccount();
         case ACCOUNT -> value.equals(thread.accountId());
+        case ACCOUNT_UNSORTED -> value.equals(thread.accountId()) && (thread.tags().isEmpty() || thread.addressedToAccount());
         case TAG -> thread.tags().contains(value);
         };
     }

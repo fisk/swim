@@ -73,6 +73,7 @@ public class CommandView extends View {
               "blame", List.of(), "", "toggle Git blame annotations for the current buffer"),
           new CommandSpec("split", List.of("sp"), "", "split the active pane below"),
           new CommandSpec("vsplit", List.of("vs"), "", "split the active pane to the right"),
+          new CommandSpec("errors", List.of(), "", "open recent error reports in a right split"),
           new CommandSpec("close", List.of(), "", "close the active pane"),
           new CommandSpec("only", List.of(), "", "keep only the active pane"),
           new CommandSpec(
@@ -508,6 +509,9 @@ public class CommandView extends View {
       case "vsplit":
       case "vs":
         splitBuffer(true);
+        break;
+      case "errors":
+        Window.getInstance().showErrorReports();
         break;
       case "close":
         closeView();
@@ -1052,6 +1056,8 @@ public class CommandView extends View {
       case "gclog", "gclogpath" ->
           blockEditorDriveCommand(
               window, rawCommand, "SWIM logs are outside the editor-control sandbox");
+      case "errors" -> blockEditorDriveCommand(
+          window, rawCommand, "error details are private and unavailable to Nemo");
       case "reload", "restart", "rebuild", "upgrade" ->
           blockEditorDriveCommand(
               window, rawCommand, "reload and rebuild commands require host action");

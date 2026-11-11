@@ -916,7 +916,9 @@ class MailPanelViewTest {
         List<Object> rows = (List<Object>) HeadlessWindowHarness.getField(panel, "_sidebarRows");
 
         assertEquals("oracle", HeadlessWindowHarness.getField(rows.get(2), "label", String.class));
-        assertEquals("outlook", HeadlessWindowHarness.getField(rows.get(3), "label", String.class));
+        assertEquals("outlook", HeadlessWindowHarness.getField(rows.get(5), "label", String.class));
+        assertEquals("  #all", HeadlessWindowHarness.getField(rows.get(3), "label", String.class));
+        assertEquals("  #unsorted", HeadlessWindowHarness.getField(rows.get(4), "label", String.class));
     }
 
     @Test
@@ -959,7 +961,7 @@ class MailPanelViewTest {
         assertTrue(rendered.contains("1 #unsorted"));
         assertTrue(rendered.contains("2 #all"));
         assertTrue(rendered.contains("3 oracle"));
-        assertTrue(rendered.contains("4 outlook"));
+        assertTrue(rendered.contains("6 outlook"));
     }
 
     @Test
@@ -1015,18 +1017,35 @@ class MailPanelViewTest {
     }
 
     @Test
-    void mouseWheelMovesThreadSelection() throws Exception {
-        var panel = new MailPanelView(Rect.create(0, 0, 80, 20), styledMailClient());
+    void mouseWheelScrollsViewportWithoutChangingSelectionOrLoadingAnotherMessage() throws Exception {
+        var terminal = TerminalContextTestSupport.install(80, 8);
+        var threads = new ArrayList<MailThreadSummary>();
+        for (int i = 0; i < 30; i++) {
+            threads.add(new MailThreadSummary(i + 1, "fixture", "Item " + i, "", "", "", false, 1, List.of()));
+        }
+        var panel = new MailPanelView(Rect.create(0, 0, 80, 8), new MailClient() {
+            @Override public MailSnapshot snapshot() {
+                return new MailSnapshot(List.of(new MailAccountSummary("fixture", "Fixture", "IMAP", 30, 0, "cached", "")), threads, "");
+            }
+            @Override public MailMessageDetail loadMessage(long id) {
+                return new MailMessageDetail(id, id, "Item", "", "", "", "", List.of());
+            }
+            @Override public void refresh() { }
+            @Override public Path getDataPath() { return tempDir; }
+        });
+        long messageGeneration = HeadlessWindowHarness.getField(panel, "_messageLoadGeneration", java.util.concurrent.atomic.AtomicLong.class).get();
 
         HeadlessWindowHarness.dispatch(panel,
                 new MouseAction(MouseActionType.SCROLL_DOWN, 5, new MouseAction.Position(30, 3)));
 
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class) != 2
-                && System.nanoTime() < deadline) {
-            Thread.sleep(10);
-        }
-        assertEquals(2, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+        panel.draw(panel.getBounds());
+        assertEquals(0, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+        assertEquals(3, HeadlessWindowHarness.getField(panel, "_threadScrollOffset", Integer.class));
+        assertEquals(messageGeneration, HeadlessWindowHarness.getField(panel, "_messageLoadGeneration", java.util.concurrent.atomic.AtomicLong.class).get());
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('j'));
+        panel.draw(panel.getBounds());
+        assertEquals(1, HeadlessWindowHarness.getField(panel, "_selectedIndex", Integer.class));
+        assertTrue(HeadlessWindowHarness.getField(panel, "_threadScrollOffset", Integer.class) <= 1);
     }
 
     @Test
@@ -1075,7 +1094,7 @@ class MailPanelViewTest {
             }
         });
 
-        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('4'));
+        HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('6'));
         HeadlessWindowHarness.dispatch(panel, HeadlessWindowHarness.key('g'));
 
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
@@ -1084,7 +1103,7 @@ class MailPanelViewTest {
         }
 
         assertEquals("SIDEBAR", HeadlessWindowHarness.getField(panel, "_browsePane", Enum.class).name());
-        assertEquals(3, HeadlessWindowHarness.getField(panel, "_sidebarSelection", Integer.class));
+        assertEquals(5, HeadlessWindowHarness.getField(panel, "_sidebarSelection", Integer.class));
         assertEquals(2L, lastLoadedThread.get());
     }
 

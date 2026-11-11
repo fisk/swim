@@ -50,6 +50,34 @@ class NemoMcpClientTest {
     }
 
     @Test
+    void unavailableServerIsDiagnosedWithoutPublishingAnEditorException() {
+        var client = new NemoMcpClient();
+        var unavailable = new NemoMcpServerConfig("unavailable-fixture", true,
+                tempDir.resolve("missing-mcp-command").toString(), List.of(), Map.of(), null, 1);
+        var events = new java.util.concurrent.CopyOnWriteArrayList<org.apache.logging.log4j.core.LogEvent>();
+        var logger = (org.apache.logging.log4j.core.Logger) org.apache.logging.log4j.LogManager.getLogger(NemoMcpClient.class);
+        var previousLevel = logger.getLevel();
+        var appender = new org.apache.logging.log4j.core.appender.AbstractAppender(
+                "mcp-discovery-fixture", null, null, true, org.apache.logging.log4j.core.config.Property.EMPTY_ARRAY) {
+            @Override public void append(org.apache.logging.log4j.core.LogEvent event) { events.add(event.toImmutable()); }
+        };
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(org.apache.logging.log4j.Level.WARN);
+        try {
+            assertTrue(client.listTools(List.of(unavailable)).isEmpty());
+            assertTrue(events.stream().anyMatch(event -> event.getMessage().getFormattedMessage().contains("unavailable-fixture")));
+            assertTrue(events.stream().allMatch(event -> event.getThrown() == null));
+            assertTrue(client.status(List.of(unavailable)).contains("unavailable-fixture | failed:"));
+        } finally {
+            logger.removeAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+            client.shutdownAll();
+        }
+    }
+
+    @Test
     void coldCallsAndStatusIsolateFailedServers() throws Exception {
         var client = new NemoMcpClient();
         var configs = List.of(config("broken", "broken", true), config("rr", "rr", false));

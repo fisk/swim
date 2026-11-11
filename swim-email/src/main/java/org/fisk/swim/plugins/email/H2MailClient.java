@@ -37,6 +37,8 @@ final class H2MailClient implements MailClient {
     private final EmailPaths _paths;
     private final Connection _readConnection;
     private final Connection _writeConnection;
+    private final Connection _countsConnection;
+    private final Object _countsLock = new Object();
     private final MailSyncAdapterFactory _adapterFactory;
     private final MailSyncEngine _syncEngine;
     private final MailDeliveryService _deliveryService;
@@ -48,6 +50,7 @@ final class H2MailClient implements MailClient {
     private final AtomicLong _refreshGeneration = new AtomicLong();
     private volatile boolean _closed;
     private volatile Thread _backfillThread;
+    private final java.util.concurrent.ConcurrentMap<Long, Object> _bodyLoads = new java.util.concurrent.ConcurrentHashMap<>();
 
     H2MailClient(EmailPaths paths) throws SQLException, IOException {
         this(paths, new DefaultMailSyncAdapterFactory(), new SmtpMailSupport(paths), true, SwimPluginWorkers.unmanaged());
@@ -75,21 +78,27 @@ final class H2MailClient implements MailClient {
         EmailConfigStore.ensureDefaultFiles(paths);
         ensureH2DriverLoaded();
         _adapterFactory = adapterFactory;
-        _syncEngine = new MailSyncEngine(adapterFactory);
+        _syncEngine = new MailSyncEngine(adapterFactory, this::capturedKeys);
         _deliveryService = deliveryService;
         _workers = workers == null ? SwimPluginWorkers.unmanaged() : workers;
         Connection writeConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
         Connection readConnection = null;
+        Connection countsConnection = null;
         _writeConnection = writeConnection;
         try {
             MailDb.initialize(_writeConnection);
             bootstrapConfigurationState();
             readConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
             _readConnection = readConnection;
+            countsConnection = DriverManager.getConnection(paths.databaseJdbcUrl());
+            _countsConnection = countsConnection;
             if (initialRefresh) {
                 refresh();
             }
         } catch (IOException | SQLException | RuntimeException | Error e) {
+            if (countsConnection != null) {
+                closeConnectionQuietly(countsConnection, e);
+            }
             if (readConnection != null) {
                 closeConnectionQuietly(readConnection, e);
             }
@@ -98,11 +107,37 @@ final class H2MailClient implements MailClient {
         }
     }
 
-    @Override
-    public MailSnapshot snapshot() {
+    private java.util.Set<String> capturedKeys(String account, List<String> keys) {
         synchronized (_readLock) {
             try {
-                return augmentSnapshotWithPendingAuth(MailDb.loadSnapshot(_readConnection, _paths, SNAPSHOT_THREAD_LIMIT));
+                return MailDb.capturedKeys(_readConnection, account, keys);
+            } catch (SQLException failure) {
+                throw new IllegalStateException("Unable to check cached mail identities", failure);
+            }
+        }
+    }
+
+    @Override
+    public boolean backgroundReads() {
+        return true;
+    }
+
+    @Override
+    public MailSnapshot sidebarSnapshot() {
+        synchronized (_readLock) {
+            try {
+                return augmentSnapshotWithPendingAuth(MailDb.loadSnapshotWithoutUnreadCounts(_readConnection, _paths, 0));
+            } catch (SQLException failure) {
+                throw new IllegalStateException("Unable to load cached mail accounts", failure);
+            }
+        }
+    }
+
+    @Override
+    public MailSnapshot snapshot() {
+        synchronized (_countsLock) {
+            try {
+                return augmentSnapshotWithPendingAuth(MailDb.loadSnapshot(_countsConnection, _paths, SNAPSHOT_THREAD_LIMIT));
             } catch (SQLException e) {
                 LOG.error("Failed to load mail snapshot", e);
                 return new MailSnapshot(java.util.List.of(), java.util.List.of(),
@@ -190,9 +225,9 @@ final class H2MailClient implements MailClient {
 
     @Override
     public Map<String, Integer> loadTagUnreadCounts() {
-        synchronized (_readLock) {
+        synchronized (_countsLock) {
             try {
-                return MailDb.loadTagUnreadCounts(_readConnection);
+                return MailDb.loadTagUnreadCounts(_countsConnection);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail tag unread counts", e);
                 return Map.of();
@@ -202,9 +237,9 @@ final class H2MailClient implements MailClient {
 
     @Override
     public Map<String, Integer> loadAccountUnreadCounts() {
-        synchronized (_readLock) {
+        synchronized (_countsLock) {
             try {
-                return MailDb.loadAccountUnreadCounts(_readConnection);
+                return MailDb.loadAccountUnreadCounts(_countsConnection);
             } catch (SQLException e) {
                 LOG.error("Failed to load mail account unread counts", e);
                 return Map.of();
@@ -214,12 +249,23 @@ final class H2MailClient implements MailClient {
 
     @Override
     public int loadUnsortedUnreadCount() {
-        synchronized (_readLock) {
+        synchronized (_countsLock) {
             try {
-                return MailDb.loadUnsortedUnreadCount(_readConnection);
+                return MailDb.loadUnsortedUnreadCount(_countsConnection);
             } catch (SQLException e) {
                 LOG.error("Failed to load unsorted unread count", e);
                 return 0;
+            }
+        }
+    }
+
+    @Override
+    public Map<String, Integer> loadAccountUnsortedUnreadCounts() {
+        synchronized (_countsLock) {
+            try {
+                return MailDb.loadAccountUnsortedUnreadCounts(_countsConnection);
+            } catch (SQLException failure) {
+                throw new IllegalStateException("Unable to count mailbox unsorted messages", failure);
             }
         }
     }
@@ -318,6 +364,13 @@ final class H2MailClient implements MailClient {
                 LOG.warn("Failed to close mail database reader", e);
             }
         }
+        synchronized (_countsLock) {
+            try {
+                _countsConnection.close();
+            } catch (SQLException failure) {
+                LOG.warn("Failed to close mail count reader", failure);
+            }
+        }
     }
 
     private EmailAccountConfig resolveAccount(String accountId) throws IOException {
@@ -395,6 +448,7 @@ final class H2MailClient implements MailClient {
                     if (batch.success()) {
                         MailDb.upsertAccountMessagesAndRefreshThreads(
                                 _writeConnection, account.normalizedId(), batch.messages());
+                        MailDb.recordCapturedKeys(_writeConnection, account.normalizedId(), adapter.capturedKeysToRecord());
                         int cachedMessages = MailDb.countMessages(_writeConnection, account.normalizedId());
                         String status = adapter.hasMore()
                                 ? JakartaMailSupport.backgroundSyncStatus(cachedMessages, batch.totalMessages())
@@ -663,6 +717,28 @@ final class H2MailClient implements MailClient {
         if (_closed || detail.messageId() == 0L || (detail.bodyText() != null && !detail.bodyText().isBlank())) {
             return detail;
         }
+        Object lock = _bodyLoads.computeIfAbsent(detail.messageId(), ignored -> new Object());
+        try {
+            synchronized (lock) {
+                synchronized (_readLock) {
+                    if (MailDb.isBodyLoaded(_readConnection, detail.messageId())) {
+                        return detailSupplier.get();
+                    }
+                }
+                return hydrateMessageBody(detail, targetSupplier, detailSupplier, label);
+            }
+        } catch (Exception failure) {
+            return detail;
+        } finally {
+            _bodyLoads.remove(detail.messageId(), lock);
+        }
+    }
+
+    private MailMessageDetail hydrateMessageBody(
+            MailMessageDetail detail,
+            ThrowingSupplier<MailDb.MessageHydrationTarget> targetSupplier,
+            ThrowingSupplier<MailMessageDetail> detailSupplier,
+            String label) {
         try {
             MailDb.MessageHydrationTarget target = targetSupplier.get();
             if (target == null || target.internetMessageId() == null || target.internetMessageId().isBlank()) {
@@ -673,7 +749,7 @@ final class H2MailClient implements MailClient {
                 return detail;
             }
             String bodyText = _adapterFactory.create(account).loadBody(account, target.folderName(), target.internetMessageId());
-            if (bodyText == null || bodyText.isBlank()) {
+            if (bodyText == null) {
                 return detail;
             }
             synchronized (_writeLock) {

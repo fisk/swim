@@ -32,6 +32,10 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
     private static final int PAGE_SIZE = 500;
 
     private final EwsTransport _transport;
+    private java.util.function.Function<List<String>, java.util.Set<String>> _capturedKeys = keys -> java.util.Set.of();
+    private int _nextOffset = -1;
+    private java.time.Instant _lastSync;
+    private List<String> _keysToRecord = List.of();
 
     ExchangeEwsMailSyncAdapter() {
         this(new HttpEwsTransport());
@@ -43,6 +47,62 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
 
     @Override
     public MailSyncBatch fetch(EmailAccountConfig account) throws Exception {
+        var messages = new ArrayList<ImportedMailMessage>();
+        MailSyncBatch batch = fetch(account, AccountSyncState.empty(account.normalizedId()));
+        if (!batch.success()) {
+            return batch;
+        }
+        messages.addAll(batch.messages());
+        while (hasMore()) {
+            batch = fetchNext(account);
+            if (!batch.success()) {
+                return batch;
+            }
+            messages.addAll(batch.messages());
+        }
+        return MailSyncBatch.success(messages, messages.size() + " messages");
+    }
+
+    @Override
+    public void useCapturedKeys(java.util.function.Function<List<String>, java.util.Set<String>> lookup) {
+        _capturedKeys = lookup;
+    }
+
+    @Override
+    public MailSyncBatch fetch(EmailAccountConfig account, AccountSyncState state) throws Exception {
+        // Start at the current head: persisted item/version keys make this safe
+        // even when incoming messages shifted the server's paging offsets.
+        _nextOffset = -1;
+        try {
+            _lastSync = state.lastSyncAt() == null ? null : java.time.Instant.parse(state.lastSyncAt());
+        } catch (DateTimeParseException invalid) {
+            _lastSync = null;
+        }
+        return fetchPage(account, 0);
+    }
+
+    @Override
+    public List<String> capturedKeysToRecord() {
+        return _keysToRecord;
+    }
+
+    @Override
+    public boolean hasMore() {
+        return _nextOffset >= 0;
+    }
+
+    @Override
+    public long backfillCursor() {
+        return hasMore() ? Long.MAX_VALUE - _nextOffset : 0;
+    }
+
+    @Override
+    public MailSyncBatch fetchNext(EmailAccountConfig account) throws Exception {
+        return hasMore() ? fetchPage(account, _nextOffset) : MailSyncBatch.success(List.of(), "");
+    }
+
+    private MailSyncBatch fetchPage(EmailAccountConfig account, int offset) throws Exception {
+        _keysToRecord = List.of();
         String validation = validate(account);
         if (validation != null) {
             return MailSyncBatch.failure(validation);
@@ -52,38 +112,82 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
             return MailSyncBatch.failure("EWS currently supports distinguished folders only");
         }
 
-        List<ImportedMailMessage> messages = new ArrayList<>();
-        int offset = 0;
-        while (true) {
-            String findResponse = _transport.post(account, buildFindItemRequest(folderId, offset));
-            Document findDocument = parseXml(findResponse);
-            String error = responseError(findDocument);
-            if (error != null) {
-                return MailSyncBatch.failure(error);
-            }
-
-            List<EwsItemRef> itemRefs = parseFindItems(findDocument);
-            if (itemRefs.isEmpty()) {
-                break;
-            }
-
-            String getItemResponse = _transport.post(account, buildGetItemRequest(itemRefs));
-            Document getItemDocument = parseXml(getItemResponse);
-            error = responseError(getItemDocument);
-            if (error != null) {
-                return MailSyncBatch.failure(error);
-            }
-
-            messages.addAll(parseMessages(account, folderId, getItemDocument));
-            if (includesLastItemInRange(findDocument)) {
-                break;
-            }
-            offset += itemRefs.size();
+        String findResponse = _transport.post(account, buildFindItemRequest(folderId, offset));
+        Document findDocument = parseXml(findResponse);
+        String error = responseError(findDocument);
+        if (error != null) {
+            return MailSyncBatch.failure(error);
         }
-        if (messages.isEmpty()) {
-            return MailSyncBatch.success(List.of(), "0 messages");
+
+        List<EwsItemRef> itemRefs = parseFindItems(findDocument);
+        if (itemRefs.isEmpty()) {
+            _nextOffset = -1;
+            return MailSyncBatch.success(List.of(), "No new messages");
         }
-        return MailSyncBatch.success(messages, messages.size() + " messages");
+
+        _nextOffset = includesLastItemInRange(findDocument) ? -1 : offset + itemRefs.size();
+        var requestedKeys = new ArrayList<String>();
+        for (var ref : itemRefs) {
+            requestedKeys.add(syncKey(folderId, ref));
+            if (legacyVersionUnchanged(ref)) {
+                requestedKeys.add("cached-message|" + ref.internetMessageId());
+            }
+        }
+        java.util.Set<String> captured = _capturedKeys.apply(requestedKeys);
+        var migrated = itemRefs.stream().filter(ref -> !captured.contains(syncKey(folderId, ref))
+                && legacyVersionUnchanged(ref) && captured.contains("cached-message|" + ref.internetMessageId())).toList();
+        _keysToRecord = migrated.stream().map(ref -> syncKey(folderId, ref)).toList();
+        var missing = itemRefs.stream().filter(ref -> !captured.contains(syncKey(folderId, ref)) && !migrated.contains(ref)).toList();
+        if (missing.isEmpty()) {
+            return MailSyncBatch.success(List.of(), "Cached messages are up to date", offset + itemRefs.size(),
+                    offset + 1, offset + itemRefs.size(), 0L, Math.max(0, _nextOffset));
+        }
+
+        String getItemResponse = _transport.post(account, buildGetItemRequest(missing));
+        Document getItemDocument = parseXml(getItemResponse);
+        error = responseError(getItemDocument);
+        if (error != null) {
+            return MailSyncBatch.failure(error);
+        }
+
+        List<ImportedMailMessage> messages = parseMessages(account, folderId, getItemDocument);
+        NodeList nodes = nodes(getItemDocument, "//*[local-name()='Items']/*[local-name()='Message']");
+        var keyed = new ArrayList<ImportedMailMessage>();
+        for (int i = 0; i < messages.size(); i++) {
+            Element node = (Element) nodes.item(i);
+            NodeList ids = node.getElementsByTagNameNS("*", "ItemId");
+            String id = ids.getLength() == 0 ? "" : ((Element) ids.item(0)).getAttribute("Id");
+            EwsItemRef ref = missing.stream().filter(candidate -> candidate.id().equals(id)).findFirst().orElse(null);
+            if (ref == null && messages.size() == missing.size()) {
+                ref = missing.get(i);
+            }
+            if (ref != null && ids.getLength() > 0) {
+                String version = ((Element) ids.item(0)).getAttribute("ChangeKey");
+                if (!version.isBlank()) {
+                    // A message can change between FindItem and GetItem. Cache
+                    // the version actually downloaded, rather than the older listing.
+                    ref = new EwsItemRef(ref.id(), version, ref.internetMessageId(), ref.lastModified());
+                }
+            }
+            keyed.add(ref == null ? messages.get(i) : messages.get(i).withSyncKey(syncKey(folderId, ref)));
+        }
+        return MailSyncBatch.success(keyed, keyed.size() + " new or changed messages", offset + itemRefs.size(),
+                offset + 1, offset + itemRefs.size(), 0L, Math.max(0, _nextOffset));
+    }
+
+    static String syncKey(String folder, EwsItemRef ref) {
+        return "ews|" + folder + "|" + ref.id() + "|" + ref.changeKey();
+    }
+
+    private boolean legacyVersionUnchanged(EwsItemRef ref) {
+        if (_lastSync == null || ref.internetMessageId().isBlank() || ref.lastModified().isBlank()) {
+            return false;
+        }
+        try {
+            return !OffsetDateTime.parse(ref.lastModified()).toInstant().isAfter(_lastSync);
+        } catch (DateTimeParseException invalid) {
+            return false;
+        }
     }
 
     private static String validate(EmailAccountConfig account) {
@@ -120,6 +224,10 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
                     <m:FindItem Traversal="Shallow">
                       <m:ItemShape>
                         <t:BaseShape>IdOnly</t:BaseShape>
+                        <t:AdditionalProperties>
+                          <t:FieldURI FieldURI="message:InternetMessageId" />
+                          <t:FieldURI FieldURI="item:LastModifiedTime" />
+                        </t:AdditionalProperties>
                       </m:ItemShape>
                       <m:IndexedPageItemView MaxEntriesReturned="%d" Offset="%d" BasePoint="Beginning" />
                       <m:ParentFolderIds>
@@ -181,7 +289,9 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
             String id = itemId.getAttribute("Id");
             String changeKey = itemId.getAttribute("ChangeKey");
             if (!id.isBlank()) {
-                itemRefs.add(new EwsItemRef(id, changeKey == null ? "" : changeKey));
+                Element message = (Element) itemId.getParentNode();
+                itemRefs.add(new EwsItemRef(id, changeKey == null ? "" : changeKey,
+                        childText(message, "InternetMessageId"), childText(message, "LastModifiedTime")));
             }
         }
         return itemRefs;
@@ -373,7 +483,7 @@ final class ExchangeEwsMailSyncAdapter implements MailSyncAdapter {
         String post(EmailAccountConfig account, String body) throws Exception;
     }
 
-    private record EwsItemRef(String id, String changeKey) {
+    private record EwsItemRef(String id, String changeKey, String internetMessageId, String lastModified) {
     }
 
     private static final class HttpEwsTransport implements EwsTransport {

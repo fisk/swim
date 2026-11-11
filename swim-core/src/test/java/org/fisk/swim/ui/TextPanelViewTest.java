@@ -26,6 +26,12 @@ class TextPanelViewTest {
     }
 
     @Test
+    void wrappingLongStackFramesPreservesEveryCharacter() {
+        String frame = "org.example.SomeVeryLongClass.someMethod(Example.java:123)";
+        assertEquals(frame, String.join("", TextPanelView.wrapText(frame, 12)));
+    }
+
+    @Test
     void scrollsDownAndBackUp() throws IOException {
         try (var harness = HeadlessWindowHarness.create(writeFile("text-panel.txt", "abc"), 20, 8)) {
             var window = harness.getWindow();

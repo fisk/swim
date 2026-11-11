@@ -47,19 +47,38 @@ final class JakartaMailSupport {
                 Integer.MAX_VALUE);
     }
 
+    static MailSyncBatch fetchPop3(EmailAccountConfig account,
+            java.util.function.Function<List<String>, java.util.Set<String>> capturedKeys) throws Exception {
+        return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX",
+                Integer.MAX_VALUE, capturedKeys);
+    }
+
+    static MailSyncBatch fetchPop3Range(EmailAccountConfig account, int endIndex,
+            java.util.function.Function<List<String>, java.util.Set<String>> capturedKeys) throws Exception {
+        return fetch(account, effectivePop3StoreProtocol(account), defaultPop3Properties(account), "INBOX", endIndex, capturedKeys);
+    }
+
     static MailSyncBatch fetchImapRange(EmailAccountConfig account, int endIndexInclusive) throws Exception {
         return fetch(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
                 endIndexInclusive);
     }
 
     static MailSyncBatch fetchImapSinceUid(EmailAccountConfig account, long lastSeenUid) throws Exception {
+        return fetchImapSinceUid(account, lastSeenUid, 0L);
+    }
+
+    static MailSyncBatch fetchImapSinceUid(EmailAccountConfig account, long lastSeenUid, long uidValidity) throws Exception {
         return fetchSinceUid(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
-                lastSeenUid);
+                lastSeenUid, uidValidity);
     }
 
     static MailSyncBatch fetchImapOlderThanUid(EmailAccountConfig account, long nextBackfillUidInclusive) throws Exception {
+        return fetchImapOlderThanUid(account, nextBackfillUidInclusive, 0L);
+    }
+
+    static MailSyncBatch fetchImapOlderThanUid(EmailAccountConfig account, long nextBackfillUidInclusive, long uidValidity) throws Exception {
         return fetchOlderThanUid(account, effectiveImapStoreProtocol(account), defaultImapProperties(account), effectiveFolder(account),
-                nextBackfillUidInclusive);
+                nextBackfillUidInclusive, uidValidity);
     }
 
     static MailSyncBatch fetchPop3Range(EmailAccountConfig account, int endIndexInclusive) throws Exception {
@@ -83,6 +102,12 @@ final class JakartaMailSupport {
             Properties properties,
             String folderName,
             int endIndexInclusive) throws Exception {
+        return fetch(account, storeProtocol, properties, folderName, endIndexInclusive, keys -> java.util.Set.of());
+    }
+
+    private static MailSyncBatch fetch(EmailAccountConfig account, String storeProtocol, Properties properties,
+            String folderName, int endIndexInclusive,
+            java.util.function.Function<List<String>, java.util.Set<String>> capturedKeys) throws Exception {
         if (account.host() == null || account.host().isBlank()) {
             return MailSyncBatch.failure("Missing host");
         }
@@ -116,11 +141,25 @@ final class JakartaMailSupport {
                 folder.open(Folder.READ_ONLY);
                 int count = folder.getMessageCount();
                 if (count == 0) {
-                    return MailSyncBatch.success(List.of(), "0 messages");
+                    return MailSyncBatch.success(List.of(), "0 messages")
+                            .withUidValidity(folder instanceof UIDFolder uidFolder ? uidFolder.getUIDValidity() : 0L);
                 }
                 int safeEnd = Math.min(count, Math.max(1, endIndexInclusive));
                 int start = syncStartIndex(safeEnd, DEFAULT_MAX_MESSAGES_PER_SYNC);
                 Message[] messages = folder.getMessages(start, safeEnd);
+                var keysByMessage = new java.util.IdentityHashMap<Message, String>();
+                long nextPop3Cursor = 0L;
+                if (folder instanceof org.eclipse.angus.mail.pop3.POP3Folder pop3) {
+                    // UIDL is metadata only. Inspect all remaining identities so a
+                    // cached mailbox does not schedule hundreds of empty backfill pages.
+                    messages = folder.getMessages(1, safeEnd);
+                    messages = uncachedPop3Messages(pop3, folderName, messages, capturedKeys, keysByMessage);
+                    int cap = DEFAULT_MAX_MESSAGES_PER_SYNC > 0 ? DEFAULT_MAX_MESSAGES_PER_SYNC : messages.length;
+                    int skip = Math.max(0, messages.length - cap);
+                    nextPop3Cursor = skip > 0 ? messages[skip - 1].getMessageNumber() : 0L;
+                    messages = java.util.Arrays.copyOfRange(messages, skip, messages.length);
+                    start = messages.length == 0 ? 0 : messages[0].getMessageNumber();
+                }
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
                 fetchProfile.add(FetchProfile.Item.FLAGS);
@@ -130,17 +169,20 @@ final class JakartaMailSupport {
                 if (folder instanceof UIDFolder) {
                     fetchProfile.add(UIDFolder.FetchProfileItem.UID);
                 }
-                folder.fetch(messages, fetchProfile);
+                if (messages.length > 0) {
+                    folder.fetch(messages, fetchProfile);
+                }
                 List<ImportedMailMessage> imported = new ArrayList<>();
                 for (Message message : messages) {
                     long uid = folder instanceof UIDFolder uidFolder ? uidFolder.getUID(message) : 0L;
-                    imported.add(toImportedMessage(account, folderName, message, uid));
+                    imported.add(toImportedMessage(account, folderName, message, uid)
+                            .withSyncKey(keysByMessage.get(message)));
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
                 long highWatermarkUid = imported.stream().mapToLong(ImportedMailMessage::serverUid).max().orElse(0L);
-                long nextBackfillUid = nextBackfillUid(imported);
+                long nextBackfillUid = folder instanceof UIDFolder ? nextBackfillUid(imported) : nextPop3Cursor;
                 return MailSyncBatch.success(imported, syncStatus(imported.size(), count, start), count, start, safeEnd,
-                        highWatermarkUid, nextBackfillUid);
+                        highWatermarkUid, nextBackfillUid).withUidValidity(folder instanceof UIDFolder uidFolder ? uidFolder.getUIDValidity() : 0L);
             } finally {
                 if (folder.isOpen()) {
                     folder.close(false);
@@ -156,7 +198,7 @@ final class JakartaMailSupport {
             String storeProtocol,
             Properties properties,
             String folderName,
-            long lastSeenUid) throws Exception {
+            long lastSeenUid, long expectedUidValidity) throws Exception {
         if (lastSeenUid <= 0L) {
             return fetch(account, storeProtocol, properties, folderName, Integer.MAX_VALUE);
         }
@@ -194,10 +236,23 @@ final class JakartaMailSupport {
                 if (!(folder instanceof UIDFolder uidFolder)) {
                     return fetch(account, storeProtocol, properties, folderName, Integer.MAX_VALUE);
                 }
+                long uidValidity = uidFolder.getUIDValidity();
+                if (uidValidity > 0L && uidValidity != expectedUidValidity) {
+                    return fetch(account, storeProtocol, properties, folderName, Integer.MAX_VALUE);
+                }
                 int count = folder.getMessageCount();
                 Message[] messages = uidFolder.getMessagesByUID(lastSeenUid + 1L, UIDFolder.LASTUID);
                 if (messages == null || messages.length == 0) {
-                    return MailSyncBatch.success(List.of(), incrementalSyncStatus(0), count, 0, 0, lastSeenUid, 0L);
+                    return MailSyncBatch.success(List.of(), incrementalSyncStatus(0), count, 0, 0, lastSeenUid, 0L)
+                            .withUidValidity(uidValidity);
+                }
+                var identities = new FetchProfile();
+                identities.add(UIDFolder.FetchProfileItem.UID);
+                folder.fetch(messages, identities);
+                messages = excludeCapturedUids(uidFolder, messages, lastSeenUid);
+                if (messages.length == 0) {
+                    return MailSyncBatch.success(List.of(), incrementalSyncStatus(0), count, 0, 0, lastSeenUid, 0L)
+                            .withUidValidity(uidValidity);
                 }
                 FetchProfile fetchProfile = new FetchProfile();
                 fetchProfile.add(FetchProfile.Item.ENVELOPE);
@@ -216,7 +271,7 @@ final class JakartaMailSupport {
                 }
                 imported.sort(Comparator.comparing(ImportedMailMessage::effectiveTimestamp).reversed());
                 return MailSyncBatch.success(imported, incrementalSyncStatus(imported.size()), count, 0, 0, highWatermarkUid,
-                        0L);
+                        0L).withUidValidity(uidValidity);
             } finally {
                 if (folder.isOpen()) {
                     folder.close(false);
@@ -227,12 +282,40 @@ final class JakartaMailSupport {
         }
     }
 
+    static Message[] excludeCapturedUids(UIDFolder folder, Message[] messages, long watermark) throws MessagingException {
+        var fresh = new ArrayList<Message>();
+        for (Message message : messages) {
+            if (folder.getUID(message) > watermark) {
+                fresh.add(message);
+            }
+        }
+        return fresh.toArray(Message[]::new);
+    }
+
+    static Message[] uncachedPop3Messages(org.eclipse.angus.mail.pop3.POP3Folder folder, String folderName,
+            Message[] messages, java.util.function.Function<List<String>, java.util.Set<String>> lookup,
+            java.util.Map<Message, String> keysByMessage) throws MessagingException {
+        var identifiers = new FetchProfile();
+        identifiers.add(UIDFolder.FetchProfileItem.UID);
+        folder.fetch(messages, identifiers);
+        for (Message message : messages) {
+            String uid = folder.getUID(message);
+            if (uid != null && !uid.isBlank()) {
+                keysByMessage.put(message, "pop3|" + folderName + "|" + uid);
+            }
+        }
+        var captured = lookup.apply(List.copyOf(keysByMessage.values()));
+        return java.util.Arrays.stream(messages)
+                .filter(message -> keysByMessage.get(message) == null || !captured.contains(keysByMessage.get(message)))
+                .toArray(Message[]::new);
+    }
+
     private static MailSyncBatch fetchOlderThanUid(
             EmailAccountConfig account,
             String storeProtocol,
             Properties properties,
             String folderName,
-            long nextBackfillUidInclusive) throws Exception {
+            long nextBackfillUidInclusive, long expectedUidValidity) throws Exception {
         if (nextBackfillUidInclusive <= 0L) {
             return MailSyncBatch.success(List.of(), "");
         }
@@ -255,6 +338,9 @@ final class JakartaMailSupport {
                 folder.open(Folder.READ_ONLY);
                 if (!(folder instanceof UIDFolder uidFolder)) {
                     return MailSyncBatch.success(List.of(), "");
+                }
+                if (expectedUidValidity > 0L && uidFolder.getUIDValidity() != expectedUidValidity) {
+                    throw new MessagingException("IMAP mailbox identity changed; refresh required before continuing backfill");
                 }
                 int count = folder.getMessageCount();
                 int endIndex = lastMessageIndexAtOrBelowUid(folder, uidFolder, nextBackfillUidInclusive, count);

@@ -166,6 +166,7 @@ public class SwimAppImpl implements SwimApp {
     @Override
     public void start(List<Path> paths, SwimHost host) {
         SwimLogging.setup();
+        H2Runtime.start();
         _bindings.setHost(host);
         List<Path> launchPaths = paths == null ? List.of() : List.copyOf(paths);
         var window = _bindings.createWindow(launchPaths);
@@ -227,6 +228,18 @@ public class SwimAppImpl implements SwimApp {
 
     @Override
     public void close() {
+        try {
+            closeRuntime();
+        } finally {
+            try {
+                H2Runtime.release();
+            } finally {
+                ErrorCapture.shutdown();
+            }
+        }
+    }
+
+    private void closeRuntime() {
         boolean reloading = SwimRuntime.isReloading();
         Thread ioThread = _ioThread;
         if (reloading) {

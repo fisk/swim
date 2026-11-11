@@ -74,7 +74,13 @@ public class View implements Drawable, EventResponder {
             return;
         }
         _needsRedraw = false;
-        draw(rect);
+        try {
+            draw(rect);
+        } catch (Throwable failure) {
+            // One broken renderer must not stop sibling panes, especially the
+            // error report that lets the host inspect and report the failure.
+            _log.error("Drawing " + getClass().getName(), failure);
+        }
         for (View view: _subviews) {
             var subRect = Rect.create(rect.getPoint().getX() + view._bounds.getPoint().getX(),
                                       rect.getPoint().getY() + view._bounds.getPoint().getY(), view._bounds.getSize().getWidth(),

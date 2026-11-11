@@ -1818,6 +1818,9 @@ public class Window implements Drawable {
 
   public String guestScreenSnapshotBlockReason() {
     ensureLayoutState();
+    if (isPrivateErrorReportVisible()) {
+      return "error reports are private and unavailable to Nemo.";
+    }
     if (isMailVisibleToGuest()) {
       return "mail is visible; email content is confidential and unavailable to Nemo.";
     }
@@ -2146,6 +2149,9 @@ public class Window implements Drawable {
   private String prepareEditorDrive() {
     if (_rootView == null) {
       return "No editor window is available.";
+    }
+    if (isPrivateErrorReportVisible()) {
+      return "Editor control is blocked while private error reports are visible.";
     }
     if (isShowingHostApprovalOverlay()) {
       return "Host approval is waiting; editor control is stopped until the host approves or"
@@ -4507,6 +4513,13 @@ public class Window implements Drawable {
 
   public void update(boolean forced) {
     ensureLayoutState();
+    org.fisk.swim.ErrorReports.getInstance().setEditorContext(errorReportContext());
+    if (!isEditorDriveSandboxActive() && _hostApprovalOverlayView == null) {
+      var reports = org.fisk.swim.ErrorReports.getInstance().takePending();
+      if (!reports.isEmpty()) {
+        presentErrorReports(reports, false);
+      }
+    }
     _log.debug("Maybe relayout");
     var terminalContext = TerminalContext.getInstance();
     var terminalSize = terminalContext.getTerminalDimensions();
@@ -4684,6 +4697,96 @@ public class Window implements Drawable {
 
   public void showTextPanel(String title, String text) {
     showPanel(new TextPanelView(Rect.create(0, 0, 0, 0), title, text));
+  }
+
+  public boolean showErrorReports() {
+    if (blockEditorDriveAction("error reports", "error details are private and unavailable to Nemo")) {
+      return false;
+    }
+    var reports = org.fisk.swim.ErrorReports.getInstance().history();
+    if (reports.isEmpty()) {
+      _commandView.setMessage("No errors recorded in this session");
+      return false;
+    }
+    return presentErrorReports(reports, true);
+  }
+
+  private boolean presentErrorReports(List<org.fisk.swim.ErrorReports.Report> reports, boolean focus) {
+    if (blockEditorDriveAction("error reports", "error details are private and unavailable to Nemo")) {
+      return false;
+    }
+    ErrorReportView view = visibleErrorReport();
+    if (view == null) {
+      view = new ErrorReportView(reports);
+      View anchor = getActiveView();
+      if (!isViewInWorkspaceLayout(anchor)) {
+        anchor = _activeBufferView != null ? _activeBufferView : _workspaceView;
+      }
+      if (!splitView(anchor, view, SplitView.Orientation.HORIZONTAL, 0.5)) {
+        return false;
+      }
+    } else {
+      view.setReports(reports);
+    }
+    if (focus) {
+      activateView(view);
+    }
+    _rootView.setNeedsRedraw();
+    return true;
+  }
+
+  public void closeErrorReport(ErrorReportView view) {
+    if (!blockEditorDriveAction("error reports", "error details are private and unavailable to Nemo")) {
+      closeView(view);
+    }
+  }
+
+  private ErrorReportView visibleErrorReport() {
+    if (_workspaceView instanceof ErrorReportView report) {
+      return report;
+    }
+    if (_workspaceView instanceof SplitView split) {
+      for (View leaf : split.leafViews()) {
+        if (leaf instanceof ErrorReportView report) {
+          return report;
+        }
+      }
+    }
+    return null;
+  }
+
+  private boolean isPrivateErrorReportVisible() {
+    if (visibleErrorReport() != null) {
+      return true;
+    }
+    for (View leaf : getLeafViews()) {
+      if (leaf instanceof BufferView bufferView) {
+        var context = getBufferContextFor(bufferView);
+        if (context != null && org.fisk.swim.ErrorReports.isSavedReportPath(context.getBuffer().getPath())) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private String errorReportContext() {
+    String kind = _currentWorkspace == null ? "buffer" : _currentWorkspace._kind.name().toLowerCase();
+    String context = "Workspace: " + kind + "\nMode: " + modeNameForDisplay();
+    if (!"buffer".equals(kind) || isMailVisibleToGuest() || _bufferContext == null) {
+      return context;
+    }
+    var buffer = _bufferContext.getBuffer();
+    context += "\nFile: " + (buffer.getPath() == null ? "scratch" : buffer.getPath())
+        + "\nUnsaved changes: " + buffer.isModified();
+    try {
+      var cursor = buffer.getCursor();
+      var line = cursor.getPhysicalLine();
+      return context + "\nCursor: line " + (line.getY() + 1) + ", column "
+          + (cursor.getPosition() - line.getStartPosition() + 1);
+    } catch (RuntimeException ignored) {
+      return context + "\nCursor: unavailable";
+    }
   }
 
   public void showLspFeaturePopup(

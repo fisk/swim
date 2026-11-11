@@ -61,7 +61,10 @@ final class NemoMcpClient {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                _log.warn("Unable to list MCP tools for {}", config.name(), e);
+                // A configured external service can be absent or offline. Keep
+                // that diagnostic in the log and :mcp status without presenting
+                // a handled discovery failure as an editor exception.
+                _log.warn("Unable to list MCP tools for {}: {}", config.name(), e.getMessage());
             }
         }
         return descriptors;

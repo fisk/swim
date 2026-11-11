@@ -21,7 +21,8 @@ final class NemoPromptBuilder {
             List<NemoSkillDocument> skills) {
         var buffer = context.getBuffer();
         String fullTranscript = transcript(turns);
-        String fullFile = buffer.getString();
+        String fullFile = org.fisk.swim.ErrorReports.isSavedReportPath(buffer.getPath())
+                ? "[Private error report omitted]" : buffer.getString();
         int promptBudget = promptBudgetChars(configuration);
         String path = String.valueOf(buffer.getPath());
 

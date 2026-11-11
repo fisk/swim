@@ -10,7 +10,8 @@ record MailSyncBatch(
         int startIndex,
         int endIndex,
         long highWatermarkUid,
-        long nextBackfillUid) {
+        long nextBackfillUid,
+        long uidValidity) {
     MailSyncBatch {
         messages = messages == null ? List.of() : List.copyOf(messages);
         statusMessage = statusMessage == null ? "" : statusMessage;
@@ -19,6 +20,16 @@ record MailSyncBatch(
         endIndex = Math.max(0, endIndex);
         highWatermarkUid = Math.max(0L, highWatermarkUid);
         nextBackfillUid = Math.max(0L, nextBackfillUid);
+    }
+
+    MailSyncBatch(List<ImportedMailMessage> messages, boolean success, String statusMessage, int totalMessages,
+            int startIndex, int endIndex, long highWatermarkUid, long nextBackfillUid) {
+        this(messages, success, statusMessage, totalMessages, startIndex, endIndex, highWatermarkUid, nextBackfillUid, 0L);
+    }
+
+    MailSyncBatch withUidValidity(long validity) {
+        return new MailSyncBatch(messages, success, statusMessage, totalMessages, startIndex, endIndex,
+                highWatermarkUid, nextBackfillUid, validity);
     }
 
     static MailSyncBatch success(List<ImportedMailMessage> messages, String statusMessage) {

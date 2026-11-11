@@ -11,6 +11,15 @@ import java.util.Map;
 public interface MailClient extends AutoCloseable {
     MailSnapshot snapshot();
 
+    /** Database and network-backed clients keep their reads off the editor event thread. */
+    default boolean backgroundReads() {
+        return false;
+    }
+
+    default MailSnapshot sidebarSnapshot() {
+        return snapshotWithoutUnreadCounts();
+    }
+
     default MailSnapshot snapshotWithoutUnreadCounts() {
         MailSnapshot snapshot = snapshot();
         var accounts = new ArrayList<MailAccountSummary>();
@@ -86,6 +95,10 @@ public interface MailClient extends AutoCloseable {
 
     default int loadUnsortedUnreadCount() {
         return 0;
+    }
+
+    default Map<String, Integer> loadAccountUnsortedUnreadCounts() {
+        return Map.of();
     }
 
     default void markMessageRead(long messageId) {

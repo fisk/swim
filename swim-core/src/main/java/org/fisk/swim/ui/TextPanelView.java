@@ -17,7 +17,7 @@ import org.fisk.swim.event.KeyType;
 
 public class TextPanelView extends View implements KeyBindingHintProvider {
     private final String _title;
-    private final String _text;
+    private String _text;
     private final ListEventResponder _responders = new ListEventResponder();
     private int _startLine;
 
@@ -33,6 +33,8 @@ public class TextPanelView extends View implements KeyBindingHintProvider {
         _responders.addEventResponder("j", "Scroll", "down", () -> scrollDown(1));
         _responders.addEventResponder("<UP>", "Scroll", "up", () -> scrollUp(1));
         _responders.addEventResponder("k", "Scroll", "up", () -> scrollUp(1));
+        _responders.addEventResponder("<PAGEDOWN>", "Scroll", "page down", () -> scrollDown(Math.max(1, getBounds().getSize().getHeight() - 2)));
+        _responders.addEventResponder("<PAGEUP>", "Scroll", "page up", () -> scrollUp(Math.max(1, getBounds().getSize().getHeight() - 2)));
     }
 
     int getStartLine() {
@@ -41,6 +43,12 @@ public class TextPanelView extends View implements KeyBindingHintProvider {
 
     String getTitle() {
         return _title;
+    }
+
+    protected void setText(String text) {
+        _text = text;
+        _startLine = 0;
+        setNeedsRedraw();
     }
 
     @Override
@@ -70,14 +78,14 @@ public class TextPanelView extends View implements KeyBindingHintProvider {
                     split = width;
                 }
                 lines.add(line.substring(0, split));
-                line = line.substring(Math.min(split + 1, line.length()));
+                line = line.substring(Math.min(split + (line.charAt(split) == ' ' ? 1 : 0), line.length()));
             }
             lines.add(line);
         }
         return lines;
     }
 
-    private void close() {
+    protected void close() {
         var window = Window.getInstance();
         if (window != null) {
             window.hidePanel();

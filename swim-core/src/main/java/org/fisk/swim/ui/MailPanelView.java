@@ -101,7 +101,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private record UnreadCounts(
       Map<String, Integer> accountUnreadCounts,
       Map<String, Integer> tagUnreadCounts,
-      int unsortedUnreadCount) {}
+      int unsortedUnreadCount,
+      Map<String, Integer> accountUnsortedUnreadCounts) {}
 
   private enum BrowsePane {
     SIDEBAR,
@@ -112,6 +113,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     ALL,
     UNSORTED,
     ACCOUNT,
+    ACCOUNT_ALL,
+    ACCOUNT_UNSORTED,
     TAG
   }
 
@@ -153,6 +156,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     SCROLL_BODY_DOWN,
     SCROLL_BODY_UP,
     CLOSE,
+    DISMISS_AUTH,
     START_SEARCH,
     APPLY_SEARCH,
     CANCEL_SEARCH,
@@ -180,6 +184,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private List<SidebarRow> _sidebarRows = List.of();
   private List<String> _availableTags = List.of();
   private Map<String, Integer> _accountUnreadCounts = Map.of();
+  private Map<String, Integer> _accountUnsortedUnreadCounts = Map.of();
   private Map<String, Integer> _tagUnreadCounts = Map.of();
   private int _unsortedUnreadCount;
   private int _allUnreadCount;
@@ -194,6 +199,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private int _sidebarScrollOffset;
   private int _threadScrollOffset;
   private int _detailScrollOffset;
+  private boolean _threadViewportScrolled;
+  private boolean _sidebarViewportScrolled;
   private BrowsePane _browsePane = BrowsePane.THREADS;
   private Mode _mode = Mode.BROWSE;
   private ComposeField _composeField = ComposeField.TO;
@@ -227,15 +234,26 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private String _lastActionableUrl;
   private boolean _awaitingOAuthCompletion;
   private long _oauthPollGeneration;
+  private String _dismissedAuthPrompt = "";
+  private boolean _refreshStatusPending;
   private BufferContext _messageBufferContext;
   private volatile boolean _disposed;
+  private final java.util.concurrent.ExecutorService _dataLoader =
+      java.util.concurrent.Executors.newSingleThreadExecutor(
+          Thread.ofPlatform().daemon().name("mail-cache-reader").factory());
+  private final AtomicLong _dataLoadGeneration = new AtomicLong();
+  private boolean _pageLoadInFlight;
+  private int _pageBaseOffset;
+  private int _requestedSelection = -1;
+  private boolean _initialRefreshChecked;
 
   public MailPanelView(Rect bounds, MailClient client) {
     super(bounds);
     _client = client;
+    _snapshot = new MailSnapshot(List.of(), List.of(), "Loading cached mail...");
     setBackgroundColour(UiTheme.SURFACE_BACKGROUND);
     reload();
-    if (shouldAutoRefreshOnOpen()) {
+    if (!_client.backgroundReads() && shouldAutoRefreshOnOpen()) {
       refreshClientAsync("Refreshing mail...");
     }
   }
@@ -251,8 +269,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   }
 
   /** Stops accepting asynchronous callbacks from a window that is being unloaded. */
-  void disposeForReload() {
+  synchronized void disposeForReload() {
     _disposed = true;
+    _dataLoadGeneration.incrementAndGet();
+    _dataLoader.shutdownNow();
     _awaitingOAuthCompletion = false;
     _oauthPollGeneration++;
     _messageLoadGeneration.incrementAndGet();
@@ -268,16 +288,20 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       return;
     }
     if (!_eventThread.isAlive()) {
-      runnable.run();
+      applyUi(runnable);
       return;
     }
     _eventThread.enqueue(
         new RunnableEvent(
             () -> {
-              if (!_disposed) {
-                runnable.run();
-              }
+              applyUi(runnable);
             }));
+  }
+
+  private synchronized void applyUi(Runnable runnable) {
+    if (!_disposed) {
+      runnable.run();
+    }
   }
 
   @Override
@@ -320,7 +344,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
               KeyBindingHint.of("R", "Compose", "reply all"),
               KeyBindingHint.of("e", "Workspace", "refresh"),
               KeyBindingHint.of("q", "Workspace", "close"),
-              KeyBindingHint.of("<ESC>", "Workspace", "close"));
+              KeyBindingHint.of("<ESC>", "Workspace", authOverlayMessage().isBlank() ? "close" : "dismiss sign-in"));
       case SEARCH ->
           List.of(
               KeyBindingHint.of("<ENTER>", "Search", "apply"),
@@ -438,7 +462,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
           case ArrowLeft -> Action.MOVE_LEFT;
           case ArrowRight -> Action.MOVE_RIGHT;
           case Enter -> Action.OPEN_MESSAGE_BUFFER;
-          case Escape -> Action.CLOSE;
+          case Escape -> authOverlayMessage().isBlank() ? Action.CLOSE : Action.DISMISS_AUTH;
           case Character ->
               switch (event.getCharacter()) {
                 case 'j' -> Action.MOVE_DOWN;
@@ -466,6 +490,12 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
   @Override
   public void respond() {
+    var window = Window.getInstance();
+    if (window != null && window.blockEditorDriveAction("mail", "mail is confidential and unavailable to Nemo")) {
+      _pendingMouseAction = null;
+      _pendingAction = Action.NONE;
+      return;
+    }
     if (_pendingMouseAction != null) {
       _pendingMouseAction.run();
       _pendingMouseAction = null;
@@ -498,7 +528,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
         if (_browsePane == BrowsePane.SIDEBAR) {
           moveSidebarTo(0);
         } else {
-          moveTo(0);
+          moveToTop();
         }
       }
       case BOTTOM -> {
@@ -514,6 +544,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       case SCROLL_BODY_DOWN -> scrollBody(5);
       case SCROLL_BODY_UP -> scrollBody(-5);
       case CLOSE -> close();
+      case DISMISS_AUTH -> {
+        _dismissedAuthPrompt = authOverlayMessage();
+        setNeedsRedraw();
+      }
       case START_SEARCH -> startSearch();
       case APPLY_SEARCH -> applySearch();
       case CANCEL_SEARCH -> cancelSearch();
@@ -609,14 +643,19 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       int delta = action.getActionType() == MouseActionType.SCROLL_DOWN ? 3 : -3;
       if (inSidebar) {
         return () -> {
-          _browsePane = BrowsePane.SIDEBAR;
-          moveSidebarTo(Math.max(0, Math.min(_sidebarSelection + delta, _sidebarRows.size() - 1)));
+          _sidebarViewportScrolled = true;
+          _sidebarScrollOffset += delta;
+          adjustSidebarScroll(Math.max(0, layout.bodyHeight() - 1));
+          setNeedsRedraw();
         };
       }
       if (inThreads) {
         return () -> {
-          _browsePane = BrowsePane.THREADS;
-          moveSelection(delta);
+          _threadViewportScrolled = true;
+          _threadScrollOffset = Math.max(0, _threadScrollOffset + delta);
+          ensureRowsLoadedThrough(_threadScrollOffset + Math.max(0, layout.bodyHeight() - 1));
+          adjustThreadScroll(Math.max(0, layout.bodyHeight() - 1));
+          setNeedsRedraw();
         };
       }
       return null;
@@ -1479,6 +1518,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       return;
     }
     _sidebarSelection = Math.max(0, Math.min(index, _sidebarRows.size() - 1));
+    _sidebarViewportScrolled = false;
+    _threadViewportScrolled = false;
     _selectedIndex = 0;
     _threadScrollOffset = 0;
     reloadThreads();
@@ -1486,6 +1527,11 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   }
 
   private void moveToBottom() {
+    if (_client.backgroundReads() && _totalThreadCount > _threads.size()) {
+      _requestedSelection = Integer.MAX_VALUE;
+      requestCachedPage(false, false, Math.max(0, _totalThreadCount - THREAD_PAGE_SIZE));
+      return;
+    }
     int targetThreadCount = Math.max(_totalThreadCount, _threads.size());
     while (_threads.size() < targetThreadCount) {
       if (!appendThreadPage()) {
@@ -1496,7 +1542,26 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     moveTo(rowIndexForThreadPosition(targetThreadIndex));
   }
 
+  private void moveToTop() {
+    if (_client.backgroundReads() && _pageBaseOffset > 0) {
+      _requestedSelection = 0;
+      requestCachedPage(false, false, 0);
+    } else {
+      moveTo(0);
+    }
+  }
+
   private void moveTo(int index) {
+    _threadViewportScrolled = false;
+    if (_client.backgroundReads() && index < 0 && _pageBaseOffset > 0) {
+      _requestedSelection = Integer.MAX_VALUE;
+      requestCachedPage(false, false, Math.max(0, _pageBaseOffset - THREAD_PAGE_SIZE));
+      return;
+    }
+    if (_client.backgroundReads() && index >= visibleThreadRows().size()
+        && _pageBaseOffset + _threads.size() < _totalThreadCount) {
+      _requestedSelection = index;
+    }
     ensureRowsLoadedThrough(index);
     var rows = visibleThreadRows();
     if (rows.isEmpty()) {
@@ -1520,14 +1585,18 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   }
 
   private void reload() {
-    _snapshot = _client.snapshotWithoutUnreadCounts();
+    if (_client.backgroundReads()) {
+      requestCachedPage(true, false, 0);
+      return;
+    }
+    _snapshot = _client.sidebarSnapshot();
     _availableTags = _client.loadTagNames();
     _accountUnreadCounts = retainAccountUnreadCounts(_accountUnreadCounts, _snapshot.accounts());
     _tagUnreadCounts = retainTagUnreadCounts(_tagUnreadCounts, _availableTags);
     _allUnreadCount = totalUnreadCount(_accountUnreadCounts);
     rebuildSidebarRows();
+    updateSnapshotActions();
     String actionableStatus = actionableSnapshotStatus();
-    _lastActionableUrl = firstUrl(actionableStatus);
     if (_awaitingOAuthCompletion && actionableStatus.contains("Mail sign-in complete")) {
       _awaitingOAuthCompletion = false;
       _oauthPollGeneration++;
@@ -1605,7 +1674,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                     new UnreadCounts(
                         _client.loadAccountUnreadCounts(),
                         _client.loadTagUnreadCounts(),
-                        _client.loadUnsortedUnreadCount());
+                        _client.loadUnsortedUnreadCount(),
+                        _client.loadAccountUnsortedUnreadCounts());
               } catch (RuntimeException e) {
                 failure = e;
               }
@@ -1628,6 +1698,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                                 ? Map.of()
                                 : Map.copyOf(finalCounts.tagUnreadCounts());
                         _unsortedUnreadCount = Math.max(0, finalCounts.unsortedUnreadCount());
+                        _accountUnsortedUnreadCounts = Map.copyOf(finalCounts.accountUnsortedUnreadCounts());
                         setNeedsRedraw();
                       }
                     } finally {
@@ -1658,7 +1729,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private void loadSelectedMessage() {
     var rows = visibleThreadRows();
     if (rows.isEmpty()) {
+      _messageLoadGeneration.incrementAndGet();
       _selectedMessage = null;
+      updateMessageBuffer();
+      setNeedsRedraw();
       return;
     }
     ThreadRow row = rows.get(Math.max(0, Math.min(_selectedIndex, rows.size() - 1)));
@@ -1750,6 +1824,11 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   }
 
   private void reloadThreads() {
+    if (_client.backgroundReads()) {
+      _requestedSelection = 0;
+      requestCachedPage(false, false, 0);
+      return;
+    }
     _threads = new ArrayList<>();
     _threadRows = new ArrayList<>();
     _threadMessagesByThreadId.clear();
@@ -1804,6 +1883,12 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   }
 
   private boolean appendThreadPage() {
+    if (_client.backgroundReads()) {
+      if (!_pageLoadInFlight && (_threads.isEmpty() || _pageBaseOffset + _threads.size() < _totalThreadCount)) {
+        requestCachedPage(false, true, _pageBaseOffset + _threads.size());
+      }
+      return false;
+    }
     MailThreadPage page =
         _client.loadThreads(_searchQuery, _threads.size(), THREAD_PAGE_SIZE, activeThreadFilter());
     _totalThreadCount = page.totalCount();
@@ -1815,6 +1900,94 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     _threads = combined;
     rebuildThreadRows();
     return true;
+  }
+
+  private void requestCachedPage(boolean sidebar, boolean append, int offset) {
+    if (_disposed || (append && _pageLoadInFlight)) {
+      return;
+    }
+    long generation = append ? _dataLoadGeneration.get() : _dataLoadGeneration.incrementAndGet();
+    _pageLoadInFlight = true;
+    String query = _searchQuery;
+    MailThreadFilter filter = sidebar && _sidebarRows.isEmpty() ? MailThreadFilter.unsorted() : activeThreadFilter();
+    _dataLoader.execute(() -> {
+      if (_disposed || generation != _dataLoadGeneration.get()) {
+        return;
+      }
+      try {
+        MailSnapshot snapshot = sidebar ? _client.sidebarSnapshot() : null;
+        List<String> tags = sidebar ? _client.loadTagNames() : List.of();
+        MailThreadPage page = _client.loadThreads(query, offset, THREAD_PAGE_SIZE, filter);
+        enqueueUi(() -> {
+          if (_disposed || generation != _dataLoadGeneration.get()) {
+            return;
+          }
+          _pageLoadInFlight = false;
+          int previousSelection = _selectedIndex;
+          var previousRows = visibleThreadRows();
+          long selectedThreadId = previousRows.isEmpty() ? -1
+              : previousRows.get(Math.clamp(_selectedIndex, 0, previousRows.size() - 1)).thread().threadId();
+          if (sidebar) {
+            _snapshot = snapshot;
+            _availableTags = tags;
+            _accountUnreadCounts = retainAccountUnreadCounts(_accountUnreadCounts, snapshot.accounts());
+            _tagUnreadCounts = retainTagUnreadCounts(_tagUnreadCounts, tags);
+            _allUnreadCount = totalUnreadCount(_accountUnreadCounts);
+            _accountUnsortedUnreadCounts = retainAccountUnreadCounts(_accountUnsortedUnreadCounts, snapshot.accounts());
+            rebuildSidebarRows();
+            updateSnapshotActions();
+          }
+          if (append) {
+            var combined = new ArrayList<>(_threads);
+            combined.addAll(page.threads());
+            _threads = List.copyOf(combined);
+          } else {
+            _pageBaseOffset = offset;
+            _threads = page.threads();
+            _threadMessagesByThreadId.clear();
+          }
+          _totalThreadCount = page.totalCount();
+          rebuildThreadRows();
+          int selected = _requestedSelection >= 0 ? _requestedSelection : _selectedIndex;
+          if (_requestedSelection < 0 && !append && selectedThreadId >= 0) {
+            for (int i = 0; i < visibleThreadRows().size(); i++) {
+              if (visibleThreadRows().get(i).thread().threadId() == selectedThreadId) {
+                selected = i;
+                break;
+              }
+            }
+          }
+          _requestedSelection = -1;
+          _selectedIndex = Math.clamp(selected, 0, Math.max(0, visibleThreadRows().size() - 1));
+          if (!append || previousSelection != _selectedIndex) {
+            loadSelectedMessage();
+          }
+          if (sidebar) {
+            loadUnreadCountsAsync();
+            if (_awaitingOAuthCompletion && actionableSnapshotStatus().contains("Mail sign-in complete")) {
+              _awaitingOAuthCompletion = false;
+              _oauthPollGeneration++;
+              refreshClientAsync("Refreshing mail...");
+            } else if (!_initialRefreshChecked) {
+              _initialRefreshChecked = true;
+              if (shouldAutoRefreshOnOpen()) {
+                refreshClientAsync("Refreshing mail...");
+              }
+            }
+          }
+          setNeedsRedraw();
+        });
+      } catch (RuntimeException failure) {
+        enqueueUi(() -> {
+          if (!_disposed && generation == _dataLoadGeneration.get()) {
+            _pageLoadInFlight = false;
+            _statusMessage = "Unable to load cached mail";
+            org.fisk.swim.ErrorReports.getInstance().capture("Loading mail cache", Thread.currentThread().getName(), failure);
+            setNeedsRedraw();
+          }
+        });
+      }
+    });
   }
 
   private void rebuildThreadRows() {
@@ -1831,6 +2004,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     rows.add(new SidebarRow(SidebarKind.ALL, "all", "#all"));
     for (var account : _snapshot.accounts()) {
       rows.add(new SidebarRow(SidebarKind.ACCOUNT, account.id(), account.id()));
+      rows.add(new SidebarRow(SidebarKind.ACCOUNT_ALL, account.id(), "  #all"));
+      rows.add(new SidebarRow(SidebarKind.ACCOUNT_UNSORTED, account.id(), "  #unsorted"));
     }
     for (String tag : _availableTags) {
       rows.add(new SidebarRow(SidebarKind.TAG, tag, "#" + tag));
@@ -1870,6 +2045,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       case ALL -> MailThreadFilter.all();
       case UNSORTED -> MailThreadFilter.unsorted();
       case ACCOUNT -> MailThreadFilter.account(filter.value());
+      case ACCOUNT_ALL -> MailThreadFilter.account(filter.value());
+      case ACCOUNT_UNSORTED -> MailThreadFilter.accountUnsorted(filter.value());
       case TAG -> MailThreadFilter.tag(filter.value());
     };
   }
@@ -1879,6 +2056,9 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       case ALL -> true;
       case UNSORTED -> thread.tags().isEmpty() || thread.addressedToAccount();
       case ACCOUNT -> filter.value().equals(thread.accountId());
+      case ACCOUNT_ALL -> filter.value().equals(thread.accountId());
+      case ACCOUNT_UNSORTED -> filter.value().equals(thread.accountId())
+          && (thread.tags().isEmpty() || thread.addressedToAccount());
       case TAG -> thread.tags().contains(filter.value());
     };
   }
@@ -2073,6 +2253,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     _tagUnreadCounts = decrementTagUnreadCounts(_tagUnreadCounts, tags);
     if (tags.isEmpty() || addressedToAccount) {
       _unsortedUnreadCount = Math.max(0, _unsortedUnreadCount - 1);
+      _accountUnsortedUnreadCounts = decrementUnreadCount(_accountUnsortedUnreadCounts, accountId);
     }
     _snapshot =
         new MailSnapshot(
@@ -2235,10 +2416,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       _threadScrollOffset = 0;
       return;
     }
-    if (_selectedIndex < _threadScrollOffset) {
+    if (!_threadViewportScrolled && _selectedIndex < _threadScrollOffset) {
       _threadScrollOffset = _selectedIndex;
     } else {
-      if (_selectedIndex >= _threadScrollOffset + availableThreadRows) {
+      if (!_threadViewportScrolled && _selectedIndex >= _threadScrollOffset + availableThreadRows) {
         _threadScrollOffset = _selectedIndex - availableThreadRows + 1;
       }
     }
@@ -2251,10 +2432,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
       _sidebarScrollOffset = 0;
       return;
     }
-    if (_sidebarSelection < _sidebarScrollOffset) {
+    if (!_sidebarViewportScrolled && _sidebarSelection < _sidebarScrollOffset) {
       _sidebarScrollOffset = _sidebarSelection;
     } else {
-      if (_sidebarSelection >= _sidebarScrollOffset + availableRows) {
+      if (!_sidebarViewportScrolled && _sidebarSelection >= _sidebarScrollOffset + availableRows) {
         _sidebarScrollOffset = _sidebarSelection - availableRows + 1;
       }
     }
@@ -2269,6 +2450,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
           case ALL -> row.label();
           case UNSORTED -> row.label();
           case ACCOUNT -> row.label();
+          case ACCOUNT_ALL, ACCOUNT_UNSORTED -> row.label();
           case TAG -> row.label();
         };
     String label = (index + 1) + " " + baseLabel;
@@ -2277,6 +2459,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
           case ALL -> _allUnreadCount;
           case UNSORTED -> _unsortedUnreadCount;
           case ACCOUNT -> _accountUnreadCounts.getOrDefault(row.value(), 0);
+          case ACCOUNT_ALL -> _accountUnreadCounts.getOrDefault(row.value(), 0);
+          case ACCOUNT_UNSORTED -> _accountUnsortedUnreadCounts.getOrDefault(row.value(), 0);
           case TAG -> _tagUnreadCounts.getOrDefault(row.value(), 0);
         };
     var output = new AttributedString();
@@ -2418,7 +2602,9 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     }
     if (_sidebarSelection >= 0 && _sidebarSelection < _sidebarRows.size()) {
       SidebarRow row = _sidebarRows.get(_sidebarSelection);
-      if (row.kind() == SidebarKind.ACCOUNT) {
+      if (row.kind() == SidebarKind.ACCOUNT
+          || row.kind() == SidebarKind.ACCOUNT_ALL
+          || row.kind() == SidebarKind.ACCOUNT_UNSORTED) {
         return safe(row.value(), "");
       }
     }
@@ -2498,10 +2684,12 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     if (_messageBufferContext == null) {
       return;
     }
-    if (_mode == Mode.COMPOSE) {
-      return;
+    synchronized (_messageBufferContext) {
+      if (_mode == Mode.COMPOSE) {
+        return;
+      }
+      setMessageBufferContent(renderSelectedMessageText(), true, false);
     }
-    setMessageBufferContent(renderSelectedMessageText(), true, false);
   }
 
   private String initialReplyBody() {
@@ -2547,14 +2735,10 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
   private void setMessageBufferContent(String text, boolean readOnly, boolean placeCursorAtEnd) {
     synchronized (_messageBufferContext) {
       var buffer = _messageBufferContext.getBuffer();
-      buffer.setReadOnly(false);
-      if (buffer.getLength() > 0) {
-        buffer.rawRemove(0, buffer.getLength());
-      }
-      if (text != null && !text.isEmpty()) {
-        buffer.rawInsert(0, text);
-      }
       buffer.setReadOnly(readOnly);
+      // Publish a host-owned snapshot without temporarily making a received
+      // message editable or exposing half of a remove/insert replacement.
+      buffer.replaceContentsFromExternal(text == null ? "" : text);
       _messageBufferContext.getTextLayout().calculate();
       buffer.getCursor().setPosition(placeCursorAtEnd ? buffer.getLength() : 0);
       _messageBufferContext.getBufferView().adaptViewToCursor();
@@ -2616,15 +2800,8 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
                 enqueueUi(
                     () -> {
                       _refreshInFlight.set(false);
+                      _refreshStatusPending = true;
                       reload();
-                      String actionableStatus = actionableSnapshotStatus();
-                      if (!actionableStatus.isBlank()) {
-                        _statusMessage = actionableStatus;
-                      } else {
-                        if (_snapshot != null && !_snapshot.statusMessage().isBlank()) {
-                          _statusMessage = _snapshot.statusMessage();
-                        }
-                      }
                       setNeedsRedraw();
                     });
               } catch (RuntimeException e) {
@@ -2674,15 +2851,28 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     if (_snapshot == null) {
       return "";
     }
-    if (_snapshot.statusMessage() != null && !_snapshot.statusMessage().isBlank()) {
+    var statuses = new ArrayList<String>();
+    for (var account : _snapshot.accounts()) {
+      statuses.add(account.syncStatus());
+    }
+    statuses.add(_snapshot.statusMessage());
+    // An ordinary global sync status must not hide a secondary account's
+    // sign-in link. Completion is informational, never a new sign-in request.
+    for (String status : statuses) {
+      if (isSignInRequest(status)) {
+        return status;
+      }
+    }
+    for (String status : statuses) {
+      if (status != null && status.contains("Mail sign-in complete")) {
+        return status;
+      }
+    }
+    if (!_snapshot.statusMessage().isBlank()) {
       return _snapshot.statusMessage();
     }
-    for (var account : _snapshot.accounts()) {
-      String status = account.syncStatus();
-      if (status == null || status.isBlank()) {
-        continue;
-      }
-      if (firstUrl(status) != null || status.contains("Mail sign-in complete")) {
+    for (String status : statuses) {
+      if (firstUrl(status) != null) {
         return status;
       }
     }
@@ -2691,7 +2881,30 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
 
   private String authOverlayMessage() {
     String status = actionableSnapshotStatus();
-    return status == null || status.isBlank() ? "" : status;
+    return isSignInRequest(status) && !status.equals(_dismissedAuthPrompt) ? status : "";
+  }
+
+  private static boolean isSignInRequest(String status) {
+    if (status == null || status.isBlank()) {
+      return false;
+    }
+    return status.contains("Complete browser sign-in at")
+        || status.contains("Authorize mail at")
+        || status.contains("To sign in,")
+        || status.contains("enter the code");
+  }
+
+  private void updateSnapshotActions() {
+    String status = actionableSnapshotStatus();
+    _lastActionableUrl = firstUrl(status);
+    String prompt = isSignInRequest(status) ? status : "";
+    if (!_dismissedAuthPrompt.equals(prompt)) {
+      _dismissedAuthPrompt = "";
+    }
+    if (_refreshStatusPending) {
+      _statusMessage = status;
+      _refreshStatusPending = false;
+    }
   }
 
   private void drawAuthOverlay(
@@ -2703,7 +2916,7 @@ public class MailPanelView extends View implements KeyBindingHintProvider {
     int modalWidth = Math.max(24, Math.min(width - 4, Math.max(40, width * 2 / 3)));
     var wrapped = TextPanelView.wrapText(message, Math.max(1, modalWidth - 4));
     String footerText =
-        firstUrl(message) != null ? " o open link  y copy link  e refresh " : " e refresh ";
+        firstUrl(message) != null ? " Esc dismiss  o open link  y copy link  e refresh " : " Esc dismiss  e refresh ";
     int modalHeight = Math.min(height - 2, wrapped.size() + 4);
     int modalX = rect.getPoint().getX() + Math.max(0, (width - modalWidth) / 2);
     int modalY = rect.getPoint().getY() + Math.max(1, (height - modalHeight) / 2);

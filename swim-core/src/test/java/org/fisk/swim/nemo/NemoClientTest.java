@@ -691,6 +691,43 @@ class NemoClientTest {
     }
 
     @Test
+    void savedErrorReportsAreExcludedFromToolsAndAutomaticPromptContext() throws Exception {
+        String previousDirectory = System.getProperty(org.fisk.swim.ErrorReports.DIRECTORY_PROPERTY);
+        Path project = Files.createDirectory(tempDir.resolve("report-project"));
+        Path reports = Files.createDirectory(project.resolve("error-reports"));
+        Path latest = reports.resolve("latest.txt");
+        Files.writeString(latest, "SWIM ERROR REPORT #1\nprivate-report-sentinel\n");
+        Path source = project.resolve("source.txt");
+        Files.writeString(source, "project-local-sentinel\n");
+        var context = new BufferContext(Rect.create(0, 0, 80, 20), source);
+        var configuration = NemoClient.Configuration.builder().workspaceRoot(project).build();
+        try {
+            System.setProperty(org.fisk.swim.ErrorReports.DIRECTORY_PROPERTY, reports.toString());
+            String read = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("read-source", "read_file", json(Map.of("path", "source.txt"))));
+            assertTrue(read.contains("project-local-sentinel"));
+            assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("read-report", "read_file", json(Map.of("path", "error-reports/latest.txt")))));
+            assertThrows(IOException.class, () -> NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("read-report-alias", "read_file",
+                            json(Map.of("path", "report-project/error-reports/latest.txt")))));
+            String search = NemoClient.executeTool(configuration, context,
+                    new NemoClient.ToolCall("search-reports", "search_files", json(Map.of("query", "private-report-sentinel"))));
+            assertFalse(search.contains("private-report-sentinel"));
+            var reportContext = new BufferContext(Rect.create(0, 0, 80, 20), latest);
+            String prompt = NemoClient.buildInput(reportContext, "Help with my project");
+            assertTrue(prompt.contains("Private error report omitted"));
+            assertFalse(prompt.contains("private-report-sentinel"));
+        } finally {
+            if (previousDirectory == null) {
+                System.clearProperty(org.fisk.swim.ErrorReports.DIRECTORY_PROPERTY);
+            } else {
+                System.setProperty(org.fisk.swim.ErrorReports.DIRECTORY_PROPERTY, previousDirectory);
+            }
+        }
+    }
+
+    @Test
     void executesMcpToolAfterApproval() throws Exception {
         Path project = tempDir.resolve("mcp-workspace");
         Files.createDirectories(project);

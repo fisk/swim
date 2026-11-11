@@ -8,6 +8,7 @@ module org.fisk.swim.core {
     requires com.h2database;
     requires static java.compiler;
     requires java.management;
+    requires java.logging;
     requires java.net.http;
     requires java.sql;
     requires java.xml;

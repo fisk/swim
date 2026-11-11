@@ -30,6 +30,7 @@ build
 /private-plugins/
 /workspace/
 /email/
+/error-reports/
 /email/accounts.json
 /todo/
 /slack/

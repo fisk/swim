@@ -53,6 +53,14 @@ public class EventThread extends Thread {
         return instance;
     }
 
+    static void wakeForErrorReport() {
+        EventThread thread = _instance;
+        if (thread != null && thread._running) {
+            // Logging must never wait for the UI (including a full event queue).
+            thread._events.offer(new RunnableEvent(() -> {}));
+        }
+    }
+
     public EventThread() {
         super("swim-event-thread");
         setDaemon(true);
@@ -93,8 +101,7 @@ public class EventThread extends Thread {
                 }
                 runPostEventHooks();
             } catch (Throwable e) {
-                _log.warn("Fatal error in event loop: {}", errorSummary(e));
-                _log.debug("Fatal error in event loop", e);
+                _log.error("Error in event loop", e);
             }
         }
     }
@@ -279,8 +286,7 @@ public class EventThread extends Thread {
             try {
                 runnable.run();
             } catch (Throwable e) {
-                _log.warn("Error processing post-event hook: {}", errorSummary(e));
-                _log.debug("Error processing post-event hook", e);
+                _log.error("Error processing post-event hook", e);
             }
         }
         _log.debug("Ran post-event hooks");

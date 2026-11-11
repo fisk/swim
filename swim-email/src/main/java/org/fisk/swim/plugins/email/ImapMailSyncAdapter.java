@@ -2,11 +2,13 @@ package org.fisk.swim.plugins.email;
 
 final class ImapMailSyncAdapter implements MailSyncAdapter {
     private long _nextBackfillUid;
+    private long _uidValidity;
 
     @Override
     public MailSyncBatch fetch(EmailAccountConfig account) throws Exception {
         MailSyncBatch batch = JakartaMailSupport.fetchImap(account);
         _nextBackfillUid = batch.nextBackfillUid();
+        _uidValidity = batch.uidValidity();
         return batch;
     }
 
@@ -15,14 +17,24 @@ final class ImapMailSyncAdapter implements MailSyncAdapter {
         if (syncState != null && syncState.backfillComplete()) {
             _nextBackfillUid = 0L;
             if (syncState.lastSeenUid() > 0L) {
-                return JakartaMailSupport.fetchImapSinceUid(account, syncState.lastSeenUid());
+                MailSyncBatch batch = JakartaMailSupport.fetchImapSinceUid(account, syncState.lastSeenUid(), syncState.uidValidity());
+                _uidValidity = batch.uidValidity();
+                if (batch.uidValidity() > 0L && batch.uidValidity() != syncState.uidValidity()) {
+                    _nextBackfillUid = batch.nextBackfillUid();
+                }
+                return batch;
             }
             return fetch(account);
         }
         if (syncState != null) {
             _nextBackfillUid = syncState.nextBackfillUid();
+            _uidValidity = syncState.uidValidity();
             if (syncState.lastSeenUid() > 0L) {
-                MailSyncBatch incremental = JakartaMailSupport.fetchImapSinceUid(account, syncState.lastSeenUid());
+                MailSyncBatch incremental = JakartaMailSupport.fetchImapSinceUid(account, syncState.lastSeenUid(), syncState.uidValidity());
+                _uidValidity = incremental.uidValidity();
+                if (incremental.uidValidity() > 0L && incremental.uidValidity() != syncState.uidValidity()) {
+                    _nextBackfillUid = incremental.nextBackfillUid();
+                }
                 return MailSyncBatch.success(
                         incremental.messages(),
                         incremental.statusMessage(),
@@ -30,7 +42,7 @@ final class ImapMailSyncAdapter implements MailSyncAdapter {
                         incremental.startIndex(),
                         incremental.endIndex(),
                         incremental.highWatermarkUid(),
-                        _nextBackfillUid);
+                        _nextBackfillUid).withUidValidity(incremental.uidValidity());
             }
             if (_nextBackfillUid > 0L) {
                 return MailSyncBatch.success(java.util.List.of(), "Resuming backfill", 0, 0, 0, 0L, _nextBackfillUid);
@@ -49,7 +61,7 @@ final class ImapMailSyncAdapter implements MailSyncAdapter {
         if (!hasMore()) {
             return MailSyncBatch.success(java.util.List.of(), "");
         }
-        MailSyncBatch batch = JakartaMailSupport.fetchImapOlderThanUid(account, _nextBackfillUid);
+        MailSyncBatch batch = JakartaMailSupport.fetchImapOlderThanUid(account, _nextBackfillUid, _uidValidity);
         _nextBackfillUid = batch.nextBackfillUid();
         return batch;
     }
